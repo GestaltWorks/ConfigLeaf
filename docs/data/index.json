@@ -29,8 +29,7 @@
     "checks": 33,
     "checksRerun": 33,
     "verbs": {
-      "ESCALATE": 8,
-      "ADOPT": 1
+      "HOLD": 9
     },
     "classes": {
       "proxy_split": 2,
@@ -44,10 +43,10 @@
   },
   "sample": {
     "bundle": "sample/bundle.json",
-    "sha256": "sha256:4737d98ade3d85812fd7f4be0d45ab8aca1b7d818ae1a77c07bf2a3d0d2e4516",
-    "runs": 4,
+    "sha256": "sha256:58c743ee1b0431e269d05fa67e99242c5648b2b8492cf72f086682e50a0bf028",
+    "runs": 14,
     "gatedOut": 0,
-    "observed": 1062,
+    "observed": 3186,
     "findings": 27,
     "classes": {
       "proxy_split": 1,
@@ -56,11 +55,10 @@
       "orphan_vhost": 3
     },
     "verbs": {
-      "ESCALATE": 22,
-      "ADOPT": 5
+      "HOLD": 27
     }
   },
-  "decisionRule": "Every check holds and none was rejected: ADOPT, as a candidate pending a judge. Any check fails or was rejected: ESCALATE. HOLD needs a judge to bound it with an expiry, so a pass with no model never issues it.",
+  "decisionRule": "The technician's accepted exception in force decides ADOPT until it expires, and a lapsed one ESCALATE. Next, the MSP's policy rule that governs the setting decides ADOPT, HOLD until an expiry, ESCALATE, ROLLBACK or FIX, and the decision names the rule and the reason. With no governing rule: every check holds and none was rejected, ADOPT, as a candidate pending a judge; any check fails or was rejected, ESCALATE.",
   "limits": {
     "maxRows": 20,
     "maxCell": 240

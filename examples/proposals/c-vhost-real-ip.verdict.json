@@ -15,13 +15,13 @@
   "bound": {
     "kind": "vhost_real_ip",
     "tenant_id": "client-1",
-    "run_id": "run-15638d43819ba756",
-    "change": "real_ip of /etc/nginx/sites-available/host-4c795e.quest on host-4b4dc1 in run run-15638d43819ba756: server[host-4c795e.quest:443].real_ip absent, server[host-4c795e.quest:80].real_ip absent -> trusted:15 header:CF-Connecting-IP scope:server"
+    "run_id": "run-ace5f05819e5b28e",
+    "change": "real_ip of /etc/nginx/sites-available/host-4c795e.quest on host-4b4dc1 in run run-ace5f05819e5b28e: server[host-4c795e.quest:443].real_ip absent, server[host-4c795e.quest:80].real_ip absent -> trusted:15 header:CF-Connecting-IP scope:server"
   },
   "baseline": {
-    "runs": 4,
+    "runs": 14,
     "gated_out": [],
-    "observed": 1062,
+    "observed": 3186,
     "findings": 27
   },
   "simulations": [
@@ -34,13 +34,13 @@
         {
           "key": "proxied_without_real_ip|client-1|host-4b4dc1|/etc/nginx/sites-available/host-4c795e.quest|server[host-4c795e.quest:443].real_ip|host-524b42.quest|bce1ca2bb7caa2de9b6823d5f6ecd3f2",
           "class": "proxied_without_real_ip",
-          "verb": "ADOPT",
+          "verb": "HOLD",
           "summary": "host-524b42.quest is proxied through Cloudflare to ip-6fb86d, and server[host-4c795e.quest:443].real_ip in /etc/nginx/sites-available/host-4c795e.quest on host-4b4dc1 is absent: the block that serves it sees Cloudflare's addresses as its visitors"
         },
         {
           "key": "proxied_without_real_ip|client-1|host-4b4dc1|/etc/nginx/sites-available/host-4c795e.quest|server[host-4c795e.quest:80].real_ip|host-524b42.quest|bce1ca2bb7caa2de9b6823d5f6ecd3f2",
           "class": "proxied_without_real_ip",
-          "verb": "ADOPT",
+          "verb": "HOLD",
           "summary": "host-524b42.quest is proxied through Cloudflare to ip-6fb86d, and server[host-4c795e.quest:80].real_ip in /etc/nginx/sites-available/host-4c795e.quest on host-4b4dc1 is absent: the block that serves it sees Cloudflare's addresses as its visitors"
         }
       ]
@@ -52,19 +52,19 @@
     {
       "key": "proxied_without_real_ip|client-1|host-4b4dc1|/etc/nginx/sites-available/host-4c795e.quest|server[host-4c795e.quest:443].real_ip|host-524b42.quest|bce1ca2bb7caa2de9b6823d5f6ecd3f2",
       "class": "proxied_without_real_ip",
-      "verb": "ADOPT",
+      "verb": "HOLD",
       "summary": "host-524b42.quest is proxied through Cloudflare to ip-6fb86d, and server[host-4c795e.quest:443].real_ip in /etc/nginx/sites-available/host-4c795e.quest on host-4b4dc1 is absent: the block that serves it sees Cloudflare's addresses as its visitors"
     },
     {
       "key": "proxied_without_real_ip|client-1|host-4b4dc1|/etc/nginx/sites-available/host-4c795e.quest|server[host-4c795e.quest:80].real_ip|host-524b42.quest|bce1ca2bb7caa2de9b6823d5f6ecd3f2",
       "class": "proxied_without_real_ip",
-      "verb": "ADOPT",
+      "verb": "HOLD",
       "summary": "host-524b42.quest is proxied through Cloudflare to ip-6fb86d, and server[host-4c795e.quest:80].real_ip in /etc/nginx/sites-available/host-4c795e.quest on host-4b4dc1 is absent: the block that serves it sees Cloudflare's addresses as its visitors"
     }
   ],
   "added": [],
   "overlays": {
-    "observation": "SELECT obs_id, run_id, tenant_id, surface, host, object_id, setting_path, CASE WHEN run_id = 'run-15638d43819ba756' AND object_id = '/etc/nginx/sites-available/host-4c795e.quest' AND setting_path IN ('server[host-4c795e.quest:443].real_ip', 'server[host-4c795e.quest:80].real_ip') THEN 'sha256:244e0f384c448c59e296bdc8265b23622bd50434b92b10249d90eec2401cd2cb' ELSE value_hash END AS value_hash, CASE WHEN run_id = 'run-15638d43819ba756' AND object_id = '/etc/nginx/sites-available/host-4c795e.quest' AND setting_path IN ('server[host-4c795e.quest:443].real_ip', 'server[host-4c795e.quest:80].real_ip') THEN 'trusted:15 header:CF-Connecting-IP scope:server' ELSE value_redacted END AS value_redacted, refers_to_type, refers_to_id, observed_at, source, authority FROM {{t:observation}}"
+    "observation": "SELECT obs_id, run_id, tenant_id, surface, host, object_id, setting_path, CASE WHEN run_id = 'run-ace5f05819e5b28e' AND object_id = '/etc/nginx/sites-available/host-4c795e.quest' AND setting_path IN ('server[host-4c795e.quest:443].real_ip', 'server[host-4c795e.quest:80].real_ip') THEN 'sha256:244e0f384c448c59e296bdc8265b23622bd50434b92b10249d90eec2401cd2cb' ELSE value_hash END AS value_hash, CASE WHEN run_id = 'run-ace5f05819e5b28e' AND object_id = '/etc/nginx/sites-available/host-4c795e.quest' AND setting_path IN ('server[host-4c795e.quest:443].real_ip', 'server[host-4c795e.quest:80].real_ip') THEN 'trusted:15 header:CF-Connecting-IP scope:server' ELSE value_redacted END AS value_redacted, refers_to_type, refers_to_id, observed_at, source, authority FROM {{t:observation}}"
   },
   "judge": {
     "status": "skipped",
@@ -77,6 +77,6 @@
     "receipt_id": null,
     "served_model": null
   },
-  "trace_id": "preflight_mvmnzisq",
-  "elapsed_ms": 313
+  "trace_id": "preflight_mvmx0lry",
+  "elapsed_ms": 781
 }

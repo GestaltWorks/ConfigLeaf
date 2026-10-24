@@ -4,7 +4,7 @@
     "finding": {
       "class": "proxy_split",
       "tenant_id": "client-1",
-      "run_id": "run-f9470e2f5f175899",
+      "run_id": "run-de1564466df1d59b",
       "surface": "cloudflare.dns",
       "host": null,
       "object_id": "bce1ca2bb7caa2de9b6823d5f6ecd3f2",
@@ -16,24 +16,31 @@
       "dns_name": "host-524b42.quest",
       "resolves_to": "ip-6fb86d",
       "resource_id": "bce1ca2bb7caa2de9b6823d5f6ecd3f2",
-      "dns_run_id": "run-f9470e2f5f175899",
+      "dns_run_id": "run-de1564466df1d59b",
       "since": "2026-04-16T21:11:15.232Z",
-      "until": "2026-10-24T07:58:55.125Z",
+      "until": "2026-10-24T21:20:58.593Z",
       "summary": "host-524b42.quest is proxied and aliases host-4c795e.quest, whose A record is direct to ip-6fb86d: the origin the proxy hides is published on the name it points at"
     },
-    "verb": "ESCALATE",
+    "verb": "HOLD",
+    "disposition": {
+      "verb": "HOLD",
+      "reason": "rule rule-8e75e1d767980665 restores a setting to its approved value; this proxy_split finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-25T01:21:22.897Z",
+      "expires_at": "2026-10-25T01:21:22.897Z",
+      "decided_by": "policy",
+      "rule_id": "rule-8e75e1d767980665"
+    },
     "checks": [
       {
         "template": "run_complete",
         "holds": true,
         "rowCount": 0,
-        "explanation": "Run run-f9470e2f5f175899 collected everything it set out to collect."
+        "explanation": "Run run-de1564466df1d59b collected everything it set out to collect."
       },
       {
         "template": "actor_attributed",
         "holds": true,
         "rowCount": 2,
-        "explanation": "2 audit events with a named actor touched bce1ca2bb7caa2de9b6823d5f6ecd3f2 between 2026-04-16T21:11:15.232Z and 2026-10-24T07:58:55.125Z."
+        "explanation": "2 audit events with a named actor touched bce1ca2bb7caa2de9b6823d5f6ecd3f2 between 2026-04-16T21:11:15.232Z and 2026-10-24T21:20:58.593Z."
       },
       {
         "template": "previous_value_recoverable",
@@ -45,17 +52,17 @@
         "template": "referent_unchanged",
         "holds": false,
         "rowCount": 3,
-        "explanation": "host-524b42.quest changed between 2026-04-16T21:11:15.232Z and 2026-10-24T07:58:55.125Z (3 pieces of evidence)."
+        "explanation": "host-524b42.quest changed between 2026-04-16T21:11:15.232Z and 2026-10-24T21:20:58.593Z (3 pieces of evidence)."
       }
     ],
     "rejected": [],
     "judge": "skipped",
     "exposure": {
       "since": "2026-04-16T21:12:47.270Z",
-      "days": 190,
+      "days": 191,
       "bound": "exact",
       "source": "audit:evt-05fa48325110cdcb",
-      "still_open_in": "run-f9470e2f5f175899"
+      "still_open_in": "run-de1564466df1d59b"
     }
   },
   {
@@ -63,7 +70,7 @@
     "finding": {
       "class": "orphan_record",
       "tenant_id": "client-1",
-      "run_id": "run-f9470e2f5f175899",
+      "run_id": "run-de1564466df1d59b",
       "surface": "cloudflare.dns",
       "host": "host-aa516a",
       "object_id": "c8b1963847dafe3548b1a4b93f520c0a",
@@ -75,18 +82,25 @@
       "dns_name": "host-3fef97.club",
       "resolves_to": "ip-6b6bba",
       "resource_id": "c8b1963847dafe3548b1a4b93f520c0a",
-      "dns_run_id": "run-f9470e2f5f175899",
+      "dns_run_id": "run-de1564466df1d59b",
       "since": "2026-04-16T21:11:15.232Z",
-      "until": "2026-10-24T07:59:20.027Z",
+      "until": "2026-10-24T21:21:07.694Z",
       "summary": "host-3fef97.club (A, direct) lands on ip-6b6bba, host-aa516a, where no enabled server block names it: requests for it reach the default server"
     },
-    "verb": "ESCALATE",
+    "verb": "HOLD",
+    "disposition": {
+      "verb": "HOLD",
+      "reason": "rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T21:21:22.897Z",
+      "expires_at": "2026-10-27T21:21:22.897Z",
+      "decided_by": "policy",
+      "rule_id": "rule-b8d9962485c3ced4"
+    },
     "checks": [
       {
         "template": "run_complete",
         "holds": true,
         "rowCount": 0,
-        "explanation": "Run run-f9470e2f5f175899 collected everything it set out to collect."
+        "explanation": "Run run-de1564466df1d59b collected everything it set out to collect."
       },
       {
         "template": "host_in_inventory",
@@ -98,7 +112,7 @@
         "template": "actor_attributed",
         "holds": false,
         "rowCount": 0,
-        "explanation": "No audit event names who changed c8b1963847dafe3548b1a4b93f520c0a between 2026-04-16T21:11:15.232Z and 2026-10-24T07:59:20.027Z."
+        "explanation": "No audit event names who changed c8b1963847dafe3548b1a4b93f520c0a between 2026-04-16T21:11:15.232Z and 2026-10-24T21:21:07.694Z."
       },
       {
         "template": "previous_value_recoverable",
@@ -115,7 +129,7 @@
     "finding": {
       "class": "orphan_record",
       "tenant_id": "client-1",
-      "run_id": "run-f9470e2f5f175899",
+      "run_id": "run-de1564466df1d59b",
       "surface": "cloudflare.dns",
       "host": "host-4b4dc1",
       "object_id": "b0a17a719bd2118a535a763379ab7ba9",
@@ -127,18 +141,25 @@
       "dns_name": "host-50b116.com",
       "resolves_to": "ip-6fb86d",
       "resource_id": "b0a17a719bd2118a535a763379ab7ba9",
-      "dns_run_id": "run-f9470e2f5f175899",
+      "dns_run_id": "run-de1564466df1d59b",
       "since": "2026-04-16T21:11:15.232Z",
-      "until": "2026-10-24T07:59:23.713Z",
+      "until": "2026-10-24T21:21:12.262Z",
       "summary": "host-50b116.com (A, proxied) lands on ip-6fb86d, host-4b4dc1, where no enabled server block names it: requests for it reach the default server"
     },
-    "verb": "ESCALATE",
+    "verb": "HOLD",
+    "disposition": {
+      "verb": "HOLD",
+      "reason": "rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T21:21:22.897Z",
+      "expires_at": "2026-10-27T21:21:22.897Z",
+      "decided_by": "policy",
+      "rule_id": "rule-b8d9962485c3ced4"
+    },
     "checks": [
       {
         "template": "run_complete",
         "holds": true,
         "rowCount": 0,
-        "explanation": "Run run-f9470e2f5f175899 collected everything it set out to collect."
+        "explanation": "Run run-de1564466df1d59b collected everything it set out to collect."
       },
       {
         "template": "host_in_inventory",
@@ -150,7 +171,7 @@
         "template": "actor_attributed",
         "holds": false,
         "rowCount": 0,
-        "explanation": "No audit event names who changed b0a17a719bd2118a535a763379ab7ba9 between 2026-04-16T21:11:15.232Z and 2026-10-24T07:59:23.713Z."
+        "explanation": "No audit event names who changed b0a17a719bd2118a535a763379ab7ba9 between 2026-04-16T21:11:15.232Z and 2026-10-24T21:21:12.262Z."
       },
       {
         "template": "previous_value_recoverable",
@@ -167,7 +188,7 @@
     "finding": {
       "class": "orphan_record",
       "tenant_id": "client-1",
-      "run_id": "run-f9470e2f5f175899",
+      "run_id": "run-de1564466df1d59b",
       "surface": "cloudflare.dns",
       "host": "host-4b4dc1",
       "object_id": "25a23b5c40a3de0ea11b6054a7b54d07",
@@ -179,18 +200,25 @@
       "dns_name": "host-c10fff.com",
       "resolves_to": "ip-6fb86d",
       "resource_id": "25a23b5c40a3de0ea11b6054a7b54d07",
-      "dns_run_id": "run-f9470e2f5f175899",
+      "dns_run_id": "run-de1564466df1d59b",
       "since": "2026-04-16T21:11:15.232Z",
-      "until": "2026-10-24T07:59:23.713Z",
+      "until": "2026-10-24T21:21:12.262Z",
       "summary": "host-c10fff.com (A, proxied) lands on ip-6fb86d, host-4b4dc1, where no enabled server block names it: requests for it reach the default server"
     },
-    "verb": "ESCALATE",
+    "verb": "HOLD",
+    "disposition": {
+      "verb": "HOLD",
+      "reason": "rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T21:21:22.897Z",
+      "expires_at": "2026-10-27T21:21:22.897Z",
+      "decided_by": "policy",
+      "rule_id": "rule-b8d9962485c3ced4"
+    },
     "checks": [
       {
         "template": "run_complete",
         "holds": true,
         "rowCount": 0,
-        "explanation": "Run run-f9470e2f5f175899 collected everything it set out to collect."
+        "explanation": "Run run-de1564466df1d59b collected everything it set out to collect."
       },
       {
         "template": "host_in_inventory",
@@ -202,7 +230,7 @@
         "template": "actor_attributed",
         "holds": true,
         "rowCount": 1,
-        "explanation": "1 audit event with a named actor touched 25a23b5c40a3de0ea11b6054a7b54d07 between 2026-04-16T21:11:15.232Z and 2026-10-24T07:59:23.713Z."
+        "explanation": "1 audit event with a named actor touched 25a23b5c40a3de0ea11b6054a7b54d07 between 2026-04-16T21:11:15.232Z and 2026-10-24T21:21:12.262Z."
       },
       {
         "template": "previous_value_recoverable",
@@ -215,10 +243,10 @@
     "judge": "skipped",
     "exposure": {
       "since": "2026-07-06T18:46:40.994Z",
-      "days": 109,
+      "days": 110,
       "bound": "at_least",
       "source": "audit:evt-48d6696c1de70593",
-      "still_open_in": "run-f9470e2f5f175899"
+      "still_open_in": "run-de1564466df1d59b"
     }
   },
   {
@@ -226,7 +254,7 @@
     "finding": {
       "class": "orphan_vhost",
       "tenant_id": "client-1",
-      "run_id": "run-15638d43819ba756",
+      "run_id": "run-ace5f05819e5b28e",
       "surface": "linux.nginx",
       "host": "host-4b4dc1",
       "object_id": "/etc/nginx/sites-available/host-085e02.com",
@@ -238,24 +266,31 @@
       "dns_name": "host-085e02.com",
       "resolves_to": null,
       "resource_id": null,
-      "dns_run_id": "run-f9470e2f5f175899",
+      "dns_run_id": "run-de1564466df1d59b",
       "since": "2026-04-16T21:11:15.232Z",
-      "until": "2026-10-24T07:59:23.713Z",
+      "until": "2026-10-24T21:21:12.262Z",
       "summary": "host-085e02.com is a server_name in /etc/nginx/sites-available/host-085e02.com on host-4b4dc1 (on disk, not enabled) with no record of that name in the collected zones and no wildcard covering its zone"
     },
-    "verb": "ADOPT",
+    "verb": "HOLD",
+    "disposition": {
+      "verb": "HOLD",
+      "reason": "rule rule-b8d9962485c3ced4 (normal) holds this orphan_vhost finding until 2026-10-27T21:21:22.897Z",
+      "expires_at": "2026-10-27T21:21:22.897Z",
+      "decided_by": "policy",
+      "rule_id": "rule-b8d9962485c3ced4"
+    },
     "checks": [
       {
         "template": "run_complete",
         "holds": true,
         "rowCount": 0,
-        "explanation": "Run run-15638d43819ba756 collected everything it set out to collect."
+        "explanation": "Run run-ace5f05819e5b28e collected everything it set out to collect."
       },
       {
         "template": "other_settings_reference",
         "holds": true,
         "rowCount": 0,
-        "explanation": "No other setting in run run-15638d43819ba756 points at host-085e02.com."
+        "explanation": "No other setting in run run-ace5f05819e5b28e points at host-085e02.com."
       },
       {
         "template": "backup_recent",
@@ -272,7 +307,7 @@
     "finding": {
       "class": "orphan_vhost",
       "tenant_id": "client-1",
-      "run_id": "run-15638d43819ba756",
+      "run_id": "run-ace5f05819e5b28e",
       "surface": "linux.nginx",
       "host": "host-4b4dc1",
       "object_id": "/etc/nginx/sites-available/host-9ac4f1.com",
@@ -284,24 +319,31 @@
       "dns_name": "host-89f6e7.com",
       "resolves_to": null,
       "resource_id": null,
-      "dns_run_id": "run-f9470e2f5f175899",
+      "dns_run_id": "run-de1564466df1d59b",
       "since": "2026-04-16T21:11:15.232Z",
-      "until": "2026-10-24T07:59:23.713Z",
+      "until": "2026-10-24T21:21:12.262Z",
       "summary": "host-89f6e7.com is a server_name in /etc/nginx/sites-available/host-9ac4f1.com on host-4b4dc1 (enabled) with no record of that name in the collected zones and no wildcard covering its zone"
     },
-    "verb": "ESCALATE",
+    "verb": "HOLD",
+    "disposition": {
+      "verb": "HOLD",
+      "reason": "rule rule-b8d9962485c3ced4 (normal) holds this orphan_vhost finding until 2026-10-27T21:21:22.897Z",
+      "expires_at": "2026-10-27T21:21:22.897Z",
+      "decided_by": "policy",
+      "rule_id": "rule-b8d9962485c3ced4"
+    },
     "checks": [
       {
         "template": "run_complete",
         "holds": true,
         "rowCount": 0,
-        "explanation": "Run run-15638d43819ba756 collected everything it set out to collect."
+        "explanation": "Run run-ace5f05819e5b28e collected everything it set out to collect."
       },
       {
         "template": "other_settings_reference",
         "holds": false,
         "rowCount": 3,
-        "explanation": "3 other settings in run run-15638d43819ba756 also point at host-89f6e7.com."
+        "explanation": "3 other settings in run run-ace5f05819e5b28e also point at host-89f6e7.com."
       },
       {
         "template": "backup_recent",
@@ -318,7 +360,7 @@
     "finding": {
       "class": "orphan_vhost",
       "tenant_id": "client-1",
-      "run_id": "run-15638d43819ba756",
+      "run_id": "run-ace5f05819e5b28e",
       "surface": "linux.nginx",
       "host": "host-4b4dc1",
       "object_id": "/etc/nginx/sites-available/host-9ac4f1.com",
@@ -330,24 +372,31 @@
       "dns_name": "host-9ac4f1.com",
       "resolves_to": null,
       "resource_id": null,
-      "dns_run_id": "run-f9470e2f5f175899",
+      "dns_run_id": "run-de1564466df1d59b",
       "since": "2026-04-16T21:11:15.232Z",
-      "until": "2026-10-24T07:59:23.713Z",
+      "until": "2026-10-24T21:21:12.262Z",
       "summary": "host-9ac4f1.com is a server_name in /etc/nginx/sites-available/host-9ac4f1.com on host-4b4dc1 (enabled) with no record of that name in the collected zones and no wildcard covering its zone"
     },
-    "verb": "ESCALATE",
+    "verb": "HOLD",
+    "disposition": {
+      "verb": "HOLD",
+      "reason": "rule rule-b8d9962485c3ced4 (normal) holds this orphan_vhost finding until 2026-10-27T21:21:22.897Z",
+      "expires_at": "2026-10-27T21:21:22.897Z",
+      "decided_by": "policy",
+      "rule_id": "rule-b8d9962485c3ced4"
+    },
     "checks": [
       {
         "template": "run_complete",
         "holds": true,
         "rowCount": 0,
-        "explanation": "Run run-15638d43819ba756 collected everything it set out to collect."
+        "explanation": "Run run-ace5f05819e5b28e collected everything it set out to collect."
       },
       {
         "template": "other_settings_reference",
         "holds": false,
         "rowCount": 3,
-        "explanation": "3 other settings in run run-15638d43819ba756 also point at host-9ac4f1.com."
+        "explanation": "3 other settings in run run-ace5f05819e5b28e also point at host-9ac4f1.com."
       },
       {
         "template": "backup_recent",

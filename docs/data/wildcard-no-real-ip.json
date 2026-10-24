@@ -2,26 +2,30 @@
  "dir": "wildcard-no-real-ip",
  "note": "proxied_without_real_ip (wildcard form): a proxied wildcard record lands on a host where no server block and not the http level trusts a Cloudflare range, so every name under the wildcard sees Cloudflare's addresses as its visitors. Rows: the DNS and audit runs, the wildcard record, every audit event on it (none: the record predates the log), the host's inventory addresses, and the host run's http.real_ip, server[...].real_ip and server[...].enabled rows (every real_ip absent). Cut from sample/bundle.json by scripts/examples.ts.",
  "tables": {
-  "collection_run": 3,
+  "collection_run": 5,
   "observation": 93,
+  "approved_setting": 32,
   "dns_record": 1,
-  "inventory_asset": 1
+  "inventory_asset": 1,
+  "policy_rule": 26,
+  "vault_copy": 56,
+  "copy_validation": 56
  },
  "files": [
   {
    "path": "examples/wildcard-no-real-ip/bundle.json",
-   "bytes": 48764,
-   "sha256": "sha256:d72fb751a402ed59311a9ce25bc3067eb99a959d07090c321d95adfd715ac569"
+   "bytes": 155758,
+   "sha256": "sha256:73c9c335fd497501d03925b8cb1d3ccfc94f69597a8c7878442d32ae6eb488b7"
   },
   {
    "path": "examples/wildcard-no-real-ip/findings.json",
-   "bytes": 2005,
-   "sha256": "sha256:4cd0f8e633b6af91e7dfa3a0077bce54f39e555464fe3b2866d3d6a7e9a75c0b"
+   "bytes": 2299,
+   "sha256": "sha256:1dcc69008e4f9417ab67ba14b75ffc3749417ca25872282d5d025a3544c647b0"
   }
  ],
  "reproduced": true,
  "verbs": {
-  "ESCALATE": 1
+  "HOLD": 1
  },
  "classes": {
   "proxied_without_real_ip": 1
@@ -30,9 +34,9 @@
   {
    "id": "wildcard-no-real-ip-1",
    "class": "proxied_without_real_ip",
-   "verb": "ESCALATE",
+   "verb": "HOLD",
    "claim": "*.host-503b27.ai is proxied through Cloudflare to ip-6b6bba, and no server block on host-aa516a trusts a Cloudflare range (http.real_ip in /etc/nginx/nginx.conf is absent): every name under the wildcard sees Cloudflare's addresses as its visitors",
-   "decision": "2 of 4 preconditions fail: actor_attributed, previous_value_recoverable",
+   "decision": "2 of 4 preconditions fail: actor_attributed, previous_value_recoverable; decided by policy under rule-b8d9962485c3ced4: rule rule-b8d9962485c3ced4 (normal) holds this proxied_without_real_ip finding until 2026-10-27T21:21:22.897Z",
    "fields": [
     [
      "finding id",
@@ -76,15 +80,15 @@
     ],
     [
      "collection run",
-     "run-67f4d6923cb4838d"
+     "run-81adedc1cc778bd5"
     ],
     [
      "DNS run",
-     "run-f9470e2f5f175899"
+     "run-de1564466df1d59b"
     ],
     [
      "window",
-     "2026-10-24T07:58:55.125Z to 2026-10-24T07:59:20.027Z"
+     "2026-10-24T21:20:58.593Z to 2026-10-24T21:21:07.694Z"
     ],
     [
      "value_hash",
@@ -100,12 +104,12 @@
    "detection": {
     "query": "wildcard_without_real_ip",
     "description": "A proxied wildcard record landing on an inventory host where neither the http level nor any enabled server block trusts a real_ip range.",
-    "sql": "SELECT d.record_id, d.zone, d.name, d.type, d.content AS origin, i.host,\n       h.obs_id, h.object_id, h.setting_path, h.value_hash, h.value_redacted, h.observed_at, d.observed_at AS dns_observed_at\nFROM dns_record d\nJOIN inventory_asset i ON i.tenant_id = d.tenant_id AND i.address = d.content\nJOIN observation h ON h.tenant_id = d.tenant_id AND h.run_id = 'run-67f4d6923cb4838d' AND h.host = i.host AND h.setting_path = 'http.real_ip' AND h.value_redacted = 'absent'\nWHERE d.tenant_id = 'client-1' AND d.run_id = 'run-f9470e2f5f175899' AND d.type IN ('A', 'AAAA') AND d.proxied = 1 AND d.name LIKE '*.%'\n  AND NOT EXISTS (SELECT 1 FROM observation n WHERE n.run_id = h.run_id AND n.refers_to_type = 'dns_name' AND n.refers_to_id = d.name)\n  AND NOT EXISTS (SELECT 1 FROM observation r JOIN observation e ON e.run_id = r.run_id AND e.object_id = r.object_id AND e.setting_path LIKE '%.enabled' AND substr(e.setting_path, 1, length(e.setting_path) - 8) = substr(r.setting_path, 1, length(r.setting_path) - 8)\n    WHERE r.run_id = h.run_id AND r.setting_path LIKE '%.real_ip' AND r.setting_path <> 'http.real_ip' AND r.value_redacted <> 'absent' AND e.value_redacted = '1')\nORDER BY d.name, d.record_id, h.object_id",
-    "sqlSha256": "sha256:857ea7f907996b3a5784240ea01d333d0fdd31f7bf30eb491b53ad5513494769",
+    "sql": "SELECT d.record_id, d.zone, d.name, d.type, d.content AS origin, i.host,\n       h.obs_id, h.object_id, h.setting_path, h.value_hash, h.value_redacted, h.observed_at, d.observed_at AS dns_observed_at\nFROM dns_record d\nJOIN inventory_asset i ON i.tenant_id = d.tenant_id AND i.address = d.content\nJOIN observation h ON h.tenant_id = d.tenant_id AND h.run_id = 'run-81adedc1cc778bd5' AND h.host = i.host AND h.setting_path = 'http.real_ip' AND h.value_redacted = 'absent'\nWHERE d.tenant_id = 'client-1' AND d.run_id = 'run-de1564466df1d59b' AND d.type IN ('A', 'AAAA') AND d.proxied = 1 AND d.name LIKE '*.%'\n  AND NOT EXISTS (SELECT 1 FROM observation n WHERE n.run_id = h.run_id AND n.refers_to_type = 'dns_name' AND n.refers_to_id = d.name)\n  AND NOT EXISTS (SELECT 1 FROM observation r JOIN observation e ON e.run_id = r.run_id AND e.object_id = r.object_id AND e.setting_path LIKE '%.enabled' AND substr(e.setting_path, 1, length(e.setting_path) - 8) = substr(r.setting_path, 1, length(r.setting_path) - 8)\n    WHERE r.run_id = h.run_id AND r.setting_path LIKE '%.real_ip' AND r.setting_path <> 'http.real_ip' AND r.value_redacted <> 'absent' AND e.value_redacted = '1')\nORDER BY d.name, d.record_id, h.object_id",
+    "sqlSha256": "sha256:bb9b92084ba42de07091aa6c5bd716fef120dc5e8b018ff41a6f875c8d160019",
     "params": {
      "tenant_id": "client-1",
-     "dns_run_id": "run-f9470e2f5f175899",
-     "run_id": "run-67f4d6923cb4838d"
+     "dns_run_id": "run-de1564466df1d59b",
+     "run_id": "run-81adedc1cc778bd5"
     },
     "total": 1,
     "matched": {
@@ -132,19 +136,19 @@
        "A",
        "ip-6b6bba",
        "host-aa516a",
-       "obs-41dfc6f16394f04e",
+       "obs-b5f81cde4a3a7a2b",
        "/etc/nginx/nginx.conf",
        "http.real_ip",
        "sha256:87f0360ad43bc8c6813cf5f45e3b53f055b885889b1868e7baa98e96ed25ed8c",
        "absent",
-       "2026-10-24T07:59:20.027Z",
-       "2026-10-24T07:58:55.125Z"
+       "2026-10-24T21:21:07.694Z",
+       "2026-10-24T21:20:58.593Z"
       ]
      ],
      "total": 1,
      "shown": 1,
      "cutCells": 0,
-     "sha256": "sha256:fbae34fd064114d574a432d58c93012409c4a8f2750902367eedf8a42700362b"
+     "sha256": "sha256:f9ae307417cbef9108c67483721ac63792f57d237eb36b6b59e49155eb3720df"
     }
    },
    "checks": [
@@ -155,7 +159,7 @@
      "status": "ran",
      "holds": true,
      "rowCount": 0,
-     "explanation": "Run run-67f4d6923cb4838d collected everything it set out to collect.",
+     "explanation": "Run run-81adedc1cc778bd5 collected everything it set out to collect.",
      "rerun": {
       "rowCount": 0,
       "holds": true
@@ -163,10 +167,10 @@
      "bound": "bound from the finding",
      "extra": {},
      "params": {
-      "run_id": "run-67f4d6923cb4838d"
+      "run_id": "run-81adedc1cc778bd5"
      },
-     "sql": "SELECT c.run_id, c.tenant_id, c.surface, c.host, c.expected_count, c.observed_count, c.status\nFROM collection_run c\nWHERE c.run_id = 'run-67f4d6923cb4838d'\n  AND (c.observed_count < c.expected_count OR c.status <> 'complete'\n    OR c.expected_count IS NULL OR c.observed_count IS NULL\n    OR (c.surface LIKE 'linux.%' AND c.expected_count > (SELECT COUNT(*) FROM observation x WHERE x.run_id = c.run_id)))",
-     "sqlSha256": "sha256:cac300e1653b36d1addb82bdfd0607c822d568a5c3b838e6cc79552b2e3b15fd",
+     "sql": "SELECT c.run_id, c.tenant_id, c.surface, c.host, c.expected_count, c.observed_count, c.status\nFROM collection_run c\nWHERE c.run_id = 'run-81adedc1cc778bd5'\n  AND (c.observed_count < c.expected_count OR c.status <> 'complete'\n    OR c.expected_count IS NULL OR c.observed_count IS NULL\n    OR (c.surface LIKE 'linux.%' AND c.expected_count > (SELECT COUNT(*) FROM observation x WHERE x.run_id = c.run_id)))",
+     "sqlSha256": "sha256:812d3ad58577874ae6944108a78b073afbd49114813eb1d8f96c7decf379adcb",
      "rows": {
       "columns": [
        "run_id",
@@ -220,13 +224,13 @@
         "ip-6b6bba",
         "vps",
         "ssh",
-        "2026-10-24T07:59:20.027Z"
+        "2026-10-24T21:21:07.694Z"
        ]
       ],
       "total": 1,
       "shown": 1,
       "cutCells": 0,
-      "sha256": "sha256:ecaa120f56ce419f92e90e3f1d8f573c5b0dd8b57be4aa17fa00c843d918aeac"
+      "sha256": "sha256:bec920c1f765ac3904361eec5aede268f14dedb9f7eff99c74fd8fe6bf08c266"
      }
     },
     {
@@ -236,7 +240,7 @@
      "status": "ran",
      "holds": false,
      "rowCount": 0,
-     "explanation": "No audit event names who changed c922e6966d55b15bd96b5e8ea932b715 between 2026-10-24T07:58:55.125Z and 2026-10-24T07:59:20.027Z.",
+     "explanation": "No audit event names who changed c922e6966d55b15bd96b5e8ea932b715 between 2026-10-24T21:20:58.593Z and 2026-10-24T21:21:07.694Z.",
      "rerun": {
       "rowCount": 0,
       "holds": false
@@ -246,11 +250,11 @@
      "params": {
       "tenant_id": "client-1",
       "resource_id": "c922e6966d55b15bd96b5e8ea932b715",
-      "since": "2026-10-24T07:58:55.125Z",
-      "until": "2026-10-24T07:59:20.027Z"
+      "since": "2026-10-24T21:20:58.593Z",
+      "until": "2026-10-24T21:21:07.694Z"
      },
-     "sql": "SELECT event_id, source, actor, action, old_value, new_value, occurred_at\nFROM audit_event\nWHERE tenant_id = 'client-1' AND resource_id = 'c922e6966d55b15bd96b5e8ea932b715'\n  AND occurred_at >= '2026-10-24T07:58:55.125Z' AND occurred_at <= '2026-10-24T07:59:20.027Z'\n  AND actor IS NOT NULL AND actor <> ''\nORDER BY occurred_at, event_id",
-     "sqlSha256": "sha256:16e80813029d28ef5feb8b9dcdc1b069d269c93a56e6faa9c88ef8af16d6bed4",
+     "sql": "SELECT event_id, source, actor, action, old_value, new_value, occurred_at\nFROM audit_event\nWHERE tenant_id = 'client-1' AND resource_id = 'c922e6966d55b15bd96b5e8ea932b715'\n  AND occurred_at >= '2026-10-24T21:20:58.593Z' AND occurred_at <= '2026-10-24T21:21:07.694Z'\n  AND actor IS NOT NULL AND actor <> ''\nORDER BY occurred_at, event_id",
+     "sqlSha256": "sha256:cf672083a86c6a9b9478fb704d2e6fab6db308ea97b0ebe19174bcd863a48553",
      "rows": {
       "columns": [
        "event_id",
@@ -322,7 +326,7 @@
    },
    "sample": {
     "match": "same",
-    "detail": "The full sample pass raises the same finding with the same verb (ESCALATE) and the same check verdicts. Its window opens at 2026-03-20T01:29:03.000Z there and at 2026-10-24T07:58:55.125Z here: a survey finding's window starts where the bundle's audit log begins, or at its DNS run when the bundle holds no audit log."
+    "detail": "The full sample pass raises the same finding with the same verb (HOLD) and the same check verdicts. Its window opens at 2026-03-20T01:29:03.000Z there and at 2026-10-24T21:20:58.593Z here: a survey finding's window starts where the bundle's audit log begins, or at its DNS run when the bundle holds no audit log."
    }
   }
  ]

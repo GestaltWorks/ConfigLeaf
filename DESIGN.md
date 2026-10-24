@@ -1,0 +1,289 @@
+# drift-agent: design
+
+## 1. What it is
+
+drift-agent is a configuration assurance layer above the MSP tool stack that remembers. For every setting it can
+reach it asks: does a configuration exist for everything that should; is it fully configured; is it backed up; what
+exactly is in the copy, against what should be there for that device class; has it changed since the copy; can the
+copy be restored (it validates, its dependencies exist); would a restore regress, and of what kind; and is it
+FOUND-BUT-DIFFERENT: a byte-identical setting whose referent now means something else. The agent acts under the
+MSP's policy: a critical setting that drifted from its approved value, with a valid copy, is rolled back to the copy,
+verified and documented; a drifted setting with no valid copy and production affected is investigated, fixed where
+allowed, documented and ticketed; everything else is adopted or held with a reason and an expiry. A config lock on a
+setting class means automatic rollback at the next cycle. The hackathon slice takes nginx vhost files and the
+Cloudflare records they depend on through the whole loop, on the operator's two production hosts and six zones.
+
+## 2. The questions it answers for a setting
+
+- **Does a configuration exist for everything that should?** `orphan_record`: a record landing where no enabled
+  block names it; `orphan_vhost`: a `server_name` with no record; `run_complete`: each run collected what it asserted.
+- **Is it fully configured?** `proxied_without_real_ip`: a proxied name served by a block that trusts no `real_ip`
+  range. `proxy_split`: a proxied CNAME aliasing a direct address record, which publishes the origin the proxy hides.
+- **Is it backed up?** `vault_copy`: each object's bytes per complete run, in git; `backup_item`: the nightly export.
+- **What exactly is in the copy, against what should be?** The vault commit holds the bytes (`blob_sha256`);
+  `approved_setting` holds the value of record; the policy rule that governs the setting names its class.
+- **Has it changed since the copy?** `changed_since_backup`: a live file the newest backup lacks or holds with other
+  bytes. `drift_vs_approved`: a live value that differs from its latest approval.
+- **Can the copy be restored?** `copy_validation`: `nginx -t` over the tree a restore would lay down, a shape and
+  dependency check over each record; every missing dependency named.
+- **Would a restore regress, and of what kind?** `restore_would_regress`: approvals newer than the backup whose value
+  the backup lacks or holds otherwise; the validation's gaps name what a restore leaves missing.
+- **Is it FOUND-BUT-DIFFERENT?** One SQL comparison over `observation` and `referent_fingerprint` for a run and its
+  previous passing run: equal `value_hash`, different fingerprint; the World Model holds the same answer.
+
+## 3. The data model
+
+`sql/schema.sql` is one portable DDL for SQLite (sql.js: sample mode, tests) and Postgres (the app database, the
+`DRIFT` datasource in Zetaris): ISO 8601 UTC text timestamps, INTEGER 0/1 flags, TEXT ids from `stableId` over each
+row's natural parts, so a re-run inserts nothing twice; every collected-text column is redacted before it is stored.
+
+| table | one row is | written by |
+|---|---|---|
+| `collection_run` | one pass over one surface (`linux.nginx`, `cloudflare.dns`, `cloudflare.audit`, `probe`), its asserted population, its status | the collectors and the probe run |
+| `observation` | one setting value in one run: object, dotted path, hash, redacted value, referent, the source's authority | the Linux collector (per file and directive), the Cloudflare collector (per record field) |
+| `approved_setting` | one value of one setting a technician signed off, with who, when and a note | `npm run approve` |
+| `backup_snapshot` | one backup artefact of one host: the nightly export tarball | the Linux collector |
+| `backup_item` | one file hash a snapshot holds | the Linux collector |
+| `dns_record` | one Cloudflare record as seen in one DNS run | the Cloudflare collector |
+| `audit_event` | one event of the Cloudflare account audit log | the Cloudflare collector |
+| `inventory_asset` | one global address of a client host | the Linux collector |
+| `policy_rule` | one version of one rule of the MSP's policy | `npm run policy:load` |
+| `vault_copy` | one object of one complete run, committed to the vault | the collectors' vault hook |
+| `copy_validation` | one validation of one vault copy: validator, result, missing dependencies, output | `npm run validate:copies` |
+| `probe` | one probe (http, dns or tls) of one served name in one probe run | `npm run probe` |
+| `disposition` | the decision on one finding in one pass: verb, reason, expiry, who decided, the rule | the pass, through its ledger |
+| `action` | what the agent did about a disposition | build B's write paths |
+| `ticket` | the PSA ticket a disposition or an action opened | build B's ticket adapter |
+| `referent_fingerprint` | what one `dns_name` observation's name resolved to in one DNS run | the pass, in its observe step |
+
+## 4. The loop
+
+1. **Collect and vault.** `collect:linux` opens one SSH session per host through the operator's own `ssh_config`
+   alias and streams a fixed script of reads; `collect:cloudflare` reads zones, records and the account audit log
+   with a read token. Each asserts its population before its first row and writes through the Store into the app
+   Postgres. A run that finishes complete is committed to the vault, one `vault_copy` row per object.
+2. **Gate (DQ).** `run_complete` in SQL: a run fails when it observed fewer than it asserted, finished other than
+   complete, asserted nothing, or (host surfaces) stored fewer rows than it asserted; a failing run feeds nothing
+   below. In Zetaris it is a DQ rule on the USL's `collection` table, beside `copy_validated` on `copy` (the latest
+   validation passed) and `action_verified` on `action` (a done action carries its verification).
+3. **Verify.** The questions as SQL in the portable subset through one DataLayer: the hero query, the survey, the
+   three detectors, then the precondition catalogue per finding. Live, the engine is Zetaris over `DRIFT`; in sample
+   mode, sql.js over the exported bundle; `test/parity.test.ts` holds the two to the same columns, rows and totals.
+4. **Triage and judge.** Nemotron Lightning picks catalogue templates and fills their typed parameters; Nemotron
+   Ultra answers a detector's claim with one SELECT that returns rows when the claim is false, which the agent guards
+   and runs. A verdict counts when its signed receipt verifies, names the tier requested and passes custody (the
+   request id, the per-tenant app id). With no model, the class's default checks run and the judge is skipped.
+5. **Decide.** `src/policy/decide.ts`, pure: the operator's exception (an accepted H-MEM lesson in force gives ADOPT
+   until its expiry; a lapsed one ESCALATE), then the policy rule that governs the setting, then the default (ADOPT
+   as a candidate when every check holds and none was rejected, else ESCALATE). Each reason is one plain sentence
+   over redacted text, hashes as 12 hex, commits as 8.
+6. **Record.** One `disposition` per finding per pass, keyed on the live value (a later change is a new decision);
+   one `referent_fingerprint` per `dns_name` observation of each passing host run.
+7. **Act and ticket.** Build B. An `action` row holds the kind (rollback_file, revert_record, fix, investigate), the
+   target, the hashes before and after, the vault commit, the verifying probe ids, the receipt ids, the status (done,
+   failed, refused) and its disposition; a `ticket` row the PSA, its id and url, type, priority, status and finding.
+
+| verb | decided when | what follows |
+|---|---|---|
+| ROLLBACK | `drift_vs_approved` under a rule with `lock` 1 or `on_drift` rollback, with a vault copy of the approved value whose latest validation is ok or ok_with_gaps | the copy is restored, probed and documented (build B) |
+| FIX | under those terms, no valid copy and production affected with `on_no_copy` investigate_ticket; `on_drift` investigate with production affected | investigated, fixed where allowed, documented, ticketed (build B) |
+| ESCALATE | under those terms, no valid copy and production affected with `on_no_copy` ticket; under those terms, no valid copy and production unknown, the reason naming why; `on_drift` investigate with production answering or unknown; by default, a check fails or could not run; a lapsed exception | a technician takes it |
+| HOLD | under those terms, no valid copy and production answering; `on_drift` hold; a rollback rule over a finding of another class, which concerns the setting's relation to another setting while its own value stands | held until `decided_at + hold_max_hours`, the expiry on the row |
+| ADOPT | `on_drift` adopt; `on_no_copy` adopt with production affected; by default, every check holds; an accepted exception in force | the live value stands |
+
+## 5. Policy
+
+The policy is data: `policy/hackathon.json` (or the file `DRIFT_POLICY_FILE` names), loaded by `npm run policy:load`
+into `policy_rule` rows. The file passes a closed schema; its globs and notes pass through the tenant's redactor, so
+a real name typed in a rule is stored as the pseudonym the observations carry and still matches them.
+
+- `tenant_id`: one tenant, or `*` for every tenant. `surface`: `linux.nginx`, `cloudflare.dns` or `*`.
+- `object_glob`, `setting_glob`: the objects and setting paths governed. `*` matches any run within one path
+  segment, `**` any run across segments, `?` one character, and every other character itself.
+- `criticality`: critical, high, normal or low, named in the reason.
+- `lock`: 1 sends a drift from the approved value to the rollback terms at the next cycle, whatever `on_drift` says.
+  A locked setting with no approved value on record is counted once per pass, with no finding.
+- `on_drift`: rollback, investigate, adopt or hold. `on_no_copy`: what a drift under the rollback terms with no valid
+  copy and production affected becomes: investigate_ticket (FIX), ticket (ESCALATE) or adopt (ADOPT).
+- `hold_max_hours`: a HOLD under the rule expires this many hours after it is decided.
+- `alert` (always, on_fix, never) and `psa_priority` (P1 to P4): for build B's write paths and tickets.
+- `version`, `author`, `since`, `note`: provenance; of each family (tenant, surface, object_glob, setting_glob) the
+  highest version stands. `rule_id`: `stableId("rule", tenant, surface, globs, version)`; a re-load writes nothing.
+
+A setting gets exactly one rule or none. Candidates are the rules whose tenant, surface and both globs match; each
+family keeps its highest version; an exact tenant outranks `*`, then an exact surface outranks `*`, then the
+object_glob with more literal characters, then the setting_glob with more, then the higher version, then the lower
+rule_id. With no rule the default decides, exactly as in a pass over a bundle with no policy.
+
+The hackathon file (tenant `*`, version 2, since 2026-10-25T00:00:00.000Z), rule by rule. Version 2 adds rules 7
+to 10; the other eleven carry version 1's families and terms, under new rule ids because the version is part of
+the id. `policy_rule` keeps both versions (26 rows on 24 Oct 2026), and version 2 is the highest of every family.
+
+| # | surface | object_glob | setting_glob | terms | rule_id |
+|---|---|---|---|---|---|
+| 1 | linux.nginx | `/etc/nginx/conf.d/*.conf` | `file` | critical, lock 1, rollback, on_no_copy investigate_ticket, hold 24 h, alert on_fix, P1 | `rule-e186e9d5790a7e6b` |
+| 2 | linux.nginx | `/etc/nginx/sites-available/*` | `file` | as rule 1 | `rule-6c41a25a00c404c8` |
+| 3 | linux.nginx | `/etc/nginx/nginx.conf` | `file` | as rule 1, alert always | `rule-d0e0d34c8ae191b4` |
+| 4 | linux.nginx | `/etc/nginx/conf.d/*.conf.*` | `**` | low, lock 0, adopt, alert never, P4 | `rule-42827f90778592ff` |
+| 5 | linux.nginx | `**/*.bak*` | `**` | as rule 4 | `rule-44429a425c681bfd` |
+| 6 | linux.nginx | `**/*.pre-symlink*` | `**` | as rule 4 | `rule-90f1bcb36548ea39` |
+| 7 | linux.nginx | `/etc/nginx/sites-available/*.bak*` | `**` | as rule 4 | `rule-be0bf7afde964803` |
+| 8 | linux.nginx | `/etc/nginx/sites-available/*.pre-symlink*` | `**` | as rule 4 | `rule-504a8801607b9f1c` |
+| 9 | linux.nginx | `/etc/nginx/sites-available/*.orig` | `**` | as rule 4 | `rule-01eb3d1f7585323c` |
+| 10 | linux.nginx | `/etc/nginx/conf.d/*.bak*` | `**` | as rule 4 | `rule-c6c3c71938210651` |
+| 11 | linux.nginx | `**` | `server[*].real_ip` | high, lock 0, hold 72 h, on_no_copy ticket, alert never, P3 | `rule-66810b66396a3b15` |
+| 12 | cloudflare.dns | `*` | `content` | critical, lock 1, rollback, on_no_copy investigate_ticket, hold 4 h, alert always, P1 | `rule-a3f26f34efab2ebb` |
+| 13 | cloudflare.dns | `*` | `proxied` | as rule 12 | `rule-8e75e1d767980665` |
+| 14 | cloudflare.dns | `*` | `ttl` | normal, lock 0, adopt, alert never, P4 | `rule-a8722e4f568e681e` |
+| 15 | `*` | `**` | `**` | normal, lock 0, hold 72 h, on_no_copy ticket, alert never, P3 | `rule-b8d9962485c3ced4` |
+
+Rule 1 restores a served vhost file to its approved copy when it drifts; rules 2 and 3 do the same for the
+sites-enabled host's vhost files and `nginx.conf`; rules 4 to 10 adopt the dated, `.bak`, `.pre-symlink` and
+`.orig` copies beside live files, rules 7 to 10 by more literal characters than the critical file rules carry
+(31, 39 and 32 against the 27 of `/etc/nginx/sites-available/*`; 22 for the conf.d copies whose name holds no
+`.conf.`); rule 11 holds a block's missing `real_ip` for three days; rules 12 and 13 lock where a name points and
+whether it is proxied; rule 14 adopts TTLs; rule 15 holds everything else with an expiry. Measured 24 Oct 2026 on
+the 54 distinct `file` settings of both hosts in `sample/bundle.json` (`test/policy.test.ts`): rule 1 takes the 8
+live vhost files of the conf.d host's 18 `conf.d` files and rule 4 the 8 dated and `.bak` copies beside them; rule
+2 the 11 live sites, rule 7 the 8 `.bak` copies and rule 8 the one `.pre-symlink` copy under `sites-available`;
+rule 3 both `nginx.conf` files; rule 15 the other 16 (the certbot renewal configs, `mime.types`, two `.ready`
+markers, `sites-enabled/default`). Measured the same day by the sample pass over the bundle exported after the
+21:21 UTC collection: 27 findings, every one HOLD by policy, decided at 2026-10-24T21:21:22.897Z (the latest
+finish of the bundle's runs, the 21:21 UTC probe run): 19 `proxied_without_real_ip` under rule 11 (72 h, expiring
+2026-10-27T21:21:22.897Z), the `proxy_split` under rule 13 (4 h, expiring 2026-10-25T01:21:22.897Z), 7 under rule
+15 (72 h: the wildcard's `http.real_ip`, 3 `orphan_record`, 3 `orphan_vhost`).
+
+## 6. The vault and validation
+
+`DRIFT_VAULT_DIR` names the vault, on the operator's machine, outside the repository; blank turns it off, and each
+collector says so in one trace line. One git repository per tenant and host alias at
+`<DRIFT_VAULT_DIR>/<tenant>/<alias>` holds the fetched files at their real paths without the leading slash
+(`etc/nginx/nginx.conf`, `etc/nginx/conf.d/<name>.conf`), with `.drift/paths.json` (real path to redacted object id)
+and `.drift/links.json` (each `sites-enabled` symlink to its target). One per tenant at
+`<DRIFT_VAULT_DIR>/<tenant>/cloudflare` holds `<zone>/<record_id>.json` per record (id, name, type, content, ttl,
+proxied). The tree mirrors the run, so a file absent from the run is absent from the commit. Each complete run is one
+commit, "run <run_id> <surface> <started_at>", authored by drift-agent, an unchanged run included; a partial or
+failed run commits nothing and the trace says so. The vault holds raw bytes and real names; what leaves it is commit
+hashes, counts and redacted object ids. A `vault_copy` row's `blob_sha256` is the sha256 of the exact bytes, for a
+file equal to its `file` observation's `value_hash`. Measured 24 Oct 2026 after the 21:21 UTC collection: three
+repositories of two commits each, from the 19:56 and the 21:21 UTC runs, the second changing no file: 58 record
+files, 32 files of the conf.d host (26 under `/etc/nginx`, 6 certbot renewal configs) and 22 of the sites-enabled
+host (17 and 5) with its 6 `sites-enabled` links; 224 `vault_copy` rows, 112 of them at the heads.
+
+Approval is the documentation of record. `npm run approve` writes `approved_setting` rows from the latest passing
+run: the `file` setting of every nginx object of a host (or one object, by real path or redacted id), or every
+field of every record of a zone, of one record, or of the account. Measured 24 Oct 2026 over the 19:56 UTC runs: 26
+approvals on the conf.d host, 17 on the sites-enabled host, 290 for the account's 58 records; 333 in all. Over the
+21:21 UTC runs each of the 333 was current, and the approval wrote 0 rows.
+
+**nginx-t** proves a vault commit restores to a tree nginx accepts. The commit is laid down in a temp directory the
+way a restore would lay it down, each symlink a copy of its target. Before the first `nginx -t` the files
+`nginx.conf` reaches are parsed (`src/collectors/nginx.ts`), and every dependency they name outside the tree gets a
+placeholder of its kind: an empty file for an unresolved named include, one self-signed certificate and key for
+`ssl_certificate` and its siblings, the RFC 7919 ffdhe2048 group for `ssl_dhparam`, an empty writable file for an
+`access_log` or `error_log` in a directory the image lacks. Then `nginx -t` runs in an `nginx:1.27` container
+through `DRIFT_NGINX_T` (on Windows by default through `wsl.exe -d Ubuntu-24.04`), and each round gives every
+further path the output names as missing its placeholder. The result is ok when round 1 passes with no placeholder,
+ok_with_gaps when a round passes with any, fail otherwise, in at most 12 rounds by default (`--max-rounds`);
+`missing_dependencies` names every path seeded or reported missing, redacted.
+**cf-schema** proves a record copy restores, offline: a known type, a name, content of the type's shape (A a dotted
+IPv4, AAAA an IPv6, CNAME and NS a hostname, MX a mail host, TXT text), and its dependencies: a CNAME target present
+as a record of the same run, an A or AAAA address present in the inventory; each absent one is named.
+
+Measured 24 Oct 2026 at 21:22 UTC by `npm run validate:copies -- --tenant client-1` over the heads (cap 12, 4.0 s,
+112 rows): the conf.d host ok_with_gaps in 1 round with 16 gaps, the sites-enabled host in 1 round with 13, every
+one seeded from the parse before round 1: certbot's live certificates and keys (12 and 10),
+`options-ssl-nginx.conf` and `ssl-dhparams.pem` on both, an origin certificate and key on the conf.d host, and on
+the sites-enabled host the one snippet the collector leaves unread because its name is credential-shaped.
+Cloudflare: 58 records, 42 ok and 16 ok_with_gaps, whose 7 distinct gaps are CNAME targets outside the collected
+zones. Every vault copy matched its `vault_copy` row (32, 22 and 58). The first commits' 54 nginx copies keep their
+fail rows of 19:59 UTC, validated at a 6-round cap with no pre-seeding, 6 gaps named on each tree.
+
+## 7. Probes and "production affected"
+
+`npm run probe` asks every served name from outside, as one collection run of surface `probe` per tenant. The
+population is read live from the Cloudflare API before any probe: the distinct names of the account's A, AAAA and
+CNAME records, wildcards left out; `expected_count` is three per name. Four probes run at once, and every target,
+expected and observed string is redacted before it is stored or printed.
+
+- **http**: `GET https://<name>/`, `redirect: manual`, 10 s timeout. Expected: an answer below status 500, with the
+  `cf-ray` header present for a proxied record and absent for a direct one.
+- **dns**: A and AAAA through each of two public resolvers (`RESOLVERS` in `src/probe/rules.ts`). Expected: a direct
+  record's content in both answers; a proxied record's content in neither, the origin staying hidden.
+- **tls**: a handshake on 443 with the name as SNI. Expected: valid for the name, more than 7 days left.
+
+Production is **affected** when a probe of the pass's probe run fails on a name the finding's object serves: an
+nginx object's `server_name` values in the run, or a record's own name. It is **answering** when probes of those
+names ran and every one passed, and **unknown** when the pass holds no probe run or no probe of those names. A drift
+under the rollback terms with no valid copy escalates when production is unknown and is held when it answers; the
+reason says which. Measured 24 Oct 2026 in two probe runs, at 19:59 UTC (12.0 s) and at 21:21 UTC
+(`run-b247c87d34f38d71`, 10.1 s): 37 names and 111 of 111 probes each, http 27 ok and 10 fail, dns 34 ok and 3
+fail, tls 30 ok and 7 fail, every probe with the same outcome in both. A pass reads the passing probe run nearest in
+time to the finding's run, within six hours: the 21:21 UTC one for the sample pass. The three `orphan_record` names
+are among the failures (two answer status 526, one presents a certificate for other names), so their findings read
+production affected, and the catch-all rule holds them for 72 h.
+
+## 8. Adapters
+
+Present:
+- **Linux over SSH**: the operator's `ssh_config` aliases, one session per host, a fixed script of reads.
+- **Cloudflare**: a read token over zones, records and the account audit log; one observation per record field.
+- **Zetaris**: Lightning SQL over the app Postgres as the `DRIFT` datasource, and the `drift_usl` semantic layer of
+  ten tables (`collection`, `setting`, `referent`, `backup_copy`, `policy`, `copy`, `probe`, `disposition`,
+  `action`, `ticket`) with its three DQ rules.
+- **Nightshift with Nemotron**: Lightning to choose checks, Ultra to judge under the tenant's app id, each verdict
+  counted on a verified, custody-checked receipt.
+- **GitHub Issues** (build B): the ticket adapter's first PSA backend; one issue per `ticket` row, `psa` github,
+  `external_id` the issue number, `url` the issue.
+
+Absent, with the one line each maps:
+- **Liongard and CIPP sensors**: collectors; each reading becomes `observation` rows of a `collection_run` that
+  asserts its population first.
+- **StackJack**: a broker in front of those collectors; one adapter reads every sensor behind it.
+- **IT Glue and Hudu**: the documentation of record; each configuration item maps onto `approved_setting` rows.
+- **HaloPSA, ConnectWise, Autotask**: the PSA side of the ticket adapter; a `ticket` row's type, priority, status,
+  external id and url map onto the PSA's ticket, with `psa` halo, connectwise or autotask.
+
+## 9. Limits
+
+- Build A decides and records; its writes go to the app Postgres, the vault and the local Zetaris. ROLLBACK and FIX
+  are dispositions. The write paths that carry them out, the PSA ticket and the watcher that runs the next cycle are
+  build B's; measured 24 Oct 2026, the `action` and `ticket` tables hold 0 rows, in the bundle and through the USL.
+- The pass runs on sql.js over the exported bundle (`npm run sample`) with no model: the default checks, the judge
+  skipped, `decided_by` policy, operator or default. Through Zetaris the same SQL runs query by query; measured 24
+  Oct 2026 over the export of the 21:21 UTC collection, 68 parity cases, the three detectors and the Decider's five
+  reads among them, are equal on both (136 of 136).
+- `copy_validated` on the USL counts every vault copy, the superseded ones included: 224 total, 170 valid, 54
+  invalid on 24 Oct 2026. The 54 are the first commits' nginx copies, validated at 19:59 UTC at a 6-round cap with
+  no pre-seeding; every head copy (54 nginx, 58 record) validates ok or ok_with_gaps, and the Decider reads a copy's
+  latest validation.
+- ok_with_gaps is nginx accepting the restored tree with placeholders in place: 16 and 13 of them on 24 Oct 2026,
+  the certbot certificates and keys, its `options-ssl-nginx.conf` and `ssl-dhparams.pem`, an origin pair and the
+  credential-shaped snippet. A file the collector leaves unread because its name is credential-shaped is absent from
+  the vault, and the restored tree names it as a gap; a restore needs every gap from the host or from certbot.
+- `drift_vs_approved` and `changed_since_backup` find 0 on the bundle, and locked settings without an approved value
+  are 0: the approvals come from the 19:56 UTC runs and no approved setting changed by the 21:21 UTC runs they are
+  compared with, and every `file` row of the 21:21 UTC runs (32 and 22) equals its member of the newest tarball.
+  ROLLBACK and FIX are exercised on `test/fixtures/policy-bundle.json` (ten findings: ADOPT 2, HOLD 5, ROLLBACK 2,
+  FIX 1).
+- `backup_item` holds every regular-file member of the newest export tarball, 82 and 72 on 24 Oct 2026. A member
+  outside `/etc/nginx/` and `/etc/letsencrypt/renewal/` (28 and 39: unit files, cron entries, an application's env
+  backups) is stored under a salted `member-<16 hex>` id of its redacted path: its hash and its count reach the
+  bundle, its name stays on the host, and the two live trees are the ones `changed_since_backup` joins.
+- The resolver weighs tenant, surface, globs, version and `rule_id`; `since` is provenance only. Both versions carry
+  since 2026-10-25T00:00:00.000Z, and version 2 decided all 27 dispositions of a sample pass decided at
+  2026-10-24T21:21:22.897Z.
+- A finding of a class other than `drift_vs_approved` under a rollback rule is held: the rule restores a setting to
+  its approved value, and the finding concerns the setting's relation to another setting while its own value
+  stands, the `proxy_split` included, whose record's `proxied` field has an approval equal to its live value.
+- In sample mode every disposition is decided at the bundle's own instant (the latest finish of its runs,
+  `src/data/instant.ts`; 2026-10-24T21:21:22.897Z for `sample/bundle.json`), and every HOLD expires from it.
+  Measured 24 Oct 2026: two runs print byte-identical finding, disposition and summary lines (the 59 lines outside
+  the trace hash the same); the 435 trace lines carry their own `ts`, `latency_ms` and `trace_id`, so the whole
+  stdout differs run to run. The examples and the replay page decide at their slice's instant the same way.
+- The sample pass's ledger is its sql.js engine; no pass has written dispositions or referent fingerprints to the app
+  Postgres, and the bundle holds none. Probes run from one machine through two public resolvers.
+- One tenant, two hosts, six zones, one policy file. The hero and FOUND-BUT-DIFFERENT classes find nothing on the
+  recorded estate, where every name a vhost serves lands on an inventory host in each of the three collections;
+  pre-flight (d) raises `found_but_different` in simulation over the 19:56 and 21:21 UTC runs, and the authored
+  fixture carries the full story.

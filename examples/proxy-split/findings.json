@@ -4,7 +4,7 @@
     "finding": {
       "class": "proxy_split",
       "tenant_id": "client-1",
-      "run_id": "run-f9470e2f5f175899",
+      "run_id": "run-de1564466df1d59b",
       "surface": "cloudflare.dns",
       "host": null,
       "object_id": "bce1ca2bb7caa2de9b6823d5f6ecd3f2",
@@ -16,24 +16,31 @@
       "dns_name": "host-524b42.quest",
       "resolves_to": "ip-6fb86d",
       "resource_id": "bce1ca2bb7caa2de9b6823d5f6ecd3f2",
-      "dns_run_id": "run-f9470e2f5f175899",
+      "dns_run_id": "run-de1564466df1d59b",
       "since": "2026-04-16T21:11:15.232Z",
-      "until": "2026-10-24T07:58:55.125Z",
+      "until": "2026-10-24T21:20:58.593Z",
       "summary": "host-524b42.quest is proxied and aliases host-4c795e.quest, whose A record is direct to ip-6fb86d: the origin the proxy hides is published on the name it points at"
     },
-    "verb": "ESCALATE",
+    "verb": "HOLD",
+    "disposition": {
+      "verb": "HOLD",
+      "reason": "rule rule-8e75e1d767980665 restores a setting to its approved value; this proxy_split finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-25T01:21:22.897Z",
+      "expires_at": "2026-10-25T01:21:22.897Z",
+      "decided_by": "policy",
+      "rule_id": "rule-8e75e1d767980665"
+    },
     "checks": [
       {
         "template": "run_complete",
         "holds": true,
         "rowCount": 0,
-        "explanation": "Run run-f9470e2f5f175899 collected everything it set out to collect."
+        "explanation": "Run run-de1564466df1d59b collected everything it set out to collect."
       },
       {
         "template": "actor_attributed",
         "holds": true,
         "rowCount": 2,
-        "explanation": "2 audit events with a named actor touched bce1ca2bb7caa2de9b6823d5f6ecd3f2 between 2026-04-16T21:11:15.232Z and 2026-10-24T07:58:55.125Z."
+        "explanation": "2 audit events with a named actor touched bce1ca2bb7caa2de9b6823d5f6ecd3f2 between 2026-04-16T21:11:15.232Z and 2026-10-24T21:20:58.593Z."
       },
       {
         "template": "previous_value_recoverable",
@@ -45,17 +52,17 @@
         "template": "referent_unchanged",
         "holds": false,
         "rowCount": 3,
-        "explanation": "host-524b42.quest changed between 2026-04-16T21:11:15.232Z and 2026-10-24T07:58:55.125Z (3 pieces of evidence)."
+        "explanation": "host-524b42.quest changed between 2026-04-16T21:11:15.232Z and 2026-10-24T21:20:58.593Z (3 pieces of evidence)."
       }
     ],
     "rejected": [],
     "judge": "skipped",
     "exposure": {
       "since": "2026-04-16T21:12:47.270Z",
-      "days": 190,
+      "days": 191,
       "bound": "exact",
       "source": "audit:evt-05fa48325110cdcb",
-      "still_open_in": "run-f9470e2f5f175899"
+      "still_open_in": "run-de1564466df1d59b"
     }
   }
 ]

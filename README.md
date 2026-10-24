@@ -1,35 +1,48 @@
 # drift-agent
 
-Config-drift assurance for MSP technicians. Three questions, asked of real servers and real DNS:
+A configuration assurance layer above the MSP tool stack that remembers. For every setting it can reach it asks:
+does a configuration exist for everything that should; is it fully configured; is it backed up; what exactly is in
+the copy, against what should be there for that device class; has it changed since the copy; can the copy be
+restored (it validates, its dependencies exist); would a restore regress, and of what kind; and is it
+FOUND-BUT-DIFFERENT: a byte-identical setting whose referent now means something else. The agent acts under the
+MSP's policy: a critical setting that drifted from its approved value, with a valid copy, is rolled back to the copy,
+verified and documented; a drifted setting with no valid copy and production affected is investigated, fixed where
+allowed, documented and ticketed; everything else is adopted or held with a reason and an expiry. A config lock on a
+setting class means automatic rollback at the next cycle.
 
-1. What changed since the last backup?
-2. Would a restore regress anything?
-3. Where does this system drift from golden, including FOUND-BUT-DIFFERENT: a reference that is byte-identical
-   while the thing it points at has changed.
-
-Each finding ends in one verb: ADOPT, HOLD (with an expiry) or ESCALATE. The agent is read-only. It never enforces.
+The hackathon slice: nginx vhost files and the Cloudflare records they depend on, through the whole loop, on the
+operator's two production hosts and six zones. This build collects, vaults, validates, probes, detects and decides:
+each finding ends in one of five verbs (ROLLBACK, FIX, ESCALATE, HOLD with an expiry, ADOPT), recorded in the
+disposition ledger, and its writes go to the app Postgres, the vault and the local Zetaris. The write paths behind
+`--apply`, the PSA ticket and the watcher are the next build's. [DESIGN.md](DESIGN.md) holds the design.
 
 Entry for the GenAI Works Open Agent Hackathon 2026, Track 1 (Solving Fragmented Intelligence).
 
 ## Status
 
-The collectors ran against the real estate on 24 Oct 2026 (two production hosts over SSH with a fixed script of
-reads, see Honesty about root; one Cloudflare account), the rows went through the redactor into the app Postgres, Zetaris reads that Postgres
-as the `DRIFT` datasource, and `sample/bundle.json` is the export of those rows. The pass runs over them
-with no model; the hero query and the survey queries run through Zetaris itself.
+The collectors ran against the real estate three times on 24 Oct 2026, at 07:58, 19:56 and 21:21 UTC (two
+production hosts over SSH with a fixed script of reads, see Honesty about root; one Cloudflare account), the rows
+went through the redactor into the app Postgres, Zetaris reads that Postgres as the `DRIFT` datasource, and
+`sample/bundle.json` is the export of those rows after the 21:21 UTC collection. The pass runs over them with no
+model; the hero query, the survey queries and the detectors run through Zetaris itself.
 
 | Command | Proves |
 |---|---|
-| `SAMPLE_MODE=true npm run sample` | The whole pass over `sample/bundle.json`: DQ gate, World Model, hero query, estate survey, precondition catalogue, stop rule, technician memory, exposure line, disposition. No credentials, no model, every step a trace line. Measured 24 Oct on the recorded bundle (the 07:58 UTC re-collection): 4 collection runs, 0 gated out, 1,062 observations recorded, 160 SQL queries (126 for the gate, the detectors and the checks, 34 for the exposure line), 388 trace lines (every one carries `model_requested: none`), 27 findings (1 `proxy_split`, 20 `proxied_without_real_ip`, 3 `orphan_record`, 3 `orphan_vhost`; 5 ADOPT, 22 ESCALATE), 0 hero findings (every name a vhost serves lands on an inventory host), 8 findings dated by the exposure line, `early_stop 0, checks_skipped 0, checks_gated 0, withdrawn_judge 0`, `lessons 0` when no lesson has been recorded. |
-| `npm test` | 22 files, 382 tests (38 more are the live Zetaris half of the parity test, skipped without `PARITY_LIVE=true`): data layer, parity, catalogue, selection, redactor, tracer, judge (with custody), receipt gate, custody, World Model, the pass over both bundles (with the technician's memory), the stop rule, the exposure line, pre-flight, technician memory with the vendored H-MEM conformance run in a child process, the replay page build, the nginx collector on redacted copies of both layouts, the Cloudflare collector on recorded shapes, the Store against a throwaway schema of the live Postgres, the Zetaris setup plan, and the deny-list probe over the tree (skipped with one line where the operator's label list is blank). |
-| `SAMPLE_MODE=true npm run preflight -- --proposal examples/proposals/<name>.json` | GO, NO-GO, GO-IF or ESCALATE for one typed proposed change, simulated as a derived table over the recorded rows with the whole pass run in that world; nothing written. Measured 24 Oct on the four committed proposals: (a) un-proxy www GO, removes 3 findings; (b) replay of the 16 April `proxied: true` body GO with zero delta (already the recorded state); (c) trusted ranges on the vhost that serves www GO, removes 2; (d) retarget the apex outside the inventory NO-GO, adds 2 `dns_change` hero findings; about 300 ms each (baseline plus one simulation). GO-IF is exercised in `test/preflight.test.ts`: 29 findings, one `add_real_ip_block`, 26. |
+| `SAMPLE_MODE=true npm run sample` | The whole pass over `sample/bundle.json`: DQ gate, World Model, hero query, estate survey, the two detectors, precondition catalogue, stop rule, technician memory, exposure line, the Decider under the policy, the ledger. No credentials, no model, every step a trace line. Measured 24 Oct 2026 on the bundle exported after the 21:21 UTC collection: 14 collection runs (DNS, audit and both hosts at 07:58, 19:56 and 21:21 UTC, and the probe runs of 19:59 and 21:21 UTC), 0 gated out, 3,186 observations in the World Model, 187 SQL queries, 435 trace lines (every one carries `model_requested: none`), 27 findings (1 `proxy_split`, 20 `proxied_without_real_ip`, 3 `orphan_record`, 3 `orphan_vhost`, 0 `changed_since_backup`, 0 `drift_vs_approved`; HOLD 27, decided by policy 27), 0 hero findings with three passing runs per host (every name a vhost serves lands on an inventory host), 8 findings dated by the exposure line, `early_stop 0, checks_skipped 0, checks_gated 0, withdrawn_judge 0`, `lessons 0` when no lesson has been recorded, 26 policy rules read (version 1's 11 and version 2's 15), 0 locked settings without an approved value, 27 dispositions and 315 referent fingerprints in the pass's ledger; about 2 s. Two runs print byte-identical finding, disposition and summary lines. |
+| `npm test` | 30 files, 613 tests, measured 24 Oct 2026 (72 more need a live flag and are skipped without it: 68 are the live Zetaris half of the parity test, `PARITY_LIVE=true`; 3 run `nginx -t` in the container and the openssl pair, `VALIDATE_LIVE=true`; 1 probes a live name, `PROBE_LIVE=true`): data layer, parity, catalogue, selection, redactor, tracer, judge (with custody), receipt gate, custody, World Model, the pass over the recorded, authored and policy fixtures (with the technician's memory and the policy), the examples, the stop rule, the exposure line, pre-flight, technician memory with the vendored H-MEM conformance run in a child process, the replay page build, the nginx collector on redacted copies of both layouts, the Cloudflare collector on recorded shapes, the Store against a throwaway schema of the live Postgres, the Zetaris setup plan, the policy (glob, schema, loader, resolver over the committed file), the Decider, the ledger, the vault, approval, copy validation, the probe rules and run, and the deny-list probe over the tree (skipped with one line where the operator's label list is blank). |
+| `SAMPLE_MODE=true npm run preflight -- --proposal examples/proposals/<name>.json` | GO, NO-GO, GO-IF or ESCALATE for one typed proposed change, simulated as a derived table over the recorded rows with the whole pass run in that world; nothing written. Measured 24 Oct 2026 on the four committed proposals over `sample/bundle.json` (27 baseline findings over 14 runs): (a) un-proxy www GO, removes 3 findings; (b) replay of the 16 April `proxied: true` body GO with zero delta (already the recorded state); (c) trusted ranges on the vhost that serves www GO, removes 2; (d) retarget the apex outside the inventory NO-GO, adds 2 `found_but_different` hero findings (the vhost's two name settings are byte-identical since the 19:56 UTC run); 752 to 781 ms each (baseline plus one simulation). GO-IF is exercised in `test/preflight.test.ts` over the 07:58 UTC export (`test/fixtures/recorded-bundle.json`): 40 findings, one `add_real_ip_block`, 37. |
 | `npm run answer -- --finding <id> --accept --until <ISO 8601 UTC> --reason "..."` | Teaches the agent one lesson about one finding (the id the pass prints): an accepted exception, or `--question`/`--answer` an answer. Stored under `.world/memory` (gitignored) through the vendored H-MEM engine; the next `npm run sample` honours it until it expires, then re-raises the finding. `--list`, `--forget <lesson id>`. Measured 24 Oct, below under Technician memory. |
 | `npm run conformance:hmem` | Vendored Meterless H-MEM conformance suite, 13/13, against the vendored reference that `src/engine/memory.ts` re-exports, plus one check through `TechnicianMemory` (record, recall by exact key, lapsed flagged). `TechnicianMemory`'s own coverage is `test/memory.test.ts`. |
-| `npm run site` | The no-install replay page, `docs/`, built from `examples/` alone: every finding with the detector query that raised it, every check with the SQL that ran, re-run at build time to the recorded count and sentence, refused otherwise. Measured 24 Oct: 3 examples, 9 findings, 33 checks re-run with counts equal, 132,928 bytes in 6 files (the page 18,959), 1,454 JSON strings through the redactor unchanged, 21 deny-list labels and 2 ssh aliases found nowhere. |
-| `PARITY_LIVE=true npx vitest run test/parity.test.ts` | 38 cases through sql.js and through Zetaris over the same rows: hero, gate, the pass queries, the five survey queries, every catalogue template, every table. Measured 24 Oct: 76/76, columns, rows and totals equal. |
-| `npm run collect:cloudflare -- --tenant client-1`, `npm run collect:linux -- --host host-redacted --tenant client-1`, `... --host host-redacted` | The collectors, live. Measured 24 Oct, 07:58 UTC (the re-collection after the night's review): DNS 58/58 records in 6 zones and audit 728/728 rows over the 18-month window, both complete; the conf.d host 24/24 vhost files, 761 observations, 46 server blocks, 8 inventory addresses (one IPv6), 3.0 s over SSH; the sites-enabled host 14/14, 301 observations, 30 blocks, 2 addresses, 2.5 s. Nothing unreadable, nothing malformed; one credential-shaped snippet skipped by name. The tenant id is neutral (`client-1`) and the aliases are the operator's own `ssh_config` entries, configured in `LINUX_HOSTS`. |
-| `npm run zetaris:setup` | The idempotent Zetaris setup: datasource, USL, DQ rule. Measured 24 Oct against the configured instance: 19 statements, 17 ok, 2 skipped, 0 failed, 3.4 s; `RUN DQ` on the USL's `collection` table: `run_complete` 4 total / 4 valid / 0 invalid. |
-| `npm run zetaris:queries -- --tenant client-1` | The agent's queries through Zetaris (`DataLayer` over `ZetarisEngine`, every `{{t:x}}` as `DRIFT.x`), re-run over the re-collected rows at 08:0x UTC: hero per host (0 and 0 rows), `proxy_split` (1), `proxied_without_real_ip` (10 + 1 wildcard on the conf.d host, 9 on the sites-enabled host), `orphan_record` (1, 2), `orphan_vhost` (0, 3), then `SHOW DQ INVALID RECORD run_complete` (0 rows: every run complete); 13 queries, 206 to 532 ms each. |
+| `npm run site` | The no-install replay page, `docs/`, built from `examples/` alone: every finding with the detector query that raised it, every check with the SQL that ran, re-run at build time to the recorded count and sentence, refused otherwise. Measured 24 Oct 2026: 3 examples, 9 findings, 33 checks re-run with counts equal, each slice's pass reproducing its `findings.json`, all 9 example findings `same` against the sample pass, 134,883 bytes in 6 files (the page 18,959), 1,454 JSON strings through the redactor unchanged, 21 deny-list labels and 2 ssh aliases found nowhere; 1.9 s. |
+| `PARITY_LIVE=true npx vitest run test/parity.test.ts` | 68 cases through sql.js and through Zetaris over the same rows: hero, gate, the pass queries, the five survey queries, the three detectors, the Decider's five reads, every catalogue template, every table, ten of them over derived tables that give a query rows the bundle lacks. Measured 24 Oct 2026 over the export of the 21:21 UTC collection: 136/136, columns, rows and totals equal, 18.7 s. |
+| `npm run collect:cloudflare -- --tenant client-1`, `npm run collect:linux -- --host host-redacted --tenant client-1`, `... --host host-redacted` | The collectors, live. Measured 24 Oct 2026, 21:21 UTC: DNS 58/58 records in 6 zones (24 proxied, 34 direct) as 290 observations, one per record field, and audit 818/818 rows over the 18-month window, both complete, 6.3 s; the conf.d host 24/24 vhost files, 761 observations, 46 server blocks, 5 inventory addresses (8 at 07:58 UTC), 9 export snapshots, 82 backup items, 2.7 s over SSH; the sites-enabled host 14/14, 301 observations, 30 blocks, 2 addresses, 9 snapshots, 72 backup items, 2.9 s over SSH. Nothing unreadable, nothing malformed; one credential-shaped snippet skipped by name; each run committed to the vault (58, 32 and 22 files, none changed since the 19:56 UTC commit). The tenant id is neutral (`client-1`) and the aliases are the operator's own `ssh_config` entries, configured in `LINUX_HOSTS`. |
+| `npm run policy:load -- --tenant <id>` | The MSP's policy file (`DRIFT_POLICY_FILE`, default `policy/hackathon.json`) validated, its globs and notes redacted, written as `policy_rule` rows. Measured 24 Oct 2026, 21:20 UTC, on version 2: 15 rules valid and written; a second load wrote 0 (15 already stored). `policy_rule` holds every version loaded, 26 rows (version 1's 11, version 2's 15), and the Decider takes the highest version of each family; `--dry-run` prints the rows and writes nothing. |
+| `npm run approve -- --tenant <id> --host <alias>`, `... --all` | `approved_setting` rows from the latest passing run, the documentation of record. Measured 24 Oct 2026 over the 19:56 UTC runs: 26 on the conf.d host and 17 on the sites-enabled host (the `file` setting of every nginx object), 290 for the account with `--all` (the five fields of each of 58 records); 333 in all. Over the 21:21 UTC runs every one of the 333 was current and 0 rows were written; a dry run first gave the same states. |
+| `npm run vault:status -- --tenant <id>` | The vault's repositories: commits, head, files and `vault_copy` rows. Measured 24 Oct 2026 after the 21:21 UTC collection: 3 repositories for `client-1`, two commits each (the 19:56 and 21:21 UTC runs): Cloudflare 58 files, the conf.d host 32, the sites-enabled host 22; `vault_copy` 116, 64 and 44 rows, 58, 32 and 22 of them at the head. |
+| `npm run validate:copies -- --tenant <id>` | `nginx -t` in `nginx:1.27` over each host's latest vault commit laid down as a restore would lay it, every dependency the parse finds outside the tree given a placeholder before round 1 and any further one nginx names round by round; `cf-schema` over each record copy. Measured 24 Oct 2026, 21:22 UTC, with the default cap of 12 rounds: both nginx trees ok_with_gaps in 1 round, with 16 and 13 gaps; Cloudflare ok_with_gaps over 58 records (42 ok, 16 ok_with_gaps, 0 fail), 7 gaps; every vault copy matched its row (32, 22, 58); 112 `copy_validation` rows written in 4.0 s. |
+| `npm run probe -- --tenant <id>` | http, dns and tls on every served name of the account, as one collection run of surface `probe`. Measured 24 Oct 2026, 21:21 UTC: 37 names (A, AAAA and CNAME, wildcards left out), `expected_count` 111, 111/111 complete in 10.1 s: http 27 ok and 10 fail, dns 34 ok and 3 fail, tls 30 ok and 7 fail, each probe with the outcome of the 19:59 UTC run. |
+| `npm run zetaris:setup` | The idempotent Zetaris setup: datasource, the ten-table USL, three DQ rules. Measured 24 Oct 2026 against the configured instance after the 21:21 UTC collection: 42 statements, 32 ok, 10 skipped, 0 failed, 10.1 s; `RUN DQ`: `run_complete` on `collection` 14 total / 14 valid / 0 invalid, `copy_validated` on `copy` 224 / 170 / 54, `action_verified` on `action` 0 / 0 / 0. |
+| `npm run zetaris:queries -- --tenant client-1` | The agent's queries through Zetaris (`DataLayer` over `ZetarisEngine`, every `{{t:x}}` as `DRIFT.x`), measured 24 Oct 2026 over the rows of the 21:21 UTC collection: hero per host (0 and 0 rows), `proxy_split` (1), `proxied_without_real_ip` (10 + 1 wildcard on the conf.d host, 9 on the sites-enabled host), `orphan_record` (1, 2), `orphan_vhost` (0, 3), `drift_vs_approved`, `changed_since_backup` and `found_but_different` per host and `drift_vs_approved` over the DNS run (0 rows each; `found_but_different` compares each host's 21:21 run with its 19:56 run), then `SHOW DQ INVALID RECORD run_complete` (0 rows: every run complete); 26 trace lines, 9.8 s. |
 | `npm run examples` | Three bundles cut from the recorded one, one per real case, and the pass's findings over each: `examples/`. |
 | `npm run conformance` | Vendored Meterless World Model conformance suite, 8/8, through `src/engine/world.ts`. |
 | `npm run smoke` | Spike A, Zetaris: `SELECT 1` and `SHOW LIGHTNING DATABASES` over REST with the agent's key. Spike B, Nightshift: Nemotron Lightning and Ultra by explicit id, signed receipts verified, job event stream read. Spike C, World Model conformance. |
@@ -45,18 +58,36 @@ npm run answer -- --finding <fnd-id> --accept --until 2026-11-30T00:00:00Z --rea
 npm run site                      # rebuild the replay page (docs/) from examples/
 npm run collect:cloudflare -- --tenant <id>            # live: Cloudflare DNS + audit log -> Postgres
 npm run collect:linux -- --host <alias> --tenant <id>  # live: one SSH session running the fixed read script -> Postgres; <alias> is a LINUX_HOSTS entry
+npm run policy:load -- --tenant <id>                   # the MSP's policy file -> policy_rule rows, redacted; --dry-run prints them
+npm run approve -- --tenant <id> --host <alias>        # sign off a host's nginx files from its latest passing run; --zone, --record or --all for records
+npm run vault:status -- --tenant <id>                  # the vault's repositories: commits, head, files, vault_copy rows
+npm run validate:copies -- --tenant <id>               # nginx -t and cf-schema over each repository's latest commit -> copy_validation
+npm run probe -- --tenant <id>                         # live: http, dns and tls on every served name -> one probe run
 npm run zetaris:setup && npm run zetaris:queries -- --tenant <id>
 npm run export:bundle                                  # Postgres -> sample/bundle.json, redacted once more
 ```
 
-`npm run sample` prints the trace (one JSON line per step), one JSON object per finding and one summary line:
+`npm run sample` prints the trace (one JSON line per step), one JSON object per finding, one `DISPOSITION` line per
+finding as the ledger holds it (verb, who decided, the rule, the expiry, the reason) and one summary line. Over
+`sample/bundle.json` on 24 Oct 2026 (lines wrapped here):
 
 ```
-SAMPLE: 4 collection runs, 0 failed the DQ gate (none), 1062 observations in the World Model, 27 finding(s):
-fnd-b4a40091cdb4f906 proxy_split cloudflare.dns bce1ca2b... proxied -> ESCALATE (3/4 preconditions hold, fails: referent_unchanged);
-fnd-45d5f3f4a2eb0b2e proxied_without_real_ip host-aa516a /etc/nginx/conf.d/word-005ed8-prod.conf server[host-18efce.ai:443].real_ip
--> ADOPT (4/4 preconditions hold); ...; judge skipped (model: none); memory: 0 lesson(s), 0 exception(s) applied, 0 lapsed
+DISPOSITION fnd-b4a40091cdb4f906 HOLD by policy under rule-8e75e1d767980665 expires 2026-10-25T01:21:22.897Z: rule
+rule-8e75e1d767980665 restores a setting to its approved value; this proxy_split finding concerns the setting's
+relation to another setting while its own value stands, so it is held until 2026-10-25T01:21:22.897Z
+DISPOSITION fnd-45d5f3f4a2eb0b2e HOLD by policy under rule-66810b66396a3b15 expires 2026-10-27T21:21:22.897Z: rule
+rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T21:21:22.897Z
+...
+SAMPLE: 14 collection runs, 0 failed the DQ gate (none), 3186 observations in the World Model, 27 finding(s):
+fnd-b4a40091cdb4f906 proxy_split cloudflare.dns bce1ca2bb7caa2de9b6823d5f6ecd3f2 proxied -> HOLD (3/4 preconditions
+hold, fails: referent_unchanged); fnd-45d5f3f4a2eb0b2e proxied_without_real_ip host-aa516a
+/etc/nginx/conf.d/word-005ed8-prod.conf server[host-18efce.ai:443].real_ip -> HOLD (4/4 preconditions hold); ...;
+judge skipped (model: none); memory: 0 lesson(s), 0 exception(s) applied, 0 lapsed; verbs: HOLD 27; policy rules 26,
+locked settings without an approved value 0; ledger: 27 disposition(s), 315 referent fingerprint(s)
 ```
+
+Every disposition of a sample pass is decided at the bundle's own instant, the latest finish of its runs
+(2026-10-24T21:21:22.897Z, the 21:21 UTC probe run; `src/data/instant.ts`), and every HOLD expires from it.
 
 Each finding carries a short id (`fnd-` plus 16 hex of the World Model's finding id: tenant, class, host, object,
 setting, record), the same on every pass over the same rows; it is what `npm run answer` takes. Every step is
@@ -74,9 +105,9 @@ the model it used (`model_requested`; `none` on every line of a sample pass) and
 | gate | `run_complete` for every collection run. A run that observed fewer objects than it asserted before collecting, did not finish `complete`, never asserted a population, or (host surfaces) stored fewer observation rows than it asserted fails; the collector's own `observed_count` is not taken on trust. The audit log is gated on the checks, not the rows: `audit_event` carries no `run_id` (its key is the vendor's event id, so overlapping pulls dedupe), so when a tenant's latest `cloudflare.audit` run fails the gate, or the tenant has none, every template that reads `audit_event` (`actor_attributed`, `previous_value_recoverable`, `referent_unchanged`, `record_reverted`) is a recorded rejection, "audit log incomplete", for that tenant's findings, and they escalate; a cursor walk cut at page n is never read as "no actor, no previous state". | `check`, status `not_checked` for a failing run; its observations feed nothing below; one `not_checked` line per tenant whose audit log is withheld |
 | observe | Every observation of a passing host-bound run goes into the World Model. A `dns_name` referent carries a fingerprint: what the name's A and AAAA records resolved to in the DNS run of the same pass (the passing DNS run nearest in time, within six hours). | `observe` |
 | detect | The hero query over the latest run of each (tenant, surface, host) against that DNS run. A row is `found_but_different` when the setting's bytes are unchanged since the previous passing run and the World Model says the referent's fingerprint is not; `dns_change` otherwise. Each row carries the DNS record it came from, so a name with an A and an AAAA record gives two findings. When no DNS run of the pass passed the gate, the group is `not_checked` and the trace names the DNS run that failed; no older DNS run stands in. | `detect` |
-| survey | The estate queries (`src/data/queries.ts`) over the same pass. Once per tenant, against its DNS run: a proxied CNAME aliasing a direct address record (`proxy_split`). Per host, against the latest passing nginx run and that DNS run: a proxied name served by an enabled block that trusts no `real_ip` range, or a proxied wildcard landing on a host where nothing does (`proxied_without_real_ip`); a record landing on the host with no enabled block naming it (`orphan_record`); a `server_name` with no record in the collected zones and no wildcard covering its zone (`orphan_vhost`). A survey finding has no previous observation, so its window is the audit log's reach up to the observation. | `detect` |
+| survey | The estate queries (`src/data/queries.ts`) over the same pass. Once per tenant, against its DNS run: a proxied CNAME aliasing a direct address record (`proxy_split`). Per host, against the latest passing nginx run and that DNS run: a proxied name served by an enabled block that trusts no `real_ip` range, or a proxied wildcard landing on a host where nothing does (`proxied_without_real_ip`); a record landing on the host with no enabled block naming it (`orphan_record`); a `server_name` with no record in the collected zones and no wildcard covering its zone (`orphan_vhost`). A survey finding has no previous observation, so its window is the audit log's reach up to the observation. Then the two detectors, over the latest passing run of each (tenant, surface, host) and the tenant's latest passing DNS run: every setting whose live value differs from its latest approval (`drift_vs_approved`, window from the approval to the observation; a record field is one observation of the DNS run), and every `file` of an nginx run that the host's newest backup lacks or holds with other bytes (`changed_since_backup`, window from the backup to the observation). | `detect` |
 | check | The default precondition policy for the class, bound from the finding and run through the catalogue. A parameter the finding cannot supply, or a check the SQL guard or the engine refuses, is a recorded rejection, not a guess: it escalates that one finding and the pass goes on. Between checks the stop rule (`src/stoprule.ts`, below) asks whether the verb can still move; a settled verdict skips only the queued checks the operator has marked as not informing the next action, each traced with its reason. | `check` per template: id, row count, one sentence; `not_checked` for a rejection; `skipped` with the reason for a check the stop rule did not run |
-| decide | The Decider first recalls the technician's lessons for the finding (`src/engine/memory.ts`, below), by exact scope key: an accepted exception in force makes the finding ADOPT until the lesson's expiry, which goes on the finding; a lapsed one re-raises it as ESCALATE ("exception lapsed"). Otherwise the policy: every check holds and none was rejected, ADOPT as a candidate; anything else, ESCALATE. HOLD needs a judge to bound it with an expiry, so a pass with no model never issues it. Then, for a finding that rests on a DNS record, the exposure line (`src/engine/world.ts`, below): since when the record has been in the state the finding rests on, stored in the World Model as an open edge. | `decide`, `model: none`, with the lesson that settled it when one did; `triage` lines for the recalled lesson and the exposure, `escalate` for a lapsed one |
+| decide | The Decider (`src/policy/decide.ts`), in precedence order: operator exception, then policy rule, then default. It first recalls the technician's lessons for the finding (`src/engine/memory.ts`, below), by exact scope key: an accepted exception in force makes the finding ADOPT until the lesson's expiry, which goes on the finding; a lapsed one re-raises it as ESCALATE ("exception lapsed"). Otherwise the policy rule that governs the setting (`policy_rule`, read once per tenant, resolved per finding by `src/policy/resolve.ts`; below, under Policy, vault, validation and probes) decides one of five verbs from the finding's class, the setting's approval, the vault copies of the approved value with their latest validation and the probes of the pass: ROLLBACK, FIX, ESCALATE, HOLD (with the rule's expiry) or ADOPT. With no rule, the default: every check holds and none was rejected, ADOPT as a candidate; anything else, ESCALATE. Each finding's disposition (verb, one-sentence reason, expiry, `decided_by` operator, policy or default, the rule) goes to the ledger, one `disposition` row per finding per pass. Then, for a finding that rests on a DNS record, the exposure line (`src/engine/world.ts`, below): since when the record has been in the state the finding rests on, stored in the World Model as an open edge. | `decide`, `model: none`, naming the rule and what the checks alone say, or the default policy, with the lesson that settled it when one did; `triage` lines for the recalled lesson and the exposure, `escalate` for a lapsed one; one `triage` line per pass with the rules read, the locked settings without an approved value, the verbs, who decided, the probe run and the ledger |
 | judge | Not called in sample mode. Withheld with a reason, before any call, when the verdict cannot move (a check not checked, `run_complete` failing, no check run, an exception in force or lapsed) or when a check that holds contradicts the detector's own claim, which withdraws the claim (`critique` from checker to detector, `revise` from the detector). Live, the call goes out under the tenant's app id and the receipt must pass custody as well as the tier gate (Judge and receipt gate, below). | `judge`, status `skipped`, with "verdict cannot move: ..." or "claim withdrawn by its own checks: ..." when withheld; one `triage` summary line per pass with the counters |
 
 The hero finding is the cross-source one the whole stack exists for: an nginx vhost whose `proxy_pass` or
@@ -96,16 +127,18 @@ the recorded bundle per case and the pass's findings over it.
 ## Collectors
 
 Two collectors, both writing through `src/data/store.ts` into the app Postgres (`DATABASE_URL`), both redacting
-every collected-text column before a row leaves them.
+every collected-text column before a row leaves them, and both committing a complete run to the vault
+(`src/vault/`, under Policy, vault, validation and probes) with one `vault_copy` row per object.
 
 **Cloudflare** (`src/collectors/cloudflare.ts`, `npm run collect:cloudflare -- --tenant <id> [--since YYYY-MM-DD]
 [--dry-run]`). A read token (`CLOUDFLARE_API_TOKEN`: Zone:Read, DNS:Read, Account:Audit Logs:Read) lists the
 zones, reads every zone's record count before any record row (`per_page=1`, the population the DQ gate
 compares against), then the records at 500 a page, then the account audit log at 1,000 a page following the
-cursor. Measured 24 Oct: 6 zones, 58 records (A 20, CNAME 19, TXT 12, MX 5, NS 2; 24 proxied), 714 then 728 audit
-rows since 2025-04-25 (the earliest the API accepts is today minus 18 months plus one day; the account's log in
-fact begins 2026-03-20; the second figure is the re-collection at 07:58 UTC, which saw the first pass's own
-reads). The audit log has no total, so the audit run asserts the sum of the server's per-page
+cursor. Each record also becomes five `observation` rows, one per field (`type`, `name`, `content`, `ttl`,
+`proxied`; object id the record id). Measured 24 Oct 2026, 21:21 UTC: 6 zones, 58 records (A 20, CNAME 19, TXT 12,
+MX 5, NS 2; 24 proxied, 34 direct), 290 observations, 818 audit rows since 2025-04-25 (the earliest the API accepts
+is today minus 18 months plus one day; the account's log begins 2026-03-20): 303 `view`, 232 `create`, 144
+`update`, 139 `delete`. The audit log has no total, so the audit run asserts the sum of the server's per-page
 counts and observes the distinct rows that normalised. The log carries no old or new value fields: a DNS record
 update is `product dns_records` with the request body as `new_value`, a system create or delete is `product dns,
 type record` with the record as `value`, and a record's previous state is reconstructed as the latest earlier
@@ -114,7 +147,7 @@ delete's removed record goes to `old_value`. The actor is the pseudonym of the a
 none, so the actor is null (the 21:47 re-point of the www record below is one). TXT contents are redacted tag by
 tag, because Cloudflare quotes them and a quoted token is not a bare one to the redactor; a wildcard name is
 redacted with its star set aside and restored. Each collection adds its own reads to the account log as `view`
-events (187, then 201, across the two passes of the day).
+events: the log held 728 rows at 07:58, 797 at 19:56 and 818 at 21:21 UTC.
 
 **Linux** (`src/collectors/linux.ts`, `src/collectors/nginx.ts`, `npm run collect:linux -- --host <alias>
 --tenant <id> [--dry-run] [--out file]`). One SSH session per host through the operator's own `ssh_config`
@@ -125,7 +158,7 @@ global` and `ip -6 ...`, `ls -l --time-style=full-iso` of `conf.d`, `sites-avail
 `base64 -w0` of `nginx.conf`, every regular vhost file and every regular file they `include` under `/etc/nginx`
 (four rounds; a `sites-enabled` symlink is never read as a file of its own), `systemctl list-timers`, the backup
 export folder (`ls`, `find`, `sha256sum` of plain nginx copies, and `tar -tvzf` plus `tar -xOzf | sha256sum` per
-regular-file `etc/nginx` member of the newest tarball that holds any, nothing landing on disk), and certbot's
+regular-file member of the newest tarball that holds `etc/nginx`, nothing landing on disk), and certbot's
 renewal configs. Nothing writes, restarts, installs or escalates. A path the login cannot read comes back as a
 section with a non-zero exit and is recorded in the run summary's `not_readable` list and in the trace; the run
 is partial only when a file of the asserted vhost population was not fetched, the vhost listing itself was
@@ -141,11 +174,11 @@ all fetched. Both hosts' export folders and tarballs were readable without root;
 (20 and 9), not fetched. A grammar fault nginx itself would refuse (a stray `}`, a block or a quoted string open
 at end of file) is parsed past and listed as `malformed` in the summary and the trace; none on either host.
 
-What becomes rows: one `file` observation per fetched nginx file (value_hash = sha256 of the bytes, so it
-compares with the export copy's `sha256sum`; 26 of 26 conf.d-host and 17 of 17 sites-enabled-host nginx files
-present in the newest tarball were byte-identical to its member, and the six enabled sites that read as changed
-in the first export were the tarball's symlinks hashed as the empty input, now left out); per server block
-`server[<first server_name>:<port>].server_name`, one `.server_name[<name>]` row per DNS-shaped name (refers_to
+What becomes rows: one `file` observation per fetched file, the nginx files and certbot's renewal configs
+(value_hash = sha256 of the bytes, so it compares with the export copy's `sha256sum`; measured 24 Oct 2026 at 21:21
+UTC, all 32 `file` rows of the conf.d host and all 22 of the sites-enabled host equal their member of the newest
+tarball, taken at 03:40 UTC; a member that hashes as the empty input, a symlink or a 0-byte file, is dropped and
+listed in the run summary); per server block `server[<first server_name>:<port>].server_name`, one `.server_name[<name>]` row per DNS-shaped name (refers_to
 `dns_name`) with a `.server_name[<name>].zone` sibling (the name's last two labels, redacted: the zone a wildcard
 record would cover it from, which the pseudonym of the whole name cannot say), `.listen`, `.ssl_certificate`
 (refers_to `cert`), `.root`, `.real_ip` (`trusted:<n> header:<h> scope:<server|http>` or `absent`), `.enabled`
@@ -161,7 +194,12 @@ hashes and confirmed 19 plaintexts behind their pseudonyms; under the salt a gue
 global IPv4 and IPv6 address (kind `vps`; the hero query's "does the client own this address" is answered from
 here, so an AAAA record can land on an inventory host). `backup_snapshot` (kind `export`) per nightly
 `server-config-<date>.tar.gz` of the family that holds `etc/nginx` (nine on each host; an application dump
-written 52 ms earlier in the same run is not it) and `backup_item` for every regular-file member of the newest.
+written 52 ms earlier in the same run is not it) and `backup_item` for every regular-file member of the newest: a
+member under `/etc/nginx/` or `/etc/letsencrypt/renewal/` under its path, the id its live file carries, and any
+other member (a unit file, a cron entry, an application's config, whose names carry the services and organisations
+the host runs) under `member-<16 hex>`, a salted id of its redacted path (`backupMemberId`). Measured 24 Oct 2026
+at 21:21 UTC: 82 members on the conf.d host (48 under `/etc/nginx/`, 6 renewal configs, 28 others) and 72 on the
+sites-enabled host (28, 5 and 39), none empty.
 
 **Redaction.** Every row goes through `src/redactor.ts` in the collector and once more in the Store (which
 reports, by count only, anything the second pass changed: 0 on every pass of the day). Hosts are
@@ -177,9 +215,10 @@ the exported bundle, in `/var/www/<product>/` paths, a timer unit and two file c
 them, the hosts were re-collected, and the probe is code: `npm run export:bundle` refuses to write a bundle in
 which any `REDACT_WORDS` or `EXPORT_DENY_WORDS` entry still stands alone (it prints positions in the list and
 counts, never the labels: `leak probe: 0 of 21 deny-list label(s) in the file` on the current export), and
-`test/leak.test.ts` runs the same probe over `sample/`, `examples/`, `README.md`, `ops/`, `scripts/`, `src/`,
-`test/`, `sql/`, `.env.example` and `package.json` with the operator's list (skipped, with one line, where the
-list is blank; the configured ssh aliases are the one allowed carrier, because the brief mandates them). The
+`test/leak.test.ts` runs the same probe over `sample/`, `examples/`, `eval/`, `README.md`, `DESIGN.md`, `ops/`,
+`scripts/`, `src/`, `test/`, `sql/`, `.env.example`, `package.json`, `policy/` and `docs/` with the operator's
+list (skipped, with one line, where the list is blank; the configured ssh aliases are the one allowed carrier,
+because the brief mandates them). The
 reviewer's substring grep for the three labels over the bundle and the examples now returns one hit, the
 letters inside Cloudflare's own `registrar/domains` resource type.
 
@@ -194,46 +233,64 @@ runs etckeeper or restic; the nightly tarball is the backup artefact. See `ops/R
 
 ## Zetaris setup
 
-`npm run zetaris:setup` (`src/zetaris/setup.ts`), idempotent, 19 statements in the order they first ran live,
-one per REST call: `SHOW DATASOURCES`; `CREATE DATASOURCE DRIFT` only when absent, built from `DATABASE_URL`'s
-user, password and database and `ZETARIS_PG_HOST` (`drift-pg`, the container name on the `zetaris_default`
-network; `host.docker.internal` does not resolve in the driver, and the Windows-side `127.0.0.1:15432` is not
-reachable from it), then `REGISTER DATASOURCE TABLES FROM DRIFT`, or `REFRESH DATASOURCE TABLES FROM DRIFT` when
-it existed; `CREATE NAMESPACE IF NOT EXISTS lightning.metastore` and `lightning.metastore.drift`; `COMPILE USL IF
-NOT EXISTS drift_usl ... DDL` with four `CREATE TABLE` blocks in ONE request (the one statement that carries
-several, separated by `;`; the adapter allows it for `COMPILE USL` only); `ACTIVATE USL TABLE` for each of
-`collection`, `setting`, `referent` and `backup_copy`, each a SELECT over `DRIFT.*` returning exactly the
-declared columns with NOT NULL varchars in `COALESCE` and ints `CAST`; `LIST DQ USL`, then `REGISTER DQ
-run_complete TABLE ...collection AS observed_count >= expected_count AND status = 'complete'` only when it is not
-listed; `RUN DQ TABLE ...collection`; `SHOW NAMESPACES OR TABLES IN lightning.metastore.drift`; `COUNT(*)` per
-USL table. The CREATE DATASOURCE statement is built in memory when sent; the printed plan and its trace line
-carry `password "<redacted>"`.
+`npm run zetaris:setup` (`src/zetaris/setup.ts`), idempotent, 42 statements, one per REST call, each step that
+depends on the instance's state running only when that state calls for it: `SHOW DATASOURCES`; `CREATE DATASOURCE
+DRIFT` when absent, built from `DATABASE_URL`'s user, password and database and `ZETARIS_PG_HOST` (`drift-pg`, the
+container name on the `zetaris_default` network, the address the driver resolves; measured: `host.docker.internal`
+fails there, and so does the Windows-side `127.0.0.1:15432`); `SHOW DATASOURCE TABLES DRIFT` when it existed, then
+`REGISTER DATASOURCE TABLES FROM DRIFT` when the source was created this run or lacks a table of `sql/schema.sql`,
+`REFRESH DATASOURCE TABLES FROM DRIFT` when it lists all sixteen; `CREATE NAMESPACE IF NOT EXISTS
+lightning.metastore` and `lightning.metastore.drift`; `SHOW NAMESPACES OR TABLES` and `LOAD USL` to read the
+existing model, `REMOVE USL` when its tables or columns differ from the ten below; `COMPILE USL IF NOT EXISTS
+drift_usl ... DDL` with ten `CREATE TABLE` blocks in ONE request (the one statement that carries several, separated
+by `;`; the adapter allows it for `COMPILE USL` only) when the USL is absent or was removed this run; `ACTIVATE USL
+TABLE` for each of the ten, each a SELECT over `DRIFT.*` returning exactly the declared columns with NOT NULL
+varchars in `COALESCE` and ints `CAST`; `LIST DQ USL`, then per rule `REGISTER DQ` when it is not listed or `UPDATE
+DQ ... SET NAME, EXPRESSION` when it is listed with another expression; `RUN DQ TABLE` on `collection`, `copy` and
+`action`; `SHOW NAMESPACES OR TABLES IN lightning.metastore.drift`; `COUNT(*)` per USL table. The CREATE DATASOURCE
+statement is built in memory when sent; the printed plan and its trace line carry `password "<redacted>"`.
+
+The three DQ rules: `run_complete` on `collection` (both counts present, observed at least expected, status
+complete), `copy_validated` on `copy` (the copy's latest validation is ok or ok_with_gaps) and `action_verified` on
+`action` (a done action names the probes that verified it). Measured on a scratch USL on 24 Oct 2026: a custom rule
+survives `REFRESH DATASOURCE TABLES` and a re-`ACTIVATE`, and `COMPILE USL IF NOT EXISTS` over an existing USL drops
+it, which is why the setup compiles only when the USL is absent or stale; the run after the 21:21 UTC collection
+found all three rules listed as stated (its 10 skipped statements are the create, register, remove and compile
+steps and the six rule writes).
 
 The USL tables: `collection` (the runs), `setting` (observations; the column is `source_kind`, because the DDL
 validator rejects a column named `source`), `referent` (every dns_name observation joined to the records of its
 name: `ref_id`, `target_name`, `resolves_to`, `proxied`, `dns_run_id`; the table is `referent` because
 `reference` is rejected too; both refusals are the one generic message `Invalid DDL statement`), `backup_copy`
-(backup items joined to their snapshots). `RUN DQ TABLE` returns `name | table | type | total_record |
-valid_record | invalid_record`, the custom rule and the key constraints as rows; `SHOW DQ INVALID RECORD
-run_complete TABLE ...` returns the failing runs (0 on 24 Oct). Measured counts through the USL after the first
-real collection: collection 4, setting 1,068, referent 185, backup_copy 85, equal to the Postgres counts; the
-re-collection of 07:58 UTC left the same tables holding 4 runs, 1,062 observations and 76 backup items, which
-is what the USL now selects from (`npm run zetaris:queries` over them is in the Status table).
+(backup items joined to their snapshots), `policy` (`policy_rule`), `copy` (each `vault_copy` with its latest
+`copy_validation` and a `validated` flag), `probe`, `disposition`, `action` and `ticket`. `RUN DQ TABLE` returns
+`name | table | type | total_record | valid_record | invalid_record`, the custom rules and the key constraints as
+rows; `SHOW DQ INVALID RECORD run_complete TABLE ...` returns the failing runs (0 on 24 Oct 2026). Measured counts
+through the USL after the 21:21 UTC collection: collection 14, setting 3,766, referent 1,713, backup_copy 154,
+policy 26, copy 224, probe 222, disposition 0, action 0, ticket 0; each table over one datasource table holds that
+table's count in the export.
 
 ## Data layer
 
 `sql/schema.sql` is the one DDL, read at import by `src/data/schema.ts`; the known-table guard, the sql.js loader's
-column order and the parity test's per-table SELECTs all derive from it. Eight tables (the brief said nine; the
-shared DDL defines eight, and a ninth would be added to the DDL alone):
+column order and the parity test's per-table SELECTs all derive from it. Sixteen tables:
 
-- `collection_run`: one collector pass over one surface, with the population it asserted before collecting (`expected_count`), what it observed and its status (`running` between `Store.beginRun` and `finishRun`, then `complete`, `partial` or `failed`). The DQ gate's input.
-- `observation`: one setting value seen in one run: object, dotted path, sha256 of the canonical value, the redacted text for display, what the value refers to (`refers_to_type`, `refers_to_id`) and the authority of the source (100 live, 40 backup, 20 approved).
-- `approved_setting`: the values a technician signed off, per tenant and optionally per host. Empty on the recorded estate; no sign-off has happened yet.
+- `collection_run`: one collector pass over one surface, with the population it asserted before collecting (`expected_count`), what it observed and its status (`running` between `Store.beginRun` and `finishRun`, then `complete`, `partial` or `failed`). The DQ gate's input. A probe run is one too, of surface `probe` with no host.
+- `observation`: one setting value seen in one run: object, dotted path, sha256 of the canonical value, the redacted text for display, what the value refers to (`refers_to_type`, `refers_to_id`) and the authority of the source (100 live, 40 backup, 20 approved). The Cloudflare collector writes one per record field (`type`, `name`, `content`, `ttl`, `proxied`, object id the record id).
+- `approved_setting`: the values a technician signed off, per tenant and optionally per host, written by `npm run approve`. 333 in the bundle exported 24 Oct 2026: the `file` setting of every nginx object of both hosts and every field of every record.
 - `backup_snapshot`: a config export tarball, restic or etckeeper snapshot of a host at a time.
 - `backup_item`: the setting hashes that snapshot holds.
 - `dns_record`: Cloudflare records as seen in one DNS run; `record_id` repeats across runs, which is what makes a change visible.
 - `audit_event`: who changed what, from Cloudflare, etckeeper or the journal, with old and new value when the log has them.
 - `inventory_asset`: the addresses and hosts the client owns; filled by the Linux collector with each host's global addresses.
+- `policy_rule`: one version of one rule of the MSP's policy (globs, criticality, lock, verbs, hold hours, alert, PSA priority), written by `npm run policy:load`; the Decider reads the highest version of each family.
+- `vault_copy`: one object of one collection run the vault committed: the git commit and the sha256 of the exact bytes, which for a file equals its `file` observation's `value_hash`.
+- `copy_validation`: one validation of one vault copy (`nginx-t` or `cf-schema`): ok, ok_with_gaps or fail, the missing dependencies and the output, redacted. A copy's latest validation is the one that counts.
+- `probe`: one probe (http, dns or tls) of one served name in one probe run: what was expected, what was observed (redacted), ok or fail, the latency.
+- `disposition`: the ledger, one row per finding per pass, about the live value decided on: verb, reason, expiry (every HOLD has one), who decided and the rule.
+- `action`: what the agent did about a disposition (kind, target, hashes before and after, vault commit, verifying probes, receipts, status). Defined; the write paths of the next build fill it.
+- `ticket`: the PSA ticket a disposition or an action opened (PSA, external id, url, type, priority, status). Defined; the ticket adapter of the next build fills it.
+- `referent_fingerprint`: what one `dns_name` observation's name resolved to in one DNS run (its A and AAAA contents, sorted), written by the pass; FOUND-BUT-DIFFERENT is one comparison over it for two runs.
 
 Timestamps are ISO 8601 UTC text, so they compare and sort identically in every engine. No SERIAL, no JSON columns,
 no booleans (INTEGER 0/1).
@@ -246,7 +303,8 @@ call, parameterised multi-row inserts, `ON CONFLICT DO NOTHING` on keyed tables 
 tables without a key, `beginRun`/`finishRun` as the run lifecycle, every `*_at` checked for the canonical
 millisecond form, every collected-text column through the redactor once more, error text scrubbed of connection
 strings. `npm run export:bundle -- [--out p] [--schema s] [--note t]` reads every table in one REPEATABLE READ
-snapshot, redacts once more, nulls `value_redacted` over 2 kB (30 file bodies in the recorded bundle), checks
+snapshot, redacts once more, nulls `value_redacted` over 2 kB (78 file bodies in the export of 24 Oct 2026, 21:21
+UTC), checks
 that sql.js loads the result and writes the bundle shape, rows in natural-key order.
 
 Two engines behind one interface (`src/data/layer.ts`): `SqlJsEngine` (SQLite in WebAssembly, in memory, for
@@ -275,19 +333,24 @@ of a setting path (`server[<name>:<port>]` is everything before `.server_name[`,
 eight-character tails) and `COALESCE` to follow a CNAME one level; they sit in JOIN ON and in correlated
 subqueries, never in a top-level WHERE, for the reason under Limitations.
 
-`test/parity.test.ts` runs 38 cases (hero per host, gate, the pass queries, the five survey queries, the audit
-span, every catalogue template, every table) through sql.js always, and through Zetaris when `PARITY_LIVE=true`
-and the datasource holds exactly the rows of `sample/bundle.json`, which it does after `npm run export:bundle`.
-Measured 24 Oct: 76/76 equal. The two surprises it was designed to catch, header case and text collation under
-ORDER BY, did not appear; the one it did catch is under Limitations.
+`test/parity.test.ts` runs 68 cases (hero per host, gate, the pass queries, the five survey queries, the audit
+span, the three detectors, the Decider's five reads, every catalogue template, every table) through sql.js always,
+and through Zetaris when `PARITY_LIVE=true` and the datasource holds exactly the rows of `sample/bundle.json`, which
+it does after `npm run export:bundle`. Ten cases run over derived tables (DataLayer overlays, the same text on both
+engines) that give a query rows the bundle lacks: approvals that differ from the live files, a backup without the
+renewal configs (6 and 5 `changed_since_backup` rows), more policy rules, approvals, copies with their
+validations, probes and dispositions. Measured 24 Oct 2026 over the export of the 21:21 UTC collection: 136/136
+equal. The two surprises it was designed to catch, header case and text collation under ORDER BY, did not appear;
+the one it did catch is under Limitations.
 
 ## Precondition catalogue
 
 `src/catalogue/templates.ts`. Nemotron Lightning never writes SQL: it chooses template ids from this list and fills
 typed parameters (zod v4), the DataLayer renders and runs them, and each template says whether rows coming back mean
 the precondition HOLDS or FAILS, so a row count becomes a verdict without a model. Every template runs on the
-recorded bundle in `test/templates.test.ts` with its rows asserted (the two approval templates over approvals
-added in memory, since no technician has signed anything off yet).
+07:58 UTC export (`test/fixtures/recorded-bundle.json`) in `test/templates.test.ts` with its rows asserted (the two
+approval templates over approvals added in memory: that export holds none, and the 333 approvals of the 19:56 UTC
+runs are in `sample/bundle.json`).
 
 | id | purpose | rows mean |
 |---|---|---|
@@ -312,7 +375,7 @@ already holds is not a regression.
 
 Finding classes: `found_but_different` and `dns_change` from the hero query; `proxy_split`,
 `proxied_without_real_ip`, `orphan_record` and `orphan_vhost` from the survey; `changed_since_backup` and
-`drift_vs_approved` with templates and default policies but no detector yet.
+`drift_vs_approved` from the pass's two detectors (`src/pipeline.ts`, the survey step).
 
 Selection (`src/catalogue/select.ts`): the system prompt lists every id, purpose, class and parameter and asks for
 at most four checks as one JSON object, with an `other` field for a check that fits no template. `validateSelection`
@@ -322,12 +385,54 @@ not rejected. `defaultSelection(class)` is the documented fallback, three or fou
 `run_complete` first everywhere; `defaultChecks(finding)` binds it from the finding through the same validator. It
 is what SAMPLE_MODE and any pass without a model run.
 
+## Policy, vault, validation and probes
+
+**Policy** (`src/policy/`). The MSP's policy is data: a JSON file (`DRIFT_POLICY_FILE`, default
+`policy/hackathon.json`, version 2, 15 rules) that `npm run policy:load` checks against a closed schema and writes as
+`policy_rule` rows, globs and notes through the tenant's redactor. A rule names a tenant or `*`, a surface or `*`,
+an `object_glob` and a `setting_glob` (`*` within one path segment, `**` across, `?` one character) and its terms:
+criticality, `lock`, `on_drift`, `on_no_copy`, `hold_max_hours`, `alert`, `psa_priority`. A setting's rule is its
+best match among each family's highest version: exact tenant over `*`, exact surface over `*`, the object glob with
+more literal characters, then the setting glob, the higher version, the lower `rule_id`; with no match the default
+decides. `policy_rule` keeps every version loaded: 26 rows on 24 Oct 2026, version 1's 11 and version 2's 15
+(version 2 adds four copy rules under `sites-available` and `conf.d` and is the highest version of every family). A
+drift under a locked or rollback rule is ROLLBACK with a valid vault copy of the approved value; with none, FIX,
+ESCALATE or ADOPT by `on_no_copy` when production is affected, ESCALATE when production is unknown (the reason
+says why), HOLD when it answers. [DESIGN.md](DESIGN.md) has the file rule by rule.
+
+**Vault** (`src/vault/`). Under `DRIFT_VAULT_DIR`, on the operator's machine outside the repository (blank: off, and
+each collector says so in one trace line): one git repository per tenant and host alias with the fetched files at
+their real paths without the leading slash, `.drift/paths.json` (real path to redacted object id) and
+`.drift/links.json` (the `sites-enabled` symlinks); one per tenant, `<tenant>/cloudflare`, with
+`<zone>/<record_id>.json` per record. One commit per complete run, the tree mirroring the run, an unchanged run
+included; a partial or failed run commits nothing. Raw bytes and real names stay in the vault; commit hashes,
+counts and redacted ids leave it. Measured 24 Oct 2026: two commits per repository, from the 19:56 and the 21:21
+UTC runs, the second changing no file.
+
+**Validation** (`src/validate/`). `nginx-t` lays a vault commit down in a temp directory as a restore would, parses
+the files `nginx.conf` reaches and gives every dependency they name outside the tree (an unresolved include, a
+certificate, key, dhparams or log path) a placeholder of its kind before the first `nginx -t` (an empty include, a
+self-signed certificate and key, the ffdhe2048 group, an empty writable log), then runs `nginx -t` in an
+`nginx:1.27` container (`DRIFT_NGINX_T`), up to 12 rounds, each giving every further path nginx names as missing its
+placeholder: ok when round 1 passes with no placeholder, ok_with_gaps when a round passes with any, with
+`missing_dependencies` naming each gap, fail otherwise. `cf-schema` checks a record copy offline: type, content
+shape, a CNAME target among the run's records, an address in inventory.
+
+**Probes** (`src/probe/`). One `probe` run per tenant over the account's A, AAAA and CNAME names, read live first,
+wildcards left out: http (status below 500, `cf-ray` as the proxy flag says), dns (two public resolvers: a direct
+record's content in both answers, a proxied record's in neither), tls (valid for the name, over 7 days left).
+Production is affected when a probe fails on a name the finding's object serves; with no probe run it is unknown.
+
+**Disposition** (`src/ledger.ts`). One row per finding per pass: the setting and the live `value_hash` decided on (a
+later change is a new decision), the verb, one plain sentence, the expiry (every HOLD has one), `decided_by`
+(operator, policy or default), the `rule_id`, the finding id and the run.
+
 ## Judge and receipt gate
 
 `src/agents/judge.ts`. The judge refutes; it never confirms by assertion. A detector's claim goes to Nemotron Ultra
 with up to 20 supporting rows and the schema, and Ultra answers with ONE SELECT that returns rows if and only if the
-claim is false. We guard it (no `{{p:}}`, no bare table name, at least one known `{{t:}}`, `assertSelectOnly`,
-LIMIT appended or capped at 50) and run it ourselves through the same data layer as the catalogue. Rows refute the
+claim is false. The agent guards it (no `{{p:}}`, no bare table name, at least one known `{{t:}}`,
+`assertSelectOnly`, LIMIT appended or capped at 50) and runs it through the same data layer as the catalogue. Rows refute the
 claim; no rows and it stands. Every verdict carries the SQL as run, the row count, the rationale, the receipt id, the
 served model and the latency.
 
@@ -344,8 +449,8 @@ controls, so its own `routed_model` is reported in the trace (served tier, `sign
 but never trusted. `ReceiptStore` fetches `GET /v1/meterless/receipts` once per pass; the orchestrator constructs one
 per pass, hands it to every `judgeClaim` and calls `reset()` between passes.
 
-**Receipt custody.** A verified signature says the runtime signed this receipt; it does not say the receipt is the
-one for our request, nor that the runtime filed it under our app. Every successful receipt also carries
+**Receipt custody.** A verified signature says the runtime signed this receipt; custody asks whether the receipt
+is the one for this request and whether the runtime filed it under this tenant's app. Every successful receipt also carries
 `request_id` (equal to the chat response's `id`), `prompt_preview` (the first characters of the prompt the runtime
 saw, ellipsis-trimmed when cut) and `app` (the `meterless-app` header the call went out under). When the judge is
 given the tenant the claim belongs to, the call goes out under `drift-agent:<tenant>` (`tenantAppId`; a tenant id
@@ -357,10 +462,11 @@ closed like an unreceipted response, so a proxy that strips the id gets no softe
 secondary check that can refute identity and never establish it: it is compared against the user message alone
 (never the system prompt, which is the same on every judge call, nor the join of the two), it counts as a `match`
 only when it is a prefix of that message reaching the end of the `[request <nonce>]` line, a preview of the shared
-system prompt or one that stops inside the nonce is `uninformative`, and a preview that is a prefix of nothing we
-sent is a `mismatch` that fails identity whatever the id says, which is what catches a replay of our own earlier
-receipt together with its id when the runtime previews the user message. Attribution holds when `app` is the id we
-sent. The gate runs before the reply is read, because a receipt that is not ours means the answer is discarded and
+system prompt or one that stops inside the nonce is `uninformative`, and a preview that is a prefix of nothing the
+call sent is a `mismatch` that fails identity whatever the id says, which is what catches a replay of the agent's
+own earlier receipt together with its id when the runtime previews the user message. Attribution holds when `app`
+is the id the call sent. The gate runs before the reply is read, because a receipt that belongs to another request
+means the answer is discarded and
 the call made once more as a fresh request (a new nonce, so a new `request_id` and no cache hit); a second custody
 failure fails closed, `not_judged`, with a gate reason that starts `custody` (the judge's verdict prefixes it:
 `receipt gate: custody: ...`; the verdict also carries `custody.ok === false`, the field to count on rather than
@@ -400,21 +506,23 @@ changes on one table compose: the second reads the first's SELECT as its base.
 - **NO-GO**: the change adds a finding no entry clears. `orphan_record`, `orphan_vhost`, `dns_change` and `found_but_different` have no entry: clearing them means adding a server block or a DNS record, and an overlay never adds a row. The addendum's `restore_backup` and `revert_record` are not built: `backup_item` holds `file` hashes only, so a restore overlay changes no survey finding, and a revert is the negation of the proposal.
 - **ESCALATE**: the simulation cannot run, or three prerequisites did not clean it.
 
-Measured 24 Oct on `sample/bundle.json` (`examples/proposals/`, the verdict files written by the script; none tuned):
+Measured 24 Oct 2026 on `sample/bundle.json`, 14 runs (`examples/proposals/`, the verdict files written by the
+script; none tuned):
 
 | proposal | change | verdict | delta against the 27 baseline findings |
 |---|---|---|---|
 | `a-unproxy-www.json` | `proxied` 1 -> 0 on the www CNAME of the split zone | GO | removes 3: the `proxy_split` and the two `proxied_without_real_ip` on the vhost blocks that serve www; adds none |
 | `b-replay-16-april-proxied.json` | `proxied` -> 1 on the same record, the `proxied` field of the real UPDATE body of 2026-04-16 21:12:47Z | GO, zero delta | the record is already proxied in the recorded world, so the derived table differs in no column and 27 stay 27. NO-GO or GO-IF was expected before running; the honest result is that the body replays the state in force. Staging the "as of 21:11" act needs a pre-state the single-field proposal cannot express (see Limitations). |
 | `c-vhost-real-ip.json` | `real_ip` absent -> `trusted:15 header:CF-Connecting-IP scope:server` on both blocks of the vhost that serves apex and www | GO | removes the two www `proxied_without_real_ip` findings; adds none |
-| `d-retarget-apex-outside-inventory.json` | apex A record `content` -> `203.0.113.9` (RFC 5737), bound by name and type | NO-GO | adds two `dns_change` hero findings (the vhost's `server_name[apex]` rows point at a name resolving outside the inventory), which no prerequisite clears; removes the two www findings, since nothing lands on an inventory host any more |
+| `d-retarget-apex-outside-inventory.json` | apex A record `content` -> `203.0.113.9` (RFC 5737), bound by name and type | NO-GO | adds two `found_but_different` hero findings, which no prerequisite clears: the vhost's `server_name[apex]` settings are byte-identical since the 19:56 UTC run while the name now resolves outside the inventory (over the 07:58 UTC export alone, with no previous run, the same change adds two `dns_change`); removes the two www findings, since nothing lands on an inventory host any more |
 
-GO-IF is exercised in `test/preflight.test.ts` (26 tests): proxying the direct A record of a `.club` name served by two
-enabled blocks of one conf.d vhost that trust no range adds two `proxied_without_real_ip` findings; one
-`add_real_ip_block` on that file clears both and, with them, the host-wide wildcard finding on the same host (an
-enabled block that trusts a range is what that check looks for): 29 findings, then 26, one iteration. The loop bound
-is tested (three useless iterations, then ESCALATE; a fixed key, NO-GO after one; an empty catalogue, NO-GO at zero).
-Each pre-flight runs the baseline and one simulation in about 300 ms on the bundle. Every line is traced with agent
+GO-IF is exercised in `test/preflight.test.ts` (27 tests) over the 07:58 UTC export
+(`test/fixtures/recorded-bundle.json`): proxying the direct A record of a `.club` name served by two enabled blocks
+of one conf.d vhost that trust no range adds two `proxied_without_real_ip` findings; one `add_real_ip_block` on that
+file clears both and, with them, the host-wide wildcard finding on the same host (an enabled block that trusts a
+range is what that check looks for): 40 findings, then 37, one iteration. The loop bound is tested (three useless
+iterations, then ESCALATE; a fixed key, NO-GO after one; an empty catalogue, NO-GO at zero). Each pre-flight runs
+the baseline and one simulation in 752 to 781 ms on `sample/bundle.json`. Every line is traced with agent
 `preflight`; the two passes' own lines are re-labelled with the original agent in `target_agent` and the world
 (`world=baseline`, `world=simulated#n`) in `detail`. Live, with `--live`, a Zetaris datasource and a Nightshift
 token, the judge's falsifier is asked in the fixed world (the last simulation), where the detector's claim is false:
@@ -438,11 +546,12 @@ the ticket is a cost the rule must not impose on its own say-so), so on the reco
 Two cases skip more: `run_complete` failing skips every queued check (the run is not a safe basis for any other), and
 when every queued check reads a table whose run is gated out (`audit_event`, when the tenant's latest audit run failed
 the DQ gate) they are recorded at once as `not_checked` with the same reasons and the same ESCALATE as one by one. A
-check that could still flip ADOPT/ESCALATE is never skipped. Measured on the bundle (`test/stoprule.test.ts`): with
-the default table 0 skips; with every template `false`, the literal "stop as soon as the verb is settled", 18 checks
-skipped over 18 findings (16 `previous_value_recoverable`, 2 `backup_recent`) and 0 verbs flipped against the rule
-switched off; with the audit run gated, 24 stops, 49 checks gated, and the same verbs and rejections as with the rule
-off. `shouldWithdraw` runs before the judge: it withholds the call with "verdict cannot move" when a check was not
+check that could still flip ADOPT/ESCALATE is never skipped. Measured on the 07:58 UTC export
+(`test/fixtures/recorded-bundle.json`, 38 findings with its 11 `changed_since_backup`; `test/stoprule.test.ts`):
+with the default table 0 skips; with every template `false`, the literal "stop as soon as the verb is settled", 29
+checks skipped over 29 findings (16 `previous_value_recoverable`, 2 `backup_recent`, 11 `setting_matches_approved`)
+and 0 verbs flipped against the rule switched off; with the audit run gated, 24 stops, 49 checks gated, and the
+same verbs and rejections as with the rule off. The sample pass over `sample/bundle.json` skips nothing either. `shouldWithdraw` runs before the judge: it withholds the call with "verdict cannot move" when a check was not
 checked, `run_complete` failed, no check ran or a proposal is invalid, and with "claim withdrawn by its own checks"
 when a check that holds contradicts the finding's own claim (`referent_unchanged` or `record_reverted` on a
 `found_but_different`, `record_reverted` on a `dns_change`), emitting `critique` and `revise`. It never changes the
@@ -469,13 +578,15 @@ call in a top-level WHERE, no correlation in a JOIN ON; the days are counted in 
 only. The finding gains `exposure: {since, days, bound, source: "audit:<event>", still_open_in: "<dns run>"}` and
 the World Model an open edge finding -> record (`validFrom` = since, attrs `since`, `exposure_days`, `until`,
 `record`, `event_id`, `dns_run_id`, `bound`) that a later DNS observation or a moved audit event supersedes (the old
-edge closes, `supersededBy` the new). Measured on the bundle: the 16 April record since 2026-04-16T21:12:47.270Z
-(event `evt-05fa48325110cdcb`, the `proxied: true` body; the 21:47 re-point kept the proxy on and does not restart
-the clock) to 2026-10-24T07:58:55.125Z, 190 days, exact, on the three findings that rest on it; `host-18efce.ai` x2
-since 2026-07-07T18:01:30.530Z, 108 days, exact; `host-f324df.com` x2 at least 113 days; `host-c10fff.com` at least
-109 days; 8 of the 24 findings that rest on a record dated, the other 16 traced `not_checked` with the reason (no
-audit event on the record); 34 SELECTs (15 record rows, 15 first-event queries, 4 earlier-body counts). A later DNS
-observation two days on gives 192 days and closes the old edge; moving the 7 July event to 1 August gives 84. The
+edge closes, `supersededBy` the new). Measured by the sample pass over `sample/bundle.json`, to the 21:21 UTC DNS
+run (2026-10-24T21:20:58.593Z): the 16 April record since 2026-04-16T21:12:47.270Z (event `evt-05fa48325110cdcb`,
+the `proxied: true` body; the 21:47 re-point kept the proxy on and does not restart the clock), 191 days, exact,
+on the three findings that rest on it; `host-18efce.ai` x2 since 2026-07-07T18:01:30.530Z, 109 days, exact;
+`host-f324df.com` x2 at least 113 days; `host-c10fff.com` at least 110 days; 8 of the 24 findings that rest on a
+record dated, the other 16 traced `not_checked` with the reason (no audit event on the record sets the state); 34
+SELECTs (15 record rows, 15 first-event queries, 4 earlier-body counts). `test/exposure.test.ts` pins the same
+lines on the 07:58 UTC export (190, 108, 113 and 109 days); there a later DNS observation two days on gives 192 days
+and closes the old edge, and moving the 7 July event to 1 August gives 84. The
 line says requests reached the host from Cloudflare addresses while the vhost had no rule to recover the visitor's
 address; it says nothing about log contents, which the agent never reads.
 
@@ -517,7 +628,10 @@ records an exception (an expiry is required: an exception without one is a perma
 not record); `--question "..." --answer "..."` records an answer (expiry default 30 days). `--list` and `--forget
 <lesson id>`. The store is `.world/memory/` (`state.json`, `ledger.jsonl`) under the working directory, gitignored
 with the rest of `.world/`, so nothing recorded reaches the repository; tests and the examples use an in-memory
-store, and the committed bundle, examples and page were built with no lesson in force. Measured 24 Oct, sample mode:
+store, and the committed bundle, examples and page were built with no lesson in force. An exception in force
+outranks the policy too: on the policy fixture the `proxy_split` held under the rollback rule becomes ADOPT until
+the lesson's expiry, `decided_by` operator (`test/pipeline.test.ts`). Measured 24 Oct 2026 in sample mode over the
+07:58 UTC export, which holds no `policy_rule` rows, so the default decided:
 an exception on `proxy_split` for the www name until 30 Nov turned finding `fnd-b4a40091cdb4f906` from ESCALATE
 (3 of 4 checks hold) to ADOPT on the next pass, with `judgeWithheld` "verdict cannot move: accepted exception mem-1
 holds until 2026-11-30T00:00:00.000Z"; a 28-second exception on `proxied_without_real_ip` for `host-18efce.ai`
@@ -599,25 +713,29 @@ expected 600 host and 400 address replacements.
 
 Today's facts, to be updated as the eval lands:
 
-- One collection, one pass. The recorded bundle holds one run per surface and host, so the hero classes (`found_but_different`, `dns_change`) have no previous run to compare against on the real estate and did not fire; the authored fixture carries that story for the tests. The next collection gives the real one.
-- The pass runs no model: Lightning does not choose checks (the default policy per class does), Ultra does not judge, and HOLD is never issued. `judgeClaim`, the receipt gate and the custody rule are tested against stubs, two real receipts and receipts signed with a throwaway key, not against a live pass. Unverified live: whether the runtime accepts a `meterless-app` value with a colon (`drift-agent:<tenant>`) and echoes it in `receipt.app`, and whether `prompt_preview` previews the system message or the last user message (both real receipts were single-message calls). Custody rests on `request_id` alone, which the preview can refute but never establish: a preview of the system message is `uninformative` and changes nothing, so a replay of our own earlier receipt and id is caught only when the runtime previews the user message (the nonce line); a preview in a shape we have not seen (neither message) is a `mismatch` and fails every call closed until measured.
+- The hero classes (`found_but_different`, `dns_change`) find nothing on the real estate: `sample/bundle.json` holds three passing runs per host (07:58, 19:56 and 21:21 UTC on 24 Oct 2026), and every address record of a name a vhost serves lands on an inventory host in each. Pre-flight (d) raises two `found_but_different` in simulation over the 19:56 and 21:21 UTC runs; the authored fixture carries the full story for the tests.
+- The pass runs no model: the default policy per class chooses the checks, Ultra does not judge, and the policy decides the verbs (HOLD 27 by policy on the sample pass of 24 Oct 2026). `judgeClaim`, the receipt gate and the custody rule are tested against stubs, two real receipts and receipts signed with a throwaway key; no live pass has called them. Unverified live: whether the runtime accepts a `meterless-app` value with a colon (`drift-agent:<tenant>`) and echoes it in `receipt.app`, and whether `prompt_preview` previews the system message or the last user message (both real receipts were single-message calls). Custody rests on `request_id` alone, which the preview can refute but never establish: a preview of the system message is `uninformative` and changes nothing, so a replay of the agent's own earlier receipt and id is caught only when the runtime previews the user message (the nonce line); a preview in any other shape (neither message) is a `mismatch` and fails every call closed until measured.
 - `verifyReceipt` trusts the public key embedded in each receipt (`pubkey_b64`), so a receipt forged with a fresh key passes the signature check; the custody tests build their fixtures exactly that way. Both real receipts carry the same runtime key; pinning it (an expected key in config, compared in the gate) would close this. Custody does not.
-- Pre-flight simulates over the world as last collected: a `when` in a proposal is carried into the verdict, not used to rewind the rows, which is why the replay of the 16 April body is GO with zero delta. Staging the "as of 21:11" act needs a pre-state (an overlay setting `proxied` 0 before the proposal) or a two-field replay (content plus proxied, the full 21:12 body), and the single-field `ProposedChange` expresses neither. Live parity of overlaid queries on Zetaris (the derived table as a FROM/JOIN subquery with an alias) is unmeasured: the shape avoids the two pushdown faults below, and `test/parity.test.ts` has no overlaid case yet.
-- The stop rule ships with every template marked as informing the next action, so on the recorded bundle it skips nothing; marking templates `false` is the operator's decision, and `test/pipeline.test.ts` pins the check lists the default table yields.
+- Pre-flight simulates over the world as last collected: a `when` in a proposal is carried into the verdict, not used to rewind the rows, which is why the replay of the 16 April body is GO with zero delta. Staging the "as of 21:11" act needs a pre-state (an overlay setting `proxied` 0 before the proposal) or a two-field replay (content plus proxied, the full 21:12 body), and the single-field `ProposedChange` expresses neither. DataLayer overlays (the derived table as a FROM/JOIN subquery with an alias) run equal on Zetaris in ten parity cases, 136 of 136 on 24 Oct 2026; the pre-flight's own `dns_record` and `observation` overlays have no live parity case yet.
+- The stop rule ships with every template marked as informing the next action, so on both recorded bundles it skips nothing; marking templates `false` is the operator's decision, and `test/pipeline.test.ts` pins the check lists the default table yields.
 - The exposure SQL lives in `src/engine/world.ts` beside the edge it writes, not in `src/data/queries.ts`, and has not run on Zetaris; it uses only constructs the parity test already covers plus `NOT LIKE` and `action <> 'view'`. `LIKE` is case-insensitive on sql.js and case-sensitive on Spark; the bodies are lowercase JSON and lowercase pseudonyms, so the two agree on this bundle. The exposure edge's target is the record as observed over one span (`<record>@<since>..<until>`, whose attrs name the plain record), not the plain record entity the addendum names: the vendored reference closes an open edge only when a new edge of the same (from, type, context) points at a different target. Re-running an older measurement after a newer one into the same persistent world does not reopen it; pass worlds are in memory today.
 - Technician memory holds nothing committed: the pass asks no question yet, so `answered()` is exercised by tests only, and an exception applies by exact scope key, so one on a host silences every finding of that class on that host until it expires. The H-MEM ledger grows by one `read` per recall hit per pass; the reference's sleep cycle is the maintenance path and is not wired.
-- `changed_since_backup` and `drift_vs_approved` have templates and default policies but no detector, and `approved_setting` is empty: no technician has signed anything off, and `scripts/approve.ts` does not exist yet.
+- `drift_vs_approved` and `changed_since_backup` find 0 on `sample/bundle.json`: the 333 approvals come from the 19:56 UTC runs and no approved setting changed by 21:21 UTC, and every `file` row of the 21:21 UTC runs equals its member of the newest tarball. ROLLBACK and FIX run on `test/fixtures/policy-bundle.json` only (ten findings: ADOPT 2, HOLD 5, ROLLBACK 2, FIX 1).
+- The resolver weighs tenant, surface, globs, version and `rule_id`; `since` is provenance only. Both policy versions carry since 2026-10-25T00:00:00.000Z, and version 2 decided all 27 dispositions of the sample pass, decided at 2026-10-24T21:21:22.897Z.
+- ok_with_gaps means nginx accepted the restored tree with placeholders in place: 16 on the conf.d host and 13 on the sites-enabled host on 24 Oct 2026 (certbot's live certificates and keys, `options-ssl-nginx.conf` and `ssl-dhparams.pem`, an origin certificate and key, the credential-shaped snippet), files the vault holds no copy of. A restore from the vault needs them from the host or from certbot.
+- `copy_validated` on the USL counts every vault copy: 224 total, 170 valid, 54 invalid on 24 Oct 2026. The 54 are the first commits' nginx copies, validated at 19:59 UTC with a 6-round cap and no pre-seeding; every head copy validates ok or ok_with_gaps.
+- Probes run from one machine through two public resolvers; production affected or answering is that machine's view at the probe run's time.
+- No live pass writes dispositions or referent fingerprints to the app Postgres yet: the sample pass's ledger is its sql.js engine, `sample/bundle.json` holds 0 of each, and the USL counts `disposition` 0. The `action` and `ticket` tables hold no rows (0 through the USL on 24 Oct 2026); the write paths behind ROLLBACK and FIX, the PSA ticket and the watcher are the next build's.
 - A `dns_name` resolves through its A and AAAA records only; the survey follows a CNAME one level. A longer chain is not followed.
 - After redaction the pseudonym of a name says nothing about its zone, so a wildcard record is matched to a vhost only through the collector's `.zone` sibling (the name's last two labels), which is right for every zone of this estate and wrong for a public-suffix zone such as `co.uk`. A proxied wildcard's `real_ip` check is therefore host-wide, not per block.
 - `orphan_vhost` reports a name with no record in the collected zones; a name whose DNS lives outside the collected Cloudflare account is reported too (two of the three on the sites-enabled host are one such domain).
 - Zetaris pushdown: a function inside a top-level WHERE on a `DRIFT` table is dropped and every row comes back (measured: `WHERE length(value_redacted) > 2048` counted all 1,068 rows, as did `WHERE setting_path = 'file' AND length(...) > 2048`). The catalogue's top-level predicates are plain column comparisons; its `substr`/`instr` sit in JOIN ON and correlated subqueries, which Spark evaluates itself, and the parity test is the guard. A correlated reference inside a subquery's JOIN ON is refused outright (`UNSUPPORTED_SUBQUERY_EXPRESSION_CATEGORY.CORRELATED_REFERENCE`), so every correlation sits in the subquery's WHERE.
-- The Zetaris setup is idempotent in its end state, not a strict no-op: on an already configured instance one of `REFRESH DATASOURCE TABLES`, `COMPILE USL IF NOT EXISTS` or a re-`ACTIVATE` drops the custom DQ rule, which step 13 registers again (measured on both runs of the day: `LIST DQ USL` lists 6 rules mid-run and 7 after). Not bisected; each bisection is a live run.
 - Actor attribution comes from audit logs and is reported unattributed when the log has none; the agent does not infer who changed something. API-token actors have no email and are unattributed by design. The Cloudflare account's audit log begins 2026-03-20, so records created before that have no history and fail `actor_attributed` and `previous_value_recoverable`.
-- Each Cloudflare collection adds its own reads to the audit log as `view` events, so `audit_event` grows by about a hundred rows per pass.
-- Every TLS vhost on both hosts includes certbot's `/etc/letsencrypt/options-ssl-nginx.conf`, outside `/etc/nginx`, which the collector records as unresolved rather than fetching.
+- Each Cloudflare collection adds its own reads to the audit log as `view` events, so `audit_event` grows with every pass: 728, 797 and 818 rows after the three collections of 24 Oct 2026, 303 of them `view`.
+- Every TLS vhost on both hosts includes certbot's `/etc/letsencrypt/options-ssl-nginx.conf`, outside `/etc/nginx`, which the collector records as an unresolved include and the validator gives a placeholder.
 - One zone's Cloudflare Origin certificate, valid only while the zone is proxied, is a real case the collectors do not surface: nothing reads certificate contents yet.
 - A trace line's setting path ending in an nginx directive outside the redactor's skip set is over-redacted in the trace text only; the stored observation keeps it.
-- Nothing here is production-ready: one tenant, one pass, in-memory World Model, no scheduler, no notification.
+- Nothing here is production-ready: one tenant, passes run by hand, an in-memory World Model, no scheduler, no notification.
 
 ## Decisions
 
@@ -631,7 +749,7 @@ Appended as spikes settle. Newest last.
 - 2026-10-23: Zetaris access is denied by default per object. The first API key authenticated for org 1 and ran `SELECT 1` but saw zero Lightning databases over both the direct REST and UI-proxy routes, so the agent's key needs either an administrator's key or a General-role user with explicit SELECT grants on the registered sources. Spike A was blocked on that grant, not on the client; an admin-role key was issued on 24 Oct. (The General-role alternative is withdrawn by the 24 Oct entry on keys below: only an admin can generate a key, and a key is the tenant's, not a user's.)
 - 2026-10-23: Schema and portability. One DDL (`sql/schema.sql`, eight tables) portable across SQLite and the Postgres registered in Zetaris: ISO 8601 UTC text timestamps, INTEGER 0/1 for flags, no SERIAL, no JSON columns. Catalogue SQL stays in the portable subset (lowercase unquoted identifiers, `'` doubled, no casts, no ILIKE, no date functions, no booleans, one statement, no semicolon) and names tables `{{t:x}}` and parameters `{{p:x}}`; the DataLayer renders both per engine and parameters become escaped literals, because Zetaris REST takes one SQL string and binds nothing. Both engines normalise to Zetaris's shape (strings, NULL as `""`) so `test/parity.test.ts` compares rows. The DQ gate fails a run with NULL `expected_count` or `observed_count`, not only a short or partial one: a run that never asserted its population cannot show it collected everything.
 - 2026-10-23: sql.js for SAMPLE_MODE. SQLite in WebAssembly, in memory, initialised once per process, the schema applied and `sample/bundle.json` loaded by column order from the DDL. Chosen over a Postgres container because a judge's clean clone and CI must run the real pass with nothing installed; the parity test is what keeps it honest against Zetaris.
-- 2026-10-23: A catalogue instead of model-written SQL. Lightning picks template ids and fills typed parameters; nothing it says becomes SQL. The one model that writes SQL is the judge, and its SELECT goes through `guardRefutation` and `assertSelectOnly` and is run by us; a reply that is not one guarded SELECT is `invalid_output` and counted. `defaultSelection(class)` is the fallback policy and what the pass runs with no model. HOLD is never issued without a judge.
+- 2026-10-23: A catalogue instead of model-written SQL. Lightning picks template ids and fills typed parameters; nothing it says becomes SQL. The one model that writes SQL is the judge, and its SELECT goes through `guardRefutation` and `assertSelectOnly` and is run by us; a reply that is not one guarded SELECT is `invalid_output` and counted. `defaultSelection(class)` is the fallback policy and what the pass runs with no model.
 - 2026-10-23: The receipt is a gate, not decoration. `GET /v1/meterless/receipts` on the local Nightshift returned 53 receipts, 53/53 verify offline; 35 are successful turns with `receipt_id`, `routing`, `phases` and `winning_route`, 18 are failed turns with no `receipt_id`. On every successful receipt the served model appears in `phases[0].model` (one phase, `final_synthesis`), `routing.winner` and `winning_route.model`, and all three agree; the tier field is the letter `A` for Lightning routes and `C` for Ultra routes, so the gate derives the tier from the model id. `receipt.requested_mode` is `meterless/auto` and `app_policy.requested_mode` is `auto` on every receipt, explicit-id calls included, so the requested tier comes from the caller. A judge verdict counts only when the gate says an Ultra answered; substitution is `not_judged` and escalates. Fixtures `test/fixtures/receipt-lightning.json` (`rcpt_req_szybz3wr`, 942 ms phase) and `receipt-ultra.json` (`rcpt_req_iger5raz`, 880 ms phase) are real, untouched and verify.
 - 2026-10-23: `chat_template_kwargs.enable_thinking` is sent by the adapter when a caller sets it but has no observable effect through the OpenRouter routes. `probe:thinking`, one run, 12/12 calls ok with 0 adapter retries: Lightning `tokens_out` 11 on all 6 calls (false 669/693/375 ms, true 310/633/401 ms); Ultra `tokens_out` 71/70/71 with false and 71/75/71 with true (false 1723/1807/1610 ms, true 1274/1554/2125 ms); `</think>` present in 0/12 replies; `extractJson` returned the correct `{ok:true,sum:42}` on 12/12. VERDICT: NO, Nightshift does not observably forward the flag on either OpenRouter route. One follow-up call (`scripts/probe-ultra-shape.ts`) on the OpenRouter Ultra route: message keys `[role, content]`, `finish_reason` stop, 101 tokens out for the 35-character JSON answer, no reasoning field, no `</think>`; the reasoning is billed but not returned there, unlike the `nvidia/` direct route measured earlier (reasoning in `content` before `</think>`). `extractJson` handles both. The judge requests `enable_thinking` true regardless: harmless here, honoured wherever the flag is forwarded, and its `max_tokens` (4096) is sized for a route that honours it, so the JSON after the reasoning is not cut off.
 - 2026-10-23: No read-only SSH; `ops/` is the honest substitute. A forced command bound to a dedicated user's key and one sudoers line, reviewed by eye and `sh -n`, not installed; `.gitattributes` pins `ops/ssh/*` and `ops/sudoers/*` to LF so a Windows checkout cannot break `#!/bin/sh`. Rewritten on 24 Oct to the measured hosts (below).
@@ -654,4 +772,4 @@ Appended as spikes settle. Newest last.
 - 2026-10-24: Receipt custody (addendum item 3, scoped to identity and attribution). `checkCustody` after the signature: `request_id` equals the response id, or, only when one side has no id, `prompt_preview` is a prefix of a message we sent (this fallback was withdrawn the same night: see the review entry below); `app` equals the per-tenant id `drift-agent:<tenant>`. `gateWithCustody` discards an answer whose receipt is not ours, retries once with a fresh nonce, fails closed on the second. The judge now gates before it reads the reply (a discarded answer is never a hypothesis); without a tenant it behaves as before. Not gated: injected context, cache hits, redaction spans; `cache.status` is carried for the eval. The Saturday 10-minute live probe was not run; no Nightshift call was made on 24 Oct.
 - 2026-10-24: The replay page is built from the committed examples only and refuses to publish anything it cannot re-run to the recorded numbers; the committed `docs/` is held to the build by a test and a CI step. Pages stays unconfigured until the repository is public. Every finding now carries a short stable id (`fnd-` plus 16 hex of the World Model's finding id), printed by the sample pass and shown on the page, so a technician can name one to `npm run answer`.
 - 2026-10-24: Integration of the four parallel builds. `test/pipeline.test.ts` counts 43, 29 and 160 traced queries where it counted 39, 27 and 126: the exposure line's SQL is traced like every other step. The wildcard example's slice now carries the audit run and its (zero) events on the wildcard record, so its two audit checks run and fail as they do in the full pass instead of being withheld for a missing run, and all 9 example findings match the full sample pass. `examples/` and `docs/` were regenerated with the exposure line and the finding ids. CI runs `conformance:hmem` and `site` with `git diff --exit-code -- docs`.
-- 2026-10-24: Two adversarial reviews of the night's work, applied. Major: the exposure bound upgraded `at_least` to `exact` on any earlier audit body, one that never named the field included (a reviewer's probe: one content-only edit on `host-f324df.com` flipped its line to "exact" with the onset still unknown); the earlier-body count is now field-aware (a body must name the field and set another value, or delete the record), an `old_value` already in the state keeps the bound, and the recorded bundle's eight lines are unchanged (the www and `host-18efce.ai` "exact" rest on real `proxied:false` bodies). Custody failed open when the response carried no id: a replayed receipt of ours passed on a preview of the shared system prompt; identity now rests on `request_id` alone, a side with no id fails closed, and the preview is secondary (user message only, through the nonce line; a system-prompt preview is `uninformative`; a prefix of nothing we sent is a `mismatch` that refutes a matching id). Minor: the GO-IF judge targets the finding the last prerequisite cleared (true in the simulation it was bound in), not a removed baseline finding, and the trace names the target; `judge.target` is on the verdict and the four verdict files were regenerated; a tenant id that is not header-safe is `not_judged`, not a throw; `{{t:x}} AS o` renders one alias under an overlay; `npm run site` refuses a stale example by name unless `--allow-stale`; a scope key the redactor would replace is refused; `conformance:hmem` says it exercises the vendored reference and adds one check through `TechnicianMemory`; "live, Lightning would pick" is withdrawn (catalogue order in both modes); the General-role key wording and the "read-only SSH" status row carry the same qualifications as the body. Open: `test/leak.test.ts` does not scan `docs/` (on the do-not-touch list tonight).
+- 2026-10-24: Two adversarial reviews of the night's work, applied. Major: the exposure bound upgraded `at_least` to `exact` on any earlier audit body, one that never named the field included (a reviewer's probe: one content-only edit on `host-f324df.com` flipped its line to "exact" with the onset still unknown); the earlier-body count is now field-aware (a body must name the field and set another value, or delete the record), an `old_value` already in the state keeps the bound, and the recorded bundle's eight lines are unchanged (the www and `host-18efce.ai` "exact" rest on real `proxied:false` bodies). Custody failed open when the response carried no id: a replayed receipt of ours passed on a preview of the shared system prompt; identity now rests on `request_id` alone, a side with no id fails closed, and the preview is secondary (user message only, through the nonce line; a system-prompt preview is `uninformative`; a prefix of nothing we sent is a `mismatch` that refutes a matching id). Minor: the GO-IF judge targets the finding the last prerequisite cleared (true in the simulation it was bound in), not a removed baseline finding, and the trace names the target; `judge.target` is on the verdict and the four verdict files were regenerated; a tenant id that is not header-safe is `not_judged`, not a throw; `{{t:x}} AS o` renders one alias under an overlay; `npm run site` refuses a stale example by name unless `--allow-stale`; a scope key the redactor would replace is refused; `conformance:hmem` says it exercises the vendored reference and adds one check through `TechnicianMemory`; "live, Lightning would pick" is withdrawn (catalogue order in both modes); the General-role key wording and the "read-only SSH" status row carry the same qualifications as the body. `test/leak.test.ts` scans `docs/`, `eval/` and `policy/` too.

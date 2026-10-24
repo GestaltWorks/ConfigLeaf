@@ -14,13 +14,13 @@
   "bound": {
     "kind": "dns_record",
     "tenant_id": "client-1",
-    "run_id": "run-f9470e2f5f175899",
-    "change": "proxied of dns_record bce1ca2bb7caa2de9b6823d5f6ecd3f2 (host-524b42.quest, CNAME, zone host-4c795e.quest) in run run-f9470e2f5f175899: 1 -> 0"
+    "run_id": "run-de1564466df1d59b",
+    "change": "proxied of dns_record bce1ca2bb7caa2de9b6823d5f6ecd3f2 (host-524b42.quest, CNAME, zone host-4c795e.quest) in run run-de1564466df1d59b: 1 -> 0"
   },
   "baseline": {
-    "runs": 4,
+    "runs": 14,
     "gated_out": [],
-    "observed": 1062,
+    "observed": 3186,
     "findings": 27
   },
   "simulations": [
@@ -33,19 +33,19 @@
         {
           "key": "proxy_split|client-1||bce1ca2bb7caa2de9b6823d5f6ecd3f2|proxied|host-524b42.quest|bce1ca2bb7caa2de9b6823d5f6ecd3f2",
           "class": "proxy_split",
-          "verb": "ESCALATE",
+          "verb": "HOLD",
           "summary": "host-524b42.quest is proxied and aliases host-4c795e.quest, whose A record is direct to ip-6fb86d: the origin the proxy hides is published on the name it points at"
         },
         {
           "key": "proxied_without_real_ip|client-1|host-4b4dc1|/etc/nginx/sites-available/host-4c795e.quest|server[host-4c795e.quest:443].real_ip|host-524b42.quest|bce1ca2bb7caa2de9b6823d5f6ecd3f2",
           "class": "proxied_without_real_ip",
-          "verb": "ADOPT",
+          "verb": "HOLD",
           "summary": "host-524b42.quest is proxied through Cloudflare to ip-6fb86d, and server[host-4c795e.quest:443].real_ip in /etc/nginx/sites-available/host-4c795e.quest on host-4b4dc1 is absent: the block that serves it sees Cloudflare's addresses as its visitors"
         },
         {
           "key": "proxied_without_real_ip|client-1|host-4b4dc1|/etc/nginx/sites-available/host-4c795e.quest|server[host-4c795e.quest:80].real_ip|host-524b42.quest|bce1ca2bb7caa2de9b6823d5f6ecd3f2",
           "class": "proxied_without_real_ip",
-          "verb": "ADOPT",
+          "verb": "HOLD",
           "summary": "host-524b42.quest is proxied through Cloudflare to ip-6fb86d, and server[host-4c795e.quest:80].real_ip in /etc/nginx/sites-available/host-4c795e.quest on host-4b4dc1 is absent: the block that serves it sees Cloudflare's addresses as its visitors"
         }
       ]
@@ -57,25 +57,25 @@
     {
       "key": "proxy_split|client-1||bce1ca2bb7caa2de9b6823d5f6ecd3f2|proxied|host-524b42.quest|bce1ca2bb7caa2de9b6823d5f6ecd3f2",
       "class": "proxy_split",
-      "verb": "ESCALATE",
+      "verb": "HOLD",
       "summary": "host-524b42.quest is proxied and aliases host-4c795e.quest, whose A record is direct to ip-6fb86d: the origin the proxy hides is published on the name it points at"
     },
     {
       "key": "proxied_without_real_ip|client-1|host-4b4dc1|/etc/nginx/sites-available/host-4c795e.quest|server[host-4c795e.quest:443].real_ip|host-524b42.quest|bce1ca2bb7caa2de9b6823d5f6ecd3f2",
       "class": "proxied_without_real_ip",
-      "verb": "ADOPT",
+      "verb": "HOLD",
       "summary": "host-524b42.quest is proxied through Cloudflare to ip-6fb86d, and server[host-4c795e.quest:443].real_ip in /etc/nginx/sites-available/host-4c795e.quest on host-4b4dc1 is absent: the block that serves it sees Cloudflare's addresses as its visitors"
     },
     {
       "key": "proxied_without_real_ip|client-1|host-4b4dc1|/etc/nginx/sites-available/host-4c795e.quest|server[host-4c795e.quest:80].real_ip|host-524b42.quest|bce1ca2bb7caa2de9b6823d5f6ecd3f2",
       "class": "proxied_without_real_ip",
-      "verb": "ADOPT",
+      "verb": "HOLD",
       "summary": "host-524b42.quest is proxied through Cloudflare to ip-6fb86d, and server[host-4c795e.quest:80].real_ip in /etc/nginx/sites-available/host-4c795e.quest on host-4b4dc1 is absent: the block that serves it sees Cloudflare's addresses as its visitors"
     }
   ],
   "added": [],
   "overlays": {
-    "dns_record": "SELECT record_id, run_id, tenant_id, zone, name, type, content, ttl, CASE WHEN record_id IN ('bce1ca2bb7caa2de9b6823d5f6ecd3f2') AND run_id = 'run-f9470e2f5f175899' THEN 0 ELSE proxied END AS proxied, observed_at FROM {{t:dns_record}}"
+    "dns_record": "SELECT record_id, run_id, tenant_id, zone, name, type, content, ttl, CASE WHEN record_id IN ('bce1ca2bb7caa2de9b6823d5f6ecd3f2') AND run_id = 'run-de1564466df1d59b' THEN 0 ELSE proxied END AS proxied, observed_at FROM {{t:dns_record}}"
   },
   "judge": {
     "status": "skipped",
@@ -88,6 +88,6 @@
     "receipt_id": null,
     "served_model": null
   },
-  "trace_id": "preflight_mvmnzfr2",
-  "elapsed_ms": 332
+  "trace_id": "preflight_mvmx0iab",
+  "elapsed_ms": 752
 }
