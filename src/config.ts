@@ -27,6 +27,9 @@ const Schema = z.object({
   ZETARIS_REST_URL: z.string().default("http://localhost:8888/api/v1.0"),
   ZETARIS_ORG_ID: z.string().default("1"),
   ZETARIS_API_KEY: z.string().default(""),
+  ZETARIS_DATASOURCE: z.string().default("DRIFT"),
+  // Salt behind the redactor's pseudonyms. Secret-like: with it a published fixture re-identifies.
+  REDACT_SALT: z.string().default(""),
   LOG_DIR: z.string().default("logs"),
 });
 
@@ -56,7 +59,9 @@ export const config = {
     restUrl: raw.ZETARIS_REST_URL.replace(/\/+$/, ""),
     orgId: raw.ZETARIS_ORG_ID,
     apiKey: raw.ZETARIS_API_KEY,
+    datasource: raw.ZETARIS_DATASOURCE,
   },
+  redactSalt: raw.REDACT_SALT,
   logDir: raw.LOG_DIR,
 } as const;
 

@@ -15,17 +15,20 @@
     "spike:world": "tsx scripts/spike-world.ts",
     "conformance": "tsx scripts/conformance.ts",
     "sample": "tsx scripts/sample.ts",
+    "probe:thinking": "tsx scripts/probe-thinking.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "openai": "^7.43.0",
     "pg": "^8.23.1",
+    "sql.js": "^1.15.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",
     "@types/pg": "^8.23.1",
+    "@types/sql.js": "^1.4.11",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5"
