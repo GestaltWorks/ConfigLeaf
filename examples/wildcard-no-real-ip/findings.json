@@ -1,5 +1,6 @@
 [
   {
+    "id": "fnd-b91b1690878eaf0e",
     "finding": {
       "class": "proxied_without_real_ip",
       "tenant_id": "client-1",
@@ -33,34 +34,21 @@
         "holds": true,
         "rowCount": 1,
         "explanation": "ip-6b6bba is in the inventory (1 asset)."
-      }
-    ],
-    "rejected": [
-      {
-        "check": {
-          "template": "actor_attributed",
-          "params": {
-            "tenant_id": "client-1",
-            "resource_id": "c922e6966d55b15bd96b5e8ea932b715",
-            "since": "2026-10-24T07:58:55.125Z",
-            "until": "2026-10-24T07:59:20.027Z"
-          },
-          "why": "default policy for proxied_without_real_ip"
-        },
-        "reason": "actor_attributed: audit log incomplete (no cloudflare.audit run for this tenant)"
       },
       {
-        "check": {
-          "template": "previous_value_recoverable",
-          "params": {
-            "tenant_id": "client-1",
-            "resource_id": "c922e6966d55b15bd96b5e8ea932b715"
-          },
-          "why": "default policy for proxied_without_real_ip"
-        },
-        "reason": "previous_value_recoverable: audit log incomplete (no cloudflare.audit run for this tenant)"
+        "template": "actor_attributed",
+        "holds": false,
+        "rowCount": 0,
+        "explanation": "No audit event names who changed c922e6966d55b15bd96b5e8ea932b715 between 2026-10-24T07:58:55.125Z and 2026-10-24T07:59:20.027Z."
+      },
+      {
+        "template": "previous_value_recoverable",
+        "holds": false,
+        "rowCount": 0,
+        "explanation": "The audit log does not record what c922e6966d55b15bd96b5e8ea932b715 was before its latest change."
       }
     ],
+    "rejected": [],
     "judge": "skipped"
   }
 ]

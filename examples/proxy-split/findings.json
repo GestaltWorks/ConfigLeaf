@@ -1,5 +1,6 @@
 [
   {
+    "id": "fnd-b4a40091cdb4f906",
     "finding": {
       "class": "proxy_split",
       "tenant_id": "client-1",
@@ -48,6 +49,13 @@
       }
     ],
     "rejected": [],
-    "judge": "skipped"
+    "judge": "skipped",
+    "exposure": {
+      "since": "2026-04-16T21:12:47.270Z",
+      "days": 190,
+      "bound": "exact",
+      "source": "audit:evt-05fa48325110cdcb",
+      "still_open_in": "run-f9470e2f5f175899"
+    }
   }
 ]

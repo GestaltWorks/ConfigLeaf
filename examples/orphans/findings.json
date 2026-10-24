@@ -1,5 +1,6 @@
 [
   {
+    "id": "fnd-b4a40091cdb4f906",
     "finding": {
       "class": "proxy_split",
       "tenant_id": "client-1",
@@ -48,9 +49,17 @@
       }
     ],
     "rejected": [],
-    "judge": "skipped"
+    "judge": "skipped",
+    "exposure": {
+      "since": "2026-04-16T21:12:47.270Z",
+      "days": 190,
+      "bound": "exact",
+      "source": "audit:evt-05fa48325110cdcb",
+      "still_open_in": "run-f9470e2f5f175899"
+    }
   },
   {
+    "id": "fnd-d62857e241af66e2",
     "finding": {
       "class": "orphan_record",
       "tenant_id": "client-1",
@@ -102,6 +111,7 @@
     "judge": "skipped"
   },
   {
+    "id": "fnd-58b251b5fce8fbff",
     "finding": {
       "class": "orphan_record",
       "tenant_id": "client-1",
@@ -153,6 +163,7 @@
     "judge": "skipped"
   },
   {
+    "id": "fnd-8fc67ccb1e4eebfa",
     "finding": {
       "class": "orphan_record",
       "tenant_id": "client-1",
@@ -201,9 +212,17 @@
       }
     ],
     "rejected": [],
-    "judge": "skipped"
+    "judge": "skipped",
+    "exposure": {
+      "since": "2026-07-06T18:46:40.994Z",
+      "days": 109,
+      "bound": "at_least",
+      "source": "audit:evt-48d6696c1de70593",
+      "still_open_in": "run-f9470e2f5f175899"
+    }
   },
   {
+    "id": "fnd-51038b9539a0174a",
     "finding": {
       "class": "orphan_vhost",
       "tenant_id": "client-1",
@@ -249,6 +268,7 @@
     "judge": "skipped"
   },
   {
+    "id": "fnd-3661fcc541693ada",
     "finding": {
       "class": "orphan_vhost",
       "tenant_id": "client-1",
@@ -294,6 +314,7 @@
     "judge": "skipped"
   },
   {
+    "id": "fnd-add52203af12de8a",
     "finding": {
       "class": "orphan_vhost",
       "tenant_id": "client-1",

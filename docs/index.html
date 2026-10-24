@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>drift-agent replay</title>
+<meta name="description" content="Every finding of the drift-agent pass over recorded, redacted real collections, with the SQL that ran, the rows it returned, the hashes and the judge step.">
+<style>
+:root{--bg:#f8f7f4;--fg:#1c1d1f;--muted:#5b5f65;--line:#dcd8cf;--card:#fff;--code:#f1efea;--accent:#1f55c0;--ok:#1b6a39;--ok-bg:#e1f1e6;--bad:#a12a1c;--bad-bg:#f7e2dd;--warn:#7f5300;--warn-bg:#f8ecd2;--chip:#ebe8e1;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
+@media (prefers-color-scheme:dark){:root{--bg:#131416;--fg:#e7e5e0;--muted:#a19f99;--line:#2e3034;--card:#1a1b1e;--code:#212327;--accent:#93b2ff;--ok:#82d49e;--ok-bg:#1b3124;--bad:#ff9d8c;--bad-bg:#3a1f1b;--warn:#f0c46e;--warn-bg:#382c13;--chip:#26282c}}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;overflow-wrap:anywhere}
+pre,table{overflow-wrap:normal}
+.wrap{max-width:1100px;margin:0 auto;padding:0 16px}
+a{color:var(--accent)}
+header{padding:36px 0 12px;border-bottom:1px solid var(--line)}
+h1{font-size:1.7rem;line-height:1.2;margin:0 0 8px;letter-spacing:-.015em}
+h2{font-size:1.25rem;margin:40px 0 6px;letter-spacing:-.01em}
+h3{font-size:1rem;margin:0}
+h4{font-size:.8rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:22px 0 8px}
+p{margin:6px 0 10px;max-width:78ch}
+.lede{color:var(--muted);font-size:1.02rem}
+code,.mono{font-family:var(--mono);font-size:.88em}
+pre{background:var(--code);border-radius:6px;padding:10px 12px;margin:6px 0;overflow:auto;max-height:440px;font:12.5px/1.5 var(--mono);white-space:pre;tab-size:2}
+.stats{display:flex;flex-wrap:wrap;gap:8px 22px;margin:14px 0 4px;padding:0;list-style:none}
+.stats b{font-size:1.25rem;display:block;line-height:1.2}
+.stats li{color:var(--muted);font-size:.85rem}
+.stats li b{color:var(--fg)}
+.controls{position:sticky;top:0;z-index:2;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 0;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
+.controls label{font-size:.85rem;color:var(--muted)}
+select,button{font:inherit;font-size:.85rem;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:6px;padding:5px 9px}
+button{cursor:pointer}
+button:hover,select:hover{border-color:var(--muted)}
+.meta{font-size:.82rem;color:var(--muted);margin:4px 0}
+.meta code{word-break:break-all}
+details.finding{background:var(--card);border:1px solid var(--line);border-radius:8px;margin:10px 0}
+details.finding[open]{box-shadow:0 1px 0 var(--line)}
+details.finding>summary{cursor:pointer;padding:12px 14px;list-style:none;display:flex;gap:10px;align-items:baseline}
+details.finding>summary::-webkit-details-marker{display:none}
+details.finding>summary::before{content:"\25B8";color:var(--muted);flex:none;transition:transform .15s}
+details.finding[open]>summary::before{transform:rotate(90deg)}
+.sumtext{min-width:0;flex:1}
+.claim{display:block;margin-top:3px}
+.where{display:block;font-size:.8rem;color:var(--muted);font-family:var(--mono);word-break:break-all;margin-top:2px}
+.body{padding:0 14px 16px 14px;border-top:1px solid var(--line)}
+.tag{display:inline-block;font:600 11px/1 var(--mono);padding:4px 7px;border-radius:4px;letter-spacing:.03em;vertical-align:1px;margin-right:6px}
+.v-ESCALATE{background:var(--warn-bg);color:var(--warn)}
+.v-ADOPT{background:var(--ok-bg);color:var(--ok)}
+.v-HOLD{background:var(--chip);color:var(--fg)}
+.cls{background:var(--chip);color:var(--fg);font-weight:500}
+.ok{color:var(--ok)}
+.warnc{color:var(--warn)}
+.t-holds{background:var(--ok-bg);color:var(--ok)}
+.t-fails{background:var(--bad-bg);color:var(--bad)}
+.t-other{background:var(--chip);color:var(--muted)}
+dl.fields{display:grid;grid-template-columns:max-content 1fr;gap:3px 14px;margin:8px 0;font-size:.85rem}
+dl.fields dt{color:var(--muted)}
+dl.fields dd{margin:0;font-family:var(--mono);font-size:.82rem;word-break:break-all}
+.check{border-left:3px solid var(--line);padding:2px 0 6px 12px;margin:14px 0}
+.check.c-holds{border-left-color:var(--ok)}
+.check.c-fails{border-left-color:var(--bad)}
+.check h3{font-family:var(--mono);font-size:.92rem;font-weight:600}
+.purpose{color:var(--muted);font-size:.85rem;margin:2px 0 6px}
+.sentence{margin:4px 0 6px}
+.scroll{overflow-x:auto;margin:6px 0;border:1px solid var(--line);border-radius:6px}
+table{border-collapse:collapse;font:12px/1.4 var(--mono);width:max-content;min-width:100%}
+th,td{padding:4px 8px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
+th{background:var(--code);font-weight:600;position:sticky;top:0}
+td{white-space:pre-wrap;word-break:break-word;max-width:46ch}
+tr:last-child td{border-bottom:0}
+.hashes{font:11.5px/1.5 var(--mono);color:var(--muted);word-break:break-all}
+.note{background:var(--code);border-radius:6px;padding:10px 12px;font-size:.88rem}
+.empty{color:var(--muted);font-size:.85rem;font-style:italic}
+.error{background:var(--bad-bg);color:var(--bad);padding:12px 14px;border-radius:6px}
+footer{margin:48px 0 0;padding:22px 0 40px;border-top:1px solid var(--line);color:var(--muted);font-size:.88rem}
+footer p{max-width:86ch}
+[hidden]{display:none!important}
+@media (max-width:640px){body{font-size:14.5px}h1{font-size:1.4rem}.controls{position:static}dl.fields{grid-template-columns:1fr}dl.fields dt{margin-top:6px}details.finding>summary{padding:12px 10px}.body{padding:0 10px 14px}}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+<h1>drift-agent: every finding, with the SQL behind it</h1>
+<p class="lede">A config-drift assurance pass for MSP technicians, replayed from recorded collections. Open a finding to see the detector query that raised it, each precondition check with the SQL that ran, the rows it returned and the hashes, and the judge step.</p>
+<ul class="stats" id="stats"></ul>
+</div></header>
+<div class="controls"><div class="wrap" style="display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;width:100%">
+<label>Class <select id="f-class"><option value="">all</option></select></label>
+<label>Verb <select id="f-verb"><option value="">all</option></select></label>
+<button type="button" id="open-all">Open all</button>
+<button type="button" id="close-all">Close all</button>
+<span class="meta" id="shown"></span>
+</div></div>
+<main class="wrap" id="app"><p class="empty">Loading data/index.json ...</p>
+<noscript><p class="error">This page renders the files in data/ with a short script. Without it, read data/index.json and the per-example files beside it directly.</p></noscript>
+</main>
+<footer><div class="wrap">
+<p><b>What this page is.</b> A replay of recorded, redacted real collections taken on 24 Oct 2026 from two production Linux hosts (nginx, over SSH with a fixed script of reads; the key is the operator's, so the read-only property is the script's) and six Cloudflare DNS zones with their audit log. Every name, address, host and actor is a pseudonym keyed by the tenant's salt, and every value hash an HMAC under it; the salt is withheld, so a guess at a real name cannot be confirmed against this page. Nothing is authored: each example is a slice of <code>sample/bundle.json</code> cut by <code>scripts/examples.ts</code>, and each finding is what the pass (<code>src/pipeline.ts</code>) computed over its slice with no model.</p>
+<p><b>How it was built.</b> <code>npm run site</code> binds every check's parameters from its finding the way the pass does, renders the catalogue template through the data layer on sql.js, runs it again over the slice and refuses to publish unless the row count, the verdict and the sentence equal the record; the detector query must return the finding's own row. It also refuses on any template it cannot render, and on any string that matches the operator's deny-list or that the redactor would still replace. A table shows at most 20 rows and 240 characters per cell; the row count and the row hash cover every row and every character.</p>
+<p><b>Reproduce it.</b> In a clone of the repository, with nothing but Node 22 and <code>npm install</code>: <code>SAMPLE_MODE=true npm run sample</code> reproduces the findings from the repo (the full bundle, no credentials, no model); <code>npm run examples</code> recuts these slices and recomputes their findings; <code>npm run site</code> rebuilds this page.</p>
+<p id="sample-line"></p>
+</div></footer>
+<script>
+(() => {
+  "use strict";
+  const h = (tag, props, ...kids) => {
+    const el = document.createElement(tag);
+    for (const [k, v] of Object.entries(props || {})) {
+      if (v == null || v === false) continue;
+      if (k === "class") el.className = v; else el.setAttribute(k, v === true ? "" : String(v));
+    }
+    for (const kid of kids.flat(Infinity)) if (kid != null && kid !== false) el.append(kid instanceof Node ? kid : String(kid));
+    return el;
+  };
+  const code = (s) => h("code", null, s);
+  const count = (o) => Object.entries(o || {}).map(([k, n]) => n + " " + k).join(", ");
+  const plural = (n, w) => n + " " + w + (n === 1 ? "" : "s");
+
+  function table(rv) {
+    if (!rv || rv.total === 0) return h("p", { class: "empty" }, "no rows");
+    const wrap = h("div", { class: "scroll" }, h("table", null,
+      h("thead", null, h("tr", null, rv.columns.map((c) => h("th", { scope: "col" }, c)))),
+      h("tbody", null, rv.rows.map((r) => h("tr", null, r.map((v) => h("td", null, v === "" ? "\u2205" : v)))))));
+    const notes = [];
+    if (rv.shown < rv.total) notes.push("showing " + rv.shown + " of " + rv.total + " rows");
+    if (rv.cutCells) notes.push(plural(rv.cutCells, "cell") + " cut at " + LIMITS.maxCell + " characters");
+    return [wrap, notes.length ? h("p", { class: "meta" }, notes.join("; ")) : null];
+  }
+  const hashes = (pairs) => h("div", { class: "hashes" }, pairs.filter((p) => p[1]).map(([k, v]) => h("div", null, k + " " + v)));
+  const params = (p) => Object.entries(p).map(([k, v]) => k + " = " + (v === null ? "NULL" : JSON.stringify(v))).join("\n");
+  const extras = (o) => Object.keys(o || {}).length
+    ? h("dl", { class: "fields" }, Object.entries(o).map(([k, v]) => [h("dt", null, k), h("dd", null, typeof v === "string" ? v : JSON.stringify(v))]))
+    : null;
+
+  function check(c) {
+    const verdict = c.status !== "ran" ? "t-other" : c.holds ? "t-holds" : "t-fails";
+    const label = c.status !== "ran" ? "NOT RUN" : c.holds ? "HOLDS" : "FAILS";
+    return h("div", { class: "check " + (c.status === "ran" ? (c.holds ? "c-holds" : "c-fails") : "") },
+      h("h3", null, h("span", { class: "tag " + verdict }, label), c.template),
+      h("p", { class: "purpose" }, c.purpose, " Rows mean the precondition ", h("b", null, c.rowsMean), "."),
+      c.explanation ? h("p", { class: "sentence" }, c.explanation) : null,
+      h("p", { class: "meta" }, c.status === "ran"
+        ? ["rows: ", h("b", null, String(c.rowCount)), " recorded, ", h("b", null, String(c.rerun.rowCount)), " on re-run at build; parameters ", c.bound]
+        : ["not run in the recorded pass; parameters ", c.bound]),
+      extras(c.extra),
+      h("pre", null, c.sql),
+      h("details", null, h("summary", { class: "meta" }, "parameters"), h("pre", null, params(c.params))),
+      c.status === "ran" ? table(c.rows) : null,
+      hashes([["sql", c.sqlSha256], ["rows", c.rows && c.rows.sha256]]));
+  }
+
+  function judge(j) {
+    const kids = [h("p", null, h("span", { class: "tag t-other" }, j.status.toUpperCase()), "model: ", code(j.model))];
+    if (j.detail) kids.push(h("p", { class: "meta" }, j.detail));
+    if (j.receiptId || j.signature) kids.push(h("dl", { class: "fields" },
+      h("dt", null, "receipt"), h("dd", null, j.receiptId || "none"),
+      h("dt", null, "signature"), h("dd", null, j.signature || "n/a"),
+      h("dt", null, "served model"), h("dd", null, j.servedModel || "unknown")));
+    if (j.sql) kids.push(h("p", { class: "meta" }, "falsifier: rows ", String(j.rowCount), " recorded", j.rerunRowCount == null ? "" : ", " + j.rerunRowCount + " on re-run at build"), h("pre", null, j.sql));
+    if (j.rationale) kids.push(h("p", { class: "sentence" }, j.rationale));
+    kids.push(extras(j.extra));
+    if (j.sqlSha256) kids.push(hashes([["sql", j.sqlSha256]]));
+    return kids;
+  }
+
+  function exposure(x) {
+    if (!x) return null;
+    const bits = [];
+    for (const k of ["line", "sentence"]) if (typeof x[k] === "string") bits.push(x[k]);
+    if (x.since) bits.push("since " + x.since);
+    if (x.days != null) bits.push("about " + x.days + " days");
+    if (x.source) bits.push("source " + x.source);
+    if (x.still_open_in) bits.push("still open in " + x.still_open_in);
+    return [h("h4", null, "Exposure"), h("p", { class: "note" }, bits.join("; ") || JSON.stringify(x))];
+  }
+
+  function finding(f) {
+    const host = f.fields.find((p) => p[0] === "host")[1];
+    const obj = f.fields.find((p) => p[0] === "object")[1];
+    const setting = f.fields.find((p) => p[0] === "setting")[1];
+    const d = f.detection;
+    return h("details", { class: "finding", id: f.id, "data-class": f.class, "data-verb": f.verb },
+      h("summary", null, h("span", { class: "sumtext" },
+        h("span", { class: "tag v-" + f.verb }, f.verb), h("span", { class: "tag cls" }, f.class),
+        h("span", { class: "claim" }, f.claim),
+        h("span", { class: "where" }, (host ? host + "  " : "") + obj + "  " + setting))),
+      h("div", { class: "body" },
+        h("h4", null, "Finding"),
+        h("dl", { class: "fields" }, f.fields.filter((p) => p[1] != null && p[1] !== "").map(([k, v]) => [h("dt", null, k), h("dd", null, v)])),
+        f.world ? h("p", { class: "meta" }, "World Model: referent fingerprint " + (f.world.before || "unknown") + " then, " + (f.world.after || "unknown") + " now; bytes " + (f.world.bytes_unchanged ? "unchanged" : "changed or no previous run")) : null,
+        exposure(f.exposure),
+        h("h4", null, "Detected by"),
+        d ? [h("p", null, code(d.query), " ", d.description), h("pre", null, d.sql),
+          h("p", { class: "meta" }, "over this slice it returns " + plural(d.total, "row") + "; the one this finding came from:"),
+          table(d.matched), hashes([["sql", d.sqlSha256], ["row", d.matched.sha256]])]
+          : h("p", { class: "empty" }, "no detector query is mapped for this class"),
+        h("h4", null, "Preconditions"),
+        f.checks.map(check),
+        f.rejected.length ? [h("h4", null, "Rejected checks (not run)"), h("ul", null, f.rejected.map((r) => h("li", null, r.template ? [code(r.template), ": "] : "", r.reason)))] : null,
+        h("h4", null, "Decision"),
+        h("p", null, h("span", { class: "tag v-" + f.verb }, f.verb), f.decision, "."),
+        h("p", { class: "meta" }, RULE),
+        h("h4", null, "Judge"),
+        judge(f.judge),
+        f.sample ? [h("h4", null, "Full sample pass"), h("p", { class: "meta " + (f.sample.match === "same" ? "ok" : "warnc") }, f.sample.detail)] : null,
+        h("p", { class: "meta" }, h("a", { href: "#" + f.id }, "link to this finding"))));
+  }
+
+  function example(e) {
+    return h("section", { id: "ex-" + e.dir },
+      h("h2", null, e.dir),
+      h("p", { class: "note" }, e.note),
+      h("p", { class: "meta" }, "rows in the slice: " + count(e.tables)),
+      h("p", { class: "meta" }, "findings: " + count(e.classes) + "; " + count(e.verbs) + ". Re-running the pass over this slice at build time " + (e.reproduced ? "gives findings.json byte for byte." : "does NOT give findings.json: the committed example is stale.")),
+      hashes(e.files.map((x) => [x.path, x.sha256 + " (" + x.bytes + " bytes, LF)"])),
+      e.findings.map(finding));
+  }
+
+  let LIMITS = { maxCell: 240 }, RULE = "";
+  function filter() {
+    const cls = document.getElementById("f-class").value, verb = document.getElementById("f-verb").value;
+    let n = 0, all = 0;
+    for (const el of document.querySelectorAll("details.finding")) {
+      const show = (!cls || el.dataset.class === cls) && (!verb || el.dataset.verb === verb);
+      el.hidden = !show; all++; if (show) n++;
+    }
+    for (const s of document.querySelectorAll("main section")) s.hidden = !s.querySelector("details.finding:not([hidden])");
+    document.getElementById("shown").textContent = n + " of " + all + " findings shown";
+  }
+  function options(sel, values) { for (const v of values) sel.append(h("option", { value: v }, v)); sel.addEventListener("change", filter); }
+
+  async function main() {
+    const app = document.getElementById("app");
+    let index, examples;
+    try {
+      index = await (await fetch("data/index.json")).json();
+      examples = await Promise.all(index.examples.map((e) => fetch(e.file).then((r) => r.json())));
+    } catch (err) {
+      app.replaceChildren(h("p", { class: "error" }, "This page reads data/index.json and the example files beside it, which a browser will not load from file://. Serve the docs folder over HTTP (for example python -m http.server -d docs, then open http://localhost:8000/), or open the published page."));
+      return;
+    }
+    LIMITS = index.limits;
+    RULE = index.decisionRule;
+    const t = index.totals;
+    document.getElementById("stats").replaceChildren(
+      h("li", null, h("b", null, String(t.findings)), "findings in " + plural(t.examples, "example")),
+      h("li", null, h("b", null, count(t.verbs)), "verbs"),
+      h("li", null, h("b", null, t.checksRerun + " / " + t.checks), "checks re-run at build, counts equal"),
+      h("li", null, h("b", null, Object.keys(t.classes).length), "finding classes"),
+      h("li", null, h("b", null, Object.keys(t.judgeModels).join(", ")), "judge model in these runs"));
+    options(document.getElementById("f-class"), Object.keys(t.classes));
+    options(document.getElementById("f-verb"), Object.keys(t.verbs));
+    app.replaceChildren(...examples.map(example));
+    if (index.sample) {
+      const s = index.sample;
+      document.getElementById("sample-line").textContent = "The full sample pass over " + s.bundle + " (" + s.sha256 + "), run at build time: " + s.runs + " collection runs, " + s.gatedOut + " gated out, " + s.observed + " observations, " + s.findings + " findings (" + count(s.classes) + "; " + count(s.verbs) + "). The examples above are slices of it.";
+    }
+    document.getElementById("open-all").onclick = () => document.querySelectorAll("details.finding:not([hidden])").forEach((d) => (d.open = true));
+    document.getElementById("close-all").onclick = () => document.querySelectorAll("details.finding").forEach((d) => (d.open = false));
+    filter();
+    const target = location.hash && document.getElementById(location.hash.slice(1));
+    if (target && target.tagName === "DETAILS") { target.open = true; target.scrollIntoView(); }
+  }
+  main();
+})();
+</script>
+</body>
+</html>

@@ -8,12 +8,16 @@ when the script ran. Nothing is authored, and re-running the script reproduces b
 `mail-XXXXXX@domain-XXXXXX`, all under the tenant's salt, so a pseudonym here is the same pseudonym in the
 full bundle and in the trace.
 
-Each finding carries the rows it rests on (`finding`), the verb (`ADOPT` as a candidate pending a judge,
-or `ESCALATE`), the default preconditions for its class with their row counts and one-sentence
-explanations (`checks`), and `judge: "skipped"` because no model ran.
+Each finding carries its short stable id (`id`, `fnd-` plus 16 hex, the one `npm run answer` takes), the rows it
+rests on (`finding`), the verb (`ADOPT` as a candidate pending a judge, or `ESCALATE`), the default preconditions
+for its class with their row counts and one-sentence explanations (`checks`), `judge: "skipped"` because no model
+ran, and, when the audit log can date it, the exposure line (`exposure`: since when the record has been in the
+state the finding rests on, how many whole days, whether that is exact or a lower bound, the event and the DNS run
+that still shows it). No lesson from the technician's memory was in force when these were computed.
 
 The directories are named for the case, never for the zone: the bundle pseudonymises the zone, and a folder
-named after it would undo that for every row of the zone and every trace line that names it.
+named after it would undo that for every row of the zone and every trace line that names it. `proposals/` holds
+the four pre-flight proposals and the verdicts the simulator returned for them; its own README explains them.
 
 ## proxy-split
 
@@ -27,7 +31,9 @@ Rows: the DNS and audit runs, the two records, the three audit events. Finding: 
 ESCALATE, 3 of 4 preconditions hold. `run_complete` holds, `actor_attributed` holds (two events with a
 named actor inside the window), `previous_value_recoverable` holds (Cloudflare logs no old values, so the
 state before the latest change is the latest earlier body, the 21:12 one), `referent_unchanged` fails: the
-name changed inside the window, three pieces of evidence.
+name changed inside the window, three pieces of evidence. Exposure: proxied since the 21:12:47 body
+(`evt-05fa48325110cdcb`), 190 whole days to the DNS run of 24 Oct 07:58 UTC, exact, because the 21:11 body
+turned the proxy off before it; the 21:47 re-point kept it on and does not restart the clock.
 
 ## wildcard-no-real-ip
 
@@ -38,11 +44,14 @@ and rate limits. A wildcard is matched by no single `server_name`, and after red
 name says nothing about its zone, so this check is host-wide, against the `http.real_ip` row the collector
 writes for the entry file.
 
-Rows: the DNS run, the wildcard record, the host's inventory addresses, the host run's `http.real_ip` row
-and the `.real_ip` and `.enabled` rows of its 46 server blocks (every `real_ip` absent).
+Rows: the DNS and audit runs, the wildcard record and every audit event on it (none: the record predates
+the account's log, which begins 2026-03-20), the host's inventory addresses, the host run's `http.real_ip`
+row and the `.real_ip` and `.enabled` rows of its 46 server blocks (every `real_ip` absent). The audit run is
+in the slice so that the audit checks run as they do in the full pass; without it they would be withheld as
+"audit log incomplete" instead of failing, which is a different thing to say.
 Finding: `proxied_without_real_ip`, ESCALATE, 2 of 4 hold: `run_complete` and `host_in_inventory` hold,
 `actor_attributed` and `previous_value_recoverable` fail because the audit log holds no event on the
-wildcard record inside its 18-month reach.
+wildcard record inside its 18-month reach. No exposure line, for the same reason: nothing dates the state.
 
 ## orphans
 
@@ -56,8 +65,9 @@ orphan vhost: its names without their own record sit under the proxied wildcard'
 Rows: the DNS and audit runs, every A and CNAME record (a name served through a CNAME alone is not an
 orphan, so the aliases must be in), the audit events on the records the findings name, both host runs'
 `server_name` rows with their `.zone` and `.enabled` siblings, the inventory and the export snapshots.
-Findings: 3 `orphan_record` (ESCALATE; one of them attributed, none with a recoverable previous state),
-3 `orphan_vhost` (the file on disk ADOPT, 3 of 3 hold: nothing else in the run points at the name and a
-backup exists; the enabled vhost's two names ESCALATE because `other_settings_reference` finds the same
-names in the :80 block and the file's `.bak` copy), and the `proxy_split` above, which the CNAMEs bring
-with them.
+Findings: 3 `orphan_record` (ESCALATE; one of them attributed, none with a recoverable previous state; the
+one on `host-c10fff.com` is dated by the exposure line, at least 109 days, because its one audit body sets
+the content the DNS run still shows and nothing earlier is on record), 3 `orphan_vhost` (the file on disk
+ADOPT, 3 of 3 hold: nothing else in the run points at the name and a backup exists; the enabled vhost's two
+names ESCALATE because `other_settings_reference` finds the same names in the :80 block and the file's `.bak`
+copy), and the `proxy_split` above, which the CNAMEs bring with them.

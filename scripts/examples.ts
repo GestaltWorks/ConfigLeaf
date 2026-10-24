@@ -56,7 +56,11 @@ function proxySplitExample(): Example {
   };
 }
 
-/** The proxied wildcard and the host it lands on: that host's http-level real_ip and every block's real_ip and enabled rows. */
+/**
+ * The proxied wildcard and the host it lands on: that host's http-level real_ip and every block's real_ip and
+ * enabled rows. The audit run comes along with every event on the wildcard record (none in the recorded log),
+ * so the audit checks run and fail as they do in the full pass, instead of being withheld for a missing run.
+ */
 function wildcardNoRealIp(): Example {
   const wild = records.filter((d) => d.name.startsWith("*.") && d.proxied === 1 && ["A", "AAAA"].includes(d.type) && inventoryAddresses.has(d.content));
   const origins = new Set(wild.map((d) => d.content));
@@ -64,10 +68,11 @@ function wildcardNoRealIp(): Example {
   const hostSet = new Set(assets.map((a) => a.host));
   const runs = hostRuns.filter((r) => hostSet.has(r.host));
   const obs = runs.flatMap((r) => obsOf(r).filter((o) => o.setting_path === "http.real_ip" || o.setting_path.endsWith(".real_ip") || o.setting_path.endsWith(".enabled")));
+  const ids = new Set(wild.map((d) => d.record_id));
   return {
     dir: "wildcard-no-real-ip",
-    note: "proxied_without_real_ip (wildcard form): a proxied wildcard record lands on a host where no server block and not the http level trusts a Cloudflare range, so every name under the wildcard sees Cloudflare's addresses as its visitors. Rows: the DNS run, the wildcard record, the host's inventory addresses, and the host run's http.real_ip, server[...].real_ip and server[...].enabled rows (every real_ip absent). Cut from sample/bundle.json by scripts/examples.ts.",
-    tables: { collection_run: [dns, ...runs], dns_record: wild, inventory_asset: assets, observation: obs },
+    note: "proxied_without_real_ip (wildcard form): a proxied wildcard record lands on a host where no server block and not the http level trusts a Cloudflare range, so every name under the wildcard sees Cloudflare's addresses as its visitors. Rows: the DNS and audit runs, the wildcard record, every audit event on it (none: the record predates the log), the host's inventory addresses, and the host run's http.real_ip, server[...].real_ip and server[...].enabled rows (every real_ip absent). Cut from sample/bundle.json by scripts/examples.ts.",
+    tables: { collection_run: [dns, audit, ...runs], dns_record: wild, inventory_asset: assets, observation: obs, audit_event: B.audit_event.filter((e) => e.resource_id && ids.has(e.resource_id)) },
     classes: ["proxied_without_real_ip"],
   };
 }

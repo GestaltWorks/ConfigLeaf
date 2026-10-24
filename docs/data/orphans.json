@@ -1,0 +1,2198 @@
+{
+ "dir": "orphans",
+ "note": "orphan_record and orphan_vhost: A records land on a collected host where no enabled server block names them (requests reach the default server), and one host carries a vhost file on disk and one enabled vhost with two names that have no record in any collected zone and no wildcard covering their zone. Rows: the DNS and audit runs, every A and CNAME record (a name served through a CNAME alone is not an orphan, so the aliases are needed), the audit events on the records the findings name, both host runs' server_name rows with their .zone and .enabled siblings, the inventory (each host's global addresses) and the export tarballs backup_recent reads. The CNAMEs bring the one proxied alias of a direct apex with them, so the pass also reports that proxy_split here. Cut from sample/bundle.json by scripts/examples.ts.",
+ "tables": {
+  "collection_run": 4,
+  "observation": 282,
+  "backup_snapshot": 18,
+  "dns_record": 39,
+  "audit_event": 4,
+  "inventory_asset": 10
+ },
+ "files": [
+  {
+   "path": "examples/orphans/bundle.json",
+   "bytes": 173008,
+   "sha256": "sha256:4634b3351754d397d4aa3b0cb3a743351a58e3873068a8f06e8a3cf191f10573"
+  },
+  {
+   "path": "examples/orphans/findings.json",
+   "bytes": 13253,
+   "sha256": "sha256:71836f474a3a1569afc21eaacdbd2c98171a6602d96ce1a83b272d8c71eca524"
+  }
+ ],
+ "reproduced": true,
+ "verbs": {
+  "ESCALATE": 6,
+  "ADOPT": 1
+ },
+ "classes": {
+  "proxy_split": 1,
+  "orphan_record": 3,
+  "orphan_vhost": 3
+ },
+ "findings": [
+  {
+   "id": "orphans-1",
+   "class": "proxy_split",
+   "verb": "ESCALATE",
+   "claim": "host-524b42.quest is proxied and aliases host-4c795e.quest, whose A record is direct to ip-6fb86d: the origin the proxy hides is published on the name it points at",
+   "decision": "1 of 4 preconditions fail: referent_unchanged",
+   "fields": [
+    [
+     "finding id",
+     "fnd-b4a40091cdb4f906"
+    ],
+    [
+     "tenant",
+     "client-1"
+    ],
+    [
+     "surface",
+     "cloudflare.dns"
+    ],
+    [
+     "host",
+     null
+    ],
+    [
+     "object",
+     "bce1ca2bb7caa2de9b6823d5f6ecd3f2"
+    ],
+    [
+     "setting",
+     "proxied"
+    ],
+    [
+     "DNS name",
+     "host-524b42.quest"
+    ],
+    [
+     "refers to",
+     "host-4c795e.quest"
+    ],
+    [
+     "resolves to",
+     "ip-6fb86d"
+    ],
+    [
+     "record (audit resource)",
+     "bce1ca2bb7caa2de9b6823d5f6ecd3f2"
+    ],
+    [
+     "collection run",
+     "run-f9470e2f5f175899"
+    ],
+    [
+     "DNS run",
+     "run-f9470e2f5f175899"
+    ],
+    [
+     "window",
+     "2026-04-16T21:11:15.232Z to 2026-10-24T07:58:55.125Z"
+    ],
+    [
+     "value_hash",
+     "sha256:6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+    ],
+    [
+     "value (redacted)",
+     "1"
+    ]
+   ],
+   "world": null,
+   "exposure": {
+    "since": "2026-04-16T21:12:47.270Z",
+    "days": 190,
+    "bound": "exact",
+    "source": "audit:evt-05fa48325110cdcb",
+    "still_open_in": "run-f9470e2f5f175899"
+   },
+   "detection": {
+    "query": "proxy_split",
+    "description": "A proxied CNAME whose target in the same DNS run is a direct A or AAAA record: the address the proxy hides on one name is published on the other.",
+    "sql": "SELECT c.zone, c.name AS proxied_name, c.record_id AS proxied_record_id, a.name AS target_name, a.type AS target_type,\n       a.content AS target_content, a.record_id AS target_record_id, c.observed_at\nFROM dns_record c\nJOIN dns_record a ON a.tenant_id = c.tenant_id AND a.run_id = c.run_id AND a.name = c.content AND a.type IN ('A', 'AAAA') AND a.proxied = 0\nWHERE c.tenant_id = 'client-1' AND c.run_id = 'run-f9470e2f5f175899' AND c.type = 'CNAME' AND c.proxied = 1\nORDER BY c.zone, c.name, c.record_id, a.record_id",
+    "sqlSha256": "sha256:2f9df0e4806351a4b219134af13627b94d4129e41cea19d3b6e3e35bd2b3368b",
+    "params": {
+     "tenant_id": "client-1",
+     "dns_run_id": "run-f9470e2f5f175899"
+    },
+    "total": 1,
+    "matched": {
+     "columns": [
+      "zone",
+      "proxied_name",
+      "proxied_record_id",
+      "target_name",
+      "target_type",
+      "target_content",
+      "target_record_id",
+      "observed_at"
+     ],
+     "rows": [
+      [
+       "host-4c795e.quest",
+       "host-524b42.quest",
+       "bce1ca2bb7caa2de9b6823d5f6ecd3f2",
+       "host-4c795e.quest",
+       "A",
+       "ip-6fb86d",
+       "f32e72c0d010752462567852ca872d12",
+       "2026-10-24T07:58:55.125Z"
+      ]
+     ],
+     "total": 1,
+     "shown": 1,
+     "cutCells": 0,
+     "sha256": "sha256:55e4e89d74579dcbd95cad74213729e74049febbb9cd1c7db360875bff3f1626"
+    }
+   },
+   "checks": [
+    {
+     "template": "run_complete",
+     "purpose": "The collection run observed the whole population it asserted before collecting and finished complete; rows are the run failing that gate.",
+     "rowsMean": "fails",
+     "status": "ran",
+     "holds": true,
+     "rowCount": 0,
+     "explanation": "Run run-f9470e2f5f175899 collected everything it set out to collect.",
+     "rerun": {
+      "rowCount": 0,
+      "holds": true
+     },
+     "bound": "bound from the finding",
+     "extra": {},
+     "params": {
+      "run_id": "run-f9470e2f5f175899"
+     },
+     "sql": "SELECT c.run_id, c.tenant_id, c.surface, c.host, c.expected_count, c.observed_count, c.status\nFROM collection_run c\nWHERE c.run_id = 'run-f9470e2f5f175899'\n  AND (c.observed_count < c.expected_count OR c.status <> 'complete'\n    OR c.expected_count IS NULL OR c.observed_count IS NULL\n    OR (c.surface LIKE 'linux.%' AND c.expected_count > (SELECT COUNT(*) FROM observation x WHERE x.run_id = c.run_id)))",
+     "sqlSha256": "sha256:03aafecd4c9356621fc178fddf53ed2c2c7c703a06f892b546a2532d136d65e1",
+     "rows": {
+      "columns": [
+       "run_id",
+       "tenant_id",
+       "surface",
+       "host",
+       "expected_count",
+       "observed_count",
+       "status"
+      ],
+      "rows": [],
+      "total": 0,
+      "shown": 0,
+      "cutCells": 0,
+      "sha256": "sha256:d44e594ac3c0101c173ade6cd96141b7e908271e1077abbf099df8cf5dc0e62d"
+     }
+    },
+    {
+     "template": "actor_attributed",
+     "purpose": "An audit event with a named actor touched the resource inside the window.",
+     "rowsMean": "holds",
+     "status": "ran",
+     "holds": true,
+     "rowCount": 2,
+     "explanation": "2 audit events with a named actor touched bce1ca2bb7caa2de9b6823d5f6ecd3f2 between 2026-04-16T21:11:15.232Z and 2026-10-24T07:58:55.125Z.",
+     "rerun": {
+      "rowCount": 2,
+      "holds": true
+     },
+     "bound": "bound from the finding",
+     "extra": {},
+     "params": {
+      "tenant_id": "client-1",
+      "resource_id": "bce1ca2bb7caa2de9b6823d5f6ecd3f2",
+      "since": "2026-04-16T21:11:15.232Z",
+      "until": "2026-10-24T07:58:55.125Z"
+     },
+     "sql": "SELECT event_id, source, actor, action, old_value, new_value, occurred_at\nFROM audit_event\nWHERE tenant_id = 'client-1' AND resource_id = 'bce1ca2bb7caa2de9b6823d5f6ecd3f2'\n  AND occurred_at >= '2026-04-16T21:11:15.232Z' AND occurred_at <= '2026-10-24T07:58:55.125Z'\n  AND actor IS NOT NULL AND actor <> ''\nORDER BY occurred_at, event_id",
+     "sqlSha256": "sha256:e85b91e224f45f236059be3d1ecb3ab65afa1799fb63180f6354dd591372b708",
+     "rows": {
+      "columns": [
+       "event_id",
+       "source",
+       "actor",
+       "action",
+       "old_value",
+       "new_value",
+       "occurred_at"
+      ],
+      "rows": [
+       [
+        "evt-2aa74efde1e1b647",
+        "cloudflare",
+        "mail-97a420@domain-503b27",
+        "update",
+        "",
+        "{\"content\":\"host-fa882b.com\",\"name\":\"host-524b42.quest\",\"proxied\":false,\"settings\":{\"flatten_cname\":false},\"tags\":[],\"type\":\"CNAME\"}",
+        "2026-04-16T21:11:15.232Z"
+       ],
+       [
+        "evt-05fa48325110cdcb",
+        "cloudflare",
+        "mail-97a420@domain-503b27",
+        "update",
+        "",
+        "{\"content\":\"host-fa882b.com\",\"name\":\"host-524b42.quest\",\"proxied\":true,\"settings\":{\"flatten_cname\":false},\"tags\":[],\"type\":\"CNAME\"}",
+        "2026-04-16T21:12:47.270Z"
+       ]
+      ],
+      "total": 2,
+      "shown": 2,
+      "cutCells": 0,
+      "sha256": "sha256:08c2eac6af9af5f6e7b6fe3850dcee24afeb03f967e2e67b7f18ea468913c747"
+     }
+    },
+    {
+     "template": "previous_value_recoverable",
+     "purpose": "The value the resource had before its latest audit event is on record: either that event carries old_value, or an earlier create or update on the same resource carries the body that was in force (Cloudflare logs no old values; the previous state is the latest earlier body).",
+     "rowsMean": "holds",
+     "status": "ran",
+     "holds": true,
+     "rowCount": 1,
+     "explanation": "The audit log records the state bce1ca2bb7caa2de9b6823d5f6ecd3f2 had before its latest change.",
+     "rerun": {
+      "rowCount": 1,
+      "holds": true
+     },
+     "bound": "bound from the finding",
+     "extra": {},
+     "params": {
+      "tenant_id": "client-1",
+      "resource_id": "bce1ca2bb7caa2de9b6823d5f6ecd3f2"
+     },
+     "sql": "SELECT e.event_id, e.source, e.action, e.old_value AS previous_value, e.occurred_at AS recorded_at, 'old_value' AS evidence\nFROM audit_event e\nWHERE e.tenant_id = 'client-1' AND e.resource_id = 'bce1ca2bb7caa2de9b6823d5f6ecd3f2'\n  AND e.old_value IS NOT NULL AND e.old_value <> ''\n  AND NOT EXISTS (SELECT 1 FROM audit_event x WHERE x.tenant_id = e.tenant_id AND x.resource_id = e.resource_id AND x.occurred_at > e.occurred_at)\nUNION ALL\nSELECT p.event_id, p.source, p.action, p.new_value AS previous_value, p.occurred_at AS recorded_at, 'earlier_event' AS evidence\nFROM audit_event e\nJOIN audit_event p ON p.tenant_id = e.tenant_id AND p.resource_id = e.resource_id AND p.occurred_at < e.occurred_at\n  AND p.action IN ('create', 'update') AND p.new_value IS NOT NULL AND p.new_value <> ''\nWHERE e.tenant_id = 'client-1' AND e.resource_id = 'bce1ca2bb7caa2de9b6823d5f6ecd3f2'\n  AND NOT EXISTS (SELECT 1 FROM audit_event x WHERE x.tenant_id = e.tenant_id AND x.resource_id = e.resource_id AND x.occurred_at > e.occurred_at)\n  AND NOT EXISTS (SELECT 1 FROM audit_event y WHERE y.tenant_id = e.tenant_id AND y.resource_id = e.resource_id AND y.action IN ('create', 'update')\n    AND y.new_value IS NOT NULL AND y.new_value <> '' AND y.occurred_at < e.occurred_at AND y.occurred_at > p.occurred_at)\nORDER BY evidence, event_id",
+     "sqlSha256": "sha256:9e4a63c9e3aa1970fc6345b11edb1c0985863fba7bab6561173658870e2dad09",
+     "rows": {
+      "columns": [
+       "event_id",
+       "source",
+       "action",
+       "previous_value",
+       "recorded_at",
+       "evidence"
+      ],
+      "rows": [
+       [
+        "evt-05fa48325110cdcb",
+        "cloudflare",
+        "update",
+        "{\"content\":\"host-fa882b.com\",\"name\":\"host-524b42.quest\",\"proxied\":true,\"settings\":{\"flatten_cname\":false},\"tags\":[],\"type\":\"CNAME\"}",
+        "2026-04-16T21:12:47.270Z",
+        "earlier_event"
+       ]
+      ],
+      "total": 1,
+      "shown": 1,
+      "cutCells": 0,
+      "sha256": "sha256:8cb426b6cd0aed6785aed892466859af1993f778a11037745fc56c51b8792150"
+     }
+    },
+    {
+     "template": "referent_unchanged",
+     "purpose": "Nothing the name resolves to changed inside the window; rows are the evidence of change, from consecutive DNS observations and from audit events on its records.",
+     "rowsMean": "fails",
+     "status": "ran",
+     "holds": false,
+     "rowCount": 3,
+     "explanation": "host-524b42.quest changed between 2026-04-16T21:11:15.232Z and 2026-10-24T07:58:55.125Z (3 pieces of evidence).",
+     "rerun": {
+      "rowCount": 3,
+      "holds": false
+     },
+     "bound": "bound from the finding",
+     "extra": {},
+     "params": {
+      "tenant_id": "client-1",
+      "name": "host-524b42.quest",
+      "since": "2026-04-16T21:11:15.232Z",
+      "until": "2026-10-24T07:58:55.125Z"
+     },
+     "sql": "SELECT 'dns_record' AS evidence, a.record_id AS resource_id, a.content AS old_value, b.content AS new_value, b.observed_at AS seen_at\nFROM dns_record a\nJOIN dns_record b ON b.tenant_id = a.tenant_id AND b.record_id = a.record_id AND b.observed_at > a.observed_at AND b.content <> a.content\nWHERE a.tenant_id = 'client-1' AND a.name = 'host-524b42.quest' AND b.name = 'host-524b42.quest'\n  AND a.observed_at >= '2026-04-16T21:11:15.232Z' AND b.observed_at <= '2026-10-24T07:58:55.125Z'\n  AND NOT EXISTS (SELECT 1 FROM dns_record m WHERE m.tenant_id = a.tenant_id AND m.record_id = a.record_id AND m.observed_at > a.observed_at AND m.observed_at < b.observed_at)\nUNION ALL\nSELECT 'audit_event' AS evidence, e.resource_id, e.old_value, e.new_value, e.occurred_at AS seen_at\nFROM audit_event e\nWHERE e.tenant_id = 'client-1' AND e.occurred_at >= '2026-04-16T21:11:15.232Z' AND e.occurred_at <= '2026-10-24T07:58:55.125Z'\n  AND e.resource_id IN (SELECT d.record_id FROM dns_record d WHERE d.tenant_id = 'client-1' AND d.name = 'host-524b42.quest')\nORDER BY seen_at, evidence, resource_id",
+     "sqlSha256": "sha256:a9a4a16791f0ff45569d67db9086adc39a46bf9c7ca32a0dfb48a4277cb1dbba",
+     "rows": {
+      "columns": [
+       "evidence",
+       "resource_id",
+       "old_value",
+       "new_value",
+       "seen_at"
+      ],
+      "rows": [
+       [
+        "audit_event",
+        "bce1ca2bb7caa2de9b6823d5f6ecd3f2",
+        "",
+        "{\"content\":\"host-fa882b.com\",\"name\":\"host-524b42.quest\",\"proxied\":false,\"settings\":{\"flatten_cname\":false},\"tags\":[],\"type\":\"CNAME\"}",
+        "2026-04-16T21:11:15.232Z"
+       ],
+       [
+        "audit_event",
+        "bce1ca2bb7caa2de9b6823d5f6ecd3f2",
+        "",
+        "{\"content\":\"host-fa882b.com\",\"name\":\"host-524b42.quest\",\"proxied\":true,\"settings\":{\"flatten_cname\":false},\"tags\":[],\"type\":\"CNAME\"}",
+        "2026-04-16T21:12:47.270Z"
+       ],
+       [
+        "audit_event",
+        "bce1ca2bb7caa2de9b6823d5f6ecd3f2",
+        "",
+        "{\"content\":\"host-4c795e.quest\",\"name\":\"host-524b42.quest\",\"proxied\":true,\"type\":\"CNAME\"}",
+        "2026-04-16T21:47:29.277Z"
+       ]
+      ],
+      "total": 3,
+      "shown": 3,
+      "cutCells": 0,
+      "sha256": "sha256:dbb9d550df4c7fa02312fc7e09c5eff52fa287cf65f6e3cdad1f5cfe94c9c3f9"
+     }
+    }
+   ],
+   "rejected": [],
+   "judge": {
+    "sql": null,
+    "sqlSha256": null,
+    "rowCount": null,
+    "rerunRowCount": null,
+    "receiptId": null,
+    "signature": null,
+    "servedModel": null,
+    "rationale": null,
+    "extra": {},
+    "status": "skipped",
+    "model": "none",
+    "detail": "No model ran in this pass, so the judge step is traced as skipped (model: none). A live pass sends the claim and its rows to Nemotron Ultra for one SELECT that returns rows only if the claim is false, runs it through the same guard and data layer, and keeps the verdict only when the signed receipt names an Ultra."
+   },
+   "sample": {
+    "match": "same",
+    "detail": "The full sample pass raises the same finding with the same verb (ESCALATE) and the same check verdicts. Its window opens at 2026-03-20T01:29:03.000Z there and at 2026-04-16T21:11:15.232Z here: a survey finding's window starts where the bundle's audit log begins, or at its DNS run when the bundle holds no audit log."
+   }
+  },
+  {
+   "id": "orphans-2",
+   "class": "orphan_record",
+   "verb": "ESCALATE",
+   "claim": "host-3fef97.club (A, direct) lands on ip-6b6bba, host-aa516a, where no enabled server block names it: requests for it reach the default server",
+   "decision": "2 of 4 preconditions fail: actor_attributed, previous_value_recoverable",
+   "fields": [
+    [
+     "finding id",
+     "fnd-d62857e241af66e2"
+    ],
+    [
+     "tenant",
+     "client-1"
+    ],
+    [
+     "surface",
+     "cloudflare.dns"
+    ],
+    [
+     "host",
+     "host-aa516a"
+    ],
+    [
+     "object",
+     "c8b1963847dafe3548b1a4b93f520c0a"
+    ],
+    [
+     "setting",
+     "name"
+    ],
+    [
+     "DNS name",
+     "host-3fef97.club"
+    ],
+    [
+     "refers to",
+     "host-3fef97.club"
+    ],
+    [
+     "resolves to",
+     "ip-6b6bba"
+    ],
+    [
+     "record (audit resource)",
+     "c8b1963847dafe3548b1a4b93f520c0a"
+    ],
+    [
+     "collection run",
+     "run-f9470e2f5f175899"
+    ],
+    [
+     "DNS run",
+     "run-f9470e2f5f175899"
+    ],
+    [
+     "window",
+     "2026-04-16T21:11:15.232Z to 2026-10-24T07:59:20.027Z"
+    ],
+    [
+     "value_hash",
+     "sha256:f34ba5c5d332de0a2a963916858130dce4663fcdd9ff5a21bd0ad7592af1b56c"
+    ],
+    [
+     "value (redacted)",
+     "host-3fef97.club"
+    ]
+   ],
+   "world": null,
+   "exposure": null,
+   "detection": {
+    "query": "orphan_record",
+    "description": "A record that lands on the host of the nginx run while no enabled server block there names it: requests for it reach the default server.",
+    "sql": "SELECT d.record_id, d.zone, d.name, d.type, d.content, COALESCE(t.content, d.content) AS origin, d.proxied, i.host, d.observed_at\nFROM dns_record d\nLEFT JOIN dns_record t ON t.tenant_id = d.tenant_id AND t.run_id = d.run_id AND d.type = 'CNAME' AND t.name = d.content AND t.type IN ('A', 'AAAA')\nJOIN inventory_asset i ON i.tenant_id = d.tenant_id AND i.address = COALESCE(t.content, d.content)\nJOIN collection_run c ON c.run_id = 'run-67f4d6923cb4838d' AND c.host = i.host\nWHERE d.tenant_id = 'client-1' AND d.run_id = 'run-f9470e2f5f175899' AND d.type IN ('A', 'AAAA', 'CNAME') AND d.name NOT LIKE '*.%'\n  AND NOT EXISTS (SELECT 1 FROM observation n JOIN observation e ON e.run_id = n.run_id AND e.object_id = n.object_id AND e.setting_path LIKE '%.enabled' AND substr(e.setting_path, 1, length(e.setting_path) - 8) = substr(n.setting_path, 1, instr(n.setting_path, '.server_name[') - 1)\n    WHERE n.run_id = c.run_id AND n.refers_to_type = 'dns_name' AND n.refers_to_id = d.name AND n.setting_path LIKE '%.server_name[%' AND e.value_redacted = '1')\nORDER BY d.name, d.record_id",
+    "sqlSha256": "sha256:b624a07d907b35b7f106f25f774b3c1e434094f5ee7d4391638b13f8be8e7507",
+    "params": {
+     "tenant_id": "client-1",
+     "dns_run_id": "run-f9470e2f5f175899",
+     "run_id": "run-67f4d6923cb4838d"
+    },
+    "total": 1,
+    "matched": {
+     "columns": [
+      "record_id",
+      "zone",
+      "name",
+      "type",
+      "content",
+      "origin",
+      "proxied",
+      "host",
+      "observed_at"
+     ],
+     "rows": [
+      [
+       "c8b1963847dafe3548b1a4b93f520c0a",
+       "host-1bf78f.club",
+       "host-3fef97.club",
+       "A",
+       "ip-6b6bba",
+       "ip-6b6bba",
+       "0",
+       "host-aa516a",
+       "2026-10-24T07:58:55.125Z"
+      ]
+     ],
+     "total": 1,
+     "shown": 1,
+     "cutCells": 0,
+     "sha256": "sha256:11e5a3b759856154cd4caf841d81765e240eabb158f9cea055b5c14de816aef6"
+    }
+   },
+   "checks": [
+    {
+     "template": "run_complete",
+     "purpose": "The collection run observed the whole population it asserted before collecting and finished complete; rows are the run failing that gate.",
+     "rowsMean": "fails",
+     "status": "ran",
+     "holds": true,
+     "rowCount": 0,
+     "explanation": "Run run-f9470e2f5f175899 collected everything it set out to collect.",
+     "rerun": {
+      "rowCount": 0,
+      "holds": true
+     },
+     "bound": "bound from the finding",
+     "extra": {},
+     "params": {
+      "run_id": "run-f9470e2f5f175899"
+     },
+     "sql": "SELECT c.run_id, c.tenant_id, c.surface, c.host, c.expected_count, c.observed_count, c.status\nFROM collection_run c\nWHERE c.run_id = 'run-f9470e2f5f175899'\n  AND (c.observed_count < c.expected_count OR c.status <> 'complete'\n    OR c.expected_count IS NULL OR c.observed_count IS NULL\n    OR (c.surface LIKE 'linux.%' AND c.expected_count > (SELECT COUNT(*) FROM observation x WHERE x.run_id = c.run_id)))",
+     "sqlSha256": "sha256:03aafecd4c9356621fc178fddf53ed2c2c7c703a06f892b546a2532d136d65e1",
+     "rows": {
+      "columns": [
+       "run_id",
+       "tenant_id",
+       "surface",
+       "host",
+       "expected_count",
+       "observed_count",
+       "status"
+      ],
+      "rows": [],
+      "total": 0,
+      "shown": 0,
+      "cutCells": 0,
+      "sha256": "sha256:d44e594ac3c0101c173ade6cd96141b7e908271e1077abbf099df8cf5dc0e62d"
+     }
+    },
+    {
+     "template": "host_in_inventory",
+     "purpose": "The address is a known asset in the client's inventory.",
+     "rowsMean": "holds",
+     "status": "ran",
+     "holds": true,
+     "rowCount": 1,
+     "explanation": "ip-6b6bba is in the inventory (1 asset).",
+     "rerun": {
+      "rowCount": 1,
+      "holds": true
+     },
+     "bound": "bound from the finding",
+     "extra": {},
+     "params": {
+      "tenant_id": "client-1",
+      "address": "ip-6b6bba"
+     },
+     "sql": "SELECT asset_id, host, address, kind, source, observed_at\nFROM inventory_asset\nWHERE tenant_id = 'client-1' AND address = 'ip-6b6bba'\nORDER BY asset_id",
+     "sqlSha256": "sha256:3ad4e464b38299bdcad75214309bc7b1d7b14d937f6b735381a1ad16bff4e3d6",
+     "rows": {
+      "columns": [
+       "asset_id",
+       "host",
+       "address",
+       "kind",
+       "source",
+       "observed_at"
+      ],
+      "rows": [
+       [
+        "asset-0820582c0633663b",
+        "host-aa516a",
+        "ip-6b6bba",
+        "vps",
+        "ssh",
+        "2026-10-24T07:59:20.027Z"
+       ]
+      ],
+      "total": 1,
+      "shown": 1,
+      "cutCells": 0,
+      "sha256": "sha256:ecaa120f56ce419f92e90e3f1d8f573c5b0dd8b57be4aa17fa00c843d918aeac"
+     }
+    },
+    {
+     "template": "actor_attributed",
+     "purpose": "An audit event with a named actor touched the resource inside the window.",
+     "rowsMean": "holds",
+     "status": "ran",
+     "holds": false,
+     "rowCount": 0,
+     "explanation": "No audit event names who changed c8b1963847dafe3548b1a4b93f520c0a between 2026-04-16T21:11:15.232Z and 2026-10-24T07:59:20.027Z.",
+     "rerun": {
+      "rowCount": 0,
+      "holds": false
+     },
+     "bound": "bound from the finding",
+     "extra": {},
+     "params": {
+      "tenant_id": "client-1",
+      "resource_id": "c8b1963847dafe3548b1a4b93f520c0a",
+      "since": "2026-04-16T21:11:15.232Z",
+      "until": "2026-10-24T07:59:20.027Z"
+     },
+     "sql": "SELECT event_id, source, actor, action, old_value, new_value, occurred_at\nFROM audit_event\nWHERE tenant_id = 'client-1' AND resource_id = 'c8b1963847dafe3548b1a4b93f520c0a'\n  AND occurred_at >= '2026-04-16T21:11:15.232Z' AND occurred_at <= '2026-10-24T07:59:20.027Z'\n  AND actor IS NOT NULL AND actor <> ''\nORDER BY occurred_at, event_id",
+     "sqlSha256": "sha256:e1694c08622a014290f8eb86bb44937bc69d81247a41bc06a3f8660165b63235",
+     "rows": {
+      "columns": [
+       "event_id",
+       "source",
+       "actor",
+       "action",
+       "old_value",
+       "new_value",
+       "occurred_at"
+      ],
+      "rows": [],
+      "total": 0,
+      "shown": 0,
+      "cutCells": 0,
+      "sha256": "sha256:a659934eac1801fbcb356ef40df843b13e6fc272feecb8cde6743dee70421ad3"
+     }
+    },
+    {
+     "template": "previous_value_recoverable",
+     "purpose": "The value the resource had before its latest audit event is on record: either that event carries old_value, or an earlier create or update on the same resource carries the body that was in force (Cloudflare logs no old values; the previous state is the latest earlier body).",
+     "rowsMean": "holds",
+     "status": "ran",
+     "holds": false,
+     "rowCount": 0,
+     "explanation": "The audit log does not record what c8b1963847dafe3548b1a4b93f520c0a was before its latest change.",
+     "rerun": {
+      "rowCount": 0,
+      "holds": false
+     },
+     "bound": "bound from the finding",
+     "extra": {},
+     "params": {
+      "tenant_id": "client-1",
+      "resource_id": "c8b1963847dafe3548b1a4b93f520c0a"
+     },
+     "sql": "SELECT e.event_id, e.source, e.action, e.old_value AS previous_value, e.occurred_at AS recorded_at, 'old_value' AS evidence\nFROM audit_event e\nWHERE e.tenant_id = 'client-1' AND e.resource_id = 'c8b1963847dafe3548b1a4b93f520c0a'\n  AND e.old_value IS NOT NULL AND e.old_value <> ''\n  AND NOT EXISTS (SELECT 1 FROM audit_event x WHERE x.tenant_id = e.tenant_id AND x.resource_id = e.resource_id AND x.occurred_at > e.occurred_at)\nUNION ALL\nSELECT p.event_id, p.source, p.action, p.new_value AS previous_value, p.occurred_at AS recorded_at, 'earlier_event' AS evidence\nFROM audit_event e\nJOIN audit_event p ON p.tenant_id = e.tenant_id AND p.resource_id = e.resource_id AND p.occurred_at < e.occurred_at\n  AND p.action IN ('create', 'update') AND p.new_value IS NOT NULL AND p.new_value <> ''\nWHERE e.tenant_id = 'client-1' AND e.resource_id = 'c8b1963847dafe3548b1a4b93f520c0a'\n  AND NOT EXISTS (SELECT 1 FROM audit_event x WHERE x.tenant_id = e.tenant_id AND x.resource_id = e.resource_id AND x.occurred_at > e.occurred_at)\n  AND NOT EXISTS (SELECT 1 FROM audit_event y WHERE y.tenant_id = e.tenant_id AND y.resource_id = e.resource_id AND y.action IN ('create', 'update')\n    AND y.new_value IS NOT NULL AND y.new_value <> '' AND y.occurred_at < e.occurred_at AND y.occurred_at > p.occurred_at)\nORDER BY evidence, event_id",
+     "sqlSha256": "sha256:e7498d01a46818d240fb7c0c1f9567df0bf048975041aec44df851b58f0f565f",
+     "rows": {
+      "columns": [
+       "event_id",
+       "source",
+       "action",
+       "previous_value",
+       "recorded_at",
+       "evidence"
+      ],
+      "rows": [],
+      "total": 0,
+      "shown": 0,
+      "cutCells": 0,
+      "sha256": "sha256:9a5d27e11b328e0b2e7abeb6083fe7c830bceec1ca4efa89c66d2b24d272bb8d"
+     }
+    }
+   ],
+   "rejected": [],
+   "judge": {
+    "sql": null,
+    "sqlSha256": null,
+    "rowCount": null,
+    "rerunRowCount": null,
+    "receiptId": null,
+    "signature": null,
+    "servedModel": null,
+    "rationale": null,
+    "extra": {},
+    "status": "skipped",
+    "model": "none",
+    "detail": "No model ran in this pass, so the judge step is traced as skipped (model: none). A live pass sends the claim and its rows to Nemotron Ultra for one SELECT that returns rows only if the claim is false, runs it through the same guard and data layer, and keeps the verdict only when the signed receipt names an Ultra."
+   },
+   "sample": {
+    "match": "same",
+    "detail": "The full sample pass raises the same finding with the same verb (ESCALATE) and the same check verdicts. Its window opens at 2026-03-20T01:29:03.000Z there and at 2026-04-16T21:11:15.232Z here: a survey finding's window starts where the bundle's audit log begins, or at its DNS run when the bundle holds no audit log."
+   }
+  },
+  {
+   "id": "orphans-3",
+   "class": "orphan_record",
+   "verb": "ESCALATE",
+   "claim": "host-50b116.com (A, proxied) lands on ip-6fb86d, host-4b4dc1, where no enabled server block names it: requests for it reach the default server",
+   "decision": "2 of 4 preconditions fail: actor_attributed, previous_value_recoverable",
+   "fields": [
+    [
+     "finding id",
+     "fnd-58b251b5fce8fbff"
+    ],
+    [
+     "tenant",
+     "client-1"
+    ],
+    [
+     "surface",
+     "cloudflare.dns"
+    ],
+    [
+     "host",
+     "host-4b4dc1"
+    ],
+    [
+     "object",
+     "b0a17a719bd2118a535a763379ab7ba9"
+    ],
+    [
+     "setting",
+     "name"
+    ],
+    [
+     "DNS name",
+     "host-50b116.com"
+    ],
+    [
+     "refers to",
+     "host-50b116.com"
+    ],
+    [
+     "resolves to",
+     "ip-6fb86d"
+    ],
+    [
+     "record (audit resource)",
+     "b0a17a719bd2118a535a763379ab7ba9"
+    ],
+    [
+     "collection run",
+     "run-f9470e2f5f175899"
+    ],
+    [
+     "DNS run",
+     "run-f9470e2f5f175899"
+    ],
+    [
+     "window",
+     "2026-04-16T21:11:15.232Z to 2026-10-24T07:59:23.713Z"
+    ],
+    [
+     "value_hash",
+     "sha256:ce0395762d254fc09b38254909f82b7ca959721572c151285660b3ba1b114fff"
+    ],
+    [
+     "value (redacted)",
+     "host-50b116.com"
+    ]
+   ],
+   "world": null,
+   "exposure": null,
+   "detection": {
+    "query": "orphan_record",
+    "description": "A record that lands on the host of the nginx run while no enabled server block there names it: requests for it reach the default server.",
+    "sql": "SELECT d.record_id, d.zone, d.name, d.type, d.content, COALESCE(t.content, d.content) AS origin, d.proxied, i.host, d.observed_at\nFROM dns_record d\nLEFT JOIN dns_record t ON t.tenant_id = d.tenant_id AND t.run_id = d.run_id AND d.type = 'CNAME' AND t.name = d.content AND t.type IN ('A', 'AAAA')\nJOIN inventory_asset i ON i.tenant_id = d.tenant_id AND i.address = COALESCE(t.content, d.content)\nJOIN collection_run c ON c.run_id = 'run-15638d43819ba756' AND c.host = i.host\nWHERE d.tenant_id = 'client-1' AND d.run_id = 'run-f9470e2f5f175899' AND d.type IN ('A', 'AAAA', 'CNAME') AND d.name NOT LIKE '*.%'\n  AND NOT EXISTS (SELECT 1 FROM observation n JOIN observation e ON e.run_id = n.run_id AND e.object_id = n.object_id AND e.setting_path LIKE '%.enabled' AND substr(e.setting_path, 1, length(e.setting_path) - 8) = substr(n.setting_path, 1, instr(n.setting_path, '.server_name[') - 1)\n    WHERE n.run_id = c.run_id AND n.refers_to_type = 'dns_name' AND n.refers_to_id = d.name AND n.setting_path LIKE '%.server_name[%' AND e.value_redacted = '1')\nORDER BY d.name, d.record_id",
+    "sqlSha256": "sha256:d361fb9b163c89938ad1a9b5e3ee1272bb05ebdfbbab475790a2f2905820f7fa",
+    "params": {
+     "tenant_id": "client-1",
+     "dns_run_id": "run-f9470e2f5f175899",
+     "run_id": "run-15638d43819ba756"
+    },
+    "total": 2,
+    "matched": {
+     "columns": [
+      "record_id",
+      "zone",
+      "name",
+      "type",
+      "content",
+      "origin",
+      "proxied",
+      "host",
+      "observed_at"
+     ],
+     "rows": [
+      [
+       "b0a17a719bd2118a535a763379ab7ba9",
+       "host-525a57.com",
+       "host-50b116.com",
+       "A",
+       "ip-6fb86d",
+       "ip-6fb86d",
+       "1",
+       "host-4b4dc1",
+       "2026-10-24T07:58:55.125Z"
+      ]
+     ],
+     "total": 1,
+     "shown": 1,
+     "cutCells": 0,
+     "sha256": "sha256:bf674080f15ba7e786d3c7b8e4b159ab9d40fccd8f0b33b22177a02b5c59898a"
+    }
+   },
+   "checks": [
+    {
+     "template": "run_complete",
+     "purpose": "The collection run observed the whole population it asserted before collecting and finished complete; rows are the run failing that gate.",
+     "rowsMean": "fails",
+     "status": "ran",
+     "holds": true,
+     "rowCount": 0,
+     "explanation": "Run run-f9470e2f5f175899 collected everything it set out to collect.",
+     "rerun": {
+      "rowCount": 0,
+      "holds": true
+     },
+     "bound": "bound from the finding",
+     "extra": {},
+     "params": {
+      "run_id": "run-f9470e2f5f175899"
+     },
+     "sql": "SELECT c.run_id, c.tenant_id, c.surface, c.host, c.expected_count, c.observed_count, c.status\nFROM collection_run c\nWHERE c.run_id = 'run-f9470e2f5f175899'\n  AND (c.observed_count < c.expected_count OR c.status <> 'complete'\n    OR c.expected_count IS NULL OR c.observed_count IS NULL\n    OR (c.surface LIKE 'linux.%' AND c.expected_count > (SELECT COUNT(*) FROM observation x WHERE x.run_id = c.run_id)))",
+     "sqlSha256": "sha256:03aafecd4c9356621fc178fddf53ed2c2c7c703a06f892b546a2532d136d65e1",
+     "rows": {
+      "columns": [
+       "run_id",
+       "tenant_id",
+       "surface",
+       "host",
+       "expected_count",
+       "observed_count",
+       "status"
+      ],
+      "rows": [],
+      "total": 0,
+      "shown": 0,
+      "cutCells": 0,
+      "sha256": "sha256:d44e594ac3c0101c173ade6cd96141b7e908271e1077abbf099df8cf5dc0e62d"
+     }
+    },
+    {
+     "template": "host_in_inventory",
+     "purpose": "The address is a known asset in the client's inventory.",
+     "rowsMean": "holds",
+     "status": "ran",
+     "holds": true,
+     "rowCount": 1,
+     "explanation": "ip-6fb86d is in the inventory (1 asset).",
+     "rerun": {
+      "rowCount": 1,
+      "holds": true
+     },
+     "bound": "bound from the finding",
+     "extra": {},
+     "params": {
+      "tenant_id": "client-1",
+      "address": "ip-6fb86d"
+     },
+     "sql": "SELECT asset_id, host, address, kind, source, observed_at\nFROM inventory_asset\nWHERE tenant_id = 'client-1' AND address = 'ip-6fb86d'\nORDER BY asset_id",
+     "sqlSha256": "sha256:535aa54c0611f5d0e7ec7927cce7cf7f4d34c9889f47bec91926af2fe1fc2ecf",
+     "rows": {
+      "columns": [
+       "asset_id",
+       "host",
+       "address",
+       "kind",
+       "source",
+       "observed_at"
+      ],
+      "rows": [
+       [
+        "asset-3b3868feb54229d6",
+        "host-4b4dc1",
+        "ip-6fb86d",
+        "vps",
+        "ssh",
+        "2026-10-24T07:59:23.713Z"
+       ]
+      ],
+      "total": 1,
+      "shown": 1,
+      "cutCells": 0,
+      "sha256": "sha256:152b18f12e186a0791606f4d8fcee27ba25571c025af4c6baf72157a7e67534b"
+     }
+    },
+    {
+     "template": "actor_attributed",
+     "purpose": "An audit event with a named actor touched the resource inside the window.",
+     "rowsMean": "holds",
+     "status": "ran",
+     "holds": false,
+     "rowCount": 0,
+     "explanation": "No audit event names who changed b0a17a719bd2118a535a763379ab7ba9 between 2026-04-16T21:11:15.232Z and 2026-10-24T07:59:23.713Z.",
+     "rerun": {
+      "rowCount": 0,
+      "holds": false
+     },
+     "bound": "bound from the finding",
+     "extra": {},
+     "params": {
+      "tenant_id": "client-1",
+      "resource_id": "b0a17a719bd2118a535a763379ab7ba9",
+      "since": "2026-04-16T21:11:15.232Z",
+      "until": "2026-10-24T07:59:23.713Z"
+     },
+     "sql": "SELECT event_id, source, actor, action, old_value, new_value, occurred_at\nFROM audit_event\nWHERE tenant_id = 'client-1' AND resource_id = 'b0a17a719bd2118a535a763379ab7ba9'\n  AND occurred_at >= '2026-04-16T21:11:15.232Z' AND occurred_at <= '2026-10-24T07:59:23.713Z'\n  AND actor IS NOT NULL AND actor <> ''\nORDER BY occurred_at, event_id",
+     "sqlSha256": "sha256:909852ac67bf6f98fd723ab3852afedab8afbfb20157ef039f67a196c02d5d44",
+     "rows": {
+      "columns": [
+       "event_id",
+       "source",
+       "actor",
+       "action",
+       "old_value",
+       "new_value",
+       "occurred_at"
+      ],
+      "rows": [],
+      "total": 0,
+      "shown": 0,
+      "cutCells": 0,
+      "sha256": "sha256:a659934eac1801fbcb356ef40df843b13e6fc272feecb8cde6743dee70421ad3"
+     }
+    },
+    {
+     "template": "previous_value_recoverable",
+     "purpose": "The value the resource had before its latest audit event is on record: either that event carries old_value, or an earlier create or update on the same resource carries the body that was in force (Cloudflare logs no old values; the previous state is the latest earlier body).",
+     "rowsMean": "holds",
+     "status": "ran",
+     "holds": false,
+     "rowCount": 0,
+     "explanation": "The audit log does not record what b0a17a719bd2118a535a763379ab7ba9 was before its latest change.",
+     "rerun": {
+      "rowCount": 0,
+      "holds": false
+     },
+     "bound": "bound from the finding",
+     "extra": {},
+     "params": {
+      "tenant_id": "client-1",
+      "resource_id": "b0a17a719bd2118a535a763379ab7ba9"
+     },
+     "sql": "SELECT e.event_id, e.source, e.action, e.old_value AS previous_value, e.occurred_at AS recorded_at, 'old_value' AS evidence\nFROM audit_event e\nWHERE e.tenant_id = 'client-1' AND e.resource_id = 'b0a17a719bd2118a535a763379ab7ba9'\n  AND e.old_value IS NOT NULL AND e.old_value <> ''\n  AND NOT EXISTS (SELECT 1 FROM audit_event x WHERE x.tenant_id = e.tenant_id AND x.resource_id = e.resource_id AND x.occurred_at > e.occurred_at)\nUNION ALL\nSELECT p.event_id, p.source, p.action, p.new_value AS previous_value, p.occurred_at AS recorded_at, 'earlier_event' AS evidence\nFROM audit_event e\nJOIN audit_event p ON p.tenant_id = e.tenant_id AND p.resource_id = e.resource_id AND p.occurred_at < e.occurred_at\n  AND p.action IN ('create', 'update') AND p.new_value IS NOT NULL AND p.new_value <> ''\nWHERE e.tenant_id = 'client-1' AND e.resource_id = 'b0a17a719bd2118a535a763379ab7ba9'\n  AND NOT EXISTS (SELECT 1 FROM audit_event x WHERE x.tenant_id = e.tenant_id AND x.resource_id = e.resource_id AND x.occurred_at > e.occurred_at)\n  AND NOT EXISTS (SELECT 1 FROM audit_event y WHERE y.tenant_id = e.tenant_id AND y.resource_id = e.resource_id AND y.action IN ('create', 'update')\n    AND y.new_value IS NOT NULL AND y.new_value <> '' AND y.occurred_at < e.occurred_at AND y.occurred_at > p.occurred_at)\nORDER BY evidence, event_id",
+     "sqlSha256": "sha256:e1b7231724aef5524a54847b0678bb392de0a9aea5d6d376d19969e0cfaf5afa",
+     "rows": {
+      "columns": [
+       "event_id",
+       "source",
+       "action",
+       "previous_value",
+       "recorded_at",
+       "evidence"
+      ],
+      "rows": [],
+      "total": 0,
+      "shown": 0,
+      "cutCells": 0,
+      "sha256": "sha256:9a5d27e11b328e0b2e7abeb6083fe7c830bceec1ca4efa89c66d2b24d272bb8d"
+     }
+    }
+   ],
+   "rejected": [],
+   "judge": {
+    "sql": null,
+    "sqlSha256": null,
+    "rowCount": null,
+    "rerunRowCount": null,
+    "receiptId": null,
+    "signature": null,
+    "servedModel": null,
+    "rationale": null,
+    "extra": {},
+    "status": "skipped",
+    "model": "none",
+    "detail": "No model ran in this pass, so the judge step is traced as skipped (model: none). A live pass sends the claim and its rows to Nemotron Ultra for one SELECT that returns rows only if the claim is false, runs it through the same guard and data layer, and keeps the verdict only when the signed receipt names an Ultra."
+   },
+   "sample": {
+    "match": "same",
+    "detail": "The full sample pass raises the same finding with the same verb (ESCALATE) and the same check verdicts. Its window opens at 2026-03-20T01:29:03.000Z there and at 2026-04-16T21:11:15.232Z here: a survey finding's window starts where the bundle's audit log begins, or at its DNS run when the bundle holds no audit log."
+   }
+  },
+  {
+   "id": "orphans-4",
+   "class": "orphan_record",
+   "verb": "ESCALATE",
+   "claim": "host-c10fff.com (A, proxied) lands on ip-6fb86d, host-4b4dc1, where no enabled server block names it: requests for it reach the default server",
+   "decision": "1 of 4 preconditions fail: previous_value_recoverable",
+   "fields": [
+    [
+     "finding id",
+     "fnd-8fc67ccb1e4eebfa"
+    ],
+    [
+     "tenant",
+     "client-1"
+    ],
+    [
+     "surface",
+     "cloudflare.dns"
+    ],
+    [
+     "host",
+     "host-4b4dc1"
+    ],
+    [
+     "object",
+     "25a23b5c40a3de0ea11b6054a7b54d07"
+    ],
+    [
+     "setting",
+     "name"
+    ],
+    [
+     "DNS name",
+     "host-c10fff.com"
+    ],
+    [
+     "refers to",
+     "host-c10fff.com"
+    ],
+    [
+     "resolves to",
+     "ip-6fb86d"
+    ],
+    [
+     "record (audit resource)",
+     "25a23b5c40a3de0ea11b6054a7b54d07"
+    ],
+    [
+     "collection run",
+     "run-f9470e2f5f175899"
+    ],
+    [
+     "DNS run",
+     "run-f9470e2f5f175899"
+    ],
+    [
+     "window",
+     "2026-04-16T21:11:15.232Z to 2026-10-24T07:59:23.713Z"
+    ],
+    [
+     "value_hash",
+     "sha256:0d6d5e49ac25f30c9a93c47a8e38776ce0acbc7d2dc19001df6e1cf9050ca4c3"
+    ],
+    [
+     "value (redacted)",
+     "host-c10fff.com"
+    ]
+   ],
+   "world": null,
+   "exposure": {
+    "since": "2026-07-06T18:46:40.994Z",
+    "days": 109,
+    "bound": "at_least",
+    "source": "audit:evt-48d6696c1de70593",
+    "still_open_in": "run-f9470e2f5f175899"
+   },
+   "detection": {
+    "query": "orphan_record",
+    "description": "A record that lands on the host of the nginx run while no enabled server block there names it: requests for it reach the default server.",
+    "sql": "SELECT d.record_id, d.zone, d.name, d.type, d.content, COALESCE(t.content, d.content) AS origin, d.proxied, i.host, d.observed_at\nFROM dns_record d\nLEFT JOIN dns_record t ON t.tenant_id = d.tenant_id AND t.run_id = d.run_id AND d.type = 'CNAME' AND t.name = d.content AND t.type IN ('A', 'AAAA')\nJOIN inventory_asset i ON i.tenant_id = d.tenant_id AND i.address = COALESCE(t.content, d.content)\nJOIN collection_run c ON c.run_id = 'run-15638d43819ba756' AND c.host = i.host\nWHERE d.tenant_id = 'client-1' AND d.run_id = 'run-f9470e2f5f175899' AND d.type IN ('A', 'AAAA', 'CNAME') AND d.name NOT LIKE '*.%'\n  AND NOT EXISTS (SELECT 1 FROM observation n JOIN observation e ON e.run_id = n.run_id AND e.object_id = n.object_id AND e.setting_path LIKE '%.enabled' AND substr(e.setting_path, 1, length(e.setting_path) - 8) = substr(n.setting_path, 1, instr(n.setting_path, '.server_name[') - 1)\n    WHERE n.run_id = c.run_id AND n.refers_to_type = 'dns_name' AND n.refers_to_id = d.name AND n.setting_path LIKE '%.server_name[%' AND e.value_redacted = '1')\nORDER BY d.name, d.record_id",
+    "sqlSha256": "sha256:d361fb9b163c89938ad1a9b5e3ee1272bb05ebdfbbab475790a2f2905820f7fa",
+    "params": {
+     "tenant_id": "client-1",
+     "dns_run_id": "run-f9470e2f5f175899",
+     "run_id": "run-15638d43819ba756"
+    },
+    "total": 2,
+    "matched": {
+     "columns": [
+      "record_id",
+      "zone",
+      "name",
+      "type",
+      "content",
+      "origin",
+      "proxied",
+      "host",
+      "observed_at"
+     ],
+     "rows": [
+      [
+       "25a23b5c40a3de0ea11b6054a7b54d07",
+       "host-525a57.com",
+       "host-c10fff.com",
+       "A",
+       "ip-6fb86d",
+       "ip-6fb86d",
+       "1",
+       "host-4b4dc1",
+       "2026-10-24T07:58:55.125Z"
+      ]
+     ],
+     "total": 1,
+     "shown": 1,
+     "cutCells": 0,
+     "sha256": "sha256:7079b93baeae1c68749c9d1ca3c6ff7effba22023a343ac84eeb9f7ed4724e89"
+    }
+   },
+   "checks": [
+    {
+     "template": "run_complete",
+     "purpose": "The collection run observed the whole population it asserted before collecting and finished complete; rows are the run failing that gate.",
+     "rowsMean": "fails",
+     "status": "ran",
+     "holds": true,
+     "rowCount": 0,
+     "explanation": "Run run-f9470e2f5f175899 collected everything it set out to collect.",
+     "rerun": {
+      "rowCount": 0,
+      "holds": true
+     },
+     "bound": "bound from the finding",
+     "extra": {},
+     "params": {
+      "run_id": "run-f9470e2f5f175899"
+     },
+     "sql": "SELECT c.run_id, c.tenant_id, c.surface, c.host, c.expected_count, c.observed_count, c.status\nFROM collection_run c\nWHERE c.run_id = 'run-f9470e2f5f175899'\n  AND (c.observed_count < c.expected_count OR c.status <> 'complete'\n    OR c.expected_count IS NULL OR c.observed_count IS NULL\n    OR (c.surface LIKE 'linux.%' AND c.expected_count > (SELECT COUNT(*) FROM observation x WHERE x.run_id = c.run_id)))",
+     "sqlSha256": "sha256:03aafecd4c9356621fc178fddf53ed2c2c7c703a06f892b546a2532d136d65e1",
+     "rows": {
+      "columns": [
+       "run_id",
+       "tenant_id",
+       "surface",
+       "host",
+       "expected_count",
+       "observed_count",
+       "status"
+      ],
+      "rows": [],
+      "total": 0,
+      "shown": 0,
+      "cutCells": 0,
+      "sha256": "sha256:d44e594ac3c0101c173ade6cd96141b7e908271e1077abbf099df8cf5dc0e62d"
+     }
+    },
+    {
+     "template": "host_in_inventory",
+     "purpose": "The address is a known asset in the client's inventory.",
+     "rowsMean": "holds",
+     "status": "ran",
+     "holds": true,
+     "rowCount": 1,
+     "explanation": "ip-6fb86d is in the inventory (1 asset).",
+     "rerun": {
+      "rowCount": 1,
+      "holds": true
+     },
+     "bound": "bound from the finding",
+     "extra": {},
+     "params": {
+      "tenant_id": "client-1",
+      "address": "ip-6fb86d"
+     },
+     "sql": "SELECT asset_id, host, address, kind, source, observed_at\nFROM inventory_asset\nWHERE tenant_id = 'client-1' AND address = 'ip-6fb86d'\nORDER BY asset_id",
+     "sqlSha256": "sha256:535aa54c0611f5d0e7ec7927cce7cf7f4d34c9889f47bec91926af2fe1fc2ecf",
+     "rows": {
+      "columns": [
+       "asset_id",
+       "host",
+       "address",
+       "kind",
+       "source",
+       "observed_at"
+      ],
+      "rows": [
+       [
+        "asset-3b3868feb54229d6",
+        "host-4b4dc1",
+        "ip-6fb86d",
+        "vps",
+        "ssh",
+        "2026-10-24T07:59:23.713Z"
+       ]
+      ],
+      "total": 1,
+      "shown": 1,
+      "cutCells": 0,
+      "sha256": "sha256:152b18f12e186a0791606f4d8fcee27ba25571c025af4c6baf72157a7e67534b"
+     }
+    },
+    {
+     "template": "actor_attributed",
+     "purpose": "An audit event with a named actor touched the resource inside the window.",
+     "rowsMean": "holds",
+     "status": "ran",
+     "holds": true,
+     "rowCount": 1,
+     "explanation": "1 audit event with a named actor touched 25a23b5c40a3de0ea11b6054a7b54d07 between 2026-04-16T21:11:15.232Z and 2026-10-24T07:59:23.713Z.",
+     "rerun": {
+      "rowCount": 1,
+      "holds": true
+     },
+     "bound": "bound from the finding",
+     "extra": {},
+     "params": {
+      "tenant_id": "client-1",
+      "resource_id": "25a23b5c40a3de0ea11b6054a7b54d07",
+      "since": "2026-04-16T21:11:15.232Z",
+      "until": "2026-10-24T07:59:23.713Z"
+     },
+     "sql": "SELECT event_id, source, actor, action, old_value, new_value, occurred_at\nFROM audit_event\nWHERE tenant_id = 'client-1' AND resource_id = '25a23b5c40a3de0ea11b6054a7b54d07'\n  AND occurred_at >= '2026-04-16T21:11:15.232Z' AND occurred_at <= '2026-10-24T07:59:23.713Z'\n  AND actor IS NOT NULL AND actor <> ''\nORDER BY occurred_at, event_id",
+     "sqlSha256": "sha256:371a6d3634a37f270647ed2f4ba33673816f00c507b5ff8af9f194ca08fd090e",
+     "rows": {
+      "columns": [
+       "event_id",
+       "source",
+       "actor",
+       "action",
+       "old_value",
+       "new_value",
+       "occurred_at"
+      ],
+      "rows": [
+       [
+        "evt-48d6696c1de70593",
+        "cloudflare",
+        "mail-97a420@domain-503b27",
+        "update",
+        "",
+        "{\"content\":\"ip-6fb86d\",\"name\":\"host-c10fff.com\",\"proxied\":true,\"tags\":[],\"type\":\"A\"}",
+        "2026-07-06T18:46:40.994Z"
+       ]
+      ],
+      "total": 1,
+      "shown": 1,
+      "cutCells": 0,
+      "sha256": "sha256:69fc9c19db968eb7e2ce504f5ba55899f94f76afaf3811926891e8c9f2784116"
+     }
+    },
+    {
+     "template": "previous_value_recoverable",
+     "purpose": "The value the resource had before its latest audit event is on record: either that event carries old_value, or an earlier create or update on the same resource carries the body that was in force (Cloudflare logs no old values; the previous state is the latest earlier body).",
+     "rowsMean": "holds",
+     "status": "ran",
+     "holds": false,
+     "rowCount": 0,
+     "explanation": "The audit log does not record what 25a23b5c40a3de0ea11b6054a7b54d07 was before its latest change.",
+     "rerun": {
+      "rowCount": 0,
+      "holds": false
+     },
+     "bound": "bound from the finding",
+     "extra": {},
+     "params": {
+      "tenant_id": "client-1",
+      "resource_id": "25a23b5c40a3de0ea11b6054a7b54d07"
+     },
+     "sql": "SELECT e.event_id, e.source, e.action, e.old_value AS previous_value, e.occurred_at AS recorded_at, 'old_value' AS evidence\nFROM audit_event e\nWHERE e.tenant_id = 'client-1' AND e.resource_id = '25a23b5c40a3de0ea11b6054a7b54d07'\n  AND e.old_value IS NOT NULL AND e.old_value <> ''\n  AND NOT EXISTS (SELECT 1 FROM audit_event x WHERE x.tenant_id = e.tenant_id AND x.resource_id = e.resource_id AND x.occurred_at > e.occurred_at)\nUNION ALL\nSELECT p.event_id, p.source, p.action, p.new_value AS previous_value, p.occurred_at AS recorded_at, 'earlier_event' AS evidence\nFROM audit_event e\nJOIN audit_event p ON p.tenant_id = e.tenant_id AND p.resource_id = e.resource_id AND p.occurred_at < e.occurred_at\n  AND p.action IN ('create', 'update') AND p.new_value IS NOT NULL AND p.new_value <> ''\nWHERE e.tenant_id = 'client-1' AND e.resource_id = '25a23b5c40a3de0ea11b6054a7b54d07'\n  AND NOT EXISTS (SELECT 1 FROM audit_event x WHERE x.tenant_id = e.tenant_id AND x.resource_id = e.resource_id AND x.occurred_at > e.occurred_at)\n  AND NOT EXISTS (SELECT 1 FROM audit_event y WHERE y.tenant_id = e.tenant_id AND y.resource_id = e.resource_id AND y.action IN ('create', 'update')\n    AND y.new_value IS NOT NULL AND y.new_value <> '' AND y.occurred_at < e.occurred_at AND y.occurred_at > p.occurred_at)\nORDER BY evidence, event_id",
+     "sqlSha256": "sha256:c3dfe71e6f7cc7fb50353c3d0b2d9e20d34b5c18ebbd89af7af069fb602b8bd3",
+     "rows": {
+      "columns": [
+       "event_id",
+       "source",
+       "action",
+       "previous_value",
+       "recorded_at",
+       "evidence"
+      ],
+      "rows": [],
+      "total": 0,
+      "shown": 0,
+      "cutCells": 0,
+      "sha256": "sha256:9a5d27e11b328e0b2e7abeb6083fe7c830bceec1ca4efa89c66d2b24d272bb8d"
+     }
+    }
+   ],
+   "rejected": [],
+   "judge": {
+    "sql": null,
+    "sqlSha256": null,
+    "rowCount": null,
+    "rerunRowCount": null,
+    "receiptId": null,
+    "signature": null,
+    "servedModel": null,
+    "rationale": null,
+    "extra": {},
+    "status": "skipped",
+    "model": "none",
+    "detail": "No model ran in this pass, so the judge step is traced as skipped (model: none). A live pass sends the claim and its rows to Nemotron Ultra for one SELECT that returns rows only if the claim is false, runs it through the same guard and data layer, and keeps the verdict only when the signed receipt names an Ultra."
+   },
+   "sample": {
+    "match": "same",
+    "detail": "The full sample pass raises the same finding with the same verb (ESCALATE) and the same check verdicts. Its window opens at 2026-03-20T01:29:03.000Z there and at 2026-04-16T21:11:15.232Z here: a survey finding's window starts where the bundle's audit log begins, or at its DNS run when the bundle holds no audit log."
+   }
+  },
+  {
+   "id": "orphans-5",
+   "class": "orphan_vhost",
+   "verb": "ADOPT",
+   "claim": "host-085e02.com is a server_name in /etc/nginx/sites-available/host-085e02.com on host-4b4dc1 (on disk, not enabled) with no record of that name in the collected zones and no wildcard covering its zone",
+   "decision": "3 of 3 preconditions hold",
+   "fields": [
+    [
+     "finding id",
+     "fnd-51038b9539a0174a"
+    ],
+    [
+     "tenant",
+     "client-1"
+    ],
+    [
+     "surface",
+     "linux.nginx"
+    ],
+    [
+     "host",
+     "host-4b4dc1"
+    ],
+    [
+     "object",
+     "/etc/nginx/sites-available/host-085e02.com"
+    ],
+    [
+     "setting",
+     "server[host-085e02.com:443].server_name[host-085e02.com]"
+    ],
+    [
+     "DNS name",
+     "host-085e02.com"
+    ],
+    [
+     "refers to",
+     "host-085e02.com"
+    ],
+    [
+     "resolves to",
+     null
+    ],
+    [
+     "record (audit resource)",
+     null
+    ],
+    [
+     "collection run",
+     "run-15638d43819ba756"
+    ],
+    [
+     "DNS run",
+     "run-f9470e2f5f175899"
+    ],
+    [
+     "window",
+     "2026-04-16T21:11:15.232Z to 2026-10-24T07:59:23.713Z"
+    ],
+    [
+     "value_hash",
+     "sha256:194ea5d80cf6fef9f4fba29cfb86fc587c80f06943593be4ccf8a919fb773acb"
+    ],
+    [
+     "value (redacted)",
+     "host-085e02.com"
+    ]
+   ],
+   "world": null,
+   "exposure": null,
+   "detection": {
+    "query": "orphan_vhost",
+    "description": "A server_name with no record of that name in the DNS run and no wildcard record covering its zone.",
+    "sql": "SELECT n.obs_id, n.host, n.object_id, n.setting_path, n.refers_to_id AS server_name, e.value_redacted AS enabled, n.value_hash, n.observed_at\nFROM observation n\nJOIN observation e ON e.run_id = n.run_id AND e.object_id = n.object_id AND e.setting_path LIKE '%.enabled' AND substr(e.setting_path, 1, length(e.setting_path) - 8) = substr(n.setting_path, 1, instr(n.setting_path, '.server_name[') - 1)\nWHERE n.tenant_id = 'client-1' AND n.run_id = 'run-15638d43819ba756' AND n.refers_to_type = 'dns_name' AND n.setting_path LIKE '%.server_name[%'\n  AND NOT EXISTS (SELECT 1 FROM dns_record d WHERE d.tenant_id = n.tenant_id AND d.run_id = 'run-f9470e2f5f175899' AND d.name = n.refers_to_id)\n  AND (e.value_redacted = '1' OR NOT EXISTS (SELECT 1 FROM observation n2 JOIN observation e2 ON e2.run_id = n2.run_id AND e2.object_id = n2.object_id AND e2.setting_path LIKE '%.enabled' AND substr(e2.setting_path, 1, length(e2.setting_path) - 8) = substr(n2.setting_path, 1, instr(n2.setting_path, '.server_name[') - 1)\n    WHERE n2.run_id = n.run_id AND n2.refers_to_type = 'dns_name' AND n2.refers_to_id = n.refers_to_id AND n2.setting_path LIKE '%.server_name[%' AND e2.value_redacted = '1'))\n  AND NOT EXISTS (SELECT 1 FROM dns_record w JOIN observation z ON z.setting_path LIKE '%.zone' AND substr(w.name, 3) = z.value_redacted\n    WHERE w.tenant_id = n.tenant_id AND w.run_id = 'run-f9470e2f5f175899' AND w.name LIKE '*.%'\n    AND z.run_id = n.run_id AND z.object_id = n.object_id AND substr(z.setting_path, 1, length(z.setting_path) - 5) = n.setting_path)\n  AND NOT EXISTS (SELECT 1 FROM observation m WHERE m.run_id = n.run_id AND m.object_id = n.object_id AND m.refers_to_type = 'dns_name' AND m.refers_to_id = n.refers_to_id AND m.setting_path < n.setting_path)\nORDER BY n.host, n.object_id, n.refers_to_id, n.setting_path",
+    "sqlSha256": "sha256:65640b15de6e390aef581ebfc352725c6db49088875cf76fe41ea9968d7a9017",
+    "params": {
+     "tenant_id": "client-1",
+     "dns_run_id": "run-f9470e2f5f175899",
+     "run_id": "run-15638d43819ba756"
+    },
+    "total": 3,
+    "matched": {
+     "columns": [
+      "obs_id",
+      "host",
+      "object_id",
+      "setting_path",
+      "server_name",
+      "enabled",
+      "value_hash",
+      "observed_at"
+     ],
+     "rows": [
+      [
+       "obs-83621a2f2415b505",
+       "host-4b4dc1",
+       "/etc/nginx/sites-available/host-085e02.com",
+       "server[host-085e02.com:443].server_name[host-085e02.com]",
+       "host-085e02.com",
+       "0",
+       "sha256:194ea5d80cf6fef9f4fba29cfb86fc587c80f06943593be4ccf8a919fb773acb",
+       "2026-10-24T07:59:23.713Z"
+      ]
+     ],
+     "total": 1,
+     "shown": 1,
+     "cutCells": 0,
+     "sha256": "sha256:96325c2cb5496704dd8c692c42e22bf6277b503ec8e4827858052b9bb73efb54"
+    }
+   },
+   "checks": [
+    {
+     "template": "run_complete",
+     "purpose": "The collection run observed the whole population it asserted before collecting and finished complete; rows are the run failing that gate.",
+     "rowsMean": "fails",
+     "status": "ran",
+     "holds": true,
+     "rowCount": 0,
+     "explanation": "Run run-15638d43819ba756 collected everything it set out to collect.",
+     "rerun": {
+      "rowCount": 0,
+      "holds": true
+     },
+     "bound": "bound from the finding",
+     "extra": {},
+     "params": {
+      "run_id": "run-15638d43819ba756"
+     },
+     "sql": "SELECT c.run_id, c.tenant_id, c.surface, c.host, c.expected_count, c.observed_count, c.status\nFROM collection_run c\nWHERE c.run_id = 'run-15638d43819ba756'\n  AND (c.observed_count < c.expected_count OR c.status <> 'complete'\n    OR c.expected_count IS NULL OR c.observed_count IS NULL\n    OR (c.surface LIKE 'linux.%' AND c.expected_count > (SELECT COUNT(*) FROM observation x WHERE x.run_id = c.run_id)))",
+     "sqlSha256": "sha256:5528dac727297984718614b65832c475eeac1b5833d020752cd60cbe4e498484",
+     "rows": {
+      "columns": [
+       "run_id",
+       "tenant_id",
+       "surface",
+       "host",
+       "expected_count",
+       "observed_count",
+       "status"
+      ],
+      "rows": [],
+      "total": 0,
+      "shown": 0,
+      "cutCells": 0,
+      "sha256": "sha256:d44e594ac3c0101c173ade6cd96141b7e908271e1077abbf099df8cf5dc0e62d"
+     }
+    },
+    {
+     "template": "other_settings_reference",
+     "purpose": "Blast radius: no other setting in the same collection run points at the same target; rows are the other settings that do.",
+     "rowsMean": "fails",
+     "status": "ran",
+     "holds": true,
+     "rowCount": 0,
+     "explanation": "No other setting in run run-15638d43819ba756 points at host-085e02.com.",
+     "rerun": {
+      "rowCount": 0,
+      "holds": true
+     },
+     "bound": "bound from the finding",
+     "extra": {},
+     "params": {
+      "tenant_id": "client-1",
+      "refers_to_id": "host-085e02.com",
+      "run_id": "run-15638d43819ba756",
+      "object_id": "/etc/nginx/sites-available/host-085e02.com",
+      "setting_path": "server[host-085e02.com:443].server_name[host-085e02.com]"
+     },
+     "sql": "SELECT o.host, o.surface, o.object_id, o.setting_path, o.refers_to_type, o.observed_at\nFROM observation o\nWHERE o.tenant_id = 'client-1' AND o.run_id = 'run-15638d43819ba756' AND o.refers_to_id = 'host-085e02.com'\n  AND NOT (o.object_id = '/etc/nginx/sites-available/host-085e02.com' AND o.setting_path = 'server[host-085e02.com:443].server_name[host-085e02.com]')\nORDER BY o.object_id, o.setting_path",
+     "sqlSha256": "sha256:cb34c8db3c7c69b8bd76ac6cd13be5e0e628d283424c9e08f3b88eac28d44a31",
+     "rows": {
+      "columns": [
+       "host",
+       "surface",
+       "object_id",
+       "setting_path",
+       "refers_to_type",
+       "observed_at"
+      ],
+      "rows": [],
+      "total": 0,
+      "shown": 0,
+      "cutCells": 0,
+      "sha256": "sha256:50890dab0a625bfde218cd46ecbf72b3837ab647cf8701662a1d4726276ddaf2"
+     }
+    },
+    {
+     "template": "backup_recent",
+     "purpose": "A backup snapshot of the host exists taken at or after the given time; without one, changed-since-backup has no baseline.",
+     "rowsMean": "holds",
+     "status": "ran",
+     "holds": true,
+     "rowCount": 9,
+     "explanation": "host-4b4dc1 has 9 backup snapshots taken since 2026-04-16T21:11:15.232Z.",
+     "rerun": {
+      "rowCount": 9,
+      "holds": true
+     },
+     "bound": "bound from the finding",
+     "extra": {},
+     "params": {
+      "tenant_id": "client-1",
+      "host": "host-4b4dc1",
+      "since": "2026-04-16T21:11:15.232Z"
+     },
+     "sql": "SELECT snapshot_id, kind, taken_at, source_ref\nFROM backup_snapshot\nWHERE tenant_id = 'client-1' AND host = 'host-4b4dc1' AND taken_at >= '2026-04-16T21:11:15.232Z'\nORDER BY taken_at, snapshot_id",
+     "sqlSha256": "sha256:8bee368ce578d9a31a3e57d5f2a6a2c3dec1e97473931305aa02f003b982bc52",
+     "rows": {
+      "columns": [
+       "snapshot_id",
+       "kind",
+       "taken_at",
+       "source_ref"
+      ],
+      "rows": [
+       [
+        "snap-1b69081c84418364",
+        "export",
+        "2026-10-16T03:40:22.273Z",
+        "/home/user-51eb89/backup-export/server-config-2026-10-16.tar.gz"
+       ],
+       [
+        "snap-7b2709d11a84eff0",
+        "export",
+        "2026-10-17T03:40:02.117Z",
+        "/home/user-51eb89/backup-export/server-config-2026-10-17.tar.gz"
+       ],
+       [
+        "snap-2981655e2d47b950",
+        "export",
+        "2026-10-18T03:40:37.240Z",
+        "/home/user-51eb89/backup-export/server-config-2026-10-18.tar.gz"
+       ],
+       [
+        "snap-92d90c5aa4f140d9",
+        "export",
+        "2026-10-19T03:40:06.330Z",
+        "/home/user-51eb89/backup-export/server-config-2026-10-19.tar.gz"
+       ],
+       [
+        "snap-d05d7efa4c18b56f",
+        "export",
+        "2026-10-20T03:40:02.111Z",
+        "/home/user-51eb89/backup-export/server-config-2026-10-20.tar.gz"
+       ],
+       [
+        "snap-e4f4b35598f8d154",
+        "export",
+        "2026-10-21T03:40:06.065Z",
+        "/home/user-51eb89/backup-export/server-config-2026-10-21.tar.gz"
+       ],
+       [
+        "snap-a3e93d773cd08777",
+        "export",
+        "2026-10-22T03:40:06.083Z",
+        "/home/user-51eb89/backup-export/server-config-2026-10-22.tar.gz"
+       ],
+       [
+        "snap-fa29e817f29a896c",
+        "export",
+        "2026-10-23T03:40:06.039Z",
+        "/home/user-51eb89/backup-export/server-config-2026-10-23.tar.gz"
+       ],
+       [
+        "snap-4f73ac1594ec4e7c",
+        "export",
+        "2026-10-24T03:40:03.985Z",
+        "/home/user-51eb89/backup-export/server-config-2026-10-24.tar.gz"
+       ]
+      ],
+      "total": 9,
+      "shown": 9,
+      "cutCells": 0,
+      "sha256": "sha256:b1b1eb1708eeddb2860402f560dc674ec09b7b8ac929e48837fb253ea6af8ceb"
+     }
+    }
+   ],
+   "rejected": [],
+   "judge": {
+    "sql": null,
+    "sqlSha256": null,
+    "rowCount": null,
+    "rerunRowCount": null,
+    "receiptId": null,
+    "signature": null,
+    "servedModel": null,
+    "rationale": null,
+    "extra": {},
+    "status": "skipped",
+    "model": "none",
+    "detail": "No model ran in this pass, so the judge step is traced as skipped (model: none). A live pass sends the claim and its rows to Nemotron Ultra for one SELECT that returns rows only if the claim is false, runs it through the same guard and data layer, and keeps the verdict only when the signed receipt names an Ultra."
+   },
+   "sample": {
+    "match": "same",
+    "detail": "The full sample pass raises the same finding with the same verb (ADOPT) and the same check verdicts. Its window opens at 2026-03-20T01:29:03.000Z there and at 2026-04-16T21:11:15.232Z here: a survey finding's window starts where the bundle's audit log begins, or at its DNS run when the bundle holds no audit log."
+   }
+  },
+  {
+   "id": "orphans-6",
+   "class": "orphan_vhost",
+   "verb": "ESCALATE",
+   "claim": "host-89f6e7.com is a server_name in /etc/nginx/sites-available/host-9ac4f1.com on host-4b4dc1 (enabled) with no record of that name in the collected zones and no wildcard covering its zone",
+   "decision": "1 of 3 preconditions fail: other_settings_reference",
+   "fields": [
+    [
+     "finding id",
+     "fnd-3661fcc541693ada"
+    ],
+    [
+     "tenant",
+     "client-1"
+    ],
+    [
+     "surface",
+     "linux.nginx"
+    ],
+    [
+     "host",
+     "host-4b4dc1"
+    ],
+    [
+     "object",
+     "/etc/nginx/sites-available/host-9ac4f1.com"
+    ],
+    [
+     "setting",
+     "server[host-9ac4f1.com:443].server_name[host-89f6e7.com]"
+    ],
+    [
+     "DNS name",
+     "host-89f6e7.com"
+    ],
+    [
+     "refers to",
+     "host-89f6e7.com"
+    ],
+    [
+     "resolves to",
+     null
+    ],
+    [
+     "record (audit resource)",
+     null
+    ],
+    [
+     "collection run",
+     "run-15638d43819ba756"
+    ],
+    [
+     "DNS run",
+     "run-f9470e2f5f175899"
+    ],
+    [
+     "window",
+     "2026-04-16T21:11:15.232Z to 2026-10-24T07:59:23.713Z"
+    ],
+    [
+     "value_hash",
+     "sha256:3d8ca55d58a9895b475424119f876a182be0f8a6ecc2a3aad5d594129daa7f3c"
+    ],
+    [
+     "value (redacted)",
+     "host-89f6e7.com"
+    ]
+   ],
+   "world": null,
+   "exposure": null,
+   "detection": {
+    "query": "orphan_vhost",
+    "description": "A server_name with no record of that name in the DNS run and no wildcard record covering its zone.",
+    "sql": "SELECT n.obs_id, n.host, n.object_id, n.setting_path, n.refers_to_id AS server_name, e.value_redacted AS enabled, n.value_hash, n.observed_at\nFROM observation n\nJOIN observation e ON e.run_id = n.run_id AND e.object_id = n.object_id AND e.setting_path LIKE '%.enabled' AND substr(e.setting_path, 1, length(e.setting_path) - 8) = substr(n.setting_path, 1, instr(n.setting_path, '.server_name[') - 1)\nWHERE n.tenant_id = 'client-1' AND n.run_id = 'run-15638d43819ba756' AND n.refers_to_type = 'dns_name' AND n.setting_path LIKE '%.server_name[%'\n  AND NOT EXISTS (SELECT 1 FROM dns_record d WHERE d.tenant_id = n.tenant_id AND d.run_id = 'run-f9470e2f5f175899' AND d.name = n.refers_to_id)\n  AND (e.value_redacted = '1' OR NOT EXISTS (SELECT 1 FROM observation n2 JOIN observation e2 ON e2.run_id = n2.run_id AND e2.object_id = n2.object_id AND e2.setting_path LIKE '%.enabled' AND substr(e2.setting_path, 1, length(e2.setting_path) - 8) = substr(n2.setting_path, 1, instr(n2.setting_path, '.server_name[') - 1)\n    WHERE n2.run_id = n.run_id AND n2.refers_to_type = 'dns_name' AND n2.refers_to_id = n.refers_to_id AND n2.setting_path LIKE '%.server_name[%' AND e2.value_redacted = '1'))\n  AND NOT EXISTS (SELECT 1 FROM dns_record w JOIN observation z ON z.setting_path LIKE '%.zone' AND substr(w.name, 3) = z.value_redacted\n    WHERE w.tenant_id = n.tenant_id AND w.run_id = 'run-f9470e2f5f175899' AND w.name LIKE '*.%'\n    AND z.run_id = n.run_id AND z.object_id = n.object_id AND substr(z.setting_path, 1, length(z.setting_path) - 5) = n.setting_path)\n  AND NOT EXISTS (SELECT 1 FROM observation m WHERE m.run_id = n.run_id AND m.object_id = n.object_id AND m.refers_to_type = 'dns_name' AND m.refers_to_id = n.refers_to_id AND m.setting_path < n.setting_path)\nORDER BY n.host, n.object_id, n.refers_to_id, n.setting_path",
+    "sqlSha256": "sha256:65640b15de6e390aef581ebfc352725c6db49088875cf76fe41ea9968d7a9017",
+    "params": {
+     "tenant_id": "client-1",
+     "dns_run_id": "run-f9470e2f5f175899",
+     "run_id": "run-15638d43819ba756"
+    },
+    "total": 3,
+    "matched": {
+     "columns": [
+      "obs_id",
+      "host",
+      "object_id",
+      "setting_path",
+      "server_name",
+      "enabled",
+      "value_hash",
+      "observed_at"
+     ],
+     "rows": [
+      [
+       "obs-177ddf549377dd7c",
+       "host-4b4dc1",
+       "/etc/nginx/sites-available/host-9ac4f1.com",
+       "server[host-9ac4f1.com:443].server_name[host-89f6e7.com]",
+       "host-89f6e7.com",
+       "1",
+       "sha256:3d8ca55d58a9895b475424119f876a182be0f8a6ecc2a3aad5d594129daa7f3c",
+       "2026-10-24T07:59:23.713Z"
+      ]
+     ],
+     "total": 1,
+     "shown": 1,
+     "cutCells": 0,
+     "sha256": "sha256:283ac9a8194c0058a69bb8176c0f73fa77353ee37a259849d3b9dbc4aaaa4f0f"
+    }
+   },
+   "checks": [
+    {
+     "template": "run_complete",
+     "purpose": "The collection run observed the whole population it asserted before collecting and finished complete; rows are the run failing that gate.",
+     "rowsMean": "fails",
+     "status": "ran",
+     "holds": true,
+     "rowCount": 0,
+     "explanation": "Run run-15638d43819ba756 collected everything it set out to collect.",
+     "rerun": {
+      "rowCount": 0,
+      "holds": true
+     },
+     "bound": "bound from the finding",
+     "extra": {},
+     "params": {
+      "run_id": "run-15638d43819ba756"
+     },
+     "sql": "SELECT c.run_id, c.tenant_id, c.surface, c.host, c.expected_count, c.observed_count, c.status\nFROM collection_run c\nWHERE c.run_id = 'run-15638d43819ba756'\n  AND (c.observed_count < c.expected_count OR c.status <> 'complete'\n    OR c.expected_count IS NULL OR c.observed_count IS NULL\n    OR (c.surface LIKE 'linux.%' AND c.expected_count > (SELECT COUNT(*) FROM observation x WHERE x.run_id = c.run_id)))",
+     "sqlSha256": "sha256:5528dac727297984718614b65832c475eeac1b5833d020752cd60cbe4e498484",
+     "rows": {
+      "columns": [
+       "run_id",
+       "tenant_id",
+       "surface",
+       "host",
+       "expected_count",
+       "observed_count",
+       "status"
+      ],
+      "rows": [],
+      "total": 0,
+      "shown": 0,
+      "cutCells": 0,
+      "sha256": "sha256:d44e594ac3c0101c173ade6cd96141b7e908271e1077abbf099df8cf5dc0e62d"
+     }
+    },
+    {
+     "template": "other_settings_reference",
+     "purpose": "Blast radius: no other setting in the same collection run points at the same target; rows are the other settings that do.",
+     "rowsMean": "fails",
+     "status": "ran",
+     "holds": false,
+     "rowCount": 3,
+     "explanation": "3 other settings in run run-15638d43819ba756 also point at host-89f6e7.com.",
+     "rerun": {
+      "rowCount": 3,
+      "holds": false
+     },
+     "bound": "bound from the finding",
+     "extra": {},
+     "params": {
+      "tenant_id": "client-1",
+      "refers_to_id": "host-89f6e7.com",
+      "run_id": "run-15638d43819ba756",
+      "object_id": "/etc/nginx/sites-available/host-9ac4f1.com",
+      "setting_path": "server[host-9ac4f1.com:443].server_name[host-89f6e7.com]"
+     },
+     "sql": "SELECT o.host, o.surface, o.object_id, o.setting_path, o.refers_to_type, o.observed_at\nFROM observation o\nWHERE o.tenant_id = 'client-1' AND o.run_id = 'run-15638d43819ba756' AND o.refers_to_id = 'host-89f6e7.com'\n  AND NOT (o.object_id = '/etc/nginx/sites-available/host-9ac4f1.com' AND o.setting_path = 'server[host-9ac4f1.com:443].server_name[host-89f6e7.com]')\nORDER BY o.object_id, o.setting_path",
+     "sqlSha256": "sha256:ac99c8af982a166d2f50b239b8fc640e6f17b8e6a58f9c409a0912bdb8b8fb64",
+     "rows": {
+      "columns": [
+       "host",
+       "surface",
+       "object_id",
+       "setting_path",
+       "refers_to_type",
+       "observed_at"
+      ],
+      "rows": [
+       [
+        "host-4b4dc1",
+        "linux.nginx",
+        "/etc/nginx/sites-available/host-9ac4f1.com",
+        "server[host-9ac4f1.com:80].server_name[host-89f6e7.com]",
+        "dns_name",
+        "2026-10-24T07:59:23.713Z"
+       ],
+       [
+        "host-4b4dc1",
+        "linux.nginx",
+        "/etc/nginx/sites-available/host-9ac4f1.com.bak.20260602-150607",
+        "server[host-9ac4f1.com:443].server_name[host-89f6e7.com]",
+        "dns_name",
+        "2026-10-24T07:59:23.713Z"
+       ],
+       [
+        "host-4b4dc1",
+        "linux.nginx",
+        "/etc/nginx/sites-available/host-9ac4f1.com.bak.20260602-150607",
+        "server[host-9ac4f1.com:80].server_name[host-89f6e7.com]",
+        "dns_name",
+        "2026-10-24T07:59:23.713Z"
+       ]
+      ],
+      "total": 3,
+      "shown": 3,
+      "cutCells": 0,
+      "sha256": "sha256:313592efd74d4d76ceb4f1fba12d6fea15119f48ad56685bc856eb79d461ac01"
+     }
+    },
+    {
+     "template": "backup_recent",
+     "purpose": "A backup snapshot of the host exists taken at or after the given time; without one, changed-since-backup has no baseline.",
+     "rowsMean": "holds",
+     "status": "ran",
+     "holds": true,
+     "rowCount": 9,
+     "explanation": "host-4b4dc1 has 9 backup snapshots taken since 2026-04-16T21:11:15.232Z.",
+     "rerun": {
+      "rowCount": 9,
+      "holds": true
+     },
+     "bound": "bound from the finding",
+     "extra": {},
+     "params": {
+      "tenant_id": "client-1",
+      "host": "host-4b4dc1",
+      "since": "2026-04-16T21:11:15.232Z"
+     },
+     "sql": "SELECT snapshot_id, kind, taken_at, source_ref\nFROM backup_snapshot\nWHERE tenant_id = 'client-1' AND host = 'host-4b4dc1' AND taken_at >= '2026-04-16T21:11:15.232Z'\nORDER BY taken_at, snapshot_id",
+     "sqlSha256": "sha256:8bee368ce578d9a31a3e57d5f2a6a2c3dec1e97473931305aa02f003b982bc52",
+     "rows": {
+      "columns": [
+       "snapshot_id",
+       "kind",
+       "taken_at",
+       "source_ref"
+      ],
+      "rows": [
+       [
+        "snap-1b69081c84418364",
+        "export",
+        "2026-10-16T03:40:22.273Z",
+        "/home/user-51eb89/backup-export/server-config-2026-10-16.tar.gz"
+       ],
+       [
+        "snap-7b2709d11a84eff0",
+        "export",
+        "2026-10-17T03:40:02.117Z",
+        "/home/user-51eb89/backup-export/server-config-2026-10-17.tar.gz"
+       ],
+       [
+        "snap-2981655e2d47b950",
+        "export",
+        "2026-10-18T03:40:37.240Z",
+        "/home/user-51eb89/backup-export/server-config-2026-10-18.tar.gz"
+       ],
+       [
+        "snap-92d90c5aa4f140d9",
+        "export",
+        "2026-10-19T03:40:06.330Z",
+        "/home/user-51eb89/backup-export/server-config-2026-10-19.tar.gz"
+       ],
+       [
+        "snap-d05d7efa4c18b56f",
+        "export",
+        "2026-10-20T03:40:02.111Z",
+        "/home/user-51eb89/backup-export/server-config-2026-10-20.tar.gz"
+       ],
+       [
+        "snap-e4f4b35598f8d154",
+        "export",
+        "2026-10-21T03:40:06.065Z",
+        "/home/user-51eb89/backup-export/server-config-2026-10-21.tar.gz"
+       ],
+       [
+        "snap-a3e93d773cd08777",
+        "export",
+        "2026-10-22T03:40:06.083Z",
+        "/home/user-51eb89/backup-export/server-config-2026-10-22.tar.gz"
+       ],
+       [
+        "snap-fa29e817f29a896c",
+        "export",
+        "2026-10-23T03:40:06.039Z",
+        "/home/user-51eb89/backup-export/server-config-2026-10-23.tar.gz"
+       ],
+       [
+        "snap-4f73ac1594ec4e7c",
+        "export",
+        "2026-10-24T03:40:03.985Z",
+        "/home/user-51eb89/backup-export/server-config-2026-10-24.tar.gz"
+       ]
+      ],
+      "total": 9,
+      "shown": 9,
+      "cutCells": 0,
+      "sha256": "sha256:b1b1eb1708eeddb2860402f560dc674ec09b7b8ac929e48837fb253ea6af8ceb"
+     }
+    }
+   ],
+   "rejected": [],
+   "judge": {
+    "sql": null,
+    "sqlSha256": null,
+    "rowCount": null,
+    "rerunRowCount": null,
+    "receiptId": null,
+    "signature": null,
+    "servedModel": null,
+    "rationale": null,
+    "extra": {},
+    "status": "skipped",
+    "model": "none",
+    "detail": "No model ran in this pass, so the judge step is traced as skipped (model: none). A live pass sends the claim and its rows to Nemotron Ultra for one SELECT that returns rows only if the claim is false, runs it through the same guard and data layer, and keeps the verdict only when the signed receipt names an Ultra."
+   },
+   "sample": {
+    "match": "same",
+    "detail": "The full sample pass raises the same finding with the same verb (ESCALATE) and the same check verdicts. Its window opens at 2026-03-20T01:29:03.000Z there and at 2026-04-16T21:11:15.232Z here: a survey finding's window starts where the bundle's audit log begins, or at its DNS run when the bundle holds no audit log."
+   }
+  },
+  {
+   "id": "orphans-7",
+   "class": "orphan_vhost",
+   "verb": "ESCALATE",
+   "claim": "host-9ac4f1.com is a server_name in /etc/nginx/sites-available/host-9ac4f1.com on host-4b4dc1 (enabled) with no record of that name in the collected zones and no wildcard covering its zone",
+   "decision": "1 of 3 preconditions fail: other_settings_reference",
+   "fields": [
+    [
+     "finding id",
+     "fnd-add52203af12de8a"
+    ],
+    [
+     "tenant",
+     "client-1"
+    ],
+    [
+     "surface",
+     "linux.nginx"
+    ],
+    [
+     "host",
+     "host-4b4dc1"
+    ],
+    [
+     "object",
+     "/etc/nginx/sites-available/host-9ac4f1.com"
+    ],
+    [
+     "setting",
+     "server[host-9ac4f1.com:443].server_name[host-9ac4f1.com]"
+    ],
+    [
+     "DNS name",
+     "host-9ac4f1.com"
+    ],
+    [
+     "refers to",
+     "host-9ac4f1.com"
+    ],
+    [
+     "resolves to",
+     null
+    ],
+    [
+     "record (audit resource)",
+     null
+    ],
+    [
+     "collection run",
+     "run-15638d43819ba756"
+    ],
+    [
+     "DNS run",
+     "run-f9470e2f5f175899"
+    ],
+    [
+     "window",
+     "2026-04-16T21:11:15.232Z to 2026-10-24T07:59:23.713Z"
+    ],
+    [
+     "value_hash",
+     "sha256:4ef9ab258c0b9a22981ca22d8b28b30ddf2edf1a341379d508d5a87677b88f7f"
+    ],
+    [
+     "value (redacted)",
+     "host-9ac4f1.com"
+    ]
+   ],
+   "world": null,
+   "exposure": null,
+   "detection": {
+    "query": "orphan_vhost",
+    "description": "A server_name with no record of that name in the DNS run and no wildcard record covering its zone.",
+    "sql": "SELECT n.obs_id, n.host, n.object_id, n.setting_path, n.refers_to_id AS server_name, e.value_redacted AS enabled, n.value_hash, n.observed_at\nFROM observation n\nJOIN observation e ON e.run_id = n.run_id AND e.object_id = n.object_id AND e.setting_path LIKE '%.enabled' AND substr(e.setting_path, 1, length(e.setting_path) - 8) = substr(n.setting_path, 1, instr(n.setting_path, '.server_name[') - 1)\nWHERE n.tenant_id = 'client-1' AND n.run_id = 'run-15638d43819ba756' AND n.refers_to_type = 'dns_name' AND n.setting_path LIKE '%.server_name[%'\n  AND NOT EXISTS (SELECT 1 FROM dns_record d WHERE d.tenant_id = n.tenant_id AND d.run_id = 'run-f9470e2f5f175899' AND d.name = n.refers_to_id)\n  AND (e.value_redacted = '1' OR NOT EXISTS (SELECT 1 FROM observation n2 JOIN observation e2 ON e2.run_id = n2.run_id AND e2.object_id = n2.object_id AND e2.setting_path LIKE '%.enabled' AND substr(e2.setting_path, 1, length(e2.setting_path) - 8) = substr(n2.setting_path, 1, instr(n2.setting_path, '.server_name[') - 1)\n    WHERE n2.run_id = n.run_id AND n2.refers_to_type = 'dns_name' AND n2.refers_to_id = n.refers_to_id AND n2.setting_path LIKE '%.server_name[%' AND e2.value_redacted = '1'))\n  AND NOT EXISTS (SELECT 1 FROM dns_record w JOIN observation z ON z.setting_path LIKE '%.zone' AND substr(w.name, 3) = z.value_redacted\n    WHERE w.tenant_id = n.tenant_id AND w.run_id = 'run-f9470e2f5f175899' AND w.name LIKE '*.%'\n    AND z.run_id = n.run_id AND z.object_id = n.object_id AND substr(z.setting_path, 1, length(z.setting_path) - 5) = n.setting_path)\n  AND NOT EXISTS (SELECT 1 FROM observation m WHERE m.run_id = n.run_id AND m.object_id = n.object_id AND m.refers_to_type = 'dns_name' AND m.refers_to_id = n.refers_to_id AND m.setting_path < n.setting_path)\nORDER BY n.host, n.object_id, n.refers_to_id, n.setting_path",
+    "sqlSha256": "sha256:65640b15de6e390aef581ebfc352725c6db49088875cf76fe41ea9968d7a9017",
+    "params": {
+     "tenant_id": "client-1",
+     "dns_run_id": "run-f9470e2f5f175899",
+     "run_id": "run-15638d43819ba756"
+    },
+    "total": 3,
+    "matched": {
+     "columns": [
+      "obs_id",
+      "host",
+      "object_id",
+      "setting_path",
+      "server_name",
+      "enabled",
+      "value_hash",
+      "observed_at"
+     ],
+     "rows": [
+      [
+       "obs-321b6dcfbaa9dd35",
+       "host-4b4dc1",
+       "/etc/nginx/sites-available/host-9ac4f1.com",
+       "server[host-9ac4f1.com:443].server_name[host-9ac4f1.com]",
+       "host-9ac4f1.com",
+       "1",
+       "sha256:4ef9ab258c0b9a22981ca22d8b28b30ddf2edf1a341379d508d5a87677b88f7f",
+       "2026-10-24T07:59:23.713Z"
+      ]
+     ],
+     "total": 1,
+     "shown": 1,
+     "cutCells": 0,
+     "sha256": "sha256:b10d9bbb485e3b14ab689f008fb71ff71e0e1111d68089dda257bec6e9a8e098"
+    }
+   },
+   "checks": [
+    {
+     "template": "run_complete",
+     "purpose": "The collection run observed the whole population it asserted before collecting and finished complete; rows are the run failing that gate.",
+     "rowsMean": "fails",
+     "status": "ran",
+     "holds": true,
+     "rowCount": 0,
+     "explanation": "Run run-15638d43819ba756 collected everything it set out to collect.",
+     "rerun": {
+      "rowCount": 0,
+      "holds": true
+     },
+     "bound": "bound from the finding",
+     "extra": {},
+     "params": {
+      "run_id": "run-15638d43819ba756"
+     },
+     "sql": "SELECT c.run_id, c.tenant_id, c.surface, c.host, c.expected_count, c.observed_count, c.status\nFROM collection_run c\nWHERE c.run_id = 'run-15638d43819ba756'\n  AND (c.observed_count < c.expected_count OR c.status <> 'complete'\n    OR c.expected_count IS NULL OR c.observed_count IS NULL\n    OR (c.surface LIKE 'linux.%' AND c.expected_count > (SELECT COUNT(*) FROM observation x WHERE x.run_id = c.run_id)))",
+     "sqlSha256": "sha256:5528dac727297984718614b65832c475eeac1b5833d020752cd60cbe4e498484",
+     "rows": {
+      "columns": [
+       "run_id",
+       "tenant_id",
+       "surface",
+       "host",
+       "expected_count",
+       "observed_count",
+       "status"
+      ],
+      "rows": [],
+      "total": 0,
+      "shown": 0,
+      "cutCells": 0,
+      "sha256": "sha256:d44e594ac3c0101c173ade6cd96141b7e908271e1077abbf099df8cf5dc0e62d"
+     }
+    },
+    {
+     "template": "other_settings_reference",
+     "purpose": "Blast radius: no other setting in the same collection run points at the same target; rows are the other settings that do.",
+     "rowsMean": "fails",
+     "status": "ran",
+     "holds": false,
+     "rowCount": 3,
+     "explanation": "3 other settings in run run-15638d43819ba756 also point at host-9ac4f1.com.",
+     "rerun": {
+      "rowCount": 3,
+      "holds": false
+     },
+     "bound": "bound from the finding",
+     "extra": {},
+     "params": {
+      "tenant_id": "client-1",
+      "refers_to_id": "host-9ac4f1.com",
+      "run_id": "run-15638d43819ba756",
+      "object_id": "/etc/nginx/sites-available/host-9ac4f1.com",
+      "setting_path": "server[host-9ac4f1.com:443].server_name[host-9ac4f1.com]"
+     },
+     "sql": "SELECT o.host, o.surface, o.object_id, o.setting_path, o.refers_to_type, o.observed_at\nFROM observation o\nWHERE o.tenant_id = 'client-1' AND o.run_id = 'run-15638d43819ba756' AND o.refers_to_id = 'host-9ac4f1.com'\n  AND NOT (o.object_id = '/etc/nginx/sites-available/host-9ac4f1.com' AND o.setting_path = 'server[host-9ac4f1.com:443].server_name[host-9ac4f1.com]')\nORDER BY o.object_id, o.setting_path",
+     "sqlSha256": "sha256:2b56a90076514aca0d6009cc8910021d289c9976eaee332303e951768664ee31",
+     "rows": {
+      "columns": [
+       "host",
+       "surface",
+       "object_id",
+       "setting_path",
+       "refers_to_type",
+       "observed_at"
+      ],
+      "rows": [
+       [
+        "host-4b4dc1",
+        "linux.nginx",
+        "/etc/nginx/sites-available/host-9ac4f1.com",
+        "server[host-9ac4f1.com:80].server_name[host-9ac4f1.com]",
+        "dns_name",
+        "2026-10-24T07:59:23.713Z"
+       ],
+       [
+        "host-4b4dc1",
+        "linux.nginx",
+        "/etc/nginx/sites-available/host-9ac4f1.com.bak.20260602-150607",
+        "server[host-9ac4f1.com:443].server_name[host-9ac4f1.com]",
+        "dns_name",
+        "2026-10-24T07:59:23.713Z"
+       ],
+       [
+        "host-4b4dc1",
+        "linux.nginx",
+        "/etc/nginx/sites-available/host-9ac4f1.com.bak.20260602-150607",
+        "server[host-9ac4f1.com:80].server_name[host-9ac4f1.com]",
+        "dns_name",
+        "2026-10-24T07:59:23.713Z"
+       ]
+      ],
+      "total": 3,
+      "shown": 3,
+      "cutCells": 0,
+      "sha256": "sha256:8c59155830ac96c6ba5aafdb6992818f39b95591792e9880cbf4bffe80d413b1"
+     }
+    },
+    {
+     "template": "backup_recent",
+     "purpose": "A backup snapshot of the host exists taken at or after the given time; without one, changed-since-backup has no baseline.",
+     "rowsMean": "holds",
+     "status": "ran",
+     "holds": true,
+     "rowCount": 9,
+     "explanation": "host-4b4dc1 has 9 backup snapshots taken since 2026-04-16T21:11:15.232Z.",
+     "rerun": {
+      "rowCount": 9,
+      "holds": true
+     },
+     "bound": "bound from the finding",
+     "extra": {},
+     "params": {
+      "tenant_id": "client-1",
+      "host": "host-4b4dc1",
+      "since": "2026-04-16T21:11:15.232Z"
+     },
+     "sql": "SELECT snapshot_id, kind, taken_at, source_ref\nFROM backup_snapshot\nWHERE tenant_id = 'client-1' AND host = 'host-4b4dc1' AND taken_at >= '2026-04-16T21:11:15.232Z'\nORDER BY taken_at, snapshot_id",
+     "sqlSha256": "sha256:8bee368ce578d9a31a3e57d5f2a6a2c3dec1e97473931305aa02f003b982bc52",
+     "rows": {
+      "columns": [
+       "snapshot_id",
+       "kind",
+       "taken_at",
+       "source_ref"
+      ],
+      "rows": [
+       [
+        "snap-1b69081c84418364",
+        "export",
+        "2026-10-16T03:40:22.273Z",
+        "/home/user-51eb89/backup-export/server-config-2026-10-16.tar.gz"
+       ],
+       [
+        "snap-7b2709d11a84eff0",
+        "export",
+        "2026-10-17T03:40:02.117Z",
+        "/home/user-51eb89/backup-export/server-config-2026-10-17.tar.gz"
+       ],
+       [
+        "snap-2981655e2d47b950",
+        "export",
+        "2026-10-18T03:40:37.240Z",
+        "/home/user-51eb89/backup-export/server-config-2026-10-18.tar.gz"
+       ],
+       [
+        "snap-92d90c5aa4f140d9",
+        "export",
+        "2026-10-19T03:40:06.330Z",
+        "/home/user-51eb89/backup-export/server-config-2026-10-19.tar.gz"
+       ],
+       [
+        "snap-d05d7efa4c18b56f",
+        "export",
+        "2026-10-20T03:40:02.111Z",
+        "/home/user-51eb89/backup-export/server-config-2026-10-20.tar.gz"
+       ],
+       [
+        "snap-e4f4b35598f8d154",
+        "export",
+        "2026-10-21T03:40:06.065Z",
+        "/home/user-51eb89/backup-export/server-config-2026-10-21.tar.gz"
+       ],
+       [
+        "snap-a3e93d773cd08777",
+        "export",
+        "2026-10-22T03:40:06.083Z",
+        "/home/user-51eb89/backup-export/server-config-2026-10-22.tar.gz"
+       ],
+       [
+        "snap-fa29e817f29a896c",
+        "export",
+        "2026-10-23T03:40:06.039Z",
+        "/home/user-51eb89/backup-export/server-config-2026-10-23.tar.gz"
+       ],
+       [
+        "snap-4f73ac1594ec4e7c",
+        "export",
+        "2026-10-24T03:40:03.985Z",
+        "/home/user-51eb89/backup-export/server-config-2026-10-24.tar.gz"
+       ]
+      ],
+      "total": 9,
+      "shown": 9,
+      "cutCells": 0,
+      "sha256": "sha256:b1b1eb1708eeddb2860402f560dc674ec09b7b8ac929e48837fb253ea6af8ceb"
+     }
+    }
+   ],
+   "rejected": [],
+   "judge": {
+    "sql": null,
+    "sqlSha256": null,
+    "rowCount": null,
+    "rerunRowCount": null,
+    "receiptId": null,
+    "signature": null,
+    "servedModel": null,
+    "rationale": null,
+    "extra": {},
+    "status": "skipped",
+    "model": "none",
+    "detail": "No model ran in this pass, so the judge step is traced as skipped (model: none). A live pass sends the claim and its rows to Nemotron Ultra for one SELECT that returns rows only if the claim is false, runs it through the same guard and data layer, and keeps the verdict only when the signed receipt names an Ultra."
+   },
+   "sample": {
+    "match": "same",
+    "detail": "The full sample pass raises the same finding with the same verb (ESCALATE) and the same check verdicts. Its window opens at 2026-03-20T01:29:03.000Z there and at 2026-04-16T21:11:15.232Z here: a survey finding's window starts where the bundle's audit log begins, or at its DNS run when the bundle holds no audit log."
+   }
+  }
+ ]
+}

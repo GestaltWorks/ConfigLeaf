@@ -1,8 +1,9 @@
-// Spike A: Lightning SQL over REST with the agent's own key. Read-only by default: SELECT 1 and SHOW
-// LIGHTNING DATABASES, which is all the agent's General-role key is meant to run. With --register it
-// also proves this key can register a Lightning database, see it and drop it again; that needs rights
-// the agent's key should not hold in production, and the DDL goes through the raw adapter, never
-// through DataLayer.run, whose guard refuses it. No sample sources, no third-party demo tables.
+// Spike A: Lightning SQL over REST with the configured ZETARIS_API_KEY (the tenant's key: only an admin
+// can generate one, and it is tenant-scoped, not a user's). Read-only by default: SELECT 1 and SHOW
+// LIGHTNING DATABASES, which is all the agent is meant to run with it. With --register it also proves
+// the key can register a Lightning database, see it and drop it again; that is DDL the agent's own query
+// path can never reach, and here it goes through the raw adapter, never through DataLayer.run, whose
+// guard refuses it. No sample sources, no third-party demo tables.
 // Needs ZETARIS_API_KEY in .env (Management > API tokens).
 import { Zetaris } from "../src/adapters/zetaris.ts";
 import { Tracer } from "../src/trace.ts";

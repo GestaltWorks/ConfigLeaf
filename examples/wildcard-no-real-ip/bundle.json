@@ -1,7 +1,8 @@
 {
-  "_note": "proxied_without_real_ip (wildcard form): a proxied wildcard record lands on a host where no server block and not the http level trusts a Cloudflare range, so every name under the wildcard sees Cloudflare's addresses as its visitors. Rows: the DNS run, the wildcard record, the host's inventory addresses, and the host run's http.real_ip, server[...].real_ip and server[...].enabled rows (every real_ip absent). Cut from sample/bundle.json by scripts/examples.ts.",
+  "_note": "proxied_without_real_ip (wildcard form): a proxied wildcard record lands on a host where no server block and not the http level trusts a Cloudflare range, so every name under the wildcard sees Cloudflare's addresses as its visitors. Rows: the DNS and audit runs, the wildcard record, every audit event on it (none: the record predates the log), the host's inventory addresses, and the host run's http.real_ip, server[...].real_ip and server[...].enabled rows (every real_ip absent). Cut from sample/bundle.json by scripts/examples.ts.",
   "collection_run": [
     { "run_id": "run-f9470e2f5f175899", "tenant_id": "client-1", "surface": "cloudflare.dns", "host": null, "started_at": "2026-10-24T07:58:55.125Z", "finished_at": "2026-10-24T07:58:58.469Z", "expected_count": 58, "observed_count": 58, "status": "complete" },
+    { "run_id": "run-507c9939230e60a4", "tenant_id": "client-1", "surface": "cloudflare.audit", "host": null, "started_at": "2026-10-24T07:58:58.469Z", "finished_at": "2026-10-24T07:58:59.651Z", "expected_count": 728, "observed_count": 728, "status": "complete" },
     { "run_id": "run-67f4d6923cb4838d", "tenant_id": "client-1", "surface": "linux.nginx", "host": "host-aa516a", "started_at": "2026-10-24T07:59:20.027Z", "finished_at": "2026-10-24T07:59:20.094Z", "expected_count": 24, "observed_count": 24, "status": "complete" }
   ],
   "observation": [
