@@ -262,3 +262,13 @@ describe("Redactor", () => {
     expect(describeRedactions(nginx, r.text(nginx))).toEqual({ bearer: 1, ip: 2, host: 6 });
   });
 });
+
+describe("wildcard hostnames", () => {
+  it("redacts the name after a leading *. and leaves an already-redacted wildcard alone", () => {
+    const r = new Redactor("salt-wild");
+    const out = r.text("A *.corp-example-zone.ai -> 198.51.100.7; *.host-17a03d.info stays");
+    expect(out).not.toContain("corp-example-zone");
+    expect(out).toMatch(/\*\.host-[0-9a-f]{6}\.ai/);
+    expect(out).toContain("*.host-17a03d.info");
+  });
+});

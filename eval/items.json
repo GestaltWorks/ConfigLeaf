@@ -1,5 +1,5 @@
 {
- "created": "2026-10-24T15:48:45.086Z",
+ "created": "2026-10-24T15:53:09.322Z",
  "note": "Pseudonymised eval items; labels are added by a human before any model run (pre-registration).",
  "items": [
   {
@@ -270,7 +270,7 @@
    "source": "cloudflare audit, record 1f75c652",
    "question": "Here is a record's change sequence. Should the agent have raised this to a technician at the time (matters), ignored it (does not), or asked?",
    "agent_says": "not yet judged (history item)",
-   "facts": "host-503b27.ai: 2026-07-03T21:25Z A *.zone-redacted.ai -> ip-6b6bba proxied=false (user)",
+   "facts": "host-503b27.ai: 2026-07-03T21:25Z A *.host-503b27.ai -> ip-6b6bba proxied=false (user)",
    "refs": {
     "record_id": "1f75c652a377966a1c93c8803d203808",
     "zone": "host-503b27.ai"
@@ -306,7 +306,7 @@
    "source": "cloudflare audit, record df52e7a3",
    "question": "Here is a record's change sequence. Should the agent have raised this to a technician at the time (matters), ignored it (does not), or asked?",
    "agent_says": "not yet judged (history item)",
-   "facts": "host-17a03d.info: 2026-08-12T20:24Z A *.zone-redacted.info -> ip-a80206 proxied=false (user); 2026-08-12T20:46Z A *.zone-redacted.info -> ip-6fb86d proxied=false (user)",
+   "facts": "host-17a03d.info: 2026-08-12T20:24Z A *.host-17a03d.info -> ip-a80206 proxied=false (user); 2026-08-12T20:46Z A *.host-17a03d.info -> ip-6fb86d proxied=false (user)",
    "refs": {
     "record_id": "df52e7a315f8b41b446c5eeecf7ff6cb",
     "zone": "host-17a03d.info"
