@@ -9,6 +9,7 @@
 
 import { randomUUID } from "node:crypto";
 import { config, redact } from "../config.ts";
+import { stripLiterals } from "../data/layer.ts";
 import type { Tracer } from "../trace.ts";
 
 export interface QueryResult {
@@ -41,10 +42,10 @@ export class Zetaris {
     };
   }
 
-  /** Run exactly one Lightning SQL statement. A trailing semicolon is stripped; a second statement is refused. */
+  /** Run exactly one Lightning SQL statement. A trailing semicolon is stripped; a second statement is refused; a ';' inside a literal is data. */
   async query(sql: string, opts: { limit?: number; agent?: string; tracer?: Tracer; timeoutMs?: number } = {}): Promise<QueryResult> {
     const clean = sql.trim().replace(/;+\s*$/, "");
-    if (/;\s*\S/.test(clean)) throw new ZetarisError("one statement per call", 0);
+    if (/;\s*\S/.test(stripLiterals(clean))) throw new ZetarisError("one statement per call", 0);
     const queryId = randomUUID();
     const t0 = Date.now();
     const r = await fetch(this.url, {

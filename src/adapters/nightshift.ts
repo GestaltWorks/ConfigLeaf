@@ -7,7 +7,14 @@
 //   - a "/no_think" system message with a small max_tokens makes Lightning return an empty
 //     response (502 provider_error); plain prompts work;
 //   - Ultra puts its reasoning in content, so JSON must be parsed tolerant of a preamble;
-//   - receipts are Ed25519 over the compact, key-sorted UTF-8 JSON of `body`.
+//   - receipts are Ed25519 over the compact, key-sorted UTF-8 JSON of `body`;
+//   - chat_template_kwargs.enable_thinking (Nemotron's documented switch) is accepted but has no
+//     observable effect through the OpenRouter routes: 3+3 calls per model on one small-JSON prompt
+//     (scripts/probe-thinking.ts), </think> absent in all 12, tokens_out 11/11 for Lightning and
+//     71/72 for Ultra with false/true. On that Ultra route the message carries only role and content
+//     (no reasoning field, no </think>) while tokens_out runs 70 to 101 for a 12-token answer, so the
+//     reasoning is billed but not returned. The judge sets it true anyway: harmless here, honoured
+//     wherever the flag is forwarded.
 
 import { createPublicKey, verify as cryptoVerify } from "node:crypto";
 import { config, redact } from "../config.ts";
@@ -59,13 +66,15 @@ export class Nightshift {
    * `meterless/*` modes are allowed but the receipt's routed_model is what we trust.
    */
   async chat(
-    opts: { model: string; messages: ChatMessage[]; maxTokens?: number; temperature?: number; agent: string; tracer?: Tracer },
+    opts: { model: string; messages: ChatMessage[]; maxTokens?: number; temperature?: number; enableThinking?: boolean; agent: string; tracer?: Tracer },
   ): Promise<ChatResult> {
     const body = JSON.stringify({
       model: opts.model,
       messages: opts.messages,
       max_tokens: opts.maxTokens ?? 1024,
       temperature: opts.temperature ?? 0,
+      // Nemotron's documented reasoning switch. Sent only when the caller sets it; see scripts/probe-thinking.ts for what Nightshift does with it.
+      ...(opts.enableThinking === undefined ? {} : { chat_template_kwargs: { enable_thinking: opts.enableThinking } }),
     });
     let lastErr: NightshiftError | null = null;
     for (let attempt = 0; attempt <= 1; attempt++) {
@@ -118,7 +127,7 @@ export class Nightshift {
    * whichever answered; the receipt's routed_model says which. A `fallback` trace event records each hop.
    */
   async chatWithFallback(
-    opts: { models: string[]; messages: ChatMessage[]; maxTokens?: number; temperature?: number; agent: string; tracer?: Tracer },
+    opts: { models: string[]; messages: ChatMessage[]; maxTokens?: number; temperature?: number; enableThinking?: boolean; agent: string; tracer?: Tracer },
   ): Promise<ChatResult & { hop: number }> {
     let lastErr: unknown;
     for (let hop = 0; hop < opts.models.length; hop++) {

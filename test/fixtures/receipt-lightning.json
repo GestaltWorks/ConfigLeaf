@@ -1,0 +1,265 @@
+{
+  "body": {
+    "llama_cpp_ref": "08659901c43b51de735740f1cf61bb82fbe0c4e4",
+    "manifest_hash": "25fa6ff31f0db5e0d043148b370615205fc2f176b65874069539226a35fbf909",
+    "receipt": {
+      "app": "drift-agent",
+      "app_policy": {
+        "app": "drift-agent",
+        "cross_check": "auto",
+        "has_rule": true,
+        "lanes": null,
+        "mode_coerced": false,
+        "premium_budget": null,
+        "privacy": "cloud-ok",
+        "race_width": 6,
+        "requested_mode": "auto",
+        "routed_mode": "auto"
+      },
+      "autopilot": {
+        "ctx_dropped": [],
+        "ctx_unfilterable": false,
+        "envelope": {
+          "allocatable_mb": 0,
+          "pressure": "unknown",
+          "remaining_mb": 0,
+          "used_mb": 0
+        },
+        "needs": {
+          "coding": false,
+          "tools": false,
+          "vision": false
+        },
+        "prompt_tokens": 14,
+        "scout": {
+          "candidates": [],
+          "category": null,
+          "confident": false,
+          "mode": "ROUTING",
+          "ms": 0.13,
+          "score": 0,
+          "source": "none",
+          "tier": null
+        },
+        "tier_hint": null,
+        "why": [
+          "no scout mode matched — the phase classifier alone plans",
+          "~14 prompt tokens — lanes whose slot cannot hold them are not asked"
+        ]
+      },
+      "bar": null,
+      "budget_degrade": null,
+      "cache": {
+        "losers_reclaimed": 0,
+        "partials_reclaimed": 0,
+        "status": "miss"
+      },
+      "consensus": {
+        "agree": 1,
+        "coherence": null,
+        "detail": "one model handled this — no cross-model agreement to check",
+        "label": "single route",
+        "level": "solo",
+        "raced": 1,
+        "tone": "neutral",
+        "verified": null
+      },
+      "consensus_escalation": null,
+      "cost": {
+        "actual_usd": 0.00003778,
+        "baseline": {
+          "label": "Nemotron 3.5 Lightning 30B A3B",
+          "model": "nvidia/nemotron-3.5-lightning-30b-a3b",
+          "source": "mode-default-frontier"
+        },
+        "naive_usd": 0,
+        "race_overhead_usd": 0,
+        "verifier_usd": 0
+      },
+      "created_at": 1792811242156,
+      "cross_check": {
+        "app": "drift-agent",
+        "blocking": false,
+        "checks": [],
+        "recommended_action": "allow",
+        "reflex_ms": 0.01,
+        "risk_level": "low",
+        "skip_reason": "tier_a_chat",
+        "status": "skipped",
+        "verifier": "none",
+        "verifier_model": null,
+        "verifier_ms": 0,
+        "verifier_ran": false,
+        "verifier_verdict": null
+      },
+      "debate": null,
+      "decision_id": "req_szybz3wr",
+      "deliberation": null,
+      "egress": {
+        "coverage": "pattern_floor",
+        "destination": "openrouter",
+        "never_eligible": [],
+        "sent": {
+          "context_sources": [
+            "messages",
+            "hmem:3 records"
+          ],
+          "prompt_chars": 55,
+          "redacted": []
+        },
+        "withheld": []
+      },
+      "eligible": null,
+      "error": "",
+      "fusion": null,
+      "gen_verifier": null,
+      "graded_weight": null,
+      "hmem": {
+        "ids": [
+          "mem_mvlt1f95_l1mk",
+          "mem_mvlt4s9m_nob5",
+          "mem_mvlrl6gj_e31q"
+        ],
+        "injected": 3,
+        "reason": "retrieved 3 memories",
+        "strategy": "comprehensive",
+        "top_score": 0.926
+      },
+      "host_pressure": {
+        "battery": null,
+        "pressure": {
+          "battery": {
+            "hard": 0.5,
+            "label": "nominal",
+            "score": 0.18,
+            "sensor": "battery%, charging",
+            "soft": 0.3
+          },
+          "cpu": {
+            "hard": 0.9,
+            "label": "nominal",
+            "score": 0.34,
+            "sensor": "30s load avg",
+            "soft": 0.7
+          },
+          "gpu": {
+            "hard": 0.92,
+            "label": "nominal",
+            "score": 0.38,
+            "sensor": "GPU + VRAM",
+            "soft": 0.75
+          },
+          "memory": {
+            "hard": 0.85,
+            "label": "warm",
+            "score": 0.51,
+            "sensor": "committed/swap",
+            "soft": 0.7
+          },
+          "network": {
+            "hard": 0.85,
+            "label": "nominal",
+            "score": 0.12,
+            "sensor": "RTT to providers",
+            "soft": 0.5
+          },
+          "quota": {
+            "hard": 0.95,
+            "label": "nominal",
+            "score": 0.28,
+            "sensor": "per-key window",
+            "soft": 0.8
+          },
+          "thermal": {
+            "hard": 0.8,
+            "label": "nominal",
+            "score": 0.22,
+            "sensor": "thermal API",
+            "soft": 0.55
+          }
+        },
+        "thermal": "nominal"
+      },
+      "job": null,
+      "mcp": null,
+      "method": null,
+      "mode": "auto",
+      "optimistic": null,
+      "phases": [
+        {
+          "coherence": null,
+          "model": "openrouter/nvidia/nemotron-3.5-lightning",
+          "ms": 942,
+          "outputTps": 46.70912951167728,
+          "phase": "final_synthesis",
+          "reflex_decided_in_ms": 0.2,
+          "tier": "A",
+          "tokensIn": 414,
+          "tokensOut": 44
+        }
+      ],
+      "privacy": {
+        "path": "cloud-ok",
+        "redaction": {
+          "applied": false,
+          "spans": 0
+        }
+      },
+      "prompt_preview": "Reply with only this JSON and nothing else: {\"ok\":true}",
+      "quality_race": null,
+      "reasoning_scaffold": null,
+      "receipt_id": "rcpt_req_szybz3wr",
+      "refine": null,
+      "request_id": "chatcmpl-aa798446-7d84-4a1a-9793-adf468d8bf53",
+      "requested_mode": "meterless/auto",
+      "routing": {
+        "confidence": null,
+        "escalated": null,
+        "escalated_on_divergence": false,
+        "hedge": null,
+        "hedges_skipped": 0,
+        "of": 1,
+        "policy": "learned-router",
+        "predicted": "nvidia/nemotron-3.5-lightning-30b-a3b",
+        "reason": "single-candidate",
+        "width": 1,
+        "winner": "openrouter/nvidia/nemotron-3.5-lightning"
+      },
+      "savings": {
+        "amount": 0,
+        "baseline_source": "mode-default-frontier",
+        "currency": "USD",
+        "vs": "Nemotron 3.5 Lightning 30B A3B"
+      },
+      "schema": "meterless.compute_receipt.v1",
+      "score": null,
+      "scorecard": null,
+      "status": "ok",
+      "summary": "ok · Nemotron 3.5 Lightning · miss · $0.0000 saved",
+      "synthesis": null,
+      "test_time_compute": null,
+      "tool_degraded": null,
+      "unmet": null,
+      "usage": {
+        "input_tokens": 414,
+        "latency_ms": 942,
+        "output_tokens": 44,
+        "output_tps": 46.70912951167728,
+        "total_tokens": 458
+      },
+      "verdict": null,
+      "verification": null,
+      "winning_route": {
+        "kind": "cloud",
+        "label": "Nemotron 3.5 Lightning",
+        "model": "openrouter/nvidia/nemotron-3.5-lightning",
+        "provider": "openrouter",
+        "tier": "A"
+      }
+    },
+    "signer": "meterlessd",
+    "ts_ms": 1792811242159
+  },
+  "pubkey_b64": "E2fgucs+khm9Ch3Jiy6W2QtwUb35z+PEhP5V7pKtrQc=",
+  "sig_b64": "Q68qGr6uZgVkq0ukFygs9zYoOOlCgoPBV565VUZUQuz4YLNsMrOaONdgFntLrtqmLwgPIZHkCbKTUduKrsG4Bg=="
+}
