@@ -1,5 +1,6 @@
-# CI proves what a judge's clean clone proves: the code typechecks, the unit tests pass, and the
-# vendored Meterless World Model conformance suite passes through our module. No credentials.
+# CI proves what a judge's clean clone proves: the code typechecks, the unit tests pass, both vendored
+# Meterless conformance suites (World Model, H-MEM) pass through our modules, the sample pass runs with
+# no credentials, and the committed replay page (docs/) is exactly the build of the committed examples.
 # The live sponsor spikes (Nightshift, Zetaris) run locally with `npm run smoke`; they need the
 # runtime on the builder's machine and are recorded in logs/ and in the README instead.
 name: ci
@@ -26,8 +27,14 @@ jobs:
         run: npm test
       - name: World Model conformance (vendored suite against src/engine/world.ts)
         run: npm run conformance
+      - name: H-MEM conformance (vendored suite against the vendored reference, re-exported by src/engine/memory.ts; TechnicianMemory is covered by test/memory.test.ts and one wrapper check here)
+        run: npm run conformance:hmem
       - name: Sample mode runs without credentials
         run: SAMPLE_MODE=true npm run sample
+      - name: Replay page rebuilds from the committed examples and matches the committed docs/
+        run: |
+          npm run site
+          git diff --exit-code -- docs
       - name: No secrets committed
         run: |
           if git grep -nE 'nvapi-[A-Za-z0-9_-]{20,}|sk-or-[A-Za-z0-9]{20,}|sk-ant-[A-Za-z0-9_-]{20,}|rt-[A-Za-z0-9]{24,}' -- ':!.github/workflows/ci.yml'; then

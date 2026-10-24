@@ -3,17 +3,22 @@
 // it. Rows refute the claim; no rows and it stands. The judge never confirms by assertion: its only
 // output is SQL that we execute ourselves, under the same guard as the catalogue queries.
 //
-// A verdict counts only when the receipt gate (src/gate.ts) says a signed receipt names an Ultra.
-// Gate failure, a receipt lookup that fails (Nightshift unreachable after the model answered) or an
-// unreachable model files the finding not_judged, which escalates. A reply that is not one guarded
-// SELECT is invalid_output, which the eval counts. Neither is retried silently.
+// A verdict counts only when the receipt gate (src/gate.ts) says a signed receipt names an Ultra and,
+// when the claim belongs to a tenant, that the receipt is ours: filed under that tenant's app id
+// ("drift-agent:<tenant>") for the request we made. The gate runs before the reply is read, because a
+// receipt that is not ours means the answer is discarded and the call made once more as a fresh request
+// (a new nonce in the prompt); a second custody failure fails closed. Gate failure, a receipt lookup
+// that fails (Nightshift unreachable after the model answered) or an unreachable model files the finding
+// not_judged, which escalates. A reply that is not one guarded SELECT is invalid_output, which the eval
+// counts. Neither is retried silently. A reply the gate refused is still parsed for the record (its SQL
+// is reported) and never run.
 
 import { z } from "zod";
 import { Nightshift, type ChatMessage, type ChatResult } from "../adapters/nightshift.ts";
 import { config } from "../config.ts";
 import { DataLayerError, assertSelectOnly, stripLiterals, type DataLayer } from "../data/layer.ts";
 import { SCHEMA_SQL, TABLE_NAMES } from "../data/schema.ts";
-import { ReceiptStore, gateChatResult, type GateResult, type ReceiptFinder } from "../gate.ts";
+import { ReceiptStore, gateChatResult, gateWithCustody, tenantAppId, type CustodyCheck, type GateResult, type ReceiptFinder } from "../gate.ts";
 import type { Tracer } from "../trace.ts";
 
 export const MAX_EVIDENCE_ROWS = 20;
@@ -36,6 +41,12 @@ export interface JudgeVerdict {
   receiptId: string | null;
   servedModel: string | null;
   latencyMs: number;
+  /** The gate's signature result when a receipt was looked up: true verified, false altered, null none found. Absent when the model never answered. */
+  signatureOk?: boolean | null;
+  /** The custody check on the receipt that passed, or the last one that failed, when the call went out under a tenant's app id. */
+  custody?: CustodyCheck;
+  /** Model calls made under custody: 2 when a receipt not ours was discarded and the call repeated. */
+  attempts?: number;
 }
 
 export interface JudgeInput {
@@ -46,6 +57,13 @@ export interface JudgeInput {
   receipts?: ReceiptFinder;
   tracer?: Tracer;
   requestedModels?: string[];
+  /**
+   * The client the claim belongs to. Given, the call goes out under tenantAppId(tenantId) with a request
+   * nonce first in the user message, and the receipt must pass custody (request_id ours, app ours); a
+   * receipt that is not ours is discarded and the call made once more. Absent, the gate checks the
+   * signature and the served tier only, as before.
+   */
+  tenantId?: string;
 }
 
 const Reply = z.object({ refute_with_sql: z.string(), rationale: z.string().default("") });
@@ -66,11 +84,16 @@ Rules for the SQL:
 Answer ONLY with this JSON object and nothing else:
 {"refute_with_sql": "<the one SELECT>", "rationale": "<one sentence: why rows from it falsify the claim>"}`;
 
-/** System prompt plus the claim and at most MAX_EVIDENCE_ROWS supporting rows, one JSON object per row. */
-export function buildMessages(claim: string, evidence: Evidence): ChatMessage[] {
+/**
+ * System prompt plus the claim and at most MAX_EVIDENCE_ROWS supporting rows, one JSON object per row.
+ * With a nonce, the user message opens with `[request <nonce>]`, so the same claim asked again is a new
+ * request to the runtime (new request_id, no cache hit) and a truncated prompt_preview still carries it.
+ */
+export function buildMessages(claim: string, evidence: Evidence, nonce?: string): ChatMessage[] {
   const shown = evidence.rows.slice(0, MAX_EVIDENCE_ROWS);
   const lines = shown.map((row) => JSON.stringify(Object.fromEntries(evidence.columns.map((c, i) => [c, row[i] ?? ""]))));
-  const user = `Claim: ${claim}\n\nSupporting rows (${shown.length} of ${evidence.rows.length}; columns: ${evidence.columns.join(", ")}):\n${lines.join("\n") || "(none)"}`;
+  const head = nonce ? `[request ${nonce}]\n` : "";
+  const user = `${head}Claim: ${claim}\n\nSupporting rows (${shown.length} of ${evidence.rows.length}; columns: ${evidence.columns.join(", ")}):\n${lines.join("\n") || "(none)"}`;
   return [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: user }];
 }
 
@@ -100,9 +123,34 @@ export function guardRefutation(sql: unknown, tables: readonly string[] = TABLE_
   return s;
 }
 
+type ParsedReply =
+  | { ok: true; sql: string; rationale: string }
+  | { ok: false; kind: "no_json" | "shape" | "refused"; reason: string; sql: string | null; rationale: string | null };
+
+/** The reply as JSON, then its SELECT through the guard. Never runs anything. */
+function parseReply(chat: ChatResult, layer: DataLayer): ParsedReply {
+  const extracted = Nightshift.extractJson(chat.content);
+  const parsed = Reply.safeParse(extracted);
+  if (!parsed.success) {
+    return extracted === null
+      ? { ok: false, kind: "no_json", reason: "no JSON object in the reply", sql: null, rationale: null }
+      : { ok: false, kind: "shape", reason: `reply is not {refute_with_sql, rationale}: ${parsed.error.issues.map((i) => `${i.path.join(".")} ${i.message}`).join("; ")}`, sql: null, rationale: null };
+  }
+  const { rationale } = parsed.data;
+  try {
+    return { ok: true, sql: guardRefutation(parsed.data.refute_with_sql, layer.tables), rationale };
+  } catch (err) {
+    return { ok: false, kind: "refused", reason: `refutation SQL refused: ${(err as Error).message}`, sql: parsed.data.refute_with_sql, rationale };
+  }
+}
+
+/** Every judge route failed; distinguished from a receipt lookup failure, which happens after the model answered. */
+class ModelUnavailable extends Error {}
+
 /**
- * Ask Ultra for a refuting SELECT, guard it, gate the receipt, run it, map rows to a verdict.
- * Every step leaves a trace event with agent "judge"; the model call and the query add their own.
+ * Ask Ultra for a refuting SELECT, gate the receipt (custody included when the claim names a tenant),
+ * then guard the reply, run it and map rows to a verdict. Every step leaves a trace event with agent
+ * "judge"; the model call, the gate and the query add their own.
  */
 export async function judgeClaim(input: JudgeInput): Promise<JudgeVerdict> {
   const { claim, evidenceRows, layer, nightshift, tracer } = input;
@@ -113,48 +161,72 @@ export async function judgeClaim(input: JudgeInput): Promise<JudgeVerdict> {
   const none = { sql: null, rowCount: null, rationale: null, receiptId: null, servedModel: null };
   const summary = claim.slice(0, 160);
 
+  // 0. The tenant's app id. A tenant id that is not a header-safe token cannot go out as meterless-app, so no
+  //    call is made: not_judged with the reason, never a throw out of a pass or a live pre-flight.
+  let appId: string | null = null;
+  if (input.tenantId !== undefined) {
+    try {
+      appId = tenantAppId(input.tenantId);
+    } catch (err) {
+      const reason = `${(err as Error).message}; no call made`;
+      tracer?.emit({ agent: "judge", action: "check", status: "not_judged", input_summary: summary, output_summary: "tenant id is not a header-safe token; not judged", detail: reason });
+      return done({ status: "not_judged", reason, ...none });
+    }
+  }
+
+  // 1. Call, then gate. Under a tenant: its app id, a fresh nonce per call, custody checked, one retry on a
+  //    receipt that is not ours (gateWithCustody). Without one: one call, signature and tier only.
+  let lastChat: ChatResult | undefined;
+  const call = async (nonce?: string): Promise<{ chat: ChatResult; prompt: string[] }> => {
+    const messages = buildMessages(claim, evidenceRows, nonce);
+    try {
+      // max_tokens is sized for a route that honours enable_thinking: the reasoning comes back in content before the JSON and must not truncate it.
+      const chat = await nightshift.chatWithFallback({ models: requestedModels, messages, maxTokens: 4096, temperature: 0, enableThinking: true, ...(appId ? { appId } : {}), agent: "judge", tracer });
+      lastChat = chat;
+      return { chat, prompt: messages.map((m) => m.content) };
+    } catch (err) {
+      throw new ModelUnavailable((err as Error).message);
+    }
+  };
   let chat: ChatResult;
-  try {
-    // max_tokens is sized for a route that honours enable_thinking: the reasoning comes back in content before the JSON and must not truncate it.
-    chat = await nightshift.chatWithFallback({ models: requestedModels, messages: buildMessages(claim, evidenceRows), maxTokens: 4096, temperature: 0, enableThinking: true, agent: "judge", tracer });
-  } catch (err) {
-    const reason = `judge model unavailable: ${(err as Error).message}`;
-    tracer?.emit({ agent: "judge", action: "hypothesise", status: "not_judged", model_requested: requestedModels[0], input_summary: summary, detail: reason });
-    return done({ status: "not_judged", reason, ...none });
-  }
-  const ids = { receiptId: chat.receiptId, servedModel: chat.modelRouted };
-
-  const extracted = Nightshift.extractJson(chat.content);
-  const parsed = Reply.safeParse(extracted);
-  if (!parsed.success) {
-    const reason = extracted === null ? "no JSON object in the reply" : `reply is not {refute_with_sql, rationale}: ${parsed.error.issues.map((i) => `${i.path.join(".")} ${i.message}`).join("; ")}`;
-    tracer?.emit({ agent: "judge", action: "hypothesise", status: "failed", model_routed: chat.modelRouted ?? undefined, receipt_id: chat.receiptId ?? undefined, input_summary: summary, detail: reason });
-    return done({ status: "invalid_output", reason, ...none, ...ids });
-  }
-  const { rationale } = parsed.data;
-
-  let sql: string;
-  try {
-    sql = guardRefutation(parsed.data.refute_with_sql, layer.tables);
-  } catch (err) {
-    const reason = `refutation SQL refused: ${(err as Error).message}`;
-    tracer?.emit({ agent: "judge", action: "check", status: "failed", model_routed: chat.modelRouted ?? undefined, receipt_id: chat.receiptId ?? undefined, input_summary: parsed.data.refute_with_sql.slice(0, 160), detail: reason });
-    return done({ status: "invalid_output", reason, sql: parsed.data.refute_with_sql, rowCount: null, rationale, ...ids });
-  }
-  tracer?.emit({ agent: "judge", action: "hypothesise", status: "ok", model_routed: chat.modelRouted ?? undefined, receipt_id: chat.receiptId ?? undefined, tokens_in: chat.tokensIn, tokens_out: chat.tokensOut, latency_ms: chat.latencyMs, input_summary: summary, output_summary: sql.slice(0, 160), detail: rationale.slice(0, 300) });
-
   let gate: GateResult;
+  let attempts = 1;
   try {
-    gate = await gateChatResult(chat, "ultra", receipts, tracer, "judge");
+    if (appId) {
+      const out = await gateWithCustody(({ nonce }) => call(nonce), "ultra", receipts, appId, tracer, "judge");
+      chat = out.chat;
+      gate = out.gate;
+      attempts = out.attempts;
+    } else {
+      chat = (await call()).chat;
+      gate = await gateChatResult(chat, "ultra", receipts, tracer, "judge");
+    }
   } catch (err) {
-    // The receipt list could not be fetched (network, 5xx) after the model answered: no verdict, never a throw out of a pass.
+    if (err instanceof ModelUnavailable || !lastChat) {
+      const reason = `judge model unavailable: ${(err as Error).message}`;
+      tracer?.emit({ agent: "judge", action: "hypothesise", status: "not_judged", model_requested: requestedModels[0], input_summary: summary, detail: reason });
+      return done({ status: "not_judged", reason, ...none });
+    }
+    // The receipt list could not be fetched (network, 5xx) after the model answered: no verdict, never a throw out of a pass. The reply is parsed for the record and never run.
     const reason = `receipt lookup failed: ${(err as Error).message}`;
-    tracer?.emit({ agent: "judge", action: "check", status: "not_judged", receipt_id: chat.receiptId ?? undefined, model_routed: chat.modelRouted ?? undefined, input_summary: summary, detail: reason });
-    return done({ status: "not_judged", reason, sql, rowCount: null, rationale, ...ids });
+    tracer?.emit({ agent: "judge", action: "check", status: "not_judged", receipt_id: lastChat.receiptId ?? undefined, model_routed: lastChat.modelRouted ?? undefined, input_summary: summary, detail: reason });
+    const p = parseReply(lastChat, layer);
+    return done({ status: "not_judged", reason, sql: p.sql, rowCount: null, rationale: p.rationale, receiptId: lastChat.receiptId, servedModel: lastChat.modelRouted });
   }
-  const served = { receiptId: gate.receiptId, servedModel: gate.servedModel };
-  if (!gate.ok) return done({ status: "not_judged", reason: `receipt gate: ${gate.reason}`, sql, rowCount: null, rationale, ...served });
+  const served = { receiptId: gate.receiptId, servedModel: gate.servedModel, signatureOk: gate.signatureOk, ...(gate.custody ? { custody: gate.custody } : {}), ...(appId ? { attempts } : {}) };
 
+  // 2. The reply, parsed and guarded. A reply the gate refused is recorded (its SQL shown) and never run.
+  const p = parseReply(chat, layer);
+  if (!gate.ok) return done({ status: "not_judged", reason: `receipt gate: ${gate.reason}`, sql: p.sql, rowCount: null, rationale: p.rationale, ...served });
+  if (!p.ok) {
+    if (p.kind === "refused") tracer?.emit({ agent: "judge", action: "check", status: "failed", model_routed: gate.servedModel ?? undefined, receipt_id: gate.receiptId ?? undefined, input_summary: (p.sql ?? "").slice(0, 160), detail: p.reason });
+    else tracer?.emit({ agent: "judge", action: "hypothesise", status: "failed", model_routed: gate.servedModel ?? undefined, receipt_id: gate.receiptId ?? undefined, input_summary: summary, detail: p.reason });
+    return done({ status: "invalid_output", reason: p.reason, sql: p.sql, rowCount: null, rationale: p.rationale, ...served });
+  }
+  const { sql, rationale } = p;
+  tracer?.emit({ agent: "judge", action: "hypothesise", status: "ok", model_routed: gate.servedModel ?? undefined, receipt_id: gate.receiptId ?? undefined, tokens_in: chat.tokensIn, tokens_out: chat.tokensOut, latency_ms: chat.latencyMs, input_summary: summary, output_summary: sql.slice(0, 160), detail: rationale.slice(0, 300) });
+
+  // 3. Run it ourselves; rows refute.
   let rowCount: number;
   try {
     rowCount = (await layer.run(sql, {}, { agent: "judge", tracer, limit: MAX_LIMIT })).rowCount;

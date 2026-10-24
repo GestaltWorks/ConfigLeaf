@@ -45,11 +45,12 @@ export class Nightshift {
   private readonly base = config.nightshift.baseUrl;
   private readonly root = config.nightshift.baseUrl.replace(/\/v1$/, "");
 
-  private headers(extra: Record<string, string> = {}): Record<string, string> {
+  /** `appId` overrides the meterless-app header for one call (per client, "drift-agent:<tenant>", see gate.ts tenantAppId), so the receipt is filed under it and the gate can verify it. */
+  private headers(extra: Record<string, string> = {}, appId: string = config.nightshift.appId): Record<string, string> {
     if (!config.nightshift.token) throw new NightshiftError("no Nightshift runtime token", 0);
     return {
       Authorization: `Bearer ${config.nightshift.token}`,
-      "meterless-app": config.nightshift.appId,
+      "meterless-app": appId,
       ...extra,
     };
   }
@@ -66,7 +67,7 @@ export class Nightshift {
    * `meterless/*` modes are allowed but the receipt's routed_model is what we trust.
    */
   async chat(
-    opts: { model: string; messages: ChatMessage[]; maxTokens?: number; temperature?: number; enableThinking?: boolean; agent: string; tracer?: Tracer },
+    opts: { model: string; messages: ChatMessage[]; maxTokens?: number; temperature?: number; enableThinking?: boolean; appId?: string; agent: string; tracer?: Tracer },
   ): Promise<ChatResult> {
     const body = JSON.stringify({
       model: opts.model,
@@ -82,7 +83,7 @@ export class Nightshift {
       try {
         const r = await fetch(`${this.base}/chat/completions`, {
           method: "POST",
-          headers: this.headers({ "Content-Type": "application/json", "meterless-scope": "user" }),
+          headers: this.headers({ "Content-Type": "application/json", "meterless-scope": "user" }, opts.appId),
           body,
           signal: AbortSignal.timeout(180_000),
         });
@@ -127,7 +128,7 @@ export class Nightshift {
    * whichever answered; the receipt's routed_model says which. A `fallback` trace event records each hop.
    */
   async chatWithFallback(
-    opts: { models: string[]; messages: ChatMessage[]; maxTokens?: number; temperature?: number; enableThinking?: boolean; agent: string; tracer?: Tracer },
+    opts: { models: string[]; messages: ChatMessage[]; maxTokens?: number; temperature?: number; enableThinking?: boolean; appId?: string; agent: string; tracer?: Tracer },
   ): Promise<ChatResult & { hop: number }> {
     let lastErr: unknown;
     for (let hop = 0; hop < opts.models.length; hop++) {

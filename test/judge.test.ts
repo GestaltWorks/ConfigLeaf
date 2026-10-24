@@ -8,9 +8,11 @@ import { config } from "../src/config.ts";
 import { DataLayer, type Params, type RunOptions } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { hero } from "../src/data/queries.ts";
+import { tenantAppId } from "../src/gate.ts";
 import { MAX_EVIDENCE_ROWS, SYSTEM_PROMPT, buildMessages, guardRefutation, judgeClaim, type JudgeModel } from "../src/agents/judge.ts";
 import bundle from "./fixtures/authored-bundle.json" with { type: "json" };
 import { MemTracer } from "./fixtures/mem-tracer.ts";
+import { ultraReceipt } from "./fixtures/signed-receipt.ts";
 import lightningJson from "./fixtures/receipt-lightning.json" with { type: "json" };
 import ultraJson from "./fixtures/receipt-ultra.json" with { type: "json" };
 
@@ -129,13 +131,19 @@ describe("judgeClaim on the authored fixture", () => {
     const ns = stub(`The claim is false only if the inventory does know 203.0.113.77, so select that row.</think>${reply("SELECT asset_id FROM {{t:inventory_asset}} WHERE tenant_id = 'client-a' AND address = '203.0.113.77'", "A row means the inventory knows the address, which falsifies the claim.")}`);
     const tracer = new MemTracer("test_judge");
     const v = await judgeClaim({ claim: HERO_CLAIM, evidenceRows: evidence, layer, nightshift: ns, receipts, tracer });
-    expect(v).toMatchObject({ status: "stands", rowCount: 0, receiptId: ULTRA_ID, servedModel: ULTRA_MODEL, rationale: "A row means the inventory knows the address, which falsifies the claim." });
+    expect(v).toMatchObject({ status: "stands", rowCount: 0, receiptId: ULTRA_ID, servedModel: ULTRA_MODEL, signatureOk: true, rationale: "A row means the inventory knows the address, which falsifies the claim." });
     expect(v.sql).toBe("SELECT asset_id FROM {{t:inventory_asset}} WHERE tenant_id = 'client-a' AND address = '203.0.113.77' LIMIT 50");
     expect(v.latencyMs).toBeGreaterThanOrEqual(0);
+    // no tenant named: no custody, no nonce, the configured app id
+    expect(v.custody).toBeUndefined();
+    expect(v.attempts).toBeUndefined();
     expect(ns.opts[0]).toMatchObject({ enableThinking: true, maxTokens: 4096, temperature: 0, agent: "judge", models: [config.nightshift.modelJudge, ...config.nightshift.fallbackJudge] });
+    expect(ns.opts[0].appId).toBeUndefined();
+    expect(ns.opts[0].messages[1].content).toMatch(/^Claim: /);
     expect(ns.opts[0].messages[1].content).toContain("Claim: " + HERO_CLAIM);
     expect(ns.opts[0].messages[1].content).toContain('"resolves_to":"203.0.113.77"');
-    expect(tracer.events.map((e) => `${e.agent}:${e.action}:${e.status}`)).toEqual(["judge:hypothesise:ok", "judge:check:ok", "judge:query:ok", "judge:judge:ok"]);
+    // the gate runs before the reply is read: a discarded answer is never parsed as a hypothesis
+    expect(tracer.events.map((e) => `${e.agent}:${e.action}:${e.status}`)).toEqual(["judge:check:ok", "judge:hypothesise:ok", "judge:query:ok", "judge:judge:ok"]);
     expect(tracer.events[3]).toMatchObject({ receipt_id: ULTRA_ID, signature_ok: true, model_routed: ULTRA_MODEL });
   });
 
@@ -185,9 +193,10 @@ describe("judgeClaim on the authored fixture", () => {
     const v = await judgeClaim({ claim: HERO_CLAIM, evidenceRows: EVIDENCE, layer, nightshift: ns, receipts, tracer });
     expect(v).toMatchObject({ status: "not_judged", rowCount: null, receiptId: LIGHTNING_ID, servedModel: LIGHTNING_MODEL });
     expect(v.reason).toMatch(/receipt gate: .*ultra was requested/);
-    expect(v.sql).toMatch(/LIMIT 50$/);
+    expect(v.sql).toMatch(/LIMIT 50$/); // parsed for the record, never run
+    expect(v.signatureOk).toBe(true);
     expect(layer.runs).toBe(before);
-    expect(tracer.events.map((e) => `${e.action}:${e.status}`)).toEqual(["hypothesise:ok", "check:not_judged"]);
+    expect(tracer.events.map((e) => `${e.action}:${e.status}`)).toEqual(["check:not_judged"]);
   });
 
   it("not_judged: a response whose receipt claims Ultra but whose body was altered fails the signature", async () => {
@@ -209,8 +218,8 @@ describe("judgeClaim on the authored fixture", () => {
     expect(v.reason).toMatch(/^receipt lookup failed: .*ECONNREFUSED/);
     expect(v.sql).toMatch(/LIMIT 50$/);
     expect(layer.runs).toBe(before);
-    expect(tracer.events.map((e) => `${e.action}:${e.status}`)).toEqual(["hypothesise:ok", "check:not_judged"]);
-    expect(tracer.events[1]).toMatchObject({ agent: "judge", receipt_id: ULTRA_ID, model_routed: ULTRA_MODEL });
+    expect(tracer.events.map((e) => `${e.action}:${e.status}`)).toEqual(["check:not_judged"]);
+    expect(tracer.events[0]).toMatchObject({ agent: "judge", receipt_id: ULTRA_ID, model_routed: ULTRA_MODEL });
   });
 
   it("not_judged: every judge route failed", async () => {
@@ -218,8 +227,113 @@ describe("judgeClaim on the authored fixture", () => {
     const tracer = new MemTracer("test_judge");
     const v = await judgeClaim({ claim: HERO_CLAIM, evidenceRows: EVIDENCE, layer, nightshift: ns, receipts, tracer, requestedModels: ["nvidia/nemotron-3-ultra-550b-a55b"] });
     expect(v).toMatchObject({ status: "not_judged", sql: null, receiptId: null, servedModel: null });
+    expect(v.signatureOk).toBeUndefined();
     expect(v.reason).toMatch(/judge model unavailable: .*502/);
     expect(tracer.events).toHaveLength(1);
     expect(tracer.events[0]).toMatchObject({ agent: "judge", action: "hypothesise", status: "not_judged", model_requested: "nvidia/nemotron-3-ultra-550b-a55b" });
+  });
+});
+
+describe("judgeClaim under a tenant: the call goes out under the tenant's app id and the receipt must pass custody", () => {
+  const CLIENT = "client-a";
+  const CLIENT_APP = tenantAppId(CLIENT);
+  const REFUTE = reply("SELECT asset_id FROM {{t:inventory_asset}} WHERE tenant_id = 'client-a' AND address = '203.0.113.77'");
+  let layer: CountingLayer;
+
+  beforeAll(async () => {
+    const engine = await SqlJsEngine.create();
+    engine.loadBundle(bundle);
+    layer = new CountingLayer(engine);
+  });
+
+  /** A Nightshift whose n-th answer is filed by the runtime under the n-th receipt and request id of `plan`. */
+  function planned(plan: { receipt: SignedReceipt; requestId: string }[]): JudgeModel & { opts: ChatOpts[] } {
+    const opts: ChatOpts[] = [];
+    return {
+      opts,
+      async chatWithFallback(o) {
+        const p = plan[opts.length];
+        opts.push(o);
+        return { content: REFUTE, modelRequested: o.models[0], modelRouted: ULTRA_MODEL, receiptId: p.receipt.body.receipt.receipt_id as string, requestId: p.requestId, tokensIn: 900, tokensOut: 120, latencyMs: 7, retries: 0, raw: {}, hop: 0 };
+      },
+    };
+  }
+  const find = (...rs: SignedReceipt[]) => ({ find: async (id: string) => rs.find((r) => r.body.receipt.receipt_id === id) ?? null });
+  const nonceOf = (o: ChatOpts): string => o.messages[1].content.match(/^\[request ([0-9a-f]{16})\]\n/)![1];
+
+  it("custody holds on the first call: the request went out under drift-agent:<tenant> with a nonce first in the user message, the receipt is ours, the verdict carries the custody check", async () => {
+    const ours = ultraReceipt("rcpt_ours", "chatcmpl-ours", CLIENT_APP);
+    const ns = planned([{ receipt: ours, requestId: "chatcmpl-ours" }]);
+    const tracer = new MemTracer("test_judge");
+    const v = await judgeClaim({ claim: HERO_CLAIM, evidenceRows: EVIDENCE, layer, nightshift: ns, receipts: find(ours), tracer, tenantId: CLIENT });
+    expect(v).toMatchObject({ status: "stands", rowCount: 0, receiptId: "rcpt_ours", servedModel: ULTRA_MODEL, signatureOk: true, attempts: 1, custody: { ok: true, requestId: "match", app: "match", cacheStatus: "miss" } });
+    expect(ns.opts).toHaveLength(1);
+    expect(ns.opts[0].appId).toBe(CLIENT_APP);
+    expect(ns.opts[0].messages[1].content).toMatch(/^\[request [0-9a-f]{16}\]\nClaim: /);
+    expect(ns.opts[0].messages[0].content).toBe(SYSTEM_PROMPT);
+    expect(tracer.events.map((e) => `${e.agent}:${e.action}:${e.status}`)).toEqual(["judge:check:ok", "judge:check:ok", "judge:hypothesise:ok", "judge:query:ok", "judge:judge:ok"]);
+    expect(tracer.events[0]).toMatchObject({ input_summary: `custody rcpt_ours under app ${CLIENT_APP}`, output_summary: "request_id match, prompt_preview absent, app match" });
+    for (const e of tracer.events) expect(JSON.stringify(e)).not.toContain("Supporting rows");
+  });
+
+  it("a receipt for someone else's request is discarded and the claim asked once more as a fresh request: a new nonce, the second receipt ours, two attempts, the verdict from the second answer", async () => {
+    const foreign = ultraReceipt("rcpt_foreign", "chatcmpl-someone-else", CLIENT_APP);
+    const ours = ultraReceipt("rcpt_ours2", "chatcmpl-2", CLIENT_APP);
+    const ns = planned([{ receipt: foreign, requestId: "chatcmpl-1" }, { receipt: ours, requestId: "chatcmpl-2" }]);
+    const tracer = new MemTracer("test_judge");
+    const before = layer.runs;
+    const v = await judgeClaim({ claim: HERO_CLAIM, evidenceRows: EVIDENCE, layer, nightshift: ns, receipts: find(foreign, ours), tracer, tenantId: CLIENT });
+    expect(v).toMatchObject({ status: "stands", receiptId: "rcpt_ours2", attempts: 2, custody: { ok: true } });
+    expect(ns.opts).toHaveLength(2);
+    expect(nonceOf(ns.opts[0])).not.toBe(nonceOf(ns.opts[1]));
+    expect(ns.opts.every((o) => o.appId === CLIENT_APP)).toBe(true);
+    expect(layer.runs).toBe(before + 1); // the discarded answer's SQL never ran
+    expect(tracer.events.map((e) => `${e.action}:${e.status}`)).toEqual(["check:not_judged", "check:not_judged", "retry:ok", "check:ok", "check:ok", "hypothesise:ok", "query:ok", "judge:ok"]);
+    expect(tracer.events[2]).toMatchObject({ agent: "judge", retry_count: 1, receipt_id: "rcpt_foreign" });
+  });
+
+  it("the real Ultra receipt is filed under the shared app with another request id, so under a tenant it fails custody twice and the finding is not_judged with a reason that starts custody; the SQL is recorded and never run", async () => {
+    const ns = planned([{ receipt: ultra, requestId: "chatcmpl-test" }, { receipt: ultra, requestId: "chatcmpl-test" }]);
+    const tracer = new MemTracer("test_judge");
+    const before = layer.runs;
+    const v = await judgeClaim({ claim: HERO_CLAIM, evidenceRows: EVIDENCE, layer, nightshift: ns, receipts, tracer, tenantId: CLIENT });
+    expect(v).toMatchObject({ status: "not_judged", rowCount: null, receiptId: ULTRA_ID, servedModel: ULTRA_MODEL, signatureOk: true, attempts: 2, custody: { ok: false, requestId: "mismatch", app: "mismatch" } });
+    expect(v.reason).toMatch(/^receipt gate: custody: failed on both attempts, answer discarded, not judged; /);
+    expect(v.sql).toMatch(/LIMIT 50$/);
+    expect(ns.opts).toHaveLength(2);
+    expect(layer.runs).toBe(before);
+    expect(tracer.events.map((e) => `${e.action}:${e.status}`)).toEqual(["check:not_judged", "check:not_judged", "retry:ok", "check:not_judged", "check:not_judged", "check:not_judged"]);
+    expect(tracer.events.at(-1)).toMatchObject({ agent: "judge", output_summary: "custody failed on 2 of 2 attempts; fail closed" });
+  });
+
+  it("a tenant id that is not a header-safe token is not_judged with the reason, traced, and no call is made; nothing throws out of the pass", async () => {
+    const ours = ultraReceipt("rcpt_unused", "chatcmpl-unused", CLIENT_APP);
+    const ns = planned([{ receipt: ours, requestId: "chatcmpl-unused" }]);
+    const tracer = new MemTracer("test_judge");
+    const before = layer.runs;
+    const v = await judgeClaim({ claim: HERO_CLAIM, evidenceRows: EVIDENCE, layer, nightshift: ns, receipts: find(ours), tracer, tenantId: "client a" });
+    expect(v).toMatchObject({ status: "not_judged", sql: null, rowCount: null, receiptId: null, servedModel: null });
+    expect(v.reason).toMatch(/^tenant id is not a header-safe token: "client a"; no call made$/);
+    expect(v.custody).toBeUndefined();
+    expect(ns.opts).toEqual([]);
+    expect(layer.runs).toBe(before);
+    expect(tracer.events.map((e) => `${e.agent}:${e.action}:${e.status}`)).toEqual(["judge:check:not_judged"]);
+    expect(tracer.events[0]).toMatchObject({ output_summary: "tenant id is not a header-safe token; not judged" });
+  });
+
+  it("a substitution under a tenant is never retried: one call, not_judged for the tier, custody recorded", async () => {
+    const ns = planned([{ receipt: lightning, requestId: "chatcmpl-x" }, { receipt: ultra, requestId: "chatcmpl-y" }]);
+    const v = await judgeClaim({ claim: HERO_CLAIM, evidenceRows: EVIDENCE, layer, nightshift: ns, receipts, tenantId: CLIENT });
+    expect(v).toMatchObject({ status: "not_judged", receiptId: LIGHTNING_ID, servedModel: LIGHTNING_MODEL, attempts: 1 });
+    expect(v.reason).toMatch(/receipt gate: .*ultra was requested$/);
+    expect(ns.opts).toHaveLength(1);
+  });
+
+  it("a tenant id that is not a header-safe token is refused before any call, as a verdict and never a throw", async () => {
+    const ns = planned([]);
+    const v = await judgeClaim({ claim: HERO_CLAIM, evidenceRows: EVIDENCE, layer, nightshift: ns, receipts, tenantId: "client a" });
+    expect(v.status).toBe("not_judged");
+    expect(v.reason).toMatch(/header-safe/);
+    expect(ns.opts).toHaveLength(0);
   });
 });
