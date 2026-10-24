@@ -1,5 +1,6 @@
-// Spike A: Lightning SQL over REST. SELECT 1, then a join across two differently sourced tables.
-// Needs ZETARIS_API_KEY in .env (Management > API tokens in the Zetaris UI).
+// Spike A: Lightning SQL over REST with the agent's own key. Proves: SELECT 1, that this user can
+// register a Lightning database and see it, and that it is dropped again. No sample sources, no
+// third-party demo tables. Needs ZETARIS_API_KEY in .env (Management > API tokens).
 import { Zetaris } from "../src/adapters/zetaris.ts";
 import { Tracer } from "../src/trace.ts";
 
@@ -12,17 +13,24 @@ const check = (ok: boolean, label: string, detail = "") => {
 };
 
 const one = await z.query("SELECT 1 AS one", { agent: "spike", tracer });
-check(one.rowCount === 1 && one.rows[0]?.[0] === "1", "SELECT 1 over REST", `${one.latencyMs} ms, columns=${JSON.stringify(one.columns)}`);
+check(one.rowCount === 1 && one.rows[0]?.[0] === "1" && one.columns[0] === "one", "SELECT 1 over REST", `${one.latencyMs} ms (server ${one.serverMs} ms)`);
 
-// The bundle ships sample sources (NY_TAXI, TPCDS_DB) and the getting-started PokeAPI REST table
-// name-redacted registered on 23 Oct. A join across a REST table and a bundled relational table proves
-// federation before our own sources exist.
-const dbs = await z.query("SHOW LIGHTNING DATABASES", { agent: "spike", tracer }).catch((e) => ({ rowCount: 0, rows: [], columns: [], error: String(e) } as any));
-check(dbs.rowCount > 0, "SHOW LIGHTNING DATABASES", `${dbs.rowCount} rows${dbs.error ? ` ${dbs.error}` : ""}`);
-console.log(dbs.rows.slice(0, 10).map((r: string[]) => "   " + r.join(" | ")).join("\n"));
-
-const poke = await z.query("SELECT pokemon_name, ability_name FROM pokeapi.pikachu_abilities_table", { agent: "spike", tracer }).catch((e) => ({ rowCount: 0, error: String(e) } as any));
-check(poke.rowCount >= 1, "live REST table (PokeAPI) answers a SELECT", `${poke.rowCount} rows${poke.error ? ` ${poke.error}` : ""}`);
+// Registration rights: the agent registers its own sources, so its key must be allowed to CREATE.
+const probe = `DRIFT_SPIKE_${Date.now().toString(36).toUpperCase()}`;
+let created = false;
+try {
+  await z.query(`CREATE LIGHTNING DATABASE ${probe} DESCRIBE BY "drift-agent spike, dropped at the end"`, { agent: "spike", tracer });
+  created = true;
+} catch (e) {
+  check(false, "this key can register a Lightning database", String((e as Error).message).slice(0, 160));
+}
+if (created) {
+  const dbs = await z.query("SHOW LIGHTNING DATABASES", { agent: "spike", tracer });
+  check(dbs.rows.some((r) => r[0] === probe), "the registered database is visible to this key", `${dbs.rowCount} database(s) visible`);
+  await z.query(`DROP LIGHTNING DATABASE ${probe}`, { agent: "spike", tracer });
+  const after = await z.query("SHOW LIGHTNING DATABASES", { agent: "spike", tracer });
+  check(!after.rows.some((r) => r[0] === probe), "and dropped again", `${after.rowCount} remain`);
+}
 
 console.log(failures ? `\nSPIKE A: ${failures} FAIL` : "\nSPIKE A: PASS");
 process.exit(failures ? 1 : 0);
