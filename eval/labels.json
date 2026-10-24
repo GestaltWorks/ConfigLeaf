@@ -1,0 +1,221 @@
+{
+ "labelled_on": "2026-10-24",
+ "labelled_by": "the operator (17 years of MSP operations), without seeing any model output",
+ "label_field": "needs_human",
+ "scale": {
+  "yes": "a technician must see this now: production down, mispointed, or being exploited",
+  "no": "work the agent does and proves; nobody is woken",
+  "unsure": "the operator could not judge from the facts given"
+ },
+ "standing_rule": "Literally none of this is important to me or anyone. The only thing an engi needs to know at 2am is when production is down, things are mispointed or being actively exploited, or, you know, many of the things we can't check here b/c we don't have the sensors.",
+ "labels": [
+  {
+   "id": "E01",
+   "needs_human": "no",
+   "reason": "B = D. Not intentional.",
+   "operator_note": "Operator: the split configuration was not intentional (an earlier coding-agent change); worth fixing, not worth waking anyone."
+  },
+  {
+   "id": "E02",
+   "needs_human": "no",
+   "reason": "A = D, not a 2am alert."
+  },
+  {
+   "id": "E03",
+   "needs_human": "no",
+   "reason": "A = D, not a 2am alert."
+  },
+  {
+   "id": "E04",
+   "needs_human": "no",
+   "reason": "A = D, not a 2am alert."
+  },
+  {
+   "id": "E05",
+   "needs_human": "no",
+   "reason": "A = D, not a 2am alert."
+  },
+  {
+   "id": "E06",
+   "needs_human": "no",
+   "reason": "C = D, leftovers."
+  },
+  {
+   "id": "E07",
+   "needs_human": "no",
+   "reason": "A = D, not a 2am alert."
+  },
+  {
+   "id": "E08",
+   "needs_human": "no",
+   "reason": "A = D, not a 2am alert."
+  },
+  {
+   "id": "E09",
+   "needs_human": "no",
+   "reason": "A = D, not a 2am alert."
+  },
+  {
+   "id": "E10",
+   "needs_human": "no",
+   "reason": "A = D, not a 2am alert."
+  },
+  {
+   "id": "E11",
+   "needs_human": "no",
+   "reason": "C = D, leftovers."
+  },
+  {
+   "id": "E12",
+   "needs_human": "no",
+   "reason": "C = D, leftovers."
+  },
+  {
+   "id": "E13",
+   "needs_human": "no",
+   "reason": "D = D. That file is only used by the operator and one of his own tools; deliberately not public.",
+   "operator_note": "Paraphrased: the original answer named the host and the tool."
+  },
+  {
+   "id": "E14",
+   "needs_human": "no",
+   "reason": "E = sure. The agent saying the DNS for that site is not observed is the right call.",
+   "operator_note": "Operator's literal answer was 'sure?'; recorded as no human needed, with the agent's 'not observed' statement accepted."
+  },
+  {
+   "id": "E15",
+   "needs_human": "no",
+   "reason": "E = sure. The agent saying the DNS for that site is not observed is the right call.",
+   "operator_note": "Operator's literal answer was 'sure?'; recorded as no human needed, with the agent's 'not observed' statement accepted."
+  },
+  {
+   "id": "E16",
+   "needs_human": "no",
+   "reason": "F: This is my personal estate. It's not an MSP. Nothing happens except on purpose unless you do it and I don't know."
+  },
+  {
+   "id": "E17",
+   "needs_human": "no",
+   "reason": "F: This is my personal estate. It's not an MSP. Nothing happens except on purpose unless you do it and I don't know."
+  },
+  {
+   "id": "E18",
+   "needs_human": "no",
+   "reason": "F: This is my personal estate. It's not an MSP. Nothing happens except on purpose unless you do it and I don't know."
+  },
+  {
+   "id": "E19",
+   "needs_human": "no",
+   "reason": "F: This is my personal estate. It's not an MSP. Nothing happens except on purpose unless you do it and I don't know."
+  },
+  {
+   "id": "E20",
+   "needs_human": "no",
+   "reason": "F: This is my personal estate. It's not an MSP. Nothing happens except on purpose unless you do it and I don't know."
+  },
+  {
+   "id": "E21",
+   "needs_human": "no",
+   "reason": "F: This is my personal estate. It's not an MSP. Nothing happens except on purpose unless you do it and I don't know."
+  },
+  {
+   "id": "E22",
+   "needs_human": "no",
+   "reason": "F: This is my personal estate. It's not an MSP. Nothing happens except on purpose unless you do it and I don't know."
+  },
+  {
+   "id": "E23",
+   "needs_human": "no",
+   "reason": "F: This is my personal estate. It's not an MSP. Nothing happens except on purpose unless you do it and I don't know."
+  },
+  {
+   "id": "E24",
+   "needs_human": "no",
+   "reason": "F: This is my personal estate. It's not an MSP. Nothing happens except on purpose unless you do it and I don't know."
+  },
+  {
+   "id": "E25",
+   "needs_human": "no",
+   "reason": "F: This is my personal estate. It's not an MSP. Nothing happens except on purpose unless you do it and I don't know."
+  },
+  {
+   "id": "E26",
+   "needs_human": "no",
+   "reason": "F: This is my personal estate. It's not an MSP. Nothing happens except on purpose unless you do it and I don't know."
+  },
+  {
+   "id": "E27",
+   "needs_human": "no",
+   "reason": "F: This is my personal estate. It's not an MSP. Nothing happens except on purpose unless you do it and I don't know."
+  },
+  {
+   "id": "E28",
+   "needs_human": "no",
+   "reason": "F: This is my personal estate. It's not an MSP. Nothing happens except on purpose unless you do it and I don't know."
+  },
+  {
+   "id": "E29",
+   "needs_human": "no",
+   "reason": "F: This is my personal estate. It's not an MSP. Nothing happens except on purpose unless you do it and I don't know."
+  },
+  {
+   "id": "E30",
+   "needs_human": "no",
+   "reason": "G: piles of old copies can be confusing I guess, we probably want more structured version history.",
+   "operator_note": "Operator wants structured version history (the vault); the copies themselves are not an alert."
+  },
+  {
+   "id": "E31",
+   "needs_human": "no",
+   "reason": "G: piles of old copies can be confusing I guess, we probably want more structured version history.",
+   "operator_note": "Operator wants structured version history (the vault); the copies themselves are not an alert."
+  },
+  {
+   "id": "E32",
+   "needs_human": "no",
+   "reason": "G: piles of old copies can be confusing I guess, we probably want more structured version history.",
+   "operator_note": "Operator wants structured version history (the vault); the copies themselves are not an alert."
+  },
+  {
+   "id": "E33",
+   "needs_human": "no",
+   "reason": "G: piles of old copies can be confusing I guess, we probably want more structured version history.",
+   "operator_note": "Operator wants structured version history (the vault); the copies themselves are not an alert."
+  },
+  {
+   "id": "E34",
+   "needs_human": "no",
+   "reason": "G: piles of old copies can be confusing I guess, we probably want more structured version history.",
+   "operator_note": "Operator wants structured version history (the vault); the copies themselves are not an alert."
+  },
+  {
+   "id": "E35",
+   "needs_human": "no",
+   "reason": "G: piles of old copies can be confusing I guess, we probably want more structured version history.",
+   "operator_note": "Operator wants structured version history (the vault); the copies themselves are not an alert."
+  },
+  {
+   "id": "E36",
+   "needs_human": "no",
+   "reason": "G: piles of old copies can be confusing I guess, we probably want more structured version history.",
+   "operator_note": "Operator wants structured version history (the vault); the copies themselves are not an alert."
+  },
+  {
+   "id": "E37",
+   "needs_human": "unsure",
+   "reason": "H: I'm not sure what the significance is.",
+   "operator_note": "The significance the agent must explain: these live config files are in no backup at all."
+  },
+  {
+   "id": "E38",
+   "needs_human": "unsure",
+   "reason": "H: I'm not sure what the significance is.",
+   "operator_note": "The significance the agent must explain: these live config files are in no backup at all."
+  }
+ ],
+ "counts": {
+  "yes": 0,
+  "no": 36,
+  "unsure": 2
+ }
+}

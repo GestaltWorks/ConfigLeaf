@@ -27,9 +27,10 @@ log, with pseudonyms as the redactor produced them. Classes:
 | drift_vs_approved | dated copies of a vhost beside the live file |
 | changed_since_backup | live config against the newest nightly export (negatives) |
 
-Labels are written by one person (the operator, an MSP technician by trade) without seeing any model
-output, as `matters`, `does not` or `unsure`, each with one line of reasoning, and committed as
-`labels.json`. `unsure` items are kept and reported, never silently dropped.
+Labels are written by one person (the operator, 17 years of MSP operations) without seeing any model
+output, and committed as `labels.json`. The label is `needs_human`: `yes`, `no` or `unsure`, with the
+operator's reasoning in his own words. `unsure` items are kept and reported. A second field,
+`operator_note`, keeps anything else he said about an item; it is recorded and left unscored.
 
 ## Split
 
