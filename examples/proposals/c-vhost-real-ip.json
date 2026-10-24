@@ -1,0 +1,7 @@
+{
+  "kind": "vhost_real_ip",
+  "target": { "host": "host-4b4dc1", "object_id": "/etc/nginx/sites-available/host-4c795e.quest" },
+  "field": "real_ip",
+  "to": "trusted:15 header:CF-Connecting-IP scope:server",
+  "note": "Add set_real_ip_from for Cloudflare's published IPv4 ranges and real_ip_header CF-Connecting-IP to both server blocks of the vhost that serves the apex and its proxied www. Both blocks' real_ip rows read absent in the recorded run."
+}

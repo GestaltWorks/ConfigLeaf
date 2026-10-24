@@ -1,0 +1,56 @@
+{
+  "verdict": "GO",
+  "reason": "the proposed value is already the recorded one; the change alters no finding (27 before and after)",
+  "invalid": false,
+  "proposal": {
+    "kind": "dns_record",
+    "target": {
+      "record_id": "bce1ca2bb7caa2de9b6823d5f6ecd3f2"
+    },
+    "field": "proxied",
+    "to": 1,
+    "when": "2026-04-16T21:12:47.270Z",
+    "note": "Replay of the proxied field of the real UPDATE body the audit log holds for this record at 2026-04-16 21:12:47 UTC (actor pseudonymised): proxied true. The simulation runs over the world as recorded on 24 Oct, in which the record is already proxied."
+  },
+  "bound": {
+    "kind": "dns_record",
+    "tenant_id": "client-1",
+    "run_id": "run-f9470e2f5f175899",
+    "change": "proxied of dns_record bce1ca2bb7caa2de9b6823d5f6ecd3f2 (host-524b42.quest, CNAME, zone host-4c795e.quest) in run run-f9470e2f5f175899: 1 -> 1"
+  },
+  "baseline": {
+    "runs": 4,
+    "gated_out": [],
+    "observed": 1062,
+    "findings": 27
+  },
+  "simulations": [
+    {
+      "iteration": 0,
+      "steps": [],
+      "findings": 27,
+      "added": [],
+      "removed": []
+    }
+  ],
+  "prerequisites": [],
+  "iterations": 0,
+  "removed": [],
+  "added": [],
+  "overlays": {
+    "dns_record": "SELECT record_id, run_id, tenant_id, zone, name, type, content, ttl, CASE WHEN record_id IN ('bce1ca2bb7caa2de9b6823d5f6ecd3f2') AND run_id = 'run-f9470e2f5f175899' THEN 1 ELSE proxied END AS proxied, observed_at FROM {{t:dns_record}}"
+  },
+  "judge": {
+    "status": "skipped",
+    "reason": "the change removes no finding; there is no claim whose falsifier could fire",
+    "target": null,
+    "claim": null,
+    "sql": null,
+    "rows_fixed": null,
+    "rows_baseline": null,
+    "receipt_id": null,
+    "served_model": null
+  },
+  "trace_id": "preflight_mvmnzhaq",
+  "elapsed_ms": 324
+}

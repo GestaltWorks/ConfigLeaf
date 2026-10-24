@@ -9,8 +9,9 @@
 import { describe, expect, it } from "vitest";
 import { DataLayer, DataLayerError, type Params, type RunOptions } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
+import { TechnicianMemory } from "../src/engine/memory.ts";
 import { DriftWorld } from "../src/engine/world.ts";
-import { runPass, type Finding } from "../src/pipeline.ts";
+import { runPass, shortFindingId, type Finding } from "../src/pipeline.ts";
 import type { TraceEvent } from "../src/trace.ts";
 import authored from "./fixtures/authored-bundle.json" with { type: "json" };
 import recorded from "../sample/bundle.json" with { type: "json" };
@@ -107,7 +108,9 @@ describe("pass over the authored fixture, model: none", () => {
     expect(heroQueries(ev)).toHaveLength(2);
     // 1 runs + 12 gate + 5 observations + 5 resolutions + 2 hero (two host groups pass the gate) + 4 hero checks
     // + survey: 1 audit span + 1 proxy_split + 4 per nginx host group whose latest run passed (host-7f1c) + 4 proxy_split checks
-    expect(okQueries(ev)).toHaveLength(1 + 12 + 5 + 5 + 2 + 4 + 1 + 1 + 4 + 4);
+    // + exposure: 2 SELECTs for each of the two findings that rest on a record (rec-a1, rec-b2): the record's row in the DNS run and
+    //   the first event of its state; the authored log carries plain old and new values, so no earlier-body count is needed
+    expect(okQueries(ev)).toHaveLength(1 + 12 + 5 + 5 + 2 + 4 + 1 + 1 + 4 + 4 + 2 * 2);
     expect(ev.filter((e) => e.action === "query" && e.status === "failed")).toEqual([]);
   });
 
@@ -171,8 +174,9 @@ describe("pass over the authored fixture, model: none", () => {
     // the survey falls back to the 20 Oct DNS run, which passed: the same proxy_split, three days older
     expect(result.findings.map((f) => [f.finding.class, f.finding.dns_run_id])).toEqual([["proxy_split", "run-dns-1020"]]);
     // 1 runs + 12 gate + 5 observations + 3 resolutions (the 20 Oct host runs still pair with run-dns-1020); no hero, no hero checks;
-    // survey: 1 audit span + 1 proxy_split + 4 checks, and no host survey (no host run pairs with a passing DNS run)
-    expect(okQueries(tracer.events)).toHaveLength(1 + 12 + 5 + 3 + 1 + 1 + 4);
+    // survey: 1 audit span + 1 proxy_split + 4 checks, and no host survey (no host run pairs with a passing DNS run);
+    // exposure: 2 SELECTs for the proxy_split's record (rec-b2 in run-dns-1020)
+    expect(okQueries(tracer.events)).toHaveLength(1 + 12 + 5 + 3 + 1 + 1 + 4 + 2);
   });
 
   it("a name with an A and an AAAA record gives two findings, each carrying its own record and checked against it", async () => {
@@ -347,6 +351,115 @@ describe("pass over the recorded bundle (the real estate, redacted), model: none
     expect(ev.filter((e) => e.action === "decide")).toHaveLength(27);
     expect(ev.filter((e) => e.action === "judge" && e.status === "skipped")).toHaveLength(27);
     // 1 runs + 4 gate + 2 observations + 2 resolutions + 2 hero + 1 audit span + 1 proxy_split + 2 hosts x 4 survey queries + checks (4 x 24 + 3 x 3)
-    expect(okQueries(ev)).toHaveLength(1 + 4 + 2 + 2 + 2 + 1 + 1 + 8 + 4 * 24 + 3 * 3);
+    // + exposure (test/exposure.test.ts measures it): 15 distinct (record, state) pairs -> 15 record rows + 15 first-event queries + 4 earlier-body counts
+    expect(okQueries(ev)).toHaveLength(1 + 4 + 2 + 2 + 2 + 1 + 1 + 8 + 4 * 24 + 3 * 3 + 15 + 15 + 4);
+  });
+
+  it("every finding carries a short stable id (fnd- plus 16 hex of the World Model's finding id), distinct across the 27 and the same on a second pass; without a memory the result says so", async () => {
+    const a = await pass(recorded);
+    const b = await pass(recorded);
+    const ids = a.result.findings.map((f) => f.id);
+    expect(ids.every((id) => /^fnd-[0-9a-f]{16}$/.test(id))).toBe(true);
+    expect(new Set(ids).size).toBe(27);
+    expect(b.result.findings.map((f) => f.id)).toEqual(ids);
+    const world = new DriftWorld("ids");
+    expect(ids).toEqual(a.result.findings.map((f) => shortFindingId(world.findingId(f.finding))));
+    expect(a.result.memory).toBeNull();
+    expect(a.result.findings.every((f) => f.exception === undefined)).toBe(true);
+  });
+});
+
+describe("the Decider consults the technician's memory (src/engine/memory.ts) before deciding", () => {
+  const T0 = Date.parse("2026-10-24T12:00:00.000Z");
+  const prov = { kind: "cli", at: "2026-10-24T11:59:00.000Z", by: "technician", runId: DNS_RUN };
+  const EXPIRES = "2026-11-30T00:00:00.000Z";
+
+  async function passWithMemory(memory: TechnicianMemory, at?: string) {
+    const engine = await SqlJsEngine.create();
+    engine.loadBundle(recorded);
+    const tracer = new MemTracer("test_pipeline_memory", { model: "none" });
+    const result = await runPass(new DataLayer(engine), { tracer, world: new DriftWorld("test_pipeline_memory"), memory, at });
+    return { result, tracer };
+  }
+  const verbsOf = (fs: Finding[]) => fs.map((f) => [f.id, f.verb]);
+
+  it("an accepted exception in force adopts the finding it scopes, with the lesson's expiry on the finding and in the trace, and withholds the judge; every other finding keeps its verb", async () => {
+    const plain = await pass(recorded);
+    const memory = new TechnicianMemory({ clock: () => T0 });
+    const lesson = memory.recordException({ tenantId: T, findingClass: "proxy_split", scopeKey: WWW_NAME, reason: "the apex stays direct until the origin certificate lands", expiresAt: EXPIRES, provenance: prov });
+    const { result, tracer } = await passWithMemory(memory);
+    const split = ofClass(result.findings, "proxy_split")[0];
+    const was = ofClass(plain.result.findings, "proxy_split")[0];
+    expect(was.verb).toBe("ESCALATE");
+    expect(split.verb).toBe("ADOPT");
+    expect(split.exception).toEqual({ lesson: lesson.id, status: "applied", expires_at: EXPIRES, scope_key: WWW_NAME, reason: lesson.reason, accepted_by: "technician", accepted_at: "2026-10-24T12:00:00.000Z" });
+    // the checks still ran and are recorded as they were; only the verb and the judge call changed
+    expect(split.checks).toEqual(was.checks);
+    expect(split.exposure).toEqual(was.exposure);
+    expect(split.judgeWithheld).toBe(`verdict cannot move: accepted exception ${lesson.id} holds until ${EXPIRES}; the technician's acceptance, not a judge, settles it`);
+    expect(verbsOf(result.findings.filter((f) => f.id !== split.id))).toEqual(verbsOf(plain.result.findings.filter((f) => f.id !== split.id)));
+    expect(result.memory).toEqual({ lessons: 1, applied: 1, lapsed: 0 });
+    expect(result.verifier.withdrawn_judge).toBe(1);
+    const mem = tracer.events.filter((e) => e.input_summary?.startsWith("memory "));
+    expect(mem.map((e) => [e.agent, e.action, e.status, e.output_summary])).toEqual([
+      ["decider", "triage", "ok", `exception ${lesson.id} accepted by technician until ${EXPIRES}: ADOPT`],
+    ]);
+    expect(mem[0].input_summary).toBe(`memory proxy_split proxied in ${WWW_RECORD}`);
+    expect(mem[0].detail).toContain(`lesson ${lesson.id} on ${WWW_NAME} (proxy_split)`);
+    const decide = tracer.events.find((e) => e.action === "decide" && e.input_summary === `proxy_split proxied in ${WWW_RECORD}`)!;
+    expect(decide.output_summary).toBe(`ADOPT: accepted exception ${lesson.id} holds until ${EXPIRES} (${lesson.reason}); the checks alone would say ESCALATE`);
+    expect(decide.detail).toContain(`; exception: ${lesson.id} applied`);
+    expect(tracer.events.find((e) => e.action === "judge" && e.input_summary === split.finding.summary.slice(0, 160))?.detail).toMatch(/^verdict cannot move: accepted exception/);
+    expect(tracer.events.filter((e) => e.action === "triage" && e.input_summary === "memory").map((e) => e.output_summary)).toEqual(["lessons 1, exceptions applied 1, lapsed 0"]);
+    // the H-MEM ledger saw the recall
+    expect(memory.hmem.ledger.history(lesson.id).map((h) => h.action)).toEqual(["create", "read"]);
+  });
+
+  it("the same exception recalled after its expiry re-raises the finding as ESCALATE ('exception lapsed'), flagged on the finding and traced; nothing is applied", async () => {
+    const memory = new TechnicianMemory({ clock: () => T0 });
+    const lesson = memory.recordException({ tenantId: T, findingClass: "proxy_split", scopeKey: WWW_NAME, reason: "temporary", expiresAt: EXPIRES, provenance: prov });
+    const { result, tracer } = await passWithMemory(memory, "2026-12-01T00:00:00.000Z");
+    const split = ofClass(result.findings, "proxy_split")[0];
+    expect(split.verb).toBe("ESCALATE");
+    expect(split.exception).toMatchObject({ lesson: lesson.id, status: "lapsed", expires_at: EXPIRES, scope_key: WWW_NAME });
+    expect(split.judgeWithheld).toBe(`verdict cannot move: exception ${lesson.id} lapsed ${EXPIRES}; the finding goes back to the technician whatever a judge answers`);
+    expect(result.memory).toEqual({ lessons: 1, applied: 0, lapsed: 1 });
+    const esc = tracer.events.filter((e) => e.action === "escalate");
+    expect(esc.map((e) => [e.agent, e.status, e.input_summary, e.output_summary])).toEqual([["decider", "ok", `memory proxy_split proxied in ${WWW_RECORD}`, `exception ${lesson.id} lapsed ${EXPIRES}: re-raised as ESCALATE`]]);
+    expect(tracer.events.find((e) => e.action === "decide" && e.input_summary === `proxy_split proxied in ${WWW_RECORD}`)!.output_summary)
+      .toBe(`ESCALATE: exception lapsed: ${lesson.id} expired ${EXPIRES}; re-raised to the technician, the checks alone would say ESCALATE`);
+  });
+
+  it("a lapsed exception re-raises even a finding every check of which holds: the two host-18efce.ai blocks go from ADOPT to ESCALATE", async () => {
+    const memory = new TechnicianMemory({ clock: () => T0 });
+    const lesson = memory.recordException({ tenantId: T, findingClass: "proxied_without_real_ip", scopeKey: "host-18efce.ai", reason: "accepted for the September migration", expiresAt: "2026-10-01T00:00:00.000Z", provenance: { ...prov, at: "2026-09-01T00:00:00.000Z" } });
+    const plain = await pass(recorded);
+    const { result } = await passWithMemory(memory);
+    const ai = result.findings.filter((f) => f.finding.dns_name === "host-18efce.ai");
+    expect(ai).toHaveLength(2);
+    expect(plain.result.findings.filter((f) => f.finding.dns_name === "host-18efce.ai").map((f) => f.verb)).toEqual(["ADOPT", "ADOPT"]);
+    expect(ai.map((f) => [f.verb, f.exception?.status, f.exception?.lesson])).toEqual([["ESCALATE", "lapsed", lesson.id], ["ESCALATE", "lapsed", lesson.id]]);
+    expect(ai.every((f) => f.checks.every((c) => c.holds))).toBe(true);
+    expect(result.findings.filter((f) => f.verb === "ADOPT")).toHaveLength(3);
+    expect(result.memory).toEqual({ lessons: 1, applied: 0, lapsed: 2 });
+  });
+
+  it("recall is by exact scope key, class and tenant: a near-miss name, another class on the right name and another tenant change nothing", async () => {
+    const plain = await pass(recorded);
+    const memory = new TechnicianMemory({ clock: () => T0 });
+    memory.recordException({ tenantId: T, findingClass: "proxy_split", scopeKey: "host-524b43.quest", reason: "one character off", expiresAt: EXPIRES, provenance: prov });
+    memory.recordException({ tenantId: T, findingClass: "orphan_record", scopeKey: WWW_NAME, reason: "other class", expiresAt: EXPIRES, provenance: prov });
+    memory.recordException({ tenantId: "client-2", findingClass: "proxy_split", scopeKey: WWW_NAME, reason: "other tenant", expiresAt: EXPIRES, provenance: prov });
+    memory.recordAnswer({ tenantId: T, question: "Is the apex meant to be direct?", answer: "Yes.", scope: { type: "name", key: WWW_NAME }, expiresAt: EXPIRES, provenance: prov });
+    const { result, tracer } = await passWithMemory(memory);
+    expect(verbsOf(result.findings)).toEqual(verbsOf(plain.result.findings));
+    expect(result.findings.every((f) => f.exception === undefined)).toBe(true);
+    expect(result.memory).toEqual({ lessons: 4, applied: 0, lapsed: 0 });
+    expect(tracer.events.filter((e) => e.input_summary?.startsWith("memory "))).toEqual([]);
+    expect(tracer.events.filter((e) => e.action === "escalate")).toEqual([]);
+    // the answer is in force on the www name: the Decider's helper finds it, so the question would not be asked again
+    const split = ofClass(result.findings, "proxy_split")[0];
+    expect(memory.answered(split.finding, "is the apex meant to be direct?")?.answer).toBe("Yes.");
+    expect(memory.exceptionFor(split.finding)).toBeNull();
   });
 });

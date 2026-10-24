@@ -1,0 +1,8 @@
+{
+  "kind": "dns_record",
+  "target": { "record_id": "bce1ca2bb7caa2de9b6823d5f6ecd3f2" },
+  "field": "proxied",
+  "to": 1,
+  "when": "2026-04-16T21:12:47.270Z",
+  "note": "Replay of the proxied field of the real UPDATE body the audit log holds for this record at 2026-04-16 21:12:47 UTC (actor pseudonymised): proxied true. The simulation runs over the world as recorded on 24 Oct, in which the record is already proxied."
+}

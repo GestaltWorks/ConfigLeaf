@@ -1,0 +1,7 @@
+{
+  "kind": "dns_record",
+  "target": { "name": "host-4c795e.quest", "type": "A" },
+  "field": "content",
+  "to": "203.0.113.9",
+  "note": "Point the apex A record (bound by name and type, not by id) at an address the client's inventory does not know (an RFC 5737 documentation address). The fourth proposal: not one of the three the brief asked for, added because none of those three reaches NO-GO on the recorded world."
+}

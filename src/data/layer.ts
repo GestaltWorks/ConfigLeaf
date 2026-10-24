@@ -59,16 +59,54 @@ export function literal(v: Param): string {
   throw new DataLayerError(`unsupported parameter type: ${v === undefined ? "undefined" : typeof v}`);
 }
 
+/**
+ * Overlays: a derived table per table name, for a simulation (src/preflight). The body is one SELECT
+ * that reads its own base table as {{t:<table>}} (the base, never the overlay: an overlay body renders
+ * against base tables only) and carries literal values, never {{p:}}; every {{t:<table>}} in a query
+ * then renders as `(<body>)` with the query's own alias (`{{t:x}} o` or `{{t:x}} AS o`, either way one
+ * alias), or the table name as alias when the query gives none (Spark wants one; SQLite accepts it).
+ * Nothing is written: the engine evaluates what would
+ * be true as a subquery, the same text on sql.js and on Zetaris, and the guard sees the final SQL.
+ */
+export type Overlays = Readonly<Record<string, string>>;
+
+/** A word after `{{t:x}}` that is SQL, not an alias. */
+const NOT_ALIAS = new Set("where join left right inner outer cross full natural on order group having union limit and or not exists in select from when then else end is like between case as".split(" "));
+/** The word after `{{t:x}}`, looking through an `AS`: `{{t:x}} o` and `{{t:x}} AS o` both name the alias o. */
+const AFTER_TABLE = /^\s*(?:as\s+)?([A-Za-z_]\w*)/i;
+
 export class DataLayer {
-  constructor(readonly engine: Engine, readonly tables: readonly string[] = TABLE_NAMES) {}
+  readonly overlays: Overlays;
+
+  constructor(readonly engine: Engine, readonly tables: readonly string[] = TABLE_NAMES, opts: { overlays?: Overlays } = {}) {
+    this.overlays = opts.overlays ?? {};
+    for (const [table, body] of Object.entries(this.overlays)) {
+      if (!tables.includes(table)) throw new DataLayerError(`overlay on unknown table: ${table}`);
+      if (!body.includes(`{{t:${table}}}`)) throw new DataLayerError(`overlay on ${table} must read its base table as {{t:${table}}}`);
+      assertSelectOnly(this.renderWith(body, {}, {}));
+    }
+  }
+
+  /** The same engine and tables with these overlays in place of the current ones. */
+  withOverlays(overlays: Overlays): DataLayer {
+    return new DataLayer(this.engine, this.tables, { overlays });
+  }
 
   /** {{t:name}} must be a known table; {{p:name}} must be present in params. Any other brace pair in the template throws; braces inside a parameter value are data. */
   render(sql: string, params: Params = {}): string {
+    return this.renderWith(sql, params, this.overlays);
+  }
+
+  private renderWith(sql: string, params: Params, overlays: Overlays): string {
     if (/\{\{|\}\}/.test(sql.replace(/\{\{(t|p):\w+\}\}/g, ""))) throw new DataLayerError("malformed placeholder; use {{t:table}} or {{p:param}}");
-    return sql.replace(/\{\{(t|p):(\w+)\}\}/g, (_, kind: string, name: string) => {
+    return sql.replace(/\{\{(t|p):(\w+)\}\}/g, (match: string, kind: string, name: string, offset: number, all: string) => {
       if (kind === "t") {
         if (!this.tables.includes(name)) throw new DataLayerError(`unknown table: ${name}`);
-        return this.engine.qualify(name);
+        const body = overlays[name];
+        if (body === undefined) return this.engine.qualify(name);
+        const next = all.slice(offset + match.length).match(AFTER_TABLE)?.[1];
+        const aliased = next !== undefined && !NOT_ALIAS.has(next.toLowerCase());
+        return `(${this.renderWith(body, {}, {})})${aliased ? "" : ` ${name}`}`;
       }
       if (!Object.hasOwn(params, name)) throw new DataLayerError(`missing parameter: ${name}`);
       return literal(params[name]);

@@ -42,8 +42,15 @@
 //            is a recorded rejection, not a guess: it escalates that one finding and the pass goes on.
 //   decide   every check holds and none was rejected -> ADOPT, as a candidate; anything else ->
 //            ESCALATE. HOLD needs a judge to bound it with an expiry, so a pass with no model never
-//            issues it.
-//   judge    skipped and traced as such: model: none.
+//            issues it. [stoprule] Between checks the stop rule (src/stoprule.ts) may end checking early;
+//            [exposure] for a finding on a DNS record the step dates its exposure (src/engine/world.ts).
+//            [memory] When the pass is given a TechnicianMemory (src/engine/memory.ts) the Decider recalls
+//            the technician's lessons for the finding first, by exact scope key: an accepted exception in
+//            force yields ADOPT with its expiry on the finding and a trace line naming the lesson; one that
+//            has lapsed re-raises the finding as ESCALATE ("exception lapsed"), whatever the checks say.
+//            The checks still run and are recorded either way; only the verb and the judge call change.
+//   judge    skipped and traced as such: model: none; [stoprule] or "verdict cannot move" when the
+//            withdraw rule says no judge call would be worth spending, or when an exception settled it.
 
 import { createHash } from "node:crypto";
 import { defaultChecks, type FindingSummary, type RejectedCheck } from "./catalogue/select.ts";
@@ -53,8 +60,11 @@ import {
   auditSpan, hero, listRuns, objects, observationsOf, orphanRecords, orphanVhosts, proxiedWithoutRealIp, proxySplit,
   resolutions, runComplete, wildcardWithoutRealIp,
 } from "./data/queries.ts";
-import { DriftWorld, type Observation } from "./engine/world.ts";
+import type { ExceptionLesson, TechnicianMemory } from "./engine/memory.ts";
+import { DriftWorld, recordExposure, type ExposureLine, type ExposureMeasure, type Observation } from "./engine/world.ts";
 import type { Tracer } from "./trace.ts";
+// [stoprule] the verifier's stop rule and the withdraw rule before the judge (src/stoprule.ts).
+import { VERDICT_CANNOT_MOVE, countersSummary, earlyStopSummary, shouldStop, shouldWithdraw, zeroCounters, type StopCounters, type StopPolicy } from "./stoprule.ts";
 
 type Row = Record<string, string>;
 
@@ -67,7 +77,21 @@ export interface CheckOutcome { template: string; holds: boolean; rowCount: numb
 
 export interface WorldView { before: string | null; after: string | null; changed: boolean; bytes_unchanged: boolean }
 
+/** [memory] The technician's accepted exception the Decider applied (ADOPT until `expires_at`) or found lapsed (re-raised as ESCALATE). */
+export interface ExceptionNote {
+  /** The lesson's id in the agent's memory (scripts/answer.ts --forget takes it). */
+  lesson: string;
+  status: "applied" | "lapsed";
+  expires_at: string;
+  scope_key: string;
+  reason: string;
+  accepted_by: string;
+  accepted_at: string;
+}
+
 export interface Finding {
+  /** Stable across passes: `fnd-` plus 16 hex of the World Model's finding id (tenant, class, host, object, setting, record). What a technician names to scripts/answer.ts. */
+  id: string;
   finding: FindingSummary;
   verb: Verb;
   /** FOUND-BUT-DIFFERENT as the World Model saw it: the referent's fingerprint at the previous and at the current observation. Hero findings only; a survey finding has no previous observation. */
@@ -76,6 +100,23 @@ export interface Finding {
   /** Checks that did not run: a parameter the finding could not supply, or a check the data layer refused. */
   rejected: RejectedCheck[];
   judge: "skipped";
+  /** [stoprule] The stop rule ended checking early: why, and the templates it did not run. */
+  earlyStop?: { reason: string; skipped: string[] };
+  /** [stoprule] Why the judge call was not spent, when the withdraw rule said so. */
+  judgeWithheld?: string;
+  /** [exposure] Since when the record this finding rests on has been in its current state (src/engine/world.ts). */
+  exposure?: ExposureLine;
+  /** [memory] The accepted exception that settled the verb, applied or lapsed. Absent when none applies. */
+  exception?: ExceptionNote;
+}
+
+export interface MemoryCounters {
+  /** Lessons the memory held when the pass ran, every tenant. */
+  lessons: number;
+  /** Findings adopted under an accepted exception in force. */
+  applied: number;
+  /** Findings re-raised because their exception had lapsed. */
+  lapsed: number;
 }
 
 export interface PassResult {
@@ -83,6 +124,10 @@ export interface PassResult {
   gatedOut: string[];
   observed: number;
   findings: Finding[];
+  /** [stoprule] The verifier's counters for this pass; stopCounters reads the same numbers back from the trace's stop and judge lines. */
+  verifier: StopCounters;
+  /** [memory] What the Decider recalled; null when the pass was given no memory. */
+  memory: MemoryCounters | null;
 }
 
 const nul = (s: string): string | null => (s === "" ? null : s);
@@ -110,10 +155,27 @@ function nearestDns(candidates: Row[], r: Row): Row | undefined {
   return best && gap(best) <= PASS_WINDOW_MS ? best : undefined;
 }
 
-export async function runPass(layer: DataLayer, opts: { tracer?: Tracer; world?: DriftWorld } = {}): Promise<PassResult> {
-  const { tracer } = opts;
+export interface PassOptions {
+  tracer?: Tracer;
+  world?: DriftWorld;
+  stopPolicy?: Omit<StopPolicy, "gatedTables">;
+  /** [memory] The technician's lessons the Decider consults before deciding; none when absent (tests, the examples, the site build). */
+  memory?: TechnicianMemory;
+  /** [memory] The instant lessons are recalled at (ISO 8601 UTC); the memory's clock when absent. */
+  at?: string;
+}
+
+/** `fnd-` plus 16 hex of sha256 over the World Model's finding id: short enough to type, stable across passes. */
+export const shortFindingId = (worldFindingId: string): string => `fnd-${createHash("sha256").update(worldFindingId).digest("hex").slice(0, 16)}`;
+
+export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise<PassResult> {
+  const { tracer, memory } = opts;
   const world = opts.world ?? new DriftWorld("pass");
   const findings: Finding[] = [];
+  // [stoprule] counters for the pass; [exposure] one measurement per (tenant, DNS run, record, field); [memory] what was recalled.
+  const verifier = zeroCounters();
+  const exposureCache = new Map<string, ExposureMeasure>();
+  const recalled: MemoryCounters | null = memory ? { lessons: memory.lessons().length, applied: 0, lapsed: 0 } : null;
 
   /** Why the tenant's audit log may not be consulted this pass, or null when its latest audit run passed the gate. Filled by the gate step. */
   const auditWithheld = new Map<string, string>();
@@ -126,7 +188,32 @@ export async function runPass(layer: DataLayer, opts: { tracer?: Tracer; world?:
     const checks: CheckOutcome[] = [];
     const rejected: RejectedCheck[] = [...selection.rejected];
     const withheld = auditWithheld.get(finding.tenant_id);
-    for (const c of selection.valid) {
+    // [stoprule] Between checks the stop rule says whether the verb can still move. A settled verdict skips
+    // the queued checks that do not inform the next action (traced "skipped" with the reason); when every
+    // queued check reads the withheld audit log they are recorded at once as not checked (they escalate).
+    const stopPolicy: StopPolicy = { ...opts.stopPolicy, gatedTables: withheld !== undefined ? ["audit_event"] : [] };
+    let earlyStop: { reason: string; skipped: string[] } | undefined;
+    const queue = [...selection.valid];
+    while (queue.length > 0) {
+      const stop = shouldStop({
+        findingClass: cls, checksSoFar: checks, remaining: queue.map((q) => q.template), policy: stopPolicy,
+        rejected: rejected.map((rj) => String((rj.check as { template?: unknown })?.template ?? "?")),
+      });
+      if (stop.stop) {
+        const out = queue.filter((q) => stop.skipped.includes(q.template));
+        queue.splice(0, queue.length, ...queue.filter((q) => !stop.skipped.includes(q.template)));
+        for (const q of out) {
+          if (stop.kind === "gated") rejected.push({ check: q, reason: `${q.template}: audit log incomplete (${withheld})` });
+          else tracer?.emit({ agent: "checker", action: "check", status: "skipped", input_summary: `${q.template} ${JSON.stringify(q.params)}`.slice(0, 200), detail: stop.reason });
+        }
+        verifier.early_stop += 1;
+        if (stop.kind === "gated") verifier.checks_gated += out.length;
+        else verifier.checks_skipped += out.length;
+        earlyStop = { reason: earlyStop ? `${earlyStop.reason}; ${stop.reason}` : stop.reason, skipped: [...(earlyStop?.skipped ?? []), ...out.map((q) => q.template)] };
+        tracer?.emit({ agent: "checker", action: "check", status: "skipped", input_summary: `${cls} ${setting}`, output_summary: earlyStopSummary(stop.kind, out.map((q) => q.template)), detail: stop.reason });
+        continue;
+      }
+      const c = queue.shift()!;
       if (withheld !== undefined && AUDIT_TEMPLATES.includes(c.template)) {
         rejected.push({ check: c, reason: `${c.template}: audit log incomplete (${withheld})` });
         continue;
@@ -152,20 +239,75 @@ export async function runPass(layer: DataLayer, opts: { tracer?: Tracer; world?:
     }
 
     const failing = checks.filter((c) => !c.holds).map((c) => c.template);
-    const verb: Verb = checks.length > 0 && failing.length === 0 && rejected.length === 0 ? "ADOPT" : "ESCALATE";
-    const why = verb === "ADOPT"
+    const policyVerb: Verb = checks.length > 0 && failing.length === 0 && rejected.length === 0 ? "ADOPT" : "ESCALATE";
+    const policyWhy = policyVerb === "ADOPT"
       ? `all ${checks.length} preconditions hold; candidate pending a judge`
       : [
         failing.length ? `${failing.length} of ${checks.length} preconditions fail: ${failing.join(", ")}` : "",
         rejected.length ? `${rejected.length} check(s) could not be bound from the finding or were refused by the guard` : "",
         checks.length === 0 && rejected.length === 0 ? "no precondition ran" : "",
       ].filter(Boolean).join("; ");
+
+    // [memory] recall before deciding, by exact scope key (same tenant, same class, the finding's host, name or
+    // address). An exception in force settles ADOPT with its expiry; a lapsed one, with none in force, re-raises
+    // the finding as ESCALATE however the checks came out. Answers (kind "answer") are the Decider's helper for a
+    // question it has not yet learned to ask; the pass asks none today, so they are counted and left alone.
+    const recall = memory?.recall(finding, opts.at);
+    const applied = recall?.applicable.find((l): l is ExceptionLesson => l.kind === "exception") ?? null;
+    const lapsed = applied ? null : (recall?.expired.filter((l): l is ExceptionLesson => l.kind === "exception").at(-1) ?? null);
+    const lesson = applied ?? lapsed;
+    const verb: Verb = applied ? "ADOPT" : lapsed ? "ESCALATE" : policyVerb;
+    const why = applied
+      ? `accepted exception ${applied.id} holds until ${applied.expiresAt} (${applied.reason}); the checks alone would say ${policyVerb}`
+      : lapsed
+        ? `exception lapsed: ${lapsed.id} expired ${lapsed.expiresAt}; re-raised to the technician, the checks alone would say ${policyVerb}`
+        : policyWhy;
+    if (applied && recalled) recalled.applied += 1;
+    if (lapsed && recalled) recalled.lapsed += 1;
+    if (applied) {
+      tracer?.emit({
+        agent: "decider", action: "triage", status: "ok", input_summary: `memory ${cls} ${setting}`,
+        output_summary: `exception ${applied.id} accepted by ${applied.provenance.by} until ${applied.expiresAt}: ADOPT`,
+        detail: `lesson ${applied.id} on ${applied.scopeKey} (${applied.findingClass}), recorded ${applied.recordedAt}: ${applied.reason}; model: none`,
+      });
+    }
+    if (lapsed) {
+      tracer?.emit({
+        agent: "decider", action: "escalate", status: "ok", input_summary: `memory ${cls} ${setting}`,
+        output_summary: `exception ${lapsed.id} lapsed ${lapsed.expiresAt}: re-raised as ESCALATE`,
+        detail: `lesson ${lapsed.id} on ${lapsed.scopeKey} (${lapsed.findingClass}), accepted by ${lapsed.provenance.by} ${lapsed.recordedAt}: ${lapsed.reason}; the exception is not applied; model: none`,
+      });
+    }
     tracer?.emit({
       agent: "decider", action: "decide", status: "ok", input_summary: `${cls} ${setting}`, output_summary: `${verb}: ${why}`,
-      detail: "model: none; policy: every check holds -> ADOPT candidate, any fails or unbound -> ESCALATE, HOLD needs a judge",
+      detail: "model: none; policy: every check holds -> ADOPT candidate, any fails or unbound -> ESCALATE, HOLD needs a judge"
+        + (earlyStop ? `; earlyStop: true (${earlyStop.reason})` : "") // [stoprule] the decide step receives { earlyStop, reason }
+        + (lesson ? `; exception: ${lesson.id} ${applied ? "applied" : "lapsed"}` : ""), // [memory] and the lesson that settled it
     });
-    tracer?.emit({ agent: "judge", action: "judge", status: "skipped", input_summary: finding.summary.slice(0, 160), detail: "model: none (sample)" });
-    findings.push({ finding, verb, ...(view ? { world: view } : {}), checks, rejected, judge: "skipped" });
+    // [exposure] the decide step records the exposure line: SQL dates it, the World Model keeps it as an open edge.
+    const exposure = await recordExposure(layer, world, finding, { tracer, cache: exposureCache });
+    // [stoprule] withdraw before the judge: no judge call is spent on a verdict that cannot move or a claim its own checks contradict;
+    // [memory] nor on a verdict the technician's exception settled, in force or lapsed.
+    const withdraw = applied
+      ? { withdraw: true, reason: `${VERDICT_CANNOT_MOVE}: accepted exception ${applied.id} holds until ${applied.expiresAt}; the technician's acceptance, not a judge, settles it` }
+      : lapsed
+        ? { withdraw: true, reason: `${VERDICT_CANNOT_MOVE}: exception ${lapsed.id} lapsed ${lapsed.expiresAt}; the finding goes back to the technician whatever a judge answers` }
+        : shouldWithdraw({ findingClass: cls, checks, rejected: rejected.length });
+    if (withdraw.withdraw) verifier.withdrawn_judge += 1;
+    if (withdraw.contradictedBy) {
+      tracer?.emit({ agent: "checker", action: "critique", target_agent: "detector", status: "ok", input_summary: `${cls} ${setting}`, output_summary: withdraw.reason, detail: "model: none" });
+      tracer?.emit({ agent: "detector", action: "revise", status: "ok", input_summary: `${cls} ${setting}`, output_summary: "finding withdrawn before judge", detail: withdraw.reason });
+    }
+    tracer?.emit({ agent: "judge", action: "judge", status: "skipped", input_summary: finding.summary.slice(0, 160), detail: withdraw.withdraw ? withdraw.reason : "model: none (sample)" });
+    const exception: ExceptionNote | undefined = lesson
+      ? { lesson: lesson.id, status: applied ? "applied" : "lapsed", expires_at: lesson.expiresAt, scope_key: lesson.scopeKey, reason: lesson.reason, accepted_by: lesson.provenance.by, accepted_at: lesson.recordedAt }
+      : undefined;
+    findings.push({
+      id: shortFindingId(world.findingId(finding)),
+      finding, verb, ...(view ? { world: view } : {}), checks, rejected, judge: "skipped",
+      ...(earlyStop ? { earlyStop } : {}), ...(withdraw.withdraw ? { judgeWithheld: withdraw.reason } : {}), ...(exposure ? { exposure } : {}),
+      ...(exception ? { exception } : {}),
+    });
   };
 
   const runs = objects(await listRuns(layer, { tracer, agent: "observer" }));
@@ -358,5 +500,15 @@ export async function runPass(layer: DataLayer, opts: { tracer?: Tracer; world?:
     }
   }
 
-  return { runs: runs.length, gatedOut: [...gatedOut], observed, findings };
+  // [stoprule] one summary line per pass; stopCounters reads the same numbers back from the stop and judge lines.
+  tracer?.emit({ agent: "decider", action: "triage", status: "ok", input_summary: "stop rule", output_summary: countersSummary(verifier), detail: "model: none" });
+  // [memory] one summary line per pass when a memory was consulted: what it held and what the Decider did with it.
+  if (recalled) {
+    tracer?.emit({
+      agent: "decider", action: "triage", status: "ok", input_summary: "memory",
+      output_summary: `lessons ${recalled.lessons}, exceptions applied ${recalled.applied}, lapsed ${recalled.lapsed}`,
+      detail: `${memory!.directory ? "local store" : "in-memory store"}; recall by exact scope key, never by similarity; model: none`,
+    });
+  }
+  return { runs: runs.length, gatedOut: [...gatedOut], observed, findings, verifier, memory: recalled };
 }

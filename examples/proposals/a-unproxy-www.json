@@ -1,0 +1,7 @@
+{
+  "kind": "dns_record",
+  "target": { "record_id": "bce1ca2bb7caa2de9b6823d5f6ecd3f2" },
+  "field": "proxied",
+  "to": 0,
+  "note": "Take the www CNAME of the one split zone (host-524b42.quest -> host-4c795e.quest, proxied since 2026-04-16 21:12 UTC) back off the Cloudflare proxy. The recorded record is proxied; this proposes the state before the 16 April flips."
+}
