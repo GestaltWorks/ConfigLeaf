@@ -1,0 +1,40 @@
+#!/bin/sh
+# drift-collect: the forced command behind the drift-collector key (ops/ssh/authorized_keys.example).
+#
+# sshd puts whatever the client asked to run in SSH_ORIGINAL_COMMAND. This script matches that string
+# whole against a fixed list of read requests and runs the matching fixed command. The client's text
+# is never evaluated as shell and never becomes an argument, with one bounded exception: the path in
+# "cat /etc/nginx/<path>", which must pass the allowlist below before it is handed to cat as a single
+# argv entry. Anything else: "refused" on stderr, exit 2. Root reads go through sudo -n and are the
+# exact lines of ops/sudoers/drift-collector.
+set -eu
+umask 077
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+refuse() {
+  client=${SSH_CLIENT-unknown}
+  logger -t drift-collect -- "refused request from ${client%% *}" 2>/dev/null || :
+  printf 'refused\n' >&2
+  exit 2
+}
+
+req=${SSH_ORIGINAL_COMMAND-}
+
+case $req in
+  'nginx -T')                exec sudo -n /usr/sbin/nginx -T ;;
+  'cat /etc/hosts')          exec /usr/bin/cat /etc/hosts ;;
+  'cat /etc/resolv.conf')    exec /usr/bin/cat /etc/resolv.conf ;;
+  'etckeeper vcs log -n 50') exec sudo -n /usr/bin/etckeeper vcs log -n 50 ;;
+  'restic snapshots --json') exec sudo -n /usr/local/bin/drift-restic-snapshots ;;
+  'cat /etc/nginx/'*)
+    f=${req#cat }
+    # one path: no traversal, no space (sudo's glob sees one argument), no shell metacharacters
+    case $f in *..* | *[!A-Za-z0-9/._-]*) refuse ;; esac
+    # sites-enabled is a tree of symlinks; the target must still live under /etc/nginx
+    case $(readlink -f -- "$f") in /etc/nginx/*) ;; *) refuse ;; esac
+    [ -f "$f" ] || refuse
+    exec sudo -n /usr/bin/cat "$f"
+    ;;
+  *) refuse ;;
+esac

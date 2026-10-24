@@ -1,0 +1,32 @@
+# /etc/sudoers.d/drift-collector (root:root, 0440)
+# Root reads the drift-collector user may perform without a password, and nothing else. Every line is one
+# request that the forced command /usr/local/bin/drift-collect (ops/ssh/drift-collect) can issue; that
+# script is the only thing the collector key can run, and it never calls sudo for anything not listed here.
+# Validate before installing:  visudo -c -f ops/sudoers/drift-collector
+
+# The forced command runs with no-pty, so there is no tty for sudo to insist on.
+Defaults:drift-collector !requiretty
+
+# nginx -T prints the complete, include-resolved configuration. Root because nginx opens every file the
+# configuration references, including ssl_certificate_key paths, before it prints anything.
+drift-collector ALL=(root) NOPASSWD: /usr/sbin/nginx -T
+
+# Verbatim bytes of one nginx file, for byte-level comparison with the backup copy; conf.d and
+# sites-enabled are often 0640 root. The wildcard spans subdirectories. sudo matches arguments as a
+# single space-separated string, so this glob alone would also accept "cat /etc/nginx/x /etc/shadow";
+# the forced command refuses any path with a space, "..", or a character outside [A-Za-z0-9/._-]
+# before sudo is reached. On sudo 1.9.10 or newer, replace this line with the regex form:
+#   drift-collector ALL=(root) NOPASSWD: ^/usr/bin/cat /etc/nginx/[A-Za-z0-9/._-]+$
+drift-collector ALL=(root) NOPASSWD: /usr/bin/cat /etc/nginx/*
+
+# etckeeper keeps /etc in a root-only repository under /etc/.git; the last 50 commits are the change
+# timeline behind "what changed since the last backup".
+drift-collector ALL=(root) NOPASSWD: /usr/bin/etckeeper vcs log -n 50
+
+# Lists restic snapshots. The wrapper (ops/ssh/drift-restic-snapshots) reads the repository location
+# and password-file path from root-only /etc/drift-collector/restic.env. The empty string means it may
+# be called with no arguments only.
+drift-collector ALL=(root) NOPASSWD: /usr/local/bin/drift-restic-snapshots ""
+
+# Not listed because they are world-readable and the forced command reads them directly:
+# /etc/hosts, /etc/resolv.conf.

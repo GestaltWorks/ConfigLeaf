@@ -8,10 +8,6 @@ const statements = [
   "SHOW LIGHTNING DATABASES",
   "SHOW DATABASES",
   "SHOW SCHEMASTORE CONTAINERS",
-  "SHOW TABLES IN pokeapi",
-  "SHOW TABLES IN pokeapi_rest",
-  "SELECT pokemon_name, ability_name FROM pokeapi.pikachu_abilities_table",
-  "SELECT count(*) AS n FROM NY_TAXI.taxi_zone_lookup",
 ];
 for (const sql of statements) {
   try {

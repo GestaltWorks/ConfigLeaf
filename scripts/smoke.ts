@@ -5,7 +5,7 @@ const steps: [string, string[]][] = [
   ["C  World Model conformance (our module)", ["tsx", "scripts/conformance.ts"]],
   ["C  domain tests (FOUND-BUT-DIFFERENT, receipt verification)", ["vitest", "run", "--reporter=dot"]],
   ["B  Nightshift: Lightning + Ultra by id, receipts, job stream", ["tsx", "scripts/spike-nightshift.ts"]],
-  ["A  Zetaris: SELECT 1 and a live REST table", ["tsx", "scripts/spike-zetaris.ts"]],
+  ["A  Zetaris: SELECT 1 and SHOW LIGHTNING DATABASES over REST (read-only; --register adds the registration probe)", ["tsx", "scripts/spike-zetaris.ts"]],
 ];
 
 let failed = 0;

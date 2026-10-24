@@ -1,0 +1,4 @@
+# /home/drift-collector/.ssh/authorized_keys (drift-collector:drift-collector, 0600). One line, one key.
+# The forced command answers an enumerated set of read requests and refuses everything else; the options
+# close every other channel the key could open. Replace the key blob with the collector's own PUBLIC key.
+command="/usr/local/bin/drift-collect",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI<collector-public-key> drift-collector

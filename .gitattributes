@@ -1,0 +1,4 @@
+# The forced command and the sudoers fragment are installed on Linux hosts; a CRLF checkout on
+# Windows (core.autocrlf=true) would turn "#!/bin/sh" into "#!/bin/sh\r" and sshd would refuse it.
+ops/ssh/* text eol=lf
+ops/sudoers/* text eol=lf
