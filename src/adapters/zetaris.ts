@@ -16,6 +16,10 @@ export interface QueryResult {
   columns: string[];
   rows: string[][];
   rowCount: number;
+  /** Rows the server counted; larger than rowCount when the request limit bound. */
+  total: number;
+  /** Server-side execution time, when reported. */
+  serverMs?: number;
   latencyMs: number;
   raw: unknown;
 }
@@ -63,21 +67,14 @@ export class Zetaris {
     return result;
   }
 
-  /** The bundle's response shape is not fixed in the docs; accept the shapes seen in the wild. */
+  /**
+   * Response shape of the 2.4.3.1 bundle, measured 23 Oct:
+   *   { headers: string[], data: string[][], total: number, timeUsed: number }
+   * Every value is a string. `total` is the row count the server saw (may exceed `data` when limit binds).
+   */
   static normalise(j: any, queryId: string, latencyMs: number): QueryResult {
-    const data = j?.data ?? j?.result ?? j;
-    let columns: string[] = [];
-    let rows: string[][] = [];
-    if (Array.isArray(data) && data.length && Array.isArray(data[0])) {
-      rows = data.map((r: unknown[]) => r.map(String));
-      columns = (j?.columns ?? j?.schema ?? []).map((c: any) => (typeof c === "string" ? c : c?.name ?? String(c)));
-    } else if (Array.isArray(data) && data.length && typeof data[0] === "object") {
-      columns = Object.keys(data[0]);
-      rows = data.map((r: Record<string, unknown>) => columns.map((c) => String(r[c])));
-    } else if (data && Array.isArray(data.rows)) {
-      columns = (data.columns ?? data.schema ?? []).map((c: any) => (typeof c === "string" ? c : c?.name ?? String(c)));
-      rows = data.rows.map((r: unknown[]) => r.map(String));
-    }
-    return { queryId, columns, rows, rowCount: rows.length, latencyMs, raw: j };
+    const columns: string[] = Array.isArray(j?.headers) ? j.headers.map(String) : [];
+    const rows: string[][] = Array.isArray(j?.data) ? j.data.map((r: unknown[]) => (Array.isArray(r) ? r.map((v) => (v === null ? "" : String(v))) : [String(r)])) : [];
+    return { queryId, columns, rows, rowCount: rows.length, total: typeof j?.total === "number" ? j.total : rows.length, serverMs: typeof j?.timeUsed === "number" ? j.timeUsed : undefined, latencyMs, raw: j };
   }
 }

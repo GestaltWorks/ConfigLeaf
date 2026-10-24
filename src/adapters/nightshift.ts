@@ -113,6 +113,29 @@ export class Nightshift {
   }
 
   /**
+   * Chat with a failover ladder: the primary model, then each fallback in order. Every hop is a
+   * Nemotron route through Nightshift (cloud paid, cloud free, local), so the award evidence holds
+   * whichever answered; the receipt's routed_model says which. A `fallback` trace event records each hop.
+   */
+  async chatWithFallback(
+    opts: { models: string[]; messages: ChatMessage[]; maxTokens?: number; temperature?: number; agent: string; tracer?: Tracer },
+  ): Promise<ChatResult & { hop: number }> {
+    let lastErr: unknown;
+    for (let hop = 0; hop < opts.models.length; hop++) {
+      const model = opts.models[hop];
+      try {
+        const r = await this.chat({ ...opts, model });
+        return { ...r, hop };
+      } catch (err) {
+        lastErr = err;
+        const next = opts.models[hop + 1];
+        opts.tracer?.emit({ agent: opts.agent, action: "fallback", model_requested: model, status: next ? "ok" : "failed", detail: next ? `${model} failed, trying ${next}` : `${model} failed, no fallback left` });
+      }
+    }
+    throw lastErr;
+  }
+
+  /**
    * Pull a JSON object out of a reply that may carry reasoning or prose around it.
    * Measured on 23 Oct: Nemotron 3 Ultra through Nightshift puts its reasoning in `content`
    * terminated by a `</think>` tag, with the answer after it. So: drop everything through the
