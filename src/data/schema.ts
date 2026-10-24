@@ -9,13 +9,16 @@ export const SCHEMA_SQL = readFileSync(SCHEMA_PATH, "utf8");
 
 export interface TableDef { name: string; columns: string[] }
 
-/** CREATE TABLE blocks in DDL order; a column is the first token of each non-comment body line. */
+/** A table constraint line (PRIMARY KEY (a, b), UNIQUE (...), ...): it names columns, it declares none. */
+const CONSTRAINT = /^(?:PRIMARY\s+KEY|UNIQUE|FOREIGN\s+KEY|CONSTRAINT|CHECK)\b/i;
+
+/** CREATE TABLE blocks in DDL order; a column is the first token of each body line, comments and table constraints aside. */
 function parse(ddl: string): TableDef[] {
   const out: TableDef[] = [];
   for (const m of ddl.matchAll(/CREATE TABLE IF NOT EXISTS (\w+)\s*\(([\s\S]*?)\n\);/g)) {
     const columns = m[2].split("\n")
       .map((l) => l.replace(/--.*$/, "").trim())
-      .filter(Boolean)
+      .filter((l) => l !== "" && !CONSTRAINT.test(l))
       .map((l) => l.split(/\s+/)[0]);
     out.push({ name: m[1], columns });
   }

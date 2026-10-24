@@ -1,5 +1,5 @@
 // The verifier's stop rule and the withdraw rule before the judge (src/stoprule.ts): unit cases on the rule
-// itself, then the pass over the recorded bundle (sample/bundle.json, the real estate redacted) with the rule
+// itself, then the pass over the recorded bundle (test/fixtures/recorded-bundle.json, the export of the 07:58 UTC collection of 24 Oct 2026: the real estate redacted) with the rule
 // active. Every number asserted over the bundle was measured on sql.js; the flips audit (a skipped check that
 // would have changed the verb) compares a run with the rule against a run with it off, finding by finding.
 import { describe, expect, it } from "vitest";
@@ -12,7 +12,7 @@ import {
   CLAIM_WITHDRAWN, INFORMS_NEXT_ACTION, VERDICT_CANNOT_MOVE, countersSummary, earlyStopSummary, shouldStop, shouldWithdraw, stopCounters, tablesOf,
   type StopPolicy,
 } from "../src/stoprule.ts";
-import recorded from "../sample/bundle.json" with { type: "json" };
+import recorded from "./fixtures/recorded-bundle.json" with { type: "json" };
 import { MemTracer } from "./fixtures/mem-tracer.ts";
 
 type R = typeof recorded;
@@ -127,12 +127,12 @@ describe("stopCounters reads the trace", () => {
 });
 
 describe("the pass over the recorded bundle with the stop rule active", () => {
-  it("still yields 27 findings in the same four classes; with the default table it skips nothing, and the trace says so", async () => {
+  it("still yields 27 survey findings in the same four classes and the 11 changed_since_backup; with the default table it skips nothing, and the trace says so", async () => {
     const { result, tracer } = await pass(recorded);
-    expect(result.findings).toHaveLength(27);
+    expect(result.findings).toHaveLength(38);
     const byClass: Record<string, number> = {};
     for (const f of result.findings) byClass[f.finding.class] = (byClass[f.finding.class] ?? 0) + 1;
-    expect(byClass).toEqual({ proxy_split: 1, proxied_without_real_ip: 20, orphan_record: 3, orphan_vhost: 3 });
+    expect(byClass).toEqual({ proxy_split: 1, proxied_without_real_ip: 20, orphan_record: 3, orphan_vhost: 3, changed_since_backup: 11 });
     expect(result.findings.filter((f) => f.verb === "ADOPT")).toHaveLength(5);
     expect(result.verifier).toEqual({ early_stop: 0, checks_skipped: 0, checks_gated: 0, withdrawn_judge: 0 });
     const summary = tracer.events.filter((e) => e.agent === "decider" && e.action === "triage" && e.input_summary === "stop rule");
@@ -140,36 +140,36 @@ describe("the pass over the recorded bundle with the stop rule active", () => {
     expect(summary[0].output_summary).toBe("early_stop 0, checks_skipped 0, checks_gated 0, withdrawn_judge 0");
     expect(stopCounters(tracer.events)).toEqual(result.verifier);
     expect(tracer.events.filter((e) => e.status === "skipped" && e.action === "check")).toEqual([]);
-    expect(tracer.events.filter((e) => e.action === "judge").map((e) => e.detail)).toEqual(Array(27).fill("model: none (sample)"));
+    expect(tracer.events.filter((e) => e.action === "judge").map((e) => e.detail)).toEqual(Array(38).fill("model: none (sample)"));
     expect(result.findings.every((f) => f.earlyStop === undefined && f.judgeWithheld === undefined)).toBe(true);
-    expect(checkQueries(tracer)).toBe(4 * 24 + 3 * 3);
+    expect(checkQueries(tracer)).toBe(4 * 24 + 3 * 3 + 4 * 11);
   });
 
-  it("the literal rule (no check informs the next action once the verdict is settled) skips 18 checks over 18 findings and flips no verb", async () => {
+  it("the literal rule (no check informs the next action once the verdict is settled) skips 29 checks over 29 findings and flips no verb", async () => {
     const off = await pass(recorded, { enabled: false });
     const on = await pass(recorded, { informsNextAction: NOTHING_INFORMS });
     expect(verdicts(on.result.findings)).toEqual(verdicts(off.result.findings)); // the flips audit: zero
     expect(on.result.findings.map((f) => f.exposure)).toEqual(off.result.findings.map((f) => f.exposure));
-    expect(on.result.verifier).toEqual({ early_stop: 18, checks_skipped: 18, checks_gated: 0, withdrawn_judge: 0 });
+    expect(on.result.verifier).toEqual({ early_stop: 29, checks_skipped: 29, checks_gated: 0, withdrawn_judge: 0 });
     expect(stopCounters(on.tracer.events)).toEqual(on.result.verifier);
     expect(off.result.verifier).toEqual({ early_stop: 0, checks_skipped: 0, checks_gated: 0, withdrawn_judge: 0 });
     // every skip is a traced line with its reason, and its SQL never ran
     const lines = on.tracer.events.filter((e) => e.agent === "checker" && e.action === "check" && e.status === "skipped");
     const skipped = lines.filter((e) => !e.output_summary?.startsWith("early_stop"));
-    expect(skipped).toHaveLength(18);
-    expect(lines.filter((e) => e.output_summary?.startsWith("early_stop settled: 1 check(s) skipped: "))).toHaveLength(18);
+    expect(skipped).toHaveLength(29);
+    expect(lines.filter((e) => e.output_summary?.startsWith("early_stop settled: 1 check(s) skipped: "))).toHaveLength(29);
     const tally: Record<string, number> = {};
     for (const e of skipped) tally[e.input_summary!.split(" ")[0]] = (tally[e.input_summary!.split(" ")[0]] ?? 0) + 1;
-    expect(tally).toEqual({ previous_value_recoverable: 16, backup_recent: 2 });
-    expect(skipped.every((e) => /^verdict settled by (actor_attributed|other_settings_reference); informs_next_action=false$/.test(e.detail ?? ""))).toBe(true);
-    expect(checkQueries(off.tracer) - checkQueries(on.tracer)).toBe(18);
+    expect(tally).toEqual({ previous_value_recoverable: 16, backup_recent: 2, setting_matches_approved: 11 });
+    expect(skipped.every((e) => /^verdict settled by (actor_attributed|other_settings_reference|change_in_last_backup); informs_next_action=false$/.test(e.detail ?? ""))).toBe(true);
+    expect(checkQueries(off.tracer) - checkQueries(on.tracer)).toBe(29);
     // the decide step receives { earlyStop: true, reason }, and the finding carries what was skipped
     const stopped = on.result.findings.filter((f) => f.earlyStop);
-    expect(stopped).toHaveLength(18);
+    expect(stopped).toHaveLength(29);
     const wild = stopped.find((f) => f.finding.setting_path === "http.real_ip")!;
     expect(wild.earlyStop).toEqual({ reason: "verdict settled by actor_attributed; informs_next_action=false", skipped: ["previous_value_recoverable"] });
     expect(wild.checks.map((c) => c.template)).toEqual(["run_complete", "host_in_inventory", "actor_attributed"]);
-    expect(on.tracer.events.filter((e) => e.action === "decide" && e.detail?.includes("; earlyStop: true (verdict settled by"))).toHaveLength(18);
+    expect(on.tracer.events.filter((e) => e.action === "decide" && e.detail?.includes("; earlyStop: true (verdict settled by"))).toHaveLength(29);
   });
 
   it("a gated audit run: every check that reads the log is recorded at once as not checked, the verbs and rejections are those of the rule switched off, and no judge call is spent on the 24 findings that cannot move", async () => {
@@ -190,7 +190,7 @@ describe("the pass over the recorded bundle with the stop rule active", () => {
     expect(split.earlyStop).toEqual({ reason: "every remaining check reads audit_event, whose collection run is gated out this pass", skipped: ["actor_attributed", "previous_value_recoverable", "referent_unchanged"] });
     expect(split.judgeWithheld).toBe("verdict cannot move: 3 check(s) not checked; a judge cannot supply missing evidence, so the finding escalates whatever it answers");
     const judge = on.tracer.events.filter((e) => e.action === "judge");
-    expect(judge).toHaveLength(27);
+    expect(judge).toHaveLength(38);
     expect(judge.filter((e) => e.detail?.startsWith(VERDICT_CANNOT_MOVE))).toHaveLength(24);
     // orphan_vhost reads no audit row: it runs every check and keeps its judge
     expect(on.result.findings.filter((f) => f.finding.class === "orphan_vhost").every((f) => f.earlyStop === undefined && f.judgeWithheld === undefined)).toBe(true);

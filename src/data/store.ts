@@ -1,15 +1,17 @@
 // Store: the app Postgres the collectors write through (drift-pg, registered in Zetaris as the DRIFT
 // datasource, so what lands here is what the live pass reads). Measured 24 Oct: 127.0.0.1:15432 from
-// Windows (DATABASE_URL), drift-pg:5432 from inside the Zetaris network; sql/schema.sql applied.
+// Windows (DATABASE_URL), drift-pg:5432 from inside the Zetaris network; sql/schema.sql applied, and
+// applied again the same evening with the eight tables of the design: 16 tables in public, the eight new
+// ones empty, the first eight at the counts of sample/bundle.json; a second apply changed nothing.
 //
 // Contract:
 //   - Every collected-text column (rows.ts REDACT: names, paths, values, actors; not ids, hashes,
 //     enums, timestamps or setting paths) goes through the Redactor before it is sent. The collectors
 //     redact first; this is the choke point, and redacting redacted text is a no-op. A field the pass
 //     changes means a collector leaked: the count goes to stderr, never the value.
-//   - Every *_at is the canonical ISO 8601 UTC millisecond form the sql.js loader and the catalogue
-//     compare as text; anything else, an unknown column or a non-integer number is refused before the
-//     transaction opens.
+//   - Every *_at (and policy_rule.since) is the canonical ISO 8601 UTC millisecond form the sql.js
+//     loader and the catalogue compare as text; anything else, an unknown column or a non-integer number
+//     is refused before the transaction opens.
 //   - One transaction per call, parameterised multi-row INSERTs of at most 1000 rows (pg binds 65535).
 //   - Re-inserting the same rows is a no-op, not a duplicate and not an error: ON CONFLICT on the primary
 //     key; dns_record and backup_item have no key in the DDL, so their existing keys (rows.ts KEYS) are
@@ -19,6 +21,11 @@
 //     older one changes nothing.
 //   - beginRun refuses a run_id that exists and finishRun one that is not running: a collector never
 //     silently reopens a finished run.
+//   - One insert method per table of the design's eight additions (policy_rule, vault_copy,
+//     copy_validation, probe, disposition, action, ticket, referent_fingerprint), each ON CONFLICT DO
+//     NOTHING on its key. Reads: latestPassingRun (the gate's definition of passing), observationsOf,
+//     dnsRecordsOf, policyRules (the tenant's and every "*" rule), and rowsOf for any table by column
+//     equality; every read is one READ ONLY transaction and returns rows in natural-key order.
 //   - Error text is scrubbed (connection-string password, bearer tokens) before it leaves.
 //
 // The bundle half (toBundle, formatBundle, writeBundle) is how recorded collections become
@@ -36,9 +43,10 @@ import { Redactor, countLabels } from "../redactor.ts";
 import { SqlJsEngine } from "./engines/sqljs.ts";
 import { SCHEMA_SQL } from "./schema.ts";
 import {
-  COLUMNS, KEYS, REDACT,
-  type ApprovedSetting, type AuditEvent, type BackupItem, type BackupSnapshot, type CollectionRun,
-  type DnsRecord, type InventoryAsset, type Observation, type Rows, type RunStatus, type TableName,
+  COLUMNS, KEYS, REDACT, isTimestampColumn,
+  type Action, type ApprovedSetting, type AuditEvent, type BackupItem, type BackupSnapshot, type CollectionRun, type CopyValidation,
+  type Disposition, type DnsRecord, type InventoryAsset, type Observation, type PolicyRule, type Probe, type ReferentFingerprint,
+  type Rows, type RunStatus, type TableName, type Ticket, type VaultCopy,
 } from "./rows.ts";
 
 const ISO_MS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
@@ -77,6 +85,14 @@ const CONFLICT: { [K in TableName]: string | null } = {
   dns_record: null,
   audit_event: "ON CONFLICT (event_id) DO NOTHING",
   inventory_asset: `ON CONFLICT (asset_id) DO UPDATE SET observed_at = EXCLUDED.observed_at, host = EXCLUDED.host, kind = EXCLUDED.kind, source = EXCLUDED.source WHERE EXCLUDED.observed_at > inventory_asset.observed_at COLLATE "C"`,
+  policy_rule: "ON CONFLICT (rule_id) DO NOTHING",
+  vault_copy: "ON CONFLICT (copy_id) DO NOTHING",
+  copy_validation: "ON CONFLICT (validation_id) DO NOTHING",
+  probe: "ON CONFLICT (probe_id) DO NOTHING",
+  disposition: "ON CONFLICT (disposition_id) DO NOTHING",
+  action: "ON CONFLICT (action_id) DO NOTHING",
+  ticket: "ON CONFLICT (ticket_id) DO NOTHING",
+  referent_fingerprint: "ON CONFLICT (obs_id, dns_run_id) DO NOTHING",
 };
 
 type Row = Record<string, string | number | null>;
@@ -164,6 +180,60 @@ export class Store {
   insertBackupSnapshot(row: BackupSnapshot): Promise<number> { return this.write("backup_snapshot", [row]); }
   insertBackupItems(rows: readonly BackupItem[]): Promise<number> { return this.write("backup_item", rows); }
   insertApproved(rows: readonly ApprovedSetting[]): Promise<number> { return this.write("approved_setting", rows); }
+  insertPolicyRules(rows: readonly PolicyRule[]): Promise<number> { return this.write("policy_rule", rows); }
+  insertVaultCopies(rows: readonly VaultCopy[]): Promise<number> { return this.write("vault_copy", rows); }
+  insertCopyValidations(rows: readonly CopyValidation[]): Promise<number> { return this.write("copy_validation", rows); }
+  insertProbes(rows: readonly Probe[]): Promise<number> { return this.write("probe", rows); }
+  insertDispositions(rows: readonly Disposition[]): Promise<number> { return this.write("disposition", rows); }
+  insertActions(rows: readonly Action[]): Promise<number> { return this.write("action", rows); }
+  insertTickets(rows: readonly Ticket[]): Promise<number> { return this.write("ticket", rows); }
+  insertReferentFingerprints(rows: readonly ReferentFingerprint[]): Promise<number> { return this.write("referent_fingerprint", rows); }
+
+  /**
+   * The tenant's latest run of one surface (and host; null for an account surface) that passes the DQ
+   * gate as RUN_COMPLETE_SQL states it: status complete, both counts present, observed_count >=
+   * expected_count, and for a linux.* surface at least expected_count observation rows stored. Latest by
+   * started_at, then run_id. null when no run passes.
+   */
+  async latestPassingRun(tenantId: string, surface: string, host: string | null): Promise<CollectionRun | null> {
+    const params: string[] = [tenantId, surface];
+    const hostCond = host === null ? "c.host IS NULL" : `c.host = $${params.push(host)}`;
+    const rows = await this.query<CollectionRun>(
+      `SELECT ${COLUMNS.collection_run.map((c) => `c.${c}`).join(", ")} FROM collection_run c
+       WHERE c.tenant_id = $1 AND c.surface = $2 AND ${hostCond}
+         AND c.status = 'complete' AND c.expected_count IS NOT NULL AND c.observed_count IS NOT NULL AND c.observed_count >= c.expected_count
+         AND (c.surface NOT LIKE 'linux.%' OR c.expected_count <= (SELECT COUNT(*) FROM observation x WHERE x.run_id = c.run_id))
+       ORDER BY c.started_at COLLATE "C" DESC, c.run_id COLLATE "C" DESC LIMIT 1`,
+      params,
+    );
+    return rows[0] ?? null;
+  }
+
+  /** Every observation of one run, in obs_id order. */
+  observationsOf(runId: string): Promise<Observation[]> { return this.rowsOf("observation", { run_id: runId }); }
+
+  /** Every DNS record of one DNS run, in record_id order. */
+  dnsRecordsOf(runId: string): Promise<DnsRecord[]> { return this.rowsOf("dns_record", { run_id: runId }); }
+
+  /** The policy rules that can apply to the tenant: its own and every "*" rule, in rule_id order. */
+  policyRules(tenantId: string): Promise<PolicyRule[]> {
+    return this.query<PolicyRule>(`SELECT ${COLUMNS.policy_rule.join(", ")} FROM policy_rule WHERE tenant_id = $1 OR tenant_id = '*' ORDER BY rule_id COLLATE "C"`, [tenantId]);
+  }
+
+  /**
+   * Rows of one table whose columns equal `where` (a null value matches NULL), every column in DDL order,
+   * in code-unit order of the natural key. An unknown column is refused.
+   */
+  async rowsOf<K extends TableName>(table: K, where: Partial<Record<(typeof COLUMNS)[K][number], string | number | null>> = {}): Promise<Rows[K][]> {
+    const cols = COLUMNS[table] as readonly string[];
+    const params: (string | number)[] = [];
+    const conds = Object.entries(where).map(([c, v]) => {
+      if (!cols.includes(c)) throw new StoreError(`${table}: unknown column ${c}`);
+      return v === null ? `${c} IS NULL` : `${c} = $${params.push(v as string | number)}`;
+    });
+    const rows = await this.query<Row>(`SELECT ${cols.join(", ")} FROM ${table}${conds.length ? ` WHERE ${conds.join(" AND ")}` : ""}`, params);
+    return rows.sort(byKey(table)) as unknown as Rows[K][];
+  }
 
   /**
    * Every table of a bundle (sample/bundle.json shape: "_" keys are notes) in one transaction, with the
@@ -198,6 +268,11 @@ export class Store {
     return this.pool.end();
   }
 
+  /** One read-only SELECT, its rows as objects. */
+  private async query<T extends object>(sql: string, params: readonly (string | number)[]): Promise<T[]> {
+    return this.tx(async (c) => (await c.query<T & pg.QueryResultRow>(sql, [...params])).rows, "BEGIN READ ONLY");
+  }
+
   private async write<K extends TableName>(table: K, rows: readonly Rows[K][]): Promise<number> {
     const prepared = this.prepare(table, rows);
     return prepared.length ? this.tx((c) => this.insert(c, table, prepared)) : 0;
@@ -216,7 +291,7 @@ export class Store {
         const v = r[c] ?? null;
         if (v !== null && typeof v !== "string" && typeof v !== "number") throw new StoreError(`${table}.${c}: unsupported value type ${typeof v}`);
         if (typeof v === "number" && !Number.isInteger(v)) throw new StoreError(`${table}.${c}: INTEGER column, got ${v}`);
-        if (c.endsWith("_at") && v !== null && !ISO_MS.test(String(v))) throw new StoreError(`${table}.${c}: timestamps must be ISO 8601 UTC in the millisecond form YYYY-MM-DDTHH:MM:SS.mmmZ, got ${String(v)}`);
+        if (isTimestampColumn(c) && v !== null && !ISO_MS.test(String(v))) throw new StoreError(`${table}.${c}: timestamps must be ISO 8601 UTC in the millisecond form YYYY-MM-DDTHH:MM:SS.mmmZ, got ${String(v)}`);
         row[c] = v;
       }
       changed += redactRow(this.redactor, table, row);
@@ -286,7 +361,7 @@ export function toBundle(tables: Tables, redactor: Redactor, note: string): { bu
   const stats: BundleStats = { counts: {} as Record<TableName, number>, changed: 0, dropped: 0 };
   const bundle: Record<string, unknown> = { _note: note };
   for (const t of TABLES) {
-    const rows = (tables[t] as unknown as Row[]).map((input) => {
+    const rows = ((tables[t] ?? []) as unknown as Row[]).map((input) => {
       const row: Row = Object.fromEntries(COLUMNS[t].map((c) => [c, input[c] ?? null]));
       stats.changed += redactRow(redactor, t, row);
       if (typeof row.value_redacted === "string" && Buffer.byteLength(row.value_redacted, "utf8") > VALUE_MAX_BYTES) {

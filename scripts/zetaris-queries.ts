@@ -3,10 +3,14 @@
 // and every statement passes assertSelectOnly before it is sent. Reads the collection runs from the
 // datasource, takes the latest complete linux.nginx run per host and the latest cloudflare.dns run, and
 // runs the hero query per host, then the estate survey (proxy_split, proxied_without_real_ip, the
-// wildcard form, orphan_record, orphan_vhost), printing every row as the engine returned it (the
-// collectors redacted them before they were stored). Last, through the raw adapter because it is not a
-// SELECT, SHOW DQ INVALID RECORD run_complete on the USL's collection table: the runs the DQ gate holds
-// back and why. Exit 1 when any query fails; nothing here writes.
+// wildcard form, orphan_record, orphan_vhost), then the three detectors the pass runs (src/pipeline.ts):
+// drift_vs_approved over each host's latest run and over the DNS run, changed_since_backup per host, and
+// found_but_different per host whose linux.nginx runs hold two that pass the DQ gate (run_complete returns
+// no row for them), the latest against the one before it. Every table prints its row count and every row
+// as the engine returned it (the collectors redacted them before they were stored), and one line per
+// tenant gives the detectors' counts. Last, through the raw adapter because it is not a SELECT, SHOW DQ
+// INVALID RECORD run_complete on the USL's collection table: the runs the DQ gate holds back and why.
+// Exit 1 when any query fails; nothing here writes.
 
 import { parseArgs } from "node:util";
 import { Zetaris } from "../src/adapters/zetaris.ts";
@@ -14,7 +18,8 @@ import { redact } from "../src/config.ts";
 import { DataLayer } from "../src/data/layer.ts";
 import { ZetarisEngine } from "../src/data/engines/zetaris.ts";
 import {
-  hero, listRuns, objects, orphanRecords, orphanVhosts, proxiedWithoutRealIp, proxySplit, wildcardWithoutRealIp,
+  changedSinceBackup, driftVsApproved, foundButDifferentSql, hero, listRuns, objects, orphanRecords, orphanVhosts, proxiedWithoutRealIp, proxySplit, runComplete,
+  wildcardWithoutRealIp,
 } from "../src/data/queries.ts";
 import { USL } from "../src/zetaris/setup.ts";
 import { Tracer } from "../src/trace.ts";
@@ -63,6 +68,32 @@ try {
       const vhosts = await orphanVhosts(dl, p, opts);
       table(`orphan_vhost on ${h.host}: server_names with no record and no covering wildcard`, vhosts.columns, vhosts.rows, vhosts.latencyMs);
     }
+
+    // the detectors, as the pass runs them
+    const counts: string[] = [];
+    for (const h of [...hostRuns.values()].filter((x) => x.tenant_id === tenant)) {
+      const drift = await driftVsApproved(dl, { tenant_id: tenant, run_id: h.run_id }, opts);
+      table(`drift_vs_approved on ${h.host} (${h.run_id}): settings whose live value differs from their latest approval`, drift.columns, drift.rows, drift.latencyMs);
+      const backup = await changedSinceBackup(dl, { tenant_id: tenant, run_id: h.run_id, host: h.host }, opts);
+      table(`changed_since_backup on ${h.host} (${h.run_id}): files the host's newest backup lacks or holds with other bytes`, backup.columns, backup.rows, backup.latencyMs);
+      counts.push(`drift_vs_approved ${h.host} ${drift.rows.length}`, `changed_since_backup ${h.host} ${backup.rows.length}`);
+      // found_but_different needs the previous passing run of the same host: the latest two that pass the DQ gate
+      const group = runs.filter((r) => r.tenant_id === tenant && r.surface === "linux.nginx" && r.host === h.host);
+      const passing: Record<string, string>[] = [];
+      for (const r of group) if ((await runComplete(dl, r.run_id, opts)).rows.length === 0) passing.push(r);
+      if (passing.length >= 2) {
+        const [prev, last] = passing.slice(-2);
+        const fbd = await foundButDifferentSql(dl, { tenant_id: tenant, run_id: last.run_id, prev_run_id: prev.run_id }, opts);
+        table(`found_but_different on ${h.host} (${last.run_id} against ${prev.run_id}): byte-identical dns_name settings whose referent's fingerprint changed`, fbd.columns, fbd.rows, fbd.latencyMs);
+        counts.push(`found_but_different ${h.host} ${fbd.rows.length}`);
+      } else {
+        console.log(`\n== found_but_different on ${h.host}: ${passing.length} passing linux.nginx run(s); the comparison takes two`);
+      }
+    }
+    const dnsDrift = await driftVsApproved(dl, { tenant_id: tenant, run_id: dns.run_id }, opts);
+    table(`drift_vs_approved on the DNS run (${dns.run_id}): record fields whose live value differs from their latest approval`, dnsDrift.columns, dnsDrift.rows, dnsDrift.latencyMs);
+    counts.push(`drift_vs_approved ${dns.run_id} ${dnsDrift.rows.length}`);
+    console.log(`\ndetectors for ${tenant} (rows): ${counts.join(", ")}`);
   }
 
   const invalid = await client.query(`SHOW DQ INVALID RECORD run_complete TABLE ${USL}.collection`, { limit, tracer, agent: "zetaris-queries", timeoutMs: 150_000 });

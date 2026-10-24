@@ -10,13 +10,13 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { CREDENTIAL_SHAPED, EMPTY_SHA256, MARK, SSH_ARGS, exportCopyToObjectId, fullIsoToIso, parseLs, parseStream, pseudonymHost, pseudonymUser, readScript, redactText, tarballStem, toRows, type Fetched } from "../src/collectors/linux.ts";
+import { CREDENTIAL_SHAPED, EMPTY_SHA256, LIVE_PREFIXES, MARK, SSH_ARGS, backupMemberId, exportCopyToObjectId, fullIsoToIso, parseLs, parseStream, pseudonymHost, pseudonymUser, readScript, redactText, tarMemberToObjectId, tarRoot, tarballStem, toRows, type Fetched } from "../src/collectors/linux.ts";
 import { analyse, classifyTarget, isDnsName, listenPort, parse, type Malformed } from "../src/collectors/nginx.ts";
 import type { ObservationRow } from "../src/collectors/types.ts";
 import { parseLinuxHosts } from "../src/config.ts";
 import { DataLayer } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
-import { runComplete } from "../src/data/queries.ts";
+import { changedSinceBackup, objects as objectsOf, runComplete } from "../src/data/queries.ts";
 import { assetId, obsId, runId, snapshotId } from "../src/data/rows.ts";
 import { Redactor } from "../src/redactor.ts";
 
@@ -335,7 +335,7 @@ describe("rows: conf.d layout (conf.d layout)", () => {
     expect(rows.backup_snapshot).toEqual([]);
     expect(rows.backup_item).toEqual([]);
     expect(summary.not_readable).toEqual(["/etc/nginx/sites-available", "/etc/nginx/sites-enabled", "/var/backups/export", "/etc/letsencrypt/renewal"]);
-    expect(summary.export).toMatchObject({ dir: "/var/backups/export", readable: false, nginx_copies: 0, snapshots: 0, tarballs: 0, newest_tarball: null, empty_members: [] });
+    expect(summary.export).toMatchObject({ dir: "/var/backups/export", readable: false, backup_items: 0, snapshots: 0, tarballs: 0, newest_tarball: null, empty_members: [] });
     expect(summary.renewals).toEqual({ readable: false, count: 0 });
     expect(summary.unresolved_includes).toEqual([]);
     expect(summary.malformed).toEqual([]);
@@ -400,14 +400,32 @@ describe("rows: sites-enabled layout (sites-enabled layout)", () => {
   const live = (p: string) => files.get(p)!;
   const EXPORT = "/home/svc/backup-export";
   const newest = `${EXPORT}/server-config-2026-10-24.tar.gz`;
+  // The newest tarball's regular-file members as the host hashed them: three under etc/nginx, then two outside it (the certbot
+  // renewal config at its live bytes, and a unit file the collector never fetches), which become backup items as well; the unit
+  // file's item carries the salted member id (backupMemberId).
   const members = [
     { sha256: sha(live("/etc/nginx/nginx.conf")), path: "etc/nginx/nginx.conf" },
     { sha256: sha(live("/etc/nginx/sites-available/portal.invalid")), path: "etc/nginx/sites-available/portal.invalid" },
     { sha256: sha(live("/etc/nginx/sites-available/shop.invalid").toString("utf8").replace("9000", "9001")), path: "etc/nginx/sites-available/shop.invalid" },
+    { sha256: sha(live("/etc/letsencrypt/renewal/portal.invalid.conf")), path: "etc/letsencrypt/renewal/portal.invalid.conf" },
+    { sha256: sha("[Timer]\nOnCalendar=*-*-* 03:40:00\n"), path: "etc/systemd/system/backup-export.timer" },
   ];
   const { rows, summary } = rowsOf(stream("sites", { tarsha: { path: newest, hashes: members } }), "vps-b");
   const obs = rows.observation;
   const sa = (name: string) => `/etc/nginx/sites-available/${name}`;
+  const UNIT_ID = backupMemberId(r, "/etc/systemd/system/backup-export.timer");
+
+  it("a member under the trees the collector reads live keeps its path; any other member is a salted member id, stable per salt, one per path", () => {
+    expect(UNIT_ID).toMatch(/^member-[0-9a-f]{16}$/);
+    expect(UNIT_ID).toBe(`member-${r.fingerprint("/etc/systemd/system/backup-export.timer").slice(7, 23)}`);
+    expect(backupMemberId(new Redactor("other-salt"), "/etc/systemd/system/backup-export.timer")).not.toBe(UNIT_ID);
+    expect(backupMemberId(r, "/etc/systemd/system/backup-export.service")).not.toBe(UNIT_ID);
+    expect(backupMemberId(r, "/etc/nginx/nginx.conf")).toBe("/etc/nginx/nginx.conf");
+    expect(backupMemberId(r, "/etc/letsencrypt/renewal/portal.invalid.conf")).toBe("/etc/letsencrypt/renewal/portal.invalid.conf");
+    expect(backupMemberId(r, "/etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh")).toMatch(/^member-[0-9a-f]{16}$/);
+    expect(LIVE_PREFIXES).toEqual(["/etc/nginx/", "/etc/letsencrypt/renewal/"]);
+    expect(rows.backup_item.map((i) => i.object_id).join(" ")).not.toContain("backup-export");
+  });
 
   it("asserts six vhost files, observes six, passes the gate; the login user is pseudonymised; both address families are inventory", async () => {
     expect(rows.collection_run[0]).toMatchObject({ expected_count: 6, observed_count: 6, status: "complete", host: pseudonymHost(r, "vps-b") });
@@ -448,7 +466,7 @@ describe("rows: sites-enabled layout (sites-enabled layout)", () => {
     expect(summary.servers.find((s) => s.key === "server[portal.invalid:443]" && s.object_id === sa("portal.invalid"))).toMatchObject({ enabled: "yes", proxy_pass: ["http://127.0.0.1:8080/"] });
   });
 
-  it("backup export as tarballs: one snapshot per tarball of the family that holds etc/nginx (the app dumps written 52 ms later are not it), items for the newest from its members, hashes comparable with the live file rows; the home path is pseudonymised", () => {
+  it("backup export as tarballs: one snapshot per tarball of the family that holds etc/nginx (the app dumps written 52 ms later are not it), items for the newest from every regular-file member, hashes comparable with the live file rows; the home path is pseudonymised", () => {
     expect(["server-config-2026-10-24.tar.gz", "server_config.20261024T034002.tgz", "operator-admin-2026-10-16.tar.gz", "backup.tar"].map(tarballStem)).toEqual(["server-config", "server_config", "operator-admin", "backup"]);
     expect(rows.backup_snapshot).toHaveLength(2);
     const [older, latest] = rows.backup_snapshot;
@@ -460,11 +478,15 @@ describe("rows: sites-enabled layout (sites-enabled layout)", () => {
     expect(latest.source_ref).toMatch(new RegExp(`^/home/user-${H6}/backup-export/server-config-2026-10-24\\.tar\\.gz$`));
     expect(rows.backup_item.map((i) => [i.snapshot_id, i.object_id, i.setting_path])).toEqual([
       [latest.snapshot_id, "/etc/nginx/nginx.conf", "file"], [latest.snapshot_id, sa("portal.invalid"), "file"], [latest.snapshot_id, sa("shop.invalid"), "file"],
+      [latest.snapshot_id, "/etc/letsencrypt/renewal/portal.invalid.conf", "file"], [latest.snapshot_id, UNIT_ID, "file"],
     ]);
     const liveHash = (p: string) => find(obs, p, "file")!.value_hash;
     expect(rows.backup_item[1].value_hash).toBe(liveHash(sa("portal.invalid")));
     expect(rows.backup_item[2].value_hash).not.toBe(liveHash(sa("shop.invalid")));
-    expect(summary.export).toMatchObject({ readable: true, mtime: "2026-10-24T03:40:02.000Z", tarballs: 2, nginx_copies: 3, snapshots: 2, empty_members: [] });
+    // a member outside etc/nginx carries the object id its live file carries, so the two compare
+    expect(rows.backup_item[3].value_hash).toBe(liveHash("/etc/letsencrypt/renewal/portal.invalid.conf"));
+    expect(summary.export).toMatchObject({ readable: true, mtime: "2026-10-24T03:40:02.000Z", tarballs: 2, backup_items: 5, snapshots: 2, empty_members: [] });
+    expect(summary.counts.backup_item).toBe(5);
     expect(summary.export!.dir).toMatch(new RegExp(`^/home/user-${H6}/backup-export$`));
     expect(summary.export!.newest_tarball).toMatch(new RegExp(`^/home/user-${H6}/backup-export/server-config-2026-10-24\\.tar\\.gz$`));
     expect(summary.export!.top_level[2]).toMatch(new RegExp(`^-rw-r--r-- 611204 2026-10-23T03:40:06\\.039Z server-config-2026-10-23\\.tar\\.gz$`));
@@ -482,10 +504,10 @@ describe("rows: sites-enabled layout (sites-enabled layout)", () => {
       { sha256: EMPTY_SHA256, path: "etc/nginx/modules-enabled/50-mod-http-geoip.conf" },
     ];
     const { rows: w, summary: s } = rowsOf(stream("sites", { tarsha: { path: newest, hashes: withLinks } }), "vps-b");
-    expect(w.backup_item.map((i) => i.object_id)).toEqual(["/etc/nginx/nginx.conf", sa("portal.invalid"), sa("shop.invalid")]);
+    expect(w.backup_item.map((i) => i.object_id)).toEqual(["/etc/nginx/nginx.conf", sa("portal.invalid"), sa("shop.invalid"), "/etc/letsencrypt/renewal/portal.invalid.conf", UNIT_ID]);
     expect(w.backup_item.some((i) => i.value_hash === `sha256:${EMPTY_SHA256}`)).toBe(false);
     expect(s.export!.empty_members).toEqual(["/etc/nginx/sites-enabled/portal.invalid", "/etc/nginx/sites-enabled/shop.invalid", "/etc/nginx/modules-enabled/50-mod-http-geoip.conf"]);
-    expect(s.export!.nginx_copies).toBe(3);
+    expect(s.export!.backup_items).toBe(5);
     // the live enabled sites still compare with their own backup copy, not with the empty digest
     const liveHash = (p: string) => find(w.observation, p, "file")!.value_hash;
     expect(w.backup_item.find((i) => i.object_id === sa("portal.invalid"))!.value_hash).toBe(liveHash(sa("portal.invalid")));
@@ -499,7 +521,7 @@ describe("rows: sites-enabled layout (sites-enabled layout)", () => {
       ["2026-10-24T03:40:02.000Z", "/home/user-X/backup-export/server-config-2026-10-24.tar.gz"],
       ["2026-10-24T03:40:02.000Z", "/home/user-X/backup-export"],
     ]);
-    expect(both.rows.backup_item).toHaveLength(5);
+    expect(both.rows.backup_item).toHaveLength(7);
     expect(new Set(both.rows.backup_snapshot.map((s) => s.snapshot_id)).size).toBe(3);
     // no tarsha section: the host found no tarball holding etc/nginx, so every tarball is a snapshot without items
     const noNginx = rowsOf(stream("sites"), "vps-b");
@@ -512,6 +534,36 @@ describe("rows: sites-enabled layout (sites-enabled layout)", () => {
     expect(exportCopyToObjectId("etc/nginx/conf.d/a.conf")).toBe("/etc/nginx/conf.d/a.conf");
     expect(exportCopyToObjectId("./etc/nginx/nginx.conf")).toBe("/etc/nginx/nginx.conf");
     expect(exportCopyToObjectId("/var/backups/export/server-config.tar.gz")).toBeNull();
+  });
+
+  it("a tarball member's object id is its path below the tarball's root, the prefix its etc/nginx members sit under", () => {
+    expect(tarRoot(["etc/systemd/system/a.timer", "etc/nginx/nginx.conf"])).toBe("");
+    expect(tarRoot(["./etc/letsencrypt/renewal/a.conf", "./etc/nginx/nginx.conf"])).toBe("./");
+    expect(tarRoot(["server-config/etc/nginx/nginx.conf"])).toBe("server-config/");
+    expect(tarRoot(["xetc/nginx/nginx.conf", "etc/hosts"])).toBe("");
+    expect(tarMemberToObjectId("etc/letsencrypt/renewal/a.conf", "")).toBe("/etc/letsencrypt/renewal/a.conf");
+    expect(tarMemberToObjectId("./etc/letsencrypt/renewal/a.conf", "./")).toBe("/etc/letsencrypt/renewal/a.conf");
+    expect(tarMemberToObjectId("server-config/etc/letsencrypt/renewal/a.conf", "server-config/")).toBe("/etc/letsencrypt/renewal/a.conf");
+    expect(tarMemberToObjectId("./etc/hosts", "")).toBe("/etc/hosts");
+    expect(tarMemberToObjectId("other/etc/hosts", "server-config/")).toBe("/other/etc/hosts");
+    expect(tarMemberToObjectId("./", "")).toBeNull();
+    const prefixed = rowsOf(stream("sites", { tarsha: { path: newest, hashes: members.map((m) => ({ ...m, path: `./${m.path}` })) } }), "vps-b");
+    expect(prefixed.rows.backup_item.map((i) => i.object_id)).toEqual(rows.backup_item.map((i) => i.object_id));
+  });
+
+  it("changed_since_backup over these rows: every fetched file the newest tarball lacks or holds with other bytes; the renewal config it holds at its live bytes gives no row", async () => {
+    const engine = await SqlJsEngine.create();
+    engine.loadBundle(rows);
+    const run = rows.collection_run[0];
+    const changed = objectsOf(await changedSinceBackup(new DataLayer(engine), { tenant_id: run.tenant_id, run_id: run.run_id, host: run.host! }));
+    engine.close();
+    const fetched = obs.filter((o) => o.setting_path === "file").map((o) => o.object_id);
+    const held = new Map(rows.backup_item.map((i) => [i.object_id, i.value_hash]));
+    expect(changed.map((c) => c.object_id)).toEqual(fetched.filter((p) => held.get(p) !== find(obs, p, "file")!.value_hash).sort());
+    expect(changed.map((c) => c.object_id)).toContain(sa("shop.invalid"));
+    expect(changed.map((c) => c.object_id)).not.toContain("/etc/letsencrypt/renewal/portal.invalid.conf");
+    expect(changed.find((c) => c.object_id === sa("shop.invalid"))!.backup_hash).toBe(held.get(sa("shop.invalid")));
+    expect(changed.filter((c) => c.backup_hash === "").map((c) => c.object_id)).toEqual(fetched.filter((p) => !held.has(p)).sort());
   });
 });
 
@@ -616,7 +668,7 @@ describe("the read script and the SSH contract", () => {
 
   it("runs only the enumerated read commands, never sudo, never anything that writes", () => {
     const commands = [...script.matchAll(/\bsection \S+ (?:'[^']*'|"[^"]*"|\S+) (\S+)/g)].map((m) => m[1]);
-    expect(new Set(commands)).toEqual(new Set(["id", "hostname", "date", "ip", "ls", "base64", "systemctl", "find", "nginx_member_hashes"]));
+    expect(new Set(commands)).toEqual(new Set(["id", "hostname", "date", "ip", "ls", "base64", "systemctl", "find", "member_hashes"]));
     expect(script).toMatch(/section timers '' systemctl list-timers --all --no-pager$/m);
     expect(script).toMatch(/ip -4 -o addr show scope global$/m);
     expect(script).toMatch(/ip -6 -o addr show scope global$/m);
@@ -627,6 +679,9 @@ describe("the read script and the SSH contract", () => {
     expect(script).not.toMatch(/tar -[a-z]*x(?![a-z]*O)/); // every tar extraction is to stdout, never to disk
     expect(script).toMatch(/tar -xOzf/);
     expect(script).toMatch(/tar -tvzf "\$1" \| grep '\^-'/); // regular-file members only: a symlink member would hash as the empty input
+    // every regular-file member of the chosen tarball is hashed; etc/nginx picks the tarball, never the members
+    expect(script).toMatch(/tar -tvzf "\$1" \| grep '\^-' \| sed -E '[^']+' \| grep -v '\/\$' \| while IFS= read -r m; do/);
+    expect(script).toMatch(/if tar -tzf "\$t" 2>\/dev\/null \| grep -qE '\(\^\|\/\)etc\/nginx\/'; then newest=\$t; break; fi/);
     expect(script).toContain("EXP='/var/backups/export'");
     expect(script).toContain("case $(basename -- \"$1\" | tr 'A-Z' 'a-z') in"); // Secrets.conf is as credential-shaped as secrets.conf
     expect(script).toContain("*htpasswd*|*passwd*|*api-key*|*api_key*|*apikey*|*secret*|*token*|*credential*|*.pem|*.key|*.crt|*.cer|*.csr|*.p12|*.pfx");

@@ -2,7 +2,8 @@
 // EXPORT_DENY_WORDS from .env: the tenant's zone and product labels, the operator's company and host
 // nicknames, the mailbox local part, real addresses). The list is configuration, never committed, so a
 // clean clone skips this file with one line; on the operator's machine every file a judge will read
-// (sample/, examples/, README.md, ops/, scripts/, src/, test/, sql/, .env.example, package.json) must hold
+// (sample/, examples/, eval/, README.md, DESIGN.md, ops/, scripts/, src/, test/, sql/, .env.example,
+// package.json, policy/, docs/) must hold
 // none of the labels standing alone (src/redactor.ts countLabels: pass e's boundaries, case-insensitive).
 // The configured ssh aliases (LINUX_HOSTS keys) are the one exception: the brief mandates them, the
 // README names them, and they are the operator's own. A failure names the file, the label's position in
@@ -17,7 +18,7 @@ import { countLabels } from "../src/redactor.ts";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const WORDS = [...new Set([...config.redactWords, ...config.exportDenyWords])];
 const ALIASES = Object.keys(config.linuxHosts);
-const SURFACES = ["sample", "examples", "eval", "README.md", "ops", "scripts", "src", "test", "sql", ".env.example", "package.json"];
+const SURFACES = ["sample", "examples", "eval", "README.md", "DESIGN.md", "ops", "scripts", "src", "test", "sql", ".env.example", "package.json", "policy", "docs"];
 const TEXT = /\.(?:ts|mts|json|md|sql|example|txt|conf|types|bak|sh)$|^[^.]+$/;
 
 if (!WORDS.length) console.log("leak: skipped (REDACT_WORDS and EXPORT_DENY_WORDS are blank; the deny-list is the operator's configuration)");

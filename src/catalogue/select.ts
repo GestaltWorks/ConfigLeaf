@@ -135,9 +135,24 @@ const DEFAULT_CHECKS: Record<FindingClass, readonly string[]> = {
   orphan_vhost: ["run_complete", "other_settings_reference", "backup_recent"],
 };
 
+/**
+ * The list a finding on a DNS record (host null) gets where its class's list reads the host: drift_vs_approved
+ * on a record field binds no host for setting_matches_approved, restore_would_regress or
+ * change_in_last_backup, so it gets the record's audit checks over the window from its approval to the run:
+ * who touched the record and whether the state before the change is on record.
+ */
+const DEFAULT_CHECKS_RECORD: Partial<Record<FindingClass, readonly string[]>> = {
+  drift_vs_approved: ["run_complete", "actor_attributed", "previous_value_recoverable"],
+};
+
 /** Deterministic: the template ids every finding of this class gets when no model answered. */
 export function defaultSelection(findingClass: FindingClass): readonly string[] {
   return DEFAULT_CHECKS[findingClass];
+}
+
+/** The class's list, or for a finding with no host the record list of its class when there is one. */
+export function defaultSelectionFor(finding: Pick<FindingSummary, "class" | "host">): readonly string[] {
+  return (finding.host === null ? DEFAULT_CHECKS_RECORD[finding.class] : undefined) ?? DEFAULT_CHECKS[finding.class];
 }
 
 /** How each catalogue parameter is read off a finding. A test asserts every parameter in the catalogue has an entry. */
@@ -169,7 +184,7 @@ export function bindParams(t: Template, finding: FindingSummary): Params {
 
 /** The default policy applied to one finding, through the same validator the model's answer goes through. */
 export function defaultChecks(finding: FindingSummary, catalogue: readonly Template[] = CATALOGUE): ValidatedSelection {
-  const checks = defaultSelection(finding.class).map((id) => {
+  const checks = defaultSelectionFor(finding).map((id) => {
     const t = catalogue.find((x) => x.id === id);
     return { template: id, params: t ? bindParams(t, finding) : {}, why: `default policy for ${finding.class}` };
   });

@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  AUDIT_LIMIT, Cloudflare, CloudflareError, RECORDS_PER_PAGE,
-  auditEventRow, auditWindow, collectCloudflare, dnsRecordRow, isoMs, previousState, proxiedFlag, resourceIdOf,
+  AUDIT_LIMIT, Cloudflare, CloudflareError, RECORDS_PER_PAGE, RECORD_FIELDS,
+  auditEventRow, auditWindow, collectCloudflare, dnsObservationRows, dnsRecordRow, isoMs, previousState, proxiedFlag, resourceIdOf,
   type CfAuditRow, type CfRecord, type CfZone,
 } from "../src/collectors/cloudflare.ts";
-import { REDACT, eventId, type AuditEvent } from "../src/data/rows.ts";
+import { AUTHORITY, REDACT, eventId, obsId, type AuditEvent, type Observation } from "../src/data/rows.ts";
 import { Redactor } from "../src/redactor.ts";
+import { cloudflareVaultFiles } from "../src/vault/hook.ts";
 import { TOKEN, fakeApi, type FakeOptions } from "./fixtures/cloudflare/fake-api.ts";
 import zonesFile from "./fixtures/cloudflare/zones.json" with { type: "json" };
 import recordsFile from "./fixtures/cloudflare/records.json" with { type: "json" };
@@ -92,6 +93,90 @@ describe("dnsRecordRow", () => {
     for (const bad of [{ ...ok, id: "" }, { ...ok, name: "" }, { ...ok, type: "" }, { ...ok, content: undefined as unknown as string }]) {
       expect(dnsRecordRow(r, bad, SHOP.name, ctx)).toBeUndefined();
     }
+  });
+});
+
+describe("dnsObservationRows", () => {
+  const rowsOf = (red: Redactor, zone: CfZone, x: CfRecord): Observation[] => dnsObservationRows(red, x, dnsRecordRow(red, x, zone.name, ctx)!);
+  const field = (rows: Observation[], f: string): Observation => rows.find((o) => o.setting_path === f)!;
+
+  it("five rows per record, one per field in RECORD_FIELDS order, of the record's DNS run: object_id the record id, host null, live authority", () => {
+    const rows = rowsOf(r, SHOP, rec(SHOP, APEX));
+    expect(RECORD_FIELDS).toEqual(["type", "name", "content", "ttl", "proxied"]);
+    expect(rows.map((o) => o.setting_path)).toEqual([...RECORD_FIELDS]);
+    for (const o of rows) {
+      expect(o).toMatchObject({ run_id: "run-test", tenant_id: TENANT, surface: "cloudflare.dns", host: null, object_id: APEX, observed_at: NOW.toISOString(), source: "cloudflare", authority: AUTHORITY.live });
+      expect(o.obs_id).toBe(obsId("run-test", APEX, o.setting_path));
+    }
+  });
+
+  it("value_hash is the salted fingerprint of the value as the API sent it; value_redacted is the row's own column, ttl and proxied as integer text", () => {
+    const rows = rowsOf(r, SHOP, rec(SHOP, APEX));
+    expect(rows.map((o) => [o.setting_path, o.value_hash, o.value_redacted])).toEqual([
+      ["type", r.fingerprint("A"), "A"],
+      ["name", r.fingerprint("shop.example"), "shop.example"],
+      ["content", r.fingerprint("203.0.113.10"), "203.0.113.10"],
+      ["ttl", r.fingerprint("1"), "1"],
+      ["proxied", r.fingerprint("0"), "0"],
+    ]);
+    expect(field(rowsOf(r, SHOP, rec(SHOP, WWW)), "proxied").value_redacted).toBe("1");
+    // the hash is of the raw value: the pseudonym on display, the salted hash of the real name underneath
+    const blue = rowsOf(r, BLUE, RECORDS[BLUE.id][0]);
+    expect(field(blue, "name").value_redacted).toMatch(new RegExp(`^host-${H6}\\.com$`));
+    expect(field(blue, "name").value_hash).toBe(r.fingerprint("bluefin-logistics-zz9q.com"));
+    expect(field(blue, "content").value_hash).toBe(r.fingerprint("10.40.12.7"));
+    // an absent ttl or proxied flag: null on display, the fingerprint of "" underneath
+    const bare = rowsOf(r, SHOP, { ...rec(SHOP, APEX), ttl: undefined, proxied: undefined });
+    expect([field(bare, "ttl"), field(bare, "proxied")].map((o) => [o.value_redacted, o.value_hash])).toEqual([[null, r.fingerprint("")], [null, r.fingerprint("")]]);
+  });
+
+  it("content refers to an ip for A and AAAA and to a dns_name for a CNAME, with the redacted value; nothing else refers", () => {
+    const apex = rowsOf(r, SHOP, rec(SHOP, APEX));
+    expect([field(apex, "content").refers_to_type, field(apex, "content").refers_to_id]).toEqual(["ip", "203.0.113.10"]);
+    const www = rowsOf(r, BLUE, RECORDS[BLUE.id][1]);
+    const target = dnsRecordRow(r, RECORDS[BLUE.id][0], BLUE.name, ctx)!;
+    expect([field(www, "content").refers_to_type, field(www, "content").refers_to_id]).toEqual(["dns_name", target.name]);
+    expect(field(rowsOf(r, BLUE, RECORDS[BLUE.id][0]), "content").refers_to_id).toBe(target.content);
+    const v6 = rowsOf(r, SHOP, { id: "d".repeat(32), name: "v6.shop.example", type: "AAAA", content: "2001:db8::7", ttl: 1, proxied: false });
+    expect([field(v6, "content").refers_to_type, field(v6, "content").refers_to_id]).toEqual(["ip", "2001:db8::7"]);
+    for (const id of ["f0e1d2c3b4a59687f0e1d2c3b4a59687", "13579bdf2468ace013579bdf2468ace0"]) {
+      expect(rowsOf(r, SHOP, rec(SHOP, id)).every((o) => o.refers_to_type === null && o.refers_to_id === null)).toBe(true);
+    }
+    expect([...apex, ...www].filter((o) => o.setting_path !== "content").every((o) => o.refers_to_type === null && o.refers_to_id === null)).toBe(true);
+  });
+
+  it("a TXT's content is redacted tag by tag, as dnsRecordRow does, and hashed raw, so two keys that both display as secrets keep two hashes", () => {
+    const verify = field(rowsOf(r, SHOP, rec(SHOP, "0fedcba987654321fedcba9876543210")), "content");
+    expect(verify.value_redacted).toMatch(/^site-verification-token=<secret:kv:[0-9a-f]{8}>$/);
+    expect(verify.value_hash).toBe(r.fingerprint("site-verification-token=Qm9ndXNUb2tlbkZvclRlc3RzT25seTEyMzQ1Njc4"));
+    const dkim = (key: string): CfRecord => ({ id: "c".repeat(32), name: "sel._domainkey.shop.example", type: "TXT", content: `"v=DKIM1; k=rsa; p=${key}"`, ttl: 1, proxied: false });
+    const k1 = `MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA${"zZ9q".repeat(30)}`;
+    const k2 = `MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA${"yY8p".repeat(30)}`;
+    const [a, b] = [k1, k2].map((k) => field(rowsOf(r, SHOP, dkim(k)), "content"));
+    expect(a.value_redacted).toBe(dnsRecordRow(r, dkim(k1), SHOP.name, ctx)!.content);
+    expect(a.value_redacted).toMatch(/^"v=DKIM1; k=rsa; p=<secret:value:[0-9a-f]{8}>"$/);
+    expect(a.value_hash).not.toBe(b.value_hash);
+    expect(JSON.stringify([a, b])).not.toContain("zZ9q");
+  });
+
+  it("deterministic under one salt, salted by it: the same records under the same salt give the same rows, another salt gives other hashes", () => {
+    const all = (red: Redactor) => ZONES.flatMap((z) => RECORDS[z.id].flatMap((x) => rowsOf(red, z, x)));
+    const mine = all(r);
+    expect(all(new Redactor("test-salt"))).toEqual(mine);
+    const other = all(new Redactor("other-salt"));
+    expect(other.every((o, i) => o.value_hash !== mine[i].value_hash)).toBe(true);
+  });
+
+  it("every row is a fixed point of the Store's redaction pass", () => {
+    const all = ZONES.flatMap((z) => RECORDS[z.id].flatMap((x) => rowsOf(r, z, x)));
+    expect(all).toHaveLength(50);
+    for (const o of all) {
+      for (const [c, how] of Object.entries(REDACT.observation) as [keyof Observation, "text" | "value"][]) {
+        const v = o[c];
+        if (typeof v === "string") expect(how === "value" ? r.value(v) : r.text(v), `${o.obs_id}.${c}`).toBe(v);
+      }
+    }
+    expect(JSON.stringify(all)).not.toMatch(RAW_LEAK);
   });
 });
 
@@ -286,7 +371,36 @@ describe("collectCloudflare", () => {
     expect(c.eventZone.get(eventId(TENANT, "cloudflare", "a0000009-5b2c-4d3e-8f10-000000000009"))).toBe(r.text("bluefin-logistics-zz9q.com"));
     expect(c.eventZone.get(eventId(TENANT, "cloudflare", "a0000008-5b2c-4d3e-8f10-000000000008"))).toBe("shop.example");
     expect(c.eventZone.get(eventId(TENANT, "cloudflare", "a000000d-5b2c-4d3e-8f10-00000000000d"))).toBeNull();
-    expect(JSON.stringify({ ...c, eventZone: [...c.eventZone] })).not.toMatch(RAW_LEAK);
+    const { rawRecords, ...redacted } = c;
+    expect(JSON.stringify({ ...redacted, eventZone: [...c.eventZone] })).not.toMatch(RAW_LEAK);
+    // rawRecords is the one raw field: every zone's records as the API sent them, under the zone's real name, for the vault
+    expect(rawRecords).toEqual(ZONES.map((z) => ({ zoneId: z.id, zone: z.name, records: RECORDS[z.id] })));
+    expect(JSON.stringify(rawRecords)).toMatch(RAW_LEAK);
+  });
+
+  it("the DNS run's observations: five per record, all of the DNS run, while expected_count and observed_count count records", async () => {
+    const c = await collectCloudflare(api({ recordsCap: 3 }).cf, r, { tenantId: TENANT, now: () => NOW });
+    expect(c.observations).toHaveLength(5 * c.records.length);
+    expect(c.observations).toHaveLength(50);
+    expect([c.dnsRun.expected_count, c.dnsRun.observed_count]).toEqual([10, 10]);
+    expect(new Set(c.observations.map((o) => o.obs_id)).size).toBe(50);
+    expect(c.observations.every((o) => o.run_id === c.dnsRun.run_id && o.surface === "cloudflare.dns" && o.host === null && o.observed_at === c.dnsRun.started_at)).toBe(true);
+    // per record, the fields in order, and each display value is the stored dns_record column as text
+    for (const d of c.records) {
+      const mine = c.observations.filter((o) => o.object_id === d.record_id);
+      expect(mine.map((o) => o.setting_path), d.record_id).toEqual([...RECORD_FIELDS]);
+      expect(mine.map((o) => o.value_redacted), d.record_id).toEqual([d.type, d.name, d.content, d.ttl === null ? null : String(d.ttl), d.proxied === null ? null : String(d.proxied)]);
+    }
+    expect(c.observations.filter((o) => o.setting_path === "proxied").map((o) => o.value_redacted).sort()).toEqual([..."0000001111"]);
+    // a second pass over the same records under the same salt gives the same rows
+    expect((await collectCloudflare(api().cf, new Redactor("test-salt"), { tenantId: TENANT, now: () => NOW })).observations).toEqual(c.observations);
+  });
+
+  it("the vault hook takes rawRecords straight from the collection: one file per stored record", async () => {
+    const c = await collectCloudflare(api({ recordsCap: 3 }).cf, r, { tenantId: TENANT, now: () => NOW });
+    const files = cloudflareVaultFiles(c, c.rawRecords, r);
+    expect(files.map((f) => f.objectId).sort()).toEqual(c.records.map((d) => d.record_id).sort());
+    expect(files.find((f) => f.objectId === APEX)!.path).toBe(`${SHOP.name}/${APEX}.json`);
   });
 
   it("a population that moves between the count and the fetch is partial, not complete", async () => {
@@ -302,6 +416,7 @@ describe("collectCloudflare", () => {
     const c = await collectCloudflare(cf, r, { tenantId: TENANT, now: () => NOW });
     expect(c.dnsRun).toMatchObject({ expected_count: 10, observed_count: 11, status: "partial" });
     expect(c.zones[0]).toEqual({ zone: "shop.example", expected: 7, observed: 8 });
+    expect(c.observations).toHaveLength(55);
   });
 
   it("a since older than the retention is clamped, so the API that refuses it still answers", async () => {
@@ -319,6 +434,7 @@ describe("collectCloudflare", () => {
     expect(audit.errors).toEqual([`cloudflare.audit: Cloudflare 403 GET /accounts/${ACCOUNT}/logs/audit: 10000: Authentication error`]);
     const dns = await collectCloudflare(api({ fail: { [`/zones/${BLUE.id}/`]: 403 } }).cf, r, { tenantId: TENANT, now: () => NOW });
     expect(dns.dnsRun).toMatchObject({ expected_count: null, observed_count: 0, status: "failed" });
+    expect([dns.records, dns.observations, dns.rawRecords]).toEqual([[], [], []]);
     expect(dns.auditRun.status).toBe("complete");
   });
 });

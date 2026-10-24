@@ -26,6 +26,11 @@
     "export:bundle": "tsx scripts/export-bundle.ts",
     "collect:cloudflare": "tsx scripts/collect-cloudflare.ts",
     "probe:thinking": "tsx scripts/probe-thinking.ts",
+    "policy:load": "tsx scripts/policy-load.ts",
+    "approve": "tsx scripts/approve.ts",
+    "vault:status": "tsx scripts/vault-status.ts",
+    "validate:copies": "tsx scripts/validate-copies.ts",
+    "probe": "tsx scripts/probe.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

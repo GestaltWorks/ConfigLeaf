@@ -222,6 +222,182 @@ export function orphanVhosts(dl: DataLayer, params: SurveyParams, opts?: RunOpti
   return dl.run(ORPHAN_VHOST_SQL, params, opts);
 }
 
+// ---- the detectors: drift from approval, change since backup, FOUND-BUT-DIFFERENT ----------------------------
+//
+// One run each, in the portable subset and under both Zetaris measurements above: COALESCE sits in JOIN ON
+// or in a correlated subquery's WHERE, every correlation sits in a subquery's WHERE, and the top-level WHERE
+// holds plain column comparisons only. The pass runs them over the latest passing run of each (tenant,
+// surface, host) and over the tenant's latest passing DNS run (src/pipeline.ts, the survey step). Every
+// ORDER BY ends on a key, so both engines return one row order. Measured live 24 Oct 2026 on Zetaris
+// 2.4.3.1 over the datasource holding sample/bundle.json (test/parity.test.ts): drift_vs_approved over
+// approvals added as a derived table (1 row), changed_since_backup on both hosts (6 and 5 rows: the
+// certbot renewal configs, absent from that bundle's backup_item rows, which held each newest export's
+// etc/nginx members) and found_but_different (0 rows: the bundle records no fingerprint) return the
+// columns, rows and totals sql.js returns.
+
+export type DriftParams = { tenant_id: string; run_id: string };
+export type BackupDiffParams = { tenant_id: string; run_id: string; host: string };
+export type FoundButDifferentParams = { tenant_id: string; run_id: string; prev_run_id: string };
+
+/**
+ * drift_vs_approved: the settings of one run whose live value differs from their latest approval. A
+ * setting's key is (tenant, surface, host, object_id, setting_path), host compared with NULL as a value,
+ * so a record's approval (host NULL) meets the per-field observation of the DNS run that the Cloudflare
+ * collector writes. The latest approval of a key is the one with no approval of the same key at a later
+ * approved_at; at an equal approved_at the greater approval_id is the latest. One row per drifted setting:
+ * the live hash and display value, the approved hash, when and by whom it was approved, and what the live
+ * value refers to. A setting whose latest approval holds the live value gives no row, and so does a
+ * setting with no approval.
+ */
+export const DRIFT_VS_APPROVED_SQL = `SELECT o.surface, o.host, o.object_id, o.setting_path, o.value_hash, o.value_redacted,
+       a.value_hash AS approved_hash, a.approved_at, a.approved_by, o.refers_to_type, o.refers_to_id, o.observed_at
+FROM {{t:observation}} o
+JOIN {{t:approved_setting}} a ON a.tenant_id = o.tenant_id AND a.surface = o.surface AND a.object_id = o.object_id
+  AND a.setting_path = o.setting_path AND COALESCE(a.host, '') = COALESCE(o.host, '')
+WHERE o.tenant_id = {{p:tenant_id}} AND o.run_id = {{p:run_id}} AND a.value_hash <> o.value_hash
+  AND NOT EXISTS (SELECT 1 FROM {{t:approved_setting}} n WHERE n.tenant_id = a.tenant_id AND n.surface = a.surface AND n.object_id = a.object_id
+    AND n.setting_path = a.setting_path AND COALESCE(n.host, '') = COALESCE(a.host, '')
+    AND (n.approved_at > a.approved_at OR (n.approved_at = a.approved_at AND n.approval_id > a.approval_id)))
+ORDER BY o.surface, o.object_id, o.setting_path, o.obs_id`;
+
+export function driftVsApproved(dl: DataLayer, params: DriftParams, opts?: RunOptions): Promise<QueryResult> {
+  return dl.run(DRIFT_VS_APPROVED_SQL, params, opts);
+}
+
+/**
+ * changed_since_backup: the `file` settings of one nginx run of the host whose bytes the host's newest
+ * backup_snapshot lacks or holds with another hash. backup_item holds every regular-file member of the
+ * newest export tarball (src/collectors/linux.ts), so every file the collector fetches is compared, the
+ * certbot renewal configs beside the nginx files. The newest snapshot is the one with no snapshot of the
+ * same tenant and host at a later taken_at; at an equal taken_at the greater snapshot_id is the newest.
+ * backup_hash is '' for a file the snapshot lacks. A host with no snapshot gives no row; backup_recent is
+ * the check that says so.
+ */
+export const CHANGED_SINCE_BACKUP_SQL = `SELECT o.host, o.object_id, o.setting_path, o.value_hash, COALESCE(b.value_hash, '') AS backup_hash,
+       s.snapshot_id, s.taken_at, o.observed_at
+FROM {{t:observation}} o
+JOIN {{t:backup_snapshot}} s ON s.tenant_id = o.tenant_id AND s.host = o.host
+LEFT JOIN {{t:backup_item}} b ON b.snapshot_id = s.snapshot_id AND b.object_id = o.object_id AND b.setting_path = o.setting_path
+WHERE o.tenant_id = {{p:tenant_id}} AND o.run_id = {{p:run_id}} AND o.host = {{p:host}} AND o.setting_path = 'file'
+  AND (b.value_hash IS NULL OR b.value_hash <> o.value_hash)
+  AND NOT EXISTS (SELECT 1 FROM {{t:backup_snapshot}} x WHERE x.tenant_id = s.tenant_id AND x.host = s.host
+    AND (x.taken_at > s.taken_at OR (x.taken_at = s.taken_at AND x.snapshot_id > s.snapshot_id)))
+ORDER BY o.object_id, o.obs_id`;
+
+export function changedSinceBackup(dl: DataLayer, params: BackupDiffParams, opts?: RunOptions): Promise<QueryResult> {
+  return dl.run(CHANGED_SINCE_BACKUP_SQL, params, opts);
+}
+
+/**
+ * FOUND-BUT-DIFFERENT as one comparison: a dns_name setting of run_id whose value_hash equals its
+ * observation in prev_run_id (the previous passing run of the same tenant, surface and host) while the
+ * fingerprint of the name it refers to differs between the two observations. The fingerprints are
+ * referent_fingerprint rows, which the pass writes (src/data/fingerprint.ts): each observation's is its
+ * row against the latest DNS run it was fingerprinted against (greatest resolved_at, then the greater
+ * dns_run_id). An observation with no fingerprint row gives no row. Measured 24 Oct 2026 on
+ * test/fixtures/authored-bundle.json: the one setting DriftWorld.foundButDifferent flags and the pass
+ * reports as found_but_different (test/datalayer.test.ts).
+ */
+export const FOUND_BUT_DIFFERENT_SQL = `SELECT o.host, o.object_id, o.setting_path, o.value_hash, o.refers_to_id AS name,
+       p.obs_id AS prev_obs_id, pf.dns_run_id AS prev_dns_run_id, pf.fingerprint AS before_fingerprint, p.observed_at AS prev_observed_at,
+       o.obs_id, f.dns_run_id, f.fingerprint AS after_fingerprint, o.observed_at
+FROM {{t:observation}} o
+JOIN {{t:observation}} p ON p.tenant_id = o.tenant_id AND p.run_id = {{p:prev_run_id}} AND p.surface = o.surface
+  AND p.object_id = o.object_id AND p.setting_path = o.setting_path AND p.value_hash = o.value_hash
+JOIN {{t:referent_fingerprint}} f ON f.obs_id = o.obs_id
+JOIN {{t:referent_fingerprint}} pf ON pf.obs_id = p.obs_id AND pf.fingerprint <> f.fingerprint
+WHERE o.tenant_id = {{p:tenant_id}} AND o.run_id = {{p:run_id}} AND o.refers_to_type = 'dns_name'
+  AND NOT EXISTS (SELECT 1 FROM {{t:referent_fingerprint}} x WHERE x.obs_id = f.obs_id
+    AND (x.resolved_at > f.resolved_at OR (x.resolved_at = f.resolved_at AND x.dns_run_id > f.dns_run_id)))
+  AND NOT EXISTS (SELECT 1 FROM {{t:referent_fingerprint}} y WHERE y.obs_id = pf.obs_id
+    AND (y.resolved_at > pf.resolved_at OR (y.resolved_at = pf.resolved_at AND y.dns_run_id > pf.dns_run_id)))
+ORDER BY o.host, o.object_id, o.setting_path, o.obs_id`;
+
+export function foundButDifferentSql(dl: DataLayer, params: FoundButDifferentParams, opts?: RunOptions): Promise<QueryResult> {
+  return dl.run(FOUND_BUT_DIFFERENT_SQL, params, opts);
+}
+
+// ---- the Decider's reads: the policy, the approvals, the vault copies, the probes ----------------------------
+//
+// What src/pipeline.ts reads before src/policy/decide.ts decides. Plain column comparisons in every top-level
+// WHERE, COALESCE only inside a correlated subquery's WHERE, every ORDER BY ending on a key. Measured 24 Oct
+// 2026 on test/fixtures/policy-bundle.json through sql.js (test/pipeline.test.ts): the 11 hackathon rules, the
+// latest approval of each of the 8 approved settings, one copy of each drifted file's approved bytes with its
+// latest validation (app.conf ok, shop.conf fail, api.conf none) and the record's cf-schema copy, the six probes.
+// Measured live 24 Oct 2026 on Zetaris 2.4.3.1 over the datasource holding sample/bundle.json, each query over the
+// bundle and over derived tables (DataLayer overlays) that give it rows (policy rules of "*", of the tenant and of
+// another tenant; every sites-host file approved twice; a copy of each with a failed then a passing validation;
+// one probe per A record; one disposition per file): 12 of 12 cases return the columns, rows and totals sql.js returns.
+
+/** The policy rules that can govern the tenant's settings: its own and every "*" rule, in rule_id order. */
+export const POLICY_RULES_SQL = `SELECT rule_id, tenant_id, surface, object_glob, setting_glob, criticality, lock, on_drift, on_no_copy, hold_max_hours,
+       alert, psa_priority, version, author, since, note
+FROM {{t:policy_rule}}
+WHERE tenant_id = {{p:tenant_id}} OR tenant_id = '*'
+ORDER BY rule_id`;
+
+export function policyRules(dl: DataLayer, tenantId: string, opts?: RunOptions): Promise<QueryResult> {
+  return dl.run(POLICY_RULES_SQL, { tenant_id: tenantId }, opts);
+}
+
+/**
+ * The latest approval of every setting key of the tenant (surface, host with NULL as a value, object_id,
+ * setting_path), by the rule DRIFT_VS_APPROVED_SQL uses: no approval of the same key at a later approved_at,
+ * and at an equal approved_at the greater approval_id. In approval_id order.
+ */
+export const LATEST_APPROVALS_SQL = `SELECT a.approval_id, a.surface, a.host, a.object_id, a.setting_path, a.value_hash, a.approved_at, a.approved_by
+FROM {{t:approved_setting}} a
+WHERE a.tenant_id = {{p:tenant_id}}
+  AND NOT EXISTS (SELECT 1 FROM {{t:approved_setting}} n WHERE n.tenant_id = a.tenant_id AND n.surface = a.surface AND n.object_id = a.object_id
+    AND n.setting_path = a.setting_path AND COALESCE(n.host, '') = COALESCE(a.host, '')
+    AND (n.approved_at > a.approved_at OR (n.approved_at = a.approved_at AND n.approval_id > a.approval_id)))
+ORDER BY a.approval_id`;
+
+export function latestApprovals(dl: DataLayer, tenantId: string, opts?: RunOptions): Promise<QueryResult> {
+  return dl.run(LATEST_APPROVALS_SQL, { tenant_id: tenantId }, opts);
+}
+
+export type ApprovedCopyParams = { tenant_id: string; surface: string; host: string; object_id: string; setting_path: string; approved_hash: string };
+
+/**
+ * The vault copies of one object that hold an approved value, each with its latest validation (the greatest
+ * validated_at, then the greater validation_id; every column of it "" when the copy has no validation).
+ * A copy holds the approved value when its blob_sha256 is the approved hash (a file's exact bytes) or when
+ * its run's observation of the setting carries the approved hash (a record field, whose copy is the record's
+ * JSON). host is '' for an object with no host. In taken_at, then copy_id order.
+ */
+export const APPROVED_COPIES_SQL = `SELECT v.copy_id, v.run_id, v.git_commit, v.blob_sha256, v.taken_at, o.value_hash,
+       c.validation_id, c.validator, c.result, c.missing_dependencies, c.validated_at
+FROM {{t:vault_copy}} v
+LEFT JOIN {{t:observation}} o ON o.tenant_id = v.tenant_id AND o.run_id = v.run_id AND o.object_id = v.object_id AND o.setting_path = {{p:setting_path}}
+LEFT JOIN {{t:copy_validation}} c ON c.copy_id = v.copy_id
+WHERE v.tenant_id = {{p:tenant_id}} AND v.surface = {{p:surface}} AND v.object_id = {{p:object_id}}
+  AND (v.host = {{p:host}} OR (v.host IS NULL AND {{p:host}} = ''))
+  AND (v.blob_sha256 = {{p:approved_hash}} OR o.value_hash = {{p:approved_hash}})
+  AND NOT EXISTS (SELECT 1 FROM {{t:copy_validation}} x WHERE x.copy_id = v.copy_id
+    AND (x.validated_at > c.validated_at OR (x.validated_at = c.validated_at AND x.validation_id > c.validation_id)))
+ORDER BY v.taken_at, v.copy_id`;
+
+export function approvedCopies(dl: DataLayer, params: ApprovedCopyParams, opts?: RunOptions): Promise<QueryResult> {
+  return dl.run(APPROVED_COPIES_SQL, params, opts);
+}
+
+/** Every probe row of one probe run of the tenant, in probe_id order. */
+export const PROBES_OF_RUN_SQL = `SELECT probe_id, run_id, kind, target, expected, observed, status, latency_ms, observed_at
+FROM {{t:probe}}
+WHERE tenant_id = {{p:tenant_id}} AND run_id = {{p:run_id}}
+ORDER BY probe_id`;
+
+export function probesOfRun(dl: DataLayer, params: { tenant_id: string; run_id: string }, opts?: RunOptions): Promise<QueryResult> {
+  return dl.run(PROBES_OF_RUN_SQL, params, opts);
+}
+
+/** Every disposition the ledger holds, in disposition_id order. */
+export const DISPOSITIONS_SQL = `SELECT disposition_id, tenant_id, surface, host, object_id, setting_path, value_hash, verb, reason, expires_at,
+       decided_by, rule_id, finding_id, run_id, decided_at
+FROM {{t:disposition}}
+ORDER BY disposition_id`;
+
 /** How far back the tenant's audit log reaches: the window a survey finding, which has no previous observation, is checked over. */
 export const AUDIT_SPAN_SQL = `SELECT MIN(occurred_at) AS first_at, MAX(occurred_at) AS last_at, COUNT(*) AS n
 FROM {{t:audit_event}}

@@ -25,6 +25,8 @@ jobs:
         run: npm run typecheck
       - name: Unit tests
         run: npm test
+      - name: Copy validation, live (nginx -t in nginx:1.27 over test/fixtures/nginx-tree; docker and openssl are on the runner)
+        run: VALIDATE_LIVE=true npx vitest run test/validate.test.ts
       - name: World Model conformance (vendored suite against src/engine/world.ts)
         run: npm run conformance
       - name: H-MEM conformance (vendored suite against the vendored reference, re-exported by src/engine/memory.ts; TechnicianMemory is covered by test/memory.test.ts and one wrapper check here)

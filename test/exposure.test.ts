@@ -11,7 +11,7 @@ import {
   DriftWorld, EXPOSURE_BEFORE_SQL, EXPOSURE_RECORD_SQL, EXPOSURE_SINCE_SQL, exposureDays, exposureState, measureExposure,
 } from "../src/engine/world.ts";
 import { runPass, type Finding } from "../src/pipeline.ts";
-import recorded from "../sample/bundle.json" with { type: "json" };
+import recorded from "./fixtures/recorded-bundle.json" with { type: "json" };
 import authored from "./fixtures/authored-bundle.json" with { type: "json" };
 import { MemTracer } from "./fixtures/mem-tracer.ts";
 import { DNS_RUN, T, WWW_RECORD } from "./fixtures/catalogue-params.ts";
@@ -162,7 +162,7 @@ describe("the pass records the exposure line", () => {
 
   it("dates 8 of the 24 findings that rest on a record, says why for the other 16, and spends 34 SELECTs doing it", async () => {
     const { result, tracer } = await pass(recorded);
-    const onRecords = result.findings.filter((f) => f.finding.class !== "orphan_vhost");
+    const onRecords = result.findings.filter((f) => !["orphan_vhost", "changed_since_backup"].includes(f.finding.class));
     expect(onRecords).toHaveLength(24);
     const dated = onRecords.filter((f) => f.exposure);
     expect(dated.map((f) => [f.finding.class, f.finding.dns_name, f.exposure!.since, f.exposure!.days, f.exposure!.bound])).toEqual([
@@ -182,10 +182,10 @@ describe("the pass records the exposure line", () => {
     expect(triage.filter((e) => e.status === "not_checked")).toHaveLength(16);
     expect(triage.every((e) => e.agent === "decider" && e.model_requested === "none")).toBe(true);
     expect(triage.find((e) => e.status === "ok")!.output_summary).toBe(`proxied=true since 2026-04-16T21:12:47.270Z: 190 day(s) to ${DNS_SEEN}, still so in DNS run ${DNS_RUN}`);
-    // 15 distinct (record, state) pairs: 15 record rows, 15 first-event queries, 4 earlier-body counts
-    expect(tracer.events.filter((e) => e.action === "query" && e.agent === "decider" && e.status === "ok")).toHaveLength(15 + 15 + 4);
-    // detection, checks and verbs are untouched by the exposure line
-    expect(result.findings).toHaveLength(27);
+    // 15 distinct (record, state) pairs: 15 record rows, 15 first-event queries, 4 earlier-body counts; plus the Decider's policy read
+    expect(tracer.events.filter((e) => e.action === "query" && e.agent === "decider" && e.status === "ok")).toHaveLength(15 + 15 + 4 + 1);
+    // detection, checks and verbs are untouched by the exposure line (27 survey findings, 11 changed_since_backup)
+    expect(result.findings).toHaveLength(38);
     expect(result.findings.filter((f) => f.verb === "ADOPT")).toHaveLength(5);
   });
 

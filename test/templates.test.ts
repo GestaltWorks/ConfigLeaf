@@ -1,5 +1,5 @@
 // The point of a tested catalogue: every template renders, passes the SELECT-only guard and runs on the
-// recorded bundle (sample/bundle.json, the real estate redacted); the ones the bundle can exercise are
+// recorded bundle (test/fixtures/recorded-bundle.json, the export of the 07:58 UTC collection of 24 Oct 2026: the real estate redacted); the ones the bundle can exercise are
 // asserted row for row. The two approval templates have no rows to work on there (no technician has
 // signed anything off yet), so they run over the bundle plus approvals added here, in memory, against
 // the real file rows and the real export snapshots. The hero finding's default checks keep running over
@@ -8,8 +8,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { DataLayer, assertSelectOnly } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { CATALOGUE, CatalogueError, FINDING_CLASSES, type FindingClass, paramNames, renderTemplate, runCheck, templateById } from "../src/catalogue/templates.ts";
-import { BIND, SelectionSchema, defaultChecks, defaultSelection, selectionPrompt, validateSelection, type FindingSummary } from "../src/catalogue/select.ts";
-import bundle from "../sample/bundle.json" with { type: "json" };
+import { BIND, SelectionSchema, defaultChecks, defaultSelection, defaultSelectionFor, selectionPrompt, validateSelection, type FindingSummary } from "../src/catalogue/select.ts";
+import bundle from "./fixtures/recorded-bundle.json" with { type: "json" };
 import authored from "./fixtures/authored-bundle.json" with { type: "json" };
 import { APEX_NAME, DNS_RUN, SITES_HOST, SITES_RUN, QUEST_FILE, QUEST_HASH, SAMPLE, SAMPLE_ROWS, T, WWW_NAME, WWW_RECORD } from "./fixtures/catalogue-params.ts";
 
@@ -353,6 +353,20 @@ describe("selection", () => {
       expect(ids[0]).toBe("run_complete");
       for (const id of ids) expect(templateById(id)?.appliesTo, `${c}: ${id}`).toContain(c);
     }
+  });
+
+  it("every id of every class list and every record list (a finding with no host) is a catalogue template whose appliesTo names the class", () => {
+    const lists = FINDING_CLASSES.flatMap((c) => [
+      [c, "class list", defaultSelectionFor({ class: c, host: "host-x" })],
+      [c, "record list", defaultSelectionFor({ class: c, host: null })],
+    ] as const);
+    for (const [c, which, ids] of lists) {
+      expect(ids.length, `${c} ${which}`).toBeGreaterThan(0);
+      expect(ids[0], `${c} ${which}`).toBe("run_complete");
+      for (const id of ids) expect(templateById(id)?.appliesTo, `${c} ${which}: ${id}`).toContain(c);
+    }
+    // the drift_vs_approved record list reads the record's audit trail
+    expect(defaultSelectionFor({ class: "drift_vs_approved", host: null })).toEqual(["run_complete", "actor_attributed", "previous_value_recoverable"]);
   });
 
   it("defaultChecks binds the hero finding and every default check runs on the authored fixture", async () => {

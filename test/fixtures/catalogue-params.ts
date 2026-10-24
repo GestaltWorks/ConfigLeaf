@@ -45,7 +45,7 @@ export const SAMPLE: Record<string, Params> = {
   backup_recent: { tenant_id: T, host: SITES_HOST, since: "2026-10-20T00:00:00.000Z" },
 };
 
-/** Rows each template returns on the bundle with SAMPLE params (measured on sql.js, 24 Oct). */
+/** Rows each template returns with SAMPLE params on test/fixtures/recorded-bundle.json, the 07:58 UTC export these ids come from (measured on sql.js, 24 Oct). */
 export const SAMPLE_ROWS: Record<string, number> = {
   host_in_inventory: 1,
   dns_target_in_inventory: 0,

@@ -27,9 +27,19 @@
 // The audit log has no total to assert, so the audit run's expected_count is the sum of the server's
 // per-page counts and observed_count the distinct rows that normalised: a row without id, type or a
 // parseable time is dropped and fails the DQ gate instead of vanishing.
+//
+// Each dns_record row also becomes five observation rows of the DNS run, one per RECORD_FIELDS entry
+// (type, name, content, ttl, proxied): surface cloudflare.dns, host null, object_id the record id,
+// value_hash Redactor.fingerprint of the field's value as the API sent it (ttl and proxied as the row's
+// integer text, "" when absent), value_redacted the row's own redacted column, content refers to an ip
+// (A, AAAA) or a dns_name (CNAME). approved_setting rows for a record and DRIFT_VS_APPROVED_SQL read
+// these rows, the same way they read a vhost's settings. The DNS run's expected_count and
+// observed_count count records. rawRecords keeps every zone's records as the API returned them, with the
+// zone's real name, for the vault (src/vault/hook.ts cloudflareVaultFiles); it carries real names and
+// raw contents, and the vault is its one reader.
 
 import { config, redact } from "../config.ts";
-import { eventId, runId, type AuditEvent, type CollectionRun, type DnsRecord } from "../data/rows.ts";
+import { AUTHORITY, eventId, obsId, runId, type AuditEvent, type CollectionRun, type DnsRecord, type Observation } from "../data/rows.ts";
 import type { Redactor } from "../redactor.ts";
 
 export const API = "https://api.cloudflare.com/client/v4";
@@ -240,6 +250,30 @@ export function dnsRecordRow(r: Redactor, rec: CfRecord, zone: string, ctx: Reco
   };
 }
 
+/** The fields of a record that become observation rows, in this order. */
+export const RECORD_FIELDS = ["type", "name", "content", "ttl", "proxied"] as const;
+export type RecordField = (typeof RECORD_FIELDS)[number];
+
+const intText = (n: number | null): string | null => (n === null ? null : String(n));
+
+/**
+ * One record as five observation rows of its DNS run, in RECORD_FIELDS order, from the raw record and
+ * the row dnsRecordRow made of it. value_hash is the fingerprint of the value as the API sent it (the
+ * Linux collector's rule for a non-file setting); value_redacted is the row's redacted column, so a TXT
+ * is redacted tag by tag; ttl and proxied are the row's integers as text, null when absent.
+ */
+export function dnsObservationRows(r: Redactor, rec: CfRecord, row: DnsRecord): Observation[] {
+  const sent: Record<RecordField, string> = { type: rec.type, name: rec.name, content: rec.content, ttl: intText(row.ttl) ?? "", proxied: intText(row.proxied) ?? "" };
+  const shown: Record<RecordField, string | null> = { type: row.type, name: row.name, content: row.content, ttl: intText(row.ttl), proxied: intText(row.proxied) };
+  const refers = row.type === "A" || row.type === "AAAA" ? "ip" : row.type === "CNAME" ? "dns_name" : null;
+  return RECORD_FIELDS.map((field) => ({
+    obs_id: obsId(row.run_id, row.record_id, field), run_id: row.run_id, tenant_id: row.tenant_id, surface: "cloudflare.dns", host: null,
+    object_id: row.record_id, setting_path: field, value_hash: r.fingerprint(sent[field]), value_redacted: shown[field],
+    refers_to_type: field === "content" ? refers : null, refers_to_id: field === "content" && refers ? row.content : null,
+    observed_at: row.observed_at, source: "cloudflare", authority: AUTHORITY.live,
+  }));
+}
+
 const nonEmpty = (v: unknown): object | undefined =>
   v && typeof v === "object" && (Array.isArray(v) ? v.length > 0 : Object.keys(v).length > 0) ? v : undefined;
 
@@ -307,10 +341,17 @@ export function previousState(events: readonly AuditEvent[], resourceId: string,
 
 export interface ZoneTally { zone: string; expected: number; observed: number }
 
+/** One zone's records as the API returned them, with the zone's real name (src/vault/hook.ts RawZone has this shape). */
+export interface CfRawZone { zoneId: string; zone: string; records: CfRecord[] }
+
 export interface CloudflareCollection {
   dnsRun: CollectionRun;
   auditRun: CollectionRun;
   records: DnsRecord[];
+  /** Five per record (dnsObservationRows), in record order, all of the DNS run. */
+  observations: Observation[];
+  /** Raw: real zone names, names and contents, read by the vault alone (scripts/collect-cloudflare.ts hands it to the hook). */
+  rawRecords: CfRawZone[];
   events: AuditEvent[];
   /** Per zone, redacted: records the API reported before collecting, and rows that normalised. */
   zones: ZoneTally[];
@@ -350,6 +391,8 @@ export async function collectCloudflare(cf: Cloudflare, r: Redactor, opts: Colle
 
   const dnsRun = newRun(opts.tenantId, "cloudflare.dns", t0.toISOString());
   const records: DnsRecord[] = [];
+  const observations: Observation[] = [];
+  const rawRecords: CfRawZone[] = [];
   const zones: ZoneTally[] = [];
   let cfZones: CfZone[] = [];
   let dnsFailed = false;
@@ -362,9 +405,11 @@ export async function collectCloudflare(cf: Cloudflare, r: Redactor, opts: Colle
     for (const [i, z] of cfZones.entries()) {
       const tally: ZoneTally = { zone: redText(r, z.name), expected: counts[i], observed: 0 };
       zones.push(tally);
-      for (const rec of await cf.listRecords(z.id)) {
+      const listed = await cf.listRecords(z.id);
+      rawRecords.push({ zoneId: z.id, zone: z.name, records: listed });
+      for (const rec of listed) {
         const row = dnsRecordRow(r, rec, z.name, ctx);
-        if (row) { records.push(row); tally.observed++; }
+        if (row) { records.push(row); observations.push(...dnsObservationRows(r, rec, row)); tally.observed++; }
       }
     }
   } catch (e) {
@@ -400,5 +445,5 @@ export async function collectCloudflare(cf: Cloudflare, r: Redactor, opts: Colle
   const events = [...byId.values()].sort((a, b) => (a.occurred_at < b.occurred_at ? -1 : a.occurred_at > b.occurred_at ? 1 : a.event_id < b.event_id ? -1 : 1));
   settle(auditRun, events.length, auditFailed, now().toISOString());
 
-  return { dnsRun, auditRun, records, events, zones, eventZone, window, errors };
+  return { dnsRun, auditRun, records, observations, rawRecords, events, zones, eventZone, window, errors };
 }

@@ -1,44 +1,248 @@
 // Idempotent Zetaris setup: the DRIFT datasource over the app Postgres, the drift_usl Unified Semantic
-// Layer over it and the run_complete DQ rule on its collection table. The statements are the ones that
-// ran live on 2.4.3.1 on 24 Oct 2026, in the order they ran; plan() lists them, apply() runs them.
+// Layer over it (ten tables) and three DQ rules on it. plan() lists the statements in the order they run,
+// apply() runs them one at a time.
 //
 // Contract:
-//   - Re-runnable. CREATE DATASOURCE has no IF NOT EXISTS, so SHOW DATASOURCES decides it; REGISTER
-//     DATASOURCE TABLES follows a create and REFRESH DATASOURCE TABLES an existing source; namespaces and
-//     the USL carry IF NOT EXISTS; REGISTER DQ runs only when LIST DQ USL does not list the rule. An error
-//     saying "already exist" is done (skipped). Any other error stops the run.
-//   - One statement per call, except COMPILE USL ... DDL: four CREATE TABLE blocks separated by ';' in
+//   - Re-runnable. CREATE DATASOURCE has no IF NOT EXISTS, so SHOW DATASOURCES decides it. REGISTER
+//     DATASOURCE TABLES follows a create, and for an existing source runs when SHOW DATASOURCE TABLES lacks
+//     a table of sql/schema.sql; REFRESH DATASOURCE TABLES runs when it lists all of them. Namespaces carry
+//     IF NOT EXISTS. An error saying "already exist" is done (skipped). Any other error stops the run.
+//   - The USL: SHOW NAMESPACES OR TABLES IN lightning.metastore.drift says whether drift_usl exists; LOAD
+//     USL reads its model. A model whose tables or columns differ from COMPILE_USL's is stale: REMOVE USL,
+//     then COMPILE afresh. COMPILE runs only when the USL is absent or was removed this run, so an instance
+//     already holding the ten tables keeps its USL and its DQ rules. The USL is derived from the
+//     datasource, so a removal loses nothing.
+//   - Every run re-ACTIVATEs the ten tables (each a SELECT over DRIFT.* returning exactly the declared
+//     columns, NOT NULL varchars in COALESCE, ints CAST), then LIST DQ USL decides each rule of DQ_RULES:
+//     REGISTER when the listing lacks it, UPDATE DQ ... SET NAME, EXPRESSION when it is listed with another
+//     expression (whitespace aside), nothing when it is listed as stated. RUN DQ on collection, copy and
+//     action, the USL's table listing, a count per table.
+//   - One statement per call, except COMPILE USL ... DDL: ten CREATE TABLE blocks separated by ';' in
 //     one request, sent with the adapter's allowMultiStatement (honoured for COMPILE USL only).
 //   - The CREATE DATASOURCE statement carries the Postgres password and is built in memory when it is
 //     sent, nowhere else: plan() holds password "<redacted>", its trace line says only "CREATE DATASOURCE
 //     DRIFT (credentials redacted)", and every error message is redact()ed and scrubbed of the literal
 //     password before it is printed or traced.
-//   - Zetaris reaches the Postgres at ZETARIS_PG_HOST (host[:port], 5432 when absent), not at
-//     DATABASE_URL's host: measured drift-pg:5432 from the driver container, 127.0.0.1:15432 from Windows.
-//     Only the user, password and database come from DATABASE_URL.
-//   - Admin-only statements (CREATE/REGISTER/REFRESH DATASOURCE, COMPILE/ACTIVATE USL, REGISTER DQ) need
-//     an admin-role key; the agent's own key only SELECTs.
+//   - Zetaris reaches the Postgres at ZETARIS_PG_HOST (host[:port], 5432 when absent): measured
+//     drift-pg:5432 from the driver container, 127.0.0.1:15432 from Windows. Only the user, password and
+//     database come from DATABASE_URL.
+//   - Admin-only statements (CREATE/REGISTER/REFRESH DATASOURCE, COMPILE/REMOVE/ACTIVATE USL, REGISTER/
+//     UPDATE DQ) need an admin-role key; the agent's own key only SELECTs.
 //
-// Measured: the USL DDL validator rejects a column named source and a table named reference with a
-// generic "Invalid DDL statement", hence source_kind and referent. RUN DQ TABLE returns name | table |
-// type | total_record | valid_record | invalid_record; on the sample bundle run_complete is 12/11/1.
-// First run against the instance already set up (24 Oct, 4.3 s, 17 ok, 2 skipped): LIST DQ USL, run after
-// steps 04-11, listed the 6 PK/FK constraint rules and not run_complete, which it lists before and after;
-// one of REFRESH, COMPILE USL IF NOT EXISTS or a re-ACTIVATE drops the custom rule of an existing USL
-// (not bisected), so the run re-registers it and ends with the same 7 rules.
+// Measured on 2.4.3.1: the USL DDL validator rejects a column named source and a table named reference with
+// a generic "Invalid DDL statement", hence source_kind and referent; it accepts lock, version, type, result
+// and the table names policy, copy, probe, disposition, action and ticket (24 Oct 2026, a scratch USL in
+// lightning.metastore.driftprobe, removed after). On that scratch USL, 24 Oct 2026: a custom rule survives
+// REFRESH DATASOURCE TABLES and a re-ACTIVATE and is dropped by COMPILE USL IF NOT EXISTS over the existing
+// USL, which re-deploys the model from the DDL; over a USL with another table set the same COMPILE replaced
+// the table list and left LIST DQ USL failing ("Catn't find tables for probe"). REMOVE USL returns one row,
+// removed = true, and the namespace lists no USL after it. UPDATE DQ r TABLE t SET NAME = r, EXPRESSION = e
+// replaced the listed expression in place. RUN DQ TABLE returns name | table | type | total_record |
+// valid_record | invalid_record, the custom rules and the key constraints as rows.
+//
+// Measured live 24 Oct 2026 against the configured instance, after sql/schema.sql gave the Postgres its
+// 16 tables. First run (18:07 UTC): LOAD USL found the four-table USL stale ("lacks policy, copy, probe,
+// disposition, action, ticket"), REMOVE USL answered removed = true in 45 ms, COMPILE of the ten tables took
+// 82 ms; REFRESH DATASOURCE TABLES had registered none of the eight new Postgres tables, so ACTIVATE of
+// policy failed with TABLE_OR_VIEW_NOT_FOUND for DRIFT.policy_rule. REGISTER DATASOURCE TABLES FROM DRIFT on
+// the existing source registered all 16 (SHOW DATASOURCE TABLES: 8, then 16), which is why the plan lists
+// the source's tables and registers when one is missing. Next run: 42 statements, 35 ok, 7 skipped, 12.0 s,
+// the three rules registered. The run after it: 32 ok, 10 skipped, 9.4 s, every rule "listed as stated".
+// With run_complete set back to its earlier expression (observed_count >= expected_count AND status =
+// 'complete'), the next run took the UPDATE DQ path: 33 ok, 9 skipped, 9.2 s. RUN DQ rows of that run:
+// collection: run_complete 4 / 4 / 0, run_id (primary key) 4 / 4 / 0; copy: copy_validated 0 / 0 / 0,
+// copy_id 0 / 0 / 0, run_id (foreign key) 0 / 0 / 0; action: action_verified 0 / 0 / 0, action_id 0 / 0 / 0,
+// disposition_id (foreign key) 0 / 0 / 0. Counts through the USL: collection 4, setting 1062, referent 185,
+// backup_copy 76, the six new tables 0. The copy entity over two vault copies and three validations written
+// for the measurement and deleted after: each copy carries its latest validation (ok_with_gaps over an
+// earlier fail: validated 1; fail: validated 0), and RUN DQ on copy gave copy_validated 2 / 1 / 1.
 
 import { Zetaris, type QueryResult } from "../adapters/zetaris.ts";
 import { config, redact } from "../config.ts";
+import { TABLE_NAMES } from "../data/schema.ts";
 import type { Tracer, TraceEvent } from "../trace.ts";
 
 export const NAMESPACE = "lightning.metastore.drift";
-export const USL = `${NAMESPACE}.drift_usl`;
-export const USL_TABLES = ["collection", "setting", "referent", "backup_copy"] as const;
-export const DQ_RULE = "run_complete";
+export const USL_NAME = "drift_usl";
+export const USL = `${NAMESPACE}.${USL_NAME}`;
 const DESCRIPTION = "drift-agent app Postgres on the zetaris network";
 const AGENT = "zetaris-setup";
 const IDENT = /^[A-Za-z][A-Za-z0-9_]*$/;
 const PG_IDENT = /^[A-Za-z0-9_-]+$/;
+
+/**
+ * The USL's ten tables, column lines in DDL order. The first four are the collected estate; policy is
+ * policy_rule; copy is vault_copy with its latest copy_validation; probe, disposition, action and ticket
+ * are their datasource tables.
+ */
+const USL_DDL = {
+  collection: [
+    "run_id varchar(128) NOT NULL PRIMARY KEY",
+    "tenant_id varchar(64) NOT NULL",
+    "surface varchar(64) NOT NULL",
+    "host varchar(128)",
+    "started_at varchar(40) NOT NULL",
+    "expected_count int",
+    "observed_count int",
+    "status varchar(16) NOT NULL",
+  ],
+  setting: [
+    "setting_id varchar(128) NOT NULL PRIMARY KEY",
+    "run_id varchar(128) NOT NULL FOREIGN KEY REFERENCES collection(run_id)",
+    "tenant_id varchar(64) NOT NULL",
+    "host varchar(128)",
+    "surface varchar(64) NOT NULL",
+    "object_id varchar(512) NOT NULL",
+    "setting_path varchar(512) NOT NULL",
+    "value_hash varchar(80) NOT NULL",
+    "refers_to_type varchar(32)",
+    "refers_to_id varchar(255)",
+    "observed_at varchar(40) NOT NULL",
+    "source_kind varchar(32) NOT NULL",
+    "authority int NOT NULL",
+  ],
+  referent: [
+    "ref_id varchar(255) NOT NULL PRIMARY KEY",
+    "setting_id varchar(128) NOT NULL FOREIGN KEY REFERENCES setting(setting_id)",
+    "tenant_id varchar(64) NOT NULL",
+    "target_type varchar(32) NOT NULL",
+    "target_name varchar(255) NOT NULL",
+    "resolves_to varchar(255) NOT NULL",
+    "proxied int",
+    "resolved_at varchar(40) NOT NULL",
+    "dns_run_id varchar(128) NOT NULL",
+  ],
+  backup_copy: [
+    "copy_id varchar(1024) NOT NULL PRIMARY KEY",
+    "tenant_id varchar(64) NOT NULL",
+    "host varchar(128) NOT NULL",
+    "kind varchar(16) NOT NULL",
+    "object_id varchar(512) NOT NULL",
+    "setting_path varchar(512) NOT NULL",
+    "value_hash varchar(80) NOT NULL",
+    "taken_at varchar(40) NOT NULL",
+  ],
+  policy: [
+    "rule_id varchar(128) NOT NULL PRIMARY KEY",
+    "tenant_id varchar(64) NOT NULL",
+    "surface varchar(64) NOT NULL",
+    "object_glob varchar(512) NOT NULL",
+    "setting_glob varchar(512) NOT NULL",
+    "criticality varchar(16) NOT NULL",
+    "lock int NOT NULL",
+    "on_drift varchar(16) NOT NULL",
+    "on_no_copy varchar(32) NOT NULL",
+    "hold_max_hours int NOT NULL",
+    "alert varchar(16) NOT NULL",
+    "psa_priority varchar(8) NOT NULL",
+    "version int NOT NULL",
+    "author varchar(128) NOT NULL",
+    "since varchar(40) NOT NULL",
+    "note varchar(1024)",
+  ],
+  copy: [
+    "copy_id varchar(128) NOT NULL PRIMARY KEY",
+    "tenant_id varchar(64) NOT NULL",
+    "surface varchar(64) NOT NULL",
+    "host varchar(128)",
+    "object_id varchar(512) NOT NULL",
+    "run_id varchar(128) NOT NULL FOREIGN KEY REFERENCES collection(run_id)",
+    "git_commit varchar(64) NOT NULL",
+    "blob_sha256 varchar(80) NOT NULL",
+    "taken_at varchar(40) NOT NULL",
+    "source_kind varchar(32) NOT NULL",
+    "validator varchar(16)",
+    "result varchar(16)",
+    "validated_at varchar(40)",
+    "validated int NOT NULL",
+  ],
+  probe: [
+    "probe_id varchar(128) NOT NULL PRIMARY KEY",
+    "run_id varchar(128) NOT NULL FOREIGN KEY REFERENCES collection(run_id)",
+    "tenant_id varchar(64) NOT NULL",
+    "kind varchar(16) NOT NULL",
+    "target varchar(255) NOT NULL",
+    "expected varchar(512) NOT NULL",
+    "observed varchar(1024) NOT NULL",
+    "status varchar(16) NOT NULL",
+    "latency_ms int",
+    "observed_at varchar(40) NOT NULL",
+  ],
+  disposition: [
+    "disposition_id varchar(128) NOT NULL PRIMARY KEY",
+    "tenant_id varchar(64) NOT NULL",
+    "surface varchar(64) NOT NULL",
+    "host varchar(128)",
+    "object_id varchar(512) NOT NULL",
+    "setting_path varchar(512) NOT NULL",
+    "value_hash varchar(80) NOT NULL",
+    "verb varchar(16) NOT NULL",
+    "reason varchar(1024) NOT NULL",
+    "expires_at varchar(40)",
+    "decided_by varchar(16) NOT NULL",
+    "rule_id varchar(128)",
+    "finding_id varchar(255) NOT NULL",
+    "run_id varchar(128) NOT NULL FOREIGN KEY REFERENCES collection(run_id)",
+    "decided_at varchar(40) NOT NULL",
+  ],
+  action: [
+    "action_id varchar(128) NOT NULL PRIMARY KEY",
+    "tenant_id varchar(64) NOT NULL",
+    "kind varchar(32) NOT NULL",
+    "target varchar(512) NOT NULL",
+    "before_hash varchar(80)",
+    "after_hash varchar(80)",
+    "vault_commit varchar(64)",
+    "verification varchar(2048) NOT NULL",
+    "receipts varchar(2048) NOT NULL",
+    "status varchar(16) NOT NULL",
+    "started_at varchar(40) NOT NULL",
+    "finished_at varchar(40)",
+    "disposition_id varchar(128) NOT NULL FOREIGN KEY REFERENCES disposition(disposition_id)",
+  ],
+  ticket: [
+    "ticket_id varchar(128) NOT NULL PRIMARY KEY",
+    "tenant_id varchar(64) NOT NULL",
+    "psa varchar(32) NOT NULL",
+    "external_id varchar(128)",
+    "url varchar(512)",
+    "type varchar(16) NOT NULL",
+    "priority varchar(8) NOT NULL",
+    "status varchar(32) NOT NULL",
+    "action_id varchar(128)",
+    "finding_id varchar(255) NOT NULL",
+    "created_at varchar(40) NOT NULL",
+    "updated_at varchar(40) NOT NULL",
+  ],
+} as const;
+
+export type UslTable = keyof typeof USL_DDL;
+export const USL_TABLES = Object.keys(USL_DDL) as UslTable[];
+
+/** Each USL table's column names in DDL order: what LOAD USL must report for the USL to be current. */
+export const USL_COLUMNS: Readonly<Record<UslTable, readonly string[]>> = Object.fromEntries(
+  USL_TABLES.map((t) => [t, USL_DDL[t].map((l) => l.split(" ")[0])]),
+) as unknown as Record<UslTable, readonly string[]>;
+
+/** Each CREATE TABLE starts on its own line; the whole block is one request. */
+export const COMPILE_USL = `COMPILE USL IF NOT EXISTS ${USL_NAME} DEPLOY NAMESPACE ${NAMESPACE} DDL\n${USL_TABLES.map((t) => `CREATE TABLE ${t} (\n${USL_DDL[t].map((l) => `  ${l}`).join(",\n")}\n)`).join(";\n")}`;
+
+export interface DqRule { name: string; table: UslTable; expression: string }
+
+/**
+ * The DQ rules. run_complete states RUN_COMPLETE_SQL's self-report half (src/data/queries.ts): both counts
+ * present, the observed count at least the asserted one, status complete, so a run that never asserted
+ * its population fails here as it fails the pass's gate. copy_validated: the copy's latest validation is
+ * ok or ok_with_gaps. action_verified: a done action names the probes that verified it.
+ */
+export const DQ_RULES: readonly DqRule[] = [
+  { name: "run_complete", table: "collection", expression: "observed_count IS NOT NULL AND expected_count IS NOT NULL AND observed_count >= expected_count AND status = 'complete'" },
+  { name: "copy_validated", table: "copy", expression: "validated = 1" },
+  { name: "action_verified", table: "action", expression: "status <> 'done' OR verification <> ''" },
+];
+/** The tables RUN DQ runs on, one statement each. */
+export const DQ_TABLES: readonly UslTable[] = ["collection", "copy", "action"];
+export const DQ_RULE = "run_complete";
 
 export class SetupError extends Error {
   constructor(message: string) { super(redact(message)); }
@@ -56,8 +260,17 @@ export function envFromProcess(): SetupEnv {
   return { databaseUrl: process.env.DATABASE_URL ?? "", pgHost: config.zetaris.pgHost, datasource: config.zetaris.datasource };
 }
 
-/** Run a step only in this state: the datasource was absent before this run, it existed, or the DQ rule is not registered. */
-export type When = "datasource_absent" | "datasource_present" | "dq_rule_absent";
+/**
+ * Run a step only in this state. datasource_absent / datasource_present: SHOW DATASOURCES listed the
+ * source or not. tables_missing: the source was created this run, or SHOW DATASOURCE TABLES lacks a table
+ * of sql/schema.sql. tables_registered: the source existed and lists every one. usl_present: the namespace
+ * lists drift_usl. usl_stale: LOAD USL reports other tables or columns than COMPILE_USL. usl_absent: no
+ * drift_usl at the start, or removed this run. dq_rule_absent / dq_rule_differs: LIST DQ USL does not list
+ * step.rule, or lists it with another expression.
+ */
+export type When =
+  | "datasource_absent" | "datasource_present" | "tables_missing" | "tables_registered"
+  | "usl_present" | "usl_stale" | "usl_absent" | "dq_rule_absent" | "dq_rule_differs";
 
 export interface Step {
   name: string;
@@ -68,13 +281,19 @@ export interface Step {
   /** The trace line's input_summary instead of sql, for a statement that carries credentials. */
   traceAs?: string;
   when?: When;
+  /** The DQ rule a dq_rule_* condition is about. */
+  rule?: DqRule;
   /** What the result tells the steps after it. */
-  probe?: "datasources" | "dq_rules";
+  probe?: "datasources" | "datasource_tables" | "usl" | "usl_model" | "dq_rules";
   /** An "already exist" error from this step means the datasource existed. */
   marksDatasource?: true;
+  /** A success from this step means the USL is gone (REMOVE USL). */
+  removesUsl?: true;
   multi?: true;
   /** Print the result rows. */
   show?: true;
+  /** A RUN DQ step: its rows go to ApplyResult.dqRuns under this table. */
+  dqTable?: UslTable;
   timeoutMs?: number;
 }
 
@@ -92,7 +311,7 @@ function pgTarget(env: SetupEnv): PgTarget {
   } catch { throw new SetupError("DATABASE_URL has a malformed percent-escape"); }
   if (!user || !password || !db) throw new SetupError("DATABASE_URL must carry a user, a password and a database");
   if (!PG_IDENT.test(user) || !PG_IDENT.test(db)) throw new SetupError("DATABASE_URL user and database must be [A-Za-z0-9_-]");
-  // Zetaris option values are double-quoted; how it escapes a quote inside one is unmeasured, so refuse rather than guess.
+  // Zetaris option values are double-quoted; how it escapes a quote inside one is unmeasured, so such a password is refused.
   if (/["\\\r\n]/.test(password)) throw new SetupError("the DATABASE_URL password holds a double quote, backslash or newline; Zetaris option values are double-quoted and their escaping is unmeasured");
   const m = env.pgHost.match(/^([A-Za-z0-9][A-Za-z0-9.-]*)(?::(\d{1,5}))?$/);
   if (!m) throw new SetupError("ZETARIS_PG_HOST must be host or host:port");
@@ -103,57 +322,11 @@ function createDatasource(ds: string, t: PgTarget, password: string): string {
   return `CREATE DATASOURCE ${ds} DESCRIBE BY "${DESCRIPTION}" OPTIONS (jdbcdriver "org.postgresql.Driver", jdbcurl "jdbc:postgresql://${t.host}:${t.port}/${t.db}", username "${t.user}", password "${password}", schema "public", fetchsize "1000")`;
 }
 
-/** Each CREATE TABLE starts on its own line; the whole block is one request. */
-export const COMPILE_USL = `COMPILE USL IF NOT EXISTS drift_usl DEPLOY NAMESPACE ${NAMESPACE} DDL
-CREATE TABLE collection (
-  run_id varchar(128) NOT NULL PRIMARY KEY,
-  tenant_id varchar(64) NOT NULL,
-  surface varchar(64) NOT NULL,
-  host varchar(128),
-  started_at varchar(40) NOT NULL,
-  expected_count int,
-  observed_count int,
-  status varchar(16) NOT NULL
-);
-CREATE TABLE setting (
-  setting_id varchar(128) NOT NULL PRIMARY KEY,
-  run_id varchar(128) NOT NULL FOREIGN KEY REFERENCES collection(run_id),
-  tenant_id varchar(64) NOT NULL,
-  host varchar(128),
-  surface varchar(64) NOT NULL,
-  object_id varchar(512) NOT NULL,
-  setting_path varchar(512) NOT NULL,
-  value_hash varchar(80) NOT NULL,
-  refers_to_type varchar(32),
-  refers_to_id varchar(255),
-  observed_at varchar(40) NOT NULL,
-  source_kind varchar(32) NOT NULL,
-  authority int NOT NULL
-);
-CREATE TABLE referent (
-  ref_id varchar(255) NOT NULL PRIMARY KEY,
-  setting_id varchar(128) NOT NULL FOREIGN KEY REFERENCES setting(setting_id),
-  tenant_id varchar(64) NOT NULL,
-  target_type varchar(32) NOT NULL,
-  target_name varchar(255) NOT NULL,
-  resolves_to varchar(255) NOT NULL,
-  proxied int,
-  resolved_at varchar(40) NOT NULL,
-  dns_run_id varchar(128) NOT NULL
-);
-CREATE TABLE backup_copy (
-  copy_id varchar(1024) NOT NULL PRIMARY KEY,
-  tenant_id varchar(64) NOT NULL,
-  host varchar(128) NOT NULL,
-  kind varchar(16) NOT NULL,
-  object_id varchar(512) NOT NULL,
-  setting_path varchar(512) NOT NULL,
-  value_hash varchar(80) NOT NULL,
-  taken_at varchar(40) NOT NULL
-)`;
+/** COALESCE(c, '') AS c for each NOT NULL varchar, the bare column for a nullable one. */
+const keep = (cols: string): string => cols.split(/\s+/).filter(Boolean).map((c) => (c.startsWith("?") ? c.slice(1) : `COALESCE(${c}, '') AS ${c}`)).join(", ");
 
 /** The activation query per USL table: exactly the declared columns, NOT NULL varchars wrapped in COALESCE, ints CAST. */
-function activation(table: (typeof USL_TABLES)[number], ds: string): string {
+function activation(table: UslTable, ds: string): string {
   switch (table) {
     case "collection":
       return `SELECT COALESCE(run_id, '') AS run_id, COALESCE(tenant_id, '') AS tenant_id, COALESCE(surface, '') AS surface, host, COALESCE(started_at, '') AS started_at, CAST(expected_count AS INT) AS expected_count, CAST(observed_count AS INT) AS observed_count, COALESCE(status, '') AS status FROM ${ds}.collection_run`;
@@ -163,6 +336,19 @@ function activation(table: (typeof USL_TABLES)[number], ds: string): string {
       return `SELECT CONCAT(o.obs_id, ':', d.record_id, ':', d.run_id) AS ref_id, COALESCE(o.obs_id, '') AS setting_id, COALESCE(o.tenant_id, '') AS tenant_id, COALESCE(o.refers_to_type, '') AS target_type, COALESCE(o.refers_to_id, '') AS target_name, COALESCE(d.content, '') AS resolves_to, CAST(d.proxied AS INT) AS proxied, COALESCE(d.observed_at, '') AS resolved_at, COALESCE(d.run_id, '') AS dns_run_id FROM ${ds}.observation o JOIN ${ds}.dns_record d ON d.tenant_id = o.tenant_id AND d.name = o.refers_to_id WHERE o.refers_to_type = 'dns_name'`;
     case "backup_copy":
       return `SELECT CONCAT(b.snapshot_id, ':', b.object_id, ':', b.setting_path) AS copy_id, COALESCE(s.tenant_id, '') AS tenant_id, COALESCE(s.host, '') AS host, COALESCE(s.kind, '') AS kind, COALESCE(b.object_id, '') AS object_id, COALESCE(b.setting_path, '') AS setting_path, COALESCE(b.value_hash, '') AS value_hash, COALESCE(s.taken_at, '') AS taken_at FROM ${ds}.backup_item b JOIN ${ds}.backup_snapshot s ON s.snapshot_id = b.snapshot_id`;
+    case "policy":
+      return `SELECT ${keep("rule_id tenant_id surface object_glob setting_glob criticality")}, CAST(COALESCE(lock, 0) AS INT) AS lock, ${keep("on_drift on_no_copy")}, CAST(COALESCE(hold_max_hours, 0) AS INT) AS hold_max_hours, ${keep("alert psa_priority")}, CAST(COALESCE(version, 0) AS INT) AS version, ${keep("author since ?note")} FROM ${ds}.policy_rule`;
+    case "copy":
+      // The latest validation per copy (latest validated_at, then validation_id): the correlation sits in the subquery's WHERE.
+      return `SELECT COALESCE(c.copy_id, '') AS copy_id, COALESCE(c.tenant_id, '') AS tenant_id, COALESCE(c.surface, '') AS surface, c.host, COALESCE(c.object_id, '') AS object_id, COALESCE(c.run_id, '') AS run_id, COALESCE(c.git_commit, '') AS git_commit, COALESCE(c.blob_sha256, '') AS blob_sha256, COALESCE(c.taken_at, '') AS taken_at, COALESCE(c.source, '') AS source_kind, l.validator, l.result, l.validated_at, CAST(CASE WHEN l.result IN ('ok', 'ok_with_gaps') THEN 1 ELSE 0 END AS INT) AS validated FROM ${ds}.vault_copy c LEFT JOIN (SELECT v.copy_id, v.validator, v.result, v.validated_at FROM ${ds}.copy_validation v WHERE NOT EXISTS (SELECT 1 FROM ${ds}.copy_validation w WHERE w.copy_id = v.copy_id AND (w.validated_at > v.validated_at OR (w.validated_at = v.validated_at AND w.validation_id > v.validation_id)))) l ON l.copy_id = c.copy_id`;
+    case "probe":
+      return `SELECT ${keep("probe_id run_id tenant_id kind target expected observed status")}, CAST(latency_ms AS INT) AS latency_ms, ${keep("observed_at")} FROM ${ds}.probe`;
+    case "disposition":
+      return `SELECT ${keep("disposition_id tenant_id surface ?host object_id setting_path value_hash verb reason ?expires_at decided_by ?rule_id finding_id run_id decided_at")} FROM ${ds}.disposition`;
+    case "action":
+      return `SELECT ${keep("action_id tenant_id kind target ?before_hash ?after_hash ?vault_commit verification receipts status started_at ?finished_at disposition_id")} FROM ${ds}.action`;
+    case "ticket":
+      return `SELECT ${keep("ticket_id tenant_id psa ?external_id ?url type priority status ?action_id finding_id created_at updated_at")} FROM ${ds}.ticket`;
   }
 }
 
@@ -171,37 +357,51 @@ export function plan(env: SetupEnv = envFromProcess()): Step[] {
   const ds = env.datasource;
   if (!IDENT.test(ds)) throw new SetupError("ZETARIS_DATASOURCE must be an unquoted identifier");
   const t = pgTarget(env);
+  const dqTable = (r: DqRule) => `${USL}.${r.table}`;
   return [
     { name: "show datasources", sql: "SHOW DATASOURCES", probe: "datasources" },
     {
       name: `create datasource ${ds}`, sql: createDatasource(ds, t, "<redacted>"), secret: () => createDatasource(ds, t, t.password),
       traceAs: `CREATE DATASOURCE ${ds} (credentials redacted)`, when: "datasource_absent", marksDatasource: true,
     },
-    { name: "register datasource tables", sql: `REGISTER DATASOURCE TABLES FROM ${ds}`, when: "datasource_absent" },
-    { name: "refresh datasource tables", sql: `REFRESH DATASOURCE TABLES FROM ${ds}`, when: "datasource_present" },
+    { name: "list datasource tables", sql: `SHOW DATASOURCE TABLES ${ds}`, when: "datasource_present", probe: "datasource_tables" },
+    { name: "register datasource tables", sql: `REGISTER DATASOURCE TABLES FROM ${ds}`, when: "tables_missing" },
+    { name: "refresh datasource tables", sql: `REFRESH DATASOURCE TABLES FROM ${ds}`, when: "tables_registered" },
     { name: "namespace lightning.metastore", sql: "CREATE NAMESPACE IF NOT EXISTS lightning.metastore" },
     { name: `namespace ${NAMESPACE}`, sql: `CREATE NAMESPACE IF NOT EXISTS ${NAMESPACE}` },
-    { name: "compile usl drift_usl", sql: COMPILE_USL, multi: true, timeoutMs: 120_000 },
+    { name: `list ${NAMESPACE}`, sql: `SHOW NAMESPACES OR TABLES IN ${NAMESPACE}`, probe: "usl" },
+    { name: `load usl ${USL_NAME}`, sql: `LOAD USL ${USL_NAME} NAMESPACE ${NAMESPACE}`, when: "usl_present", probe: "usl_model" },
+    { name: `remove usl ${USL_NAME}`, sql: `REMOVE USL ${USL_NAME} NAMESPACE ${NAMESPACE}`, when: "usl_stale", removesUsl: true },
+    { name: `compile usl ${USL_NAME}`, sql: COMPILE_USL, when: "usl_absent", multi: true, timeoutMs: 120_000 },
     ...USL_TABLES.map((tb): Step => ({ name: `activate ${tb}`, sql: `ACTIVATE USL TABLE ${USL}.${tb} AS ${activation(tb, ds)}`, timeoutMs: 120_000 })),
     { name: "list dq rules", sql: `LIST DQ USL ${USL}`, probe: "dq_rules" },
-    { name: `register dq ${DQ_RULE}`, sql: `REGISTER DQ ${DQ_RULE} TABLE ${USL}.collection AS observed_count >= expected_count AND status = 'complete'`, when: "dq_rule_absent" },
-    { name: "run dq collection", sql: `RUN DQ TABLE ${USL}.collection`, show: true, timeoutMs: 150_000 },
-    { name: `show ${NAMESPACE}`, sql: `SHOW NAMESPACES OR TABLES IN ${NAMESPACE}`, show: true },
+    ...DQ_RULES.flatMap((r): Step[] => [
+      { name: `register dq ${r.name}`, sql: `REGISTER DQ ${r.name} TABLE ${dqTable(r)} AS ${r.expression}`, when: "dq_rule_absent", rule: r },
+      { name: `update dq ${r.name}`, sql: `UPDATE DQ ${r.name} TABLE ${dqTable(r)} SET NAME = ${r.name}, EXPRESSION = ${r.expression}`, when: "dq_rule_differs", rule: r },
+    ]),
+    ...DQ_TABLES.map((tb): Step => ({ name: `run dq ${tb}`, sql: `RUN DQ TABLE ${USL}.${tb}`, show: true, dqTable: tb, timeoutMs: 150_000 })),
+    { name: `show ${USL}`, sql: `SHOW NAMESPACES OR TABLES IN ${USL}`, show: true },
     ...USL_TABLES.map((tb): Step => ({ name: `count ${tb}`, sql: `SELECT COUNT(*) AS n FROM ${USL}.${tb}` })),
   ];
 }
 
-const WHEN_TEXT: Record<When, (ds: string) => string> = {
+const WHEN_TEXT: Record<When, (ds: string, s: Step) => string> = {
   datasource_absent: (ds) => `only when ${ds} is absent`,
   datasource_present: (ds) => `only when ${ds} already existed`,
-  dq_rule_absent: () => `only when LIST DQ USL does not list ${DQ_RULE}`,
+  tables_missing: (ds) => `only when ${ds} was created this run or lacks a table of sql/schema.sql`,
+  tables_registered: (ds) => `only when ${ds} already existed and lists every table of sql/schema.sql`,
+  usl_present: () => `only when ${NAMESPACE} lists ${USL_NAME}`,
+  usl_stale: () => `only when ${USL_NAME}'s tables or columns differ from the ${USL_TABLES.length} below`,
+  usl_absent: () => `only when ${USL_NAME} is absent or was removed this run`,
+  dq_rule_absent: (_ds, s) => `only when LIST DQ USL lacks ${s.rule?.name}`,
+  dq_rule_differs: (_ds, s) => `only when LIST DQ USL lists ${s.rule?.name} with another expression`,
 };
 
 /** The plan as printed by --plan: number, name, condition, then the statement indented. No password: sql holds "<redacted>". */
 export function formatPlan(steps: Step[], ds: string = config.zetaris.datasource): string[] {
   const lines: string[] = [];
   for (const [i, s] of steps.entries()) {
-    const notes = [s.when && WHEN_TEXT[s.when](ds), s.multi && "one request"].filter(Boolean);
+    const notes = [s.when && WHEN_TEXT[s.when](ds, s), s.multi && "one request"].filter(Boolean);
     lines.push(`${String(i + 1).padStart(2, "0")} ${s.name}${notes.length ? `  (${notes.join("; ")})` : ""}`);
     for (const l of s.sql.split("\n")) lines.push(`     ${l}`);
   }
@@ -216,7 +416,16 @@ export interface StepResult {
   result?: QueryResult;
 }
 
-export interface ApplyResult { ok: boolean; results: StepResult[]; dq?: QueryResult; error?: string; ms: number }
+export interface ApplyResult {
+  ok: boolean;
+  results: StepResult[];
+  /** RUN DQ on collection. */
+  dq?: QueryResult;
+  /** RUN DQ per table it ran on. */
+  dqRuns: Partial<Record<UslTable, QueryResult>>;
+  error?: string;
+  ms: number;
+}
 
 export interface ApplyDeps {
   client?: Pick<Zetaris, "query">;
@@ -225,10 +434,49 @@ export interface ApplyDeps {
   env?: SetupEnv;
 }
 
-/** Does LIST DQ USL list the rule? Matches the name column when there is one, else any cell. */
-function listsRule(r: QueryResult, rule: string): boolean {
-  const i = r.columns.findIndex((c) => c.toLowerCase() === "name");
-  return r.rows.some((row) => (i >= 0 ? row[i] === rule : row.includes(rule)));
+const col = (r: QueryResult, name: string): number => r.columns.findIndex((c) => c.toLowerCase() === name);
+const squash = (s: string): string => s.replace(/\s+/g, " ").trim();
+
+/** Does SHOW NAMESPACES OR TABLES IN the namespace list the USL? Matches the name column when there is one, else any cell. */
+function listsUsl(r: QueryResult): boolean {
+  const i = col(r, "name");
+  return r.rows.some((row) => (i >= 0 ? row[i] === USL_NAME : row.includes(USL_NAME)));
+}
+
+/**
+ * LOAD USL's model against COMPILE_USL: the reason it is stale, or null when its tables and their columns
+ * are exactly USL_COLUMNS. A model that fails to parse is stale.
+ */
+export function staleness(r: QueryResult): string | null {
+  let model: { tables?: { name?: unknown; columnSpecs?: { name?: unknown }[] }[] };
+  try {
+    model = JSON.parse(r.rows[0]?.[0] ?? "");
+  } catch {
+    return "LOAD USL returned no model that parses";
+  }
+  const have = new Map((model.tables ?? []).map((t) => [String(t.name), (t.columnSpecs ?? []).map((c) => String(c.name))]));
+  const want = USL_TABLES;
+  const missing = want.filter((t) => !have.has(t));
+  const extra = [...have.keys()].filter((t) => !(want as string[]).includes(t)).sort();
+  const changed = want.filter((t) => have.has(t) && have.get(t)!.join(",") !== USL_COLUMNS[t].join(","));
+  const parts = [
+    missing.length ? `lacks ${missing.join(", ")}` : "",
+    extra.length ? `holds ${extra.join(", ")} beyond the ${want.length}` : "",
+    changed.length ? `columns differ in ${changed.join(", ")}` : "",
+  ].filter(Boolean);
+  return parts.length ? `${have.size} table(s); ${parts.join("; ")}` : null;
+}
+
+/** The custom rules LIST DQ USL lists: rule name and table -> expression. Without a table column, the name alone keys it. */
+function listedRules(r: QueryResult): Map<string, string> {
+  const [n, t, e] = [col(r, "name"), col(r, "table"), col(r, "expression")];
+  const out = new Map<string, string>();
+  for (const row of r.rows) {
+    const name = n >= 0 ? row[n] : undefined;
+    if (!name || !DQ_RULES.some((d) => d.name === name)) continue;
+    out.set(t >= 0 ? `${name}@${row[t]}` : name, e >= 0 ? row[e] : "");
+  }
+  return out;
 }
 
 function rowsNote(r: QueryResult): string {
@@ -242,8 +490,8 @@ function table(r: QueryResult): string[] {
 
 /**
  * Run the plan one statement at a time. Prints one line per statement (status, number, name, note,
- * latency), the rows of RUN DQ and SHOW NAMESPACES, and a closing summary; emits one trace line per
- * statement, ok, skipped or failed. Stops at the first error that is not "already exist".
+ * latency), the rows of each RUN DQ and of the USL's table listing, and a closing summary; emits one trace
+ * line per statement, ok, skipped or failed. Stops at the first error that is not "already exist".
  */
 export async function apply(deps: ApplyDeps = {}): Promise<ApplyResult> {
   const env = deps.env ?? envFromProcess();
@@ -252,10 +500,31 @@ export async function apply(deps: ApplyDeps = {}): Promise<ApplyResult> {
   const steps = plan(env);
   const { password } = pgTarget(env);
   const clean = (s: string) => (password.length >= 4 ? redact(s).split(password).join("<redacted>") : redact(s)).slice(0, 400);
-  const state = { datasourceExisted: false, dqRuleRegistered: false };
+  const state = { datasourceExisted: false, missingTables: null as string[] | null, uslPresent: false, uslStale: null as string | null, rules: null as Map<string, string> | null };
   const results: StepResult[] = [];
+  const dqRuns: Partial<Record<UslTable, QueryResult>> = {};
   const t0 = Date.now();
-  let dq: QueryResult | undefined;
+
+  const listed = (r: DqRule): string | undefined => state.rules?.get(`${r.name}@${r.table}`) ?? state.rules?.get(r.name);
+  const gate = (s: Step): string | false => {
+    switch (s.when) {
+      case "datasource_absent": return state.datasourceExisted && `${env.datasource} exists`;
+      case "datasource_present": return !state.datasourceExisted && `${env.datasource} created this run`;
+      case "tables_missing": return state.datasourceExisted && state.missingTables !== null && state.missingTables.length === 0 && `every table of sql/schema.sql is registered`;
+      case "tables_registered":
+        return !state.datasourceExisted ? `${env.datasource} created this run`
+          : (state.missingTables === null || state.missingTables.length > 0) && `registered this run`;
+      case "usl_present": return !state.uslPresent && `${USL_NAME} is absent`;
+      case "usl_stale": return state.uslStale === null && (state.uslPresent ? `${USL_NAME} holds the ${USL_TABLES.length} tables as compiled` : `${USL_NAME} is absent`);
+      case "usl_absent": return state.uslPresent && `${USL_NAME} holds the ${USL_TABLES.length} tables as compiled`;
+      case "dq_rule_absent": return listed(s.rule!) !== undefined && `${s.rule!.name} already registered`;
+      case "dq_rule_differs": {
+        const e = listed(s.rule!);
+        return (e === undefined ? `${s.rule!.name} registered this run` : squash(e) === squash(s.rule!.expression) && `${s.rule!.name} listed as stated`);
+      }
+      default: return false;
+    }
+  };
 
   const record = (i: number, s: Step, res: StepResult, ev: Partial<Omit<TraceEvent, "ts" | "trace_id">> = {}) => {
     results.push(res);
@@ -265,10 +534,7 @@ export async function apply(deps: ApplyDeps = {}): Promise<ApplyResult> {
   };
 
   for (const [i, s] of steps.entries()) {
-    const gated = s.when === "datasource_absent" ? state.datasourceExisted && `${env.datasource} exists`
-      : s.when === "datasource_present" ? !state.datasourceExisted && `${env.datasource} created this run`
-      : s.when === "dq_rule_absent" ? state.dqRuleRegistered && `${DQ_RULE} already registered`
-      : false;
+    const gated = gate(s);
     if (gated) {
       record(i, s, { name: s.name, status: "skipped", note: gated });
       continue;
@@ -281,11 +547,33 @@ export async function apply(deps: ApplyDeps = {}): Promise<ApplyResult> {
         state.datasourceExisted = r.rows.some((row) => row.some((v) => v.toUpperCase() === env.datasource.toUpperCase()));
         note += `, ${env.datasource} ${state.datasourceExisted ? "listed" : "not listed"}`;
       }
-      if (s.probe === "dq_rules") {
-        state.dqRuleRegistered = listsRule(r, DQ_RULE);
-        note += `, ${DQ_RULE} ${state.dqRuleRegistered ? "listed" : "not listed"}`;
+      if (s.probe === "datasource_tables") {
+        const i = col(r, "name");
+        const listedTables = new Set(r.rows.map((row) => (i >= 0 ? row[i] : row[0])));
+        state.missingTables = TABLE_NAMES.filter((t) => !listedTables.has(t));
+        note += state.missingTables.length ? `, ${state.missingTables.length} of ${TABLE_NAMES.length} schema tables unregistered: ${state.missingTables.join(", ")}` : `, all ${TABLE_NAMES.length} schema tables registered`;
       }
-      if (s.name === "run dq collection") dq = r;
+      if (s.probe === "usl") {
+        state.uslPresent = listsUsl(r);
+        note += `, ${USL_NAME} ${state.uslPresent ? "listed" : "not listed"}`;
+      }
+      if (s.probe === "usl_model") {
+        state.uslStale = staleness(r);
+        note = state.uslStale === null ? `${USL_TABLES.length} tables as compiled` : `stale: ${state.uslStale}`;
+      }
+      if (s.removesUsl) {
+        state.uslPresent = false;
+        state.rules = null;
+      }
+      if (s.probe === "dq_rules") {
+        state.rules = listedRules(r);
+        const say = DQ_RULES.map((d) => {
+          const e = listed(d);
+          return `${d.name} ${e === undefined ? "not listed" : squash(e) === squash(d.expression) ? "listed" : "listed with another expression"}`;
+        });
+        note += `, ${say.join(", ")}`;
+      }
+      if (s.dqTable) dqRuns[s.dqTable] = r;
       record(i, s, { name: s.name, status: "ok", note, ms: Date.now() - s0, result: r }, { query_id: r.queryId });
       if (s.show) for (const l of table(r)) out(l);
     } catch (e) {
@@ -298,12 +586,12 @@ export async function apply(deps: ApplyDeps = {}): Promise<ApplyResult> {
       record(i, s, { name: s.name, status: "failed", note: msg, ms: Date.now() - s0 }, { detail: msg });
       const ms = Date.now() - t0;
       out(`ZETARIS SETUP FAILED at ${String(i + 1).padStart(2, "0")} ${s.name} after ${ms} ms: ${msg}`);
-      return { ok: false, results, dq, error: msg, ms };
+      return { ok: false, results, dq: dqRuns.collection, dqRuns, error: msg, ms };
     }
   }
 
   const ms = Date.now() - t0;
   const n = (st: StepResult["status"]) => results.filter((r) => r.status === st).length;
   out(`ZETARIS SETUP: ${results.length} statements, ${n("ok")} ok, ${n("skipped")} skipped, 0 failed, ${(ms / 1000).toFixed(1)} s`);
-  return { ok: true, results, dq, ms };
+  return { ok: true, results, dq: dqRuns.collection, dqRuns, ms };
 }

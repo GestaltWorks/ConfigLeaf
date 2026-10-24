@@ -9,25 +9,33 @@
 //   examples/wildcard-no-real-ip/    proxied_without_real_ip  the DNS run, the proxied wildcard, the landing host run's real_ip and enabled rows
 //   examples/orphans/                orphan_record, orphan_vhost  both host runs' server_name, zone and enabled rows, every A record, the inventory, the export snapshots
 //
+// Every slice also keeps what the Decider reads for its own rows when the recorded bundle holds it
+// (sliceDeciderRows): the policy rules of the tenant and of "*", whole; the approvals and vault copies whose
+// object_id is an object of the slice's observations or a record of its dns_record rows, and the
+// validations of those copies; the probes whose target is a name of the slice (its dns_record names and the
+// referents of its server_name rows), and the tenant's probe runs. So the verbs over a slice are the ones
+// the full pass gives, and every approval, copy and probe a slice holds belongs to a row it shows.
+//
 // Each directory gets bundle.json (the slice, in the house format) and findings.json (the pass's findings).
 // Directory names say what the case is, never which zone it is: the bundle pseudonymises the zone, and a
-// folder named after it would undo that for every row of the zone.
+// folder named after it would undo that for every row of the zone. Every pass decides at the slice's own
+// instant (src/data/instant.ts), so a re-run gives the same findings.json.
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { DataLayer } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
+import { decisionInstant } from "../src/data/instant.ts";
 import { formatBundle, TABLES, type BundleFile, type Tables } from "../src/data/store.ts";
 import type { TableName } from "../src/data/rows.ts";
 import { DriftWorld } from "../src/engine/world.ts";
-import { runPass, type Finding } from "../src/pipeline.ts";
+import { VERBS, runPass, type Finding } from "../src/pipeline.ts";
 import bundle from "../sample/bundle.json" with { type: "json" };
 
-const { values: args } = parseArgs({ options: { out: { type: "string", default: "examples" } } });
 const B = bundle as unknown as Tables;
 
-const runsOf = (surfaces: string[], hosts: (string | null)[] = [null]) => B.collection_run.filter((r) => surfaces.includes(r.surface) && (r.host === null || hosts.includes(r.host)));
 const latest = (surface: string, host: string | null) => [...B.collection_run].filter((r) => r.surface === surface && r.host === host && r.status === "complete").sort((a, b) => (a.started_at < b.started_at ? 1 : -1))[0];
 
 const dns = latest("cloudflare.dns", null);
@@ -40,7 +48,43 @@ const inventoryAddresses = new Set(B.inventory_asset.map((a) => a.address));
 const records = B.dns_record.filter((d) => d.run_id === dns.run_id);
 const obsOf = (run: { run_id: string }) => B.observation.filter((o) => o.run_id === run.run_id);
 
-interface Example { dir: string; note: string; tables: Partial<Tables>; classes: string[] }
+export interface Example { dir: string; note: string; tables: Partial<Tables>; classes: string[] }
+
+/**
+ * What the Decider reads for the rows of one slice, taken from `source` (see the header): policy rules of the
+ * tenant and of "*", whole; approvals and vault copies of the tenant whose object_id is an object of the slice's
+ * observations or a record of its dns_record rows; the validations of those copies; the tenant's probes whose
+ * target is a dns_record name of the slice or the referent of one of its server_name rows; the tenant's probe
+ * runs. A table the source does not hold gives nothing.
+ */
+export function sliceDeciderRows(source: Partial<Tables>, tenant: string, slice: Partial<Tables>): Partial<Tables> {
+  const objects = new Set([...(slice.observation ?? []).map((o) => o.object_id), ...(slice.dns_record ?? []).map((d) => d.record_id)]);
+  const names = new Set([
+    ...(slice.dns_record ?? []).map((d) => d.name),
+    ...(slice.observation ?? []).filter((o) => o.refers_to_type === "dns_name" && o.setting_path.includes(".server_name[") && o.refers_to_id).map((o) => o.refers_to_id!),
+  ]);
+  const copies = (source.vault_copy ?? []).filter((c) => c.tenant_id === tenant && objects.has(c.object_id));
+  const copyIds = new Set(copies.map((c) => c.copy_id));
+  return {
+    policy_rule: (source.policy_rule ?? []).filter((r) => r.tenant_id === tenant || r.tenant_id === "*"),
+    approved_setting: (source.approved_setting ?? []).filter((a) => a.tenant_id === tenant && objects.has(a.object_id)),
+    vault_copy: copies,
+    copy_validation: (source.copy_validation ?? []).filter((v) => v.tenant_id === tenant && copyIds.has(v.copy_id)),
+    probe: (source.probe ?? []).filter((p) => p.tenant_id === tenant && names.has(p.target)),
+    collection_run: (source.collection_run ?? []).filter((r) => r.tenant_id === tenant && r.surface === "probe"),
+  };
+}
+
+/** The slice's own tables plus the Decider's rows for them; collection_run gains the probe runs. */
+function withDeciderRows(ex: Example): Example {
+  const extra = sliceDeciderRows(B, dns.tenant_id, ex.tables);
+  const tables: Partial<Tables> = { ...ex.tables };
+  for (const [t, rows] of Object.entries(extra) as [keyof Tables, Tables[keyof Tables]][]) {
+    if (!rows.length) continue;
+    (tables as Record<string, unknown[]>)[t] = [...((ex.tables[t] as unknown[] | undefined) ?? []), ...rows];
+  }
+  return { ...ex, tables };
+}
 
 /** The proxied CNAME and the direct A record it aliases, plus the audit trail of the CNAME. */
 function proxySplitExample(): Example {
@@ -104,10 +148,15 @@ async function passOver(file: Record<string, unknown>) {
   const engine = await SqlJsEngine.create();
   engine.loadBundle(file);
   try {
-    return await runPass(new DataLayer(engine), { world: new DriftWorld("example_probe") });
+    return await runPass(new DataLayer(engine), { world: new DriftWorld("example_probe"), decidedAt: decisionInstant(file) });
   } finally {
     engine.close();
   }
+}
+
+/** The three slices, each with the Decider's rows for it. */
+export async function buildExamples(): Promise<Example[]> {
+  return [proxySplitExample(), wildcardNoRealIp(), await orphans()].map(withDeciderRows);
 }
 
 function toBundleFile(ex: Example): BundleFile {
@@ -116,20 +165,24 @@ function toBundleFile(ex: Example): BundleFile {
   return out as BundleFile;
 }
 
-for (const ex of [proxySplitExample(), wildcardNoRealIp(), await orphans()]) {
-  const file = toBundleFile(ex);
-  const engine = await SqlJsEngine.create();
-  const counts = engine.loadBundle(file);
-  const pass = await runPass(new DataLayer(engine), { world: new DriftWorld(`example_${ex.dir}`) });
-  engine.close();
-  const unexpected = pass.findings.filter((f) => !ex.classes.includes(f.finding.class));
-  if (unexpected.length) throw new Error(`${ex.dir}: the slice produced ${unexpected.length} finding(s) outside ${ex.classes.join("/")}: ${unexpected.map((f) => f.finding.class).join(", ")}`);
-  if (!pass.findings.length) throw new Error(`${ex.dir}: the slice produced no finding`);
-  const dir = path.join(args.out, ex.dir);
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(path.join(dir, "bundle.json"), formatBundle(file));
-  writeFileSync(path.join(dir, "findings.json"), `${JSON.stringify(pass.findings satisfies Finding[], null, 2)}\n`);
-  const verbs = pass.findings.map((f) => f.verb);
-  console.log(`${ex.dir}: ${Object.entries(counts).filter(([, n]) => n).map(([t, n]) => `${t} ${n}`).join(", ")}; ${pass.runs} runs, ${pass.gatedOut.length} gated; ${pass.findings.length} finding(s): ${ex.classes.join(", ")}; ${verbs.filter((v) => v === "ADOPT").length} ADOPT, ${verbs.filter((v) => v === "ESCALATE").length} ESCALATE`);
-  for (const f of pass.findings) console.log(`  ${f.verb.padEnd(8)} ${f.finding.class.padEnd(24)} ${f.finding.summary}`);
+const invoked = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href.toLowerCase() : "";
+if (invoked === import.meta.url.toLowerCase()) {
+  const { values: args } = parseArgs({ options: { out: { type: "string", default: "examples" } } });
+  for (const ex of await buildExamples()) {
+    const file = toBundleFile(ex);
+    const engine = await SqlJsEngine.create();
+    const counts = engine.loadBundle(file);
+    const pass = await runPass(new DataLayer(engine), { world: new DriftWorld(`example_${ex.dir}`), decidedAt: decisionInstant(file) });
+    engine.close();
+    const unexpected = pass.findings.filter((f) => !ex.classes.includes(f.finding.class));
+    if (unexpected.length) throw new Error(`${ex.dir}: the slice produced ${unexpected.length} finding(s) outside ${ex.classes.join("/")}: ${unexpected.map((f) => f.finding.class).join(", ")}`);
+    if (!pass.findings.length) throw new Error(`${ex.dir}: the slice produced no finding`);
+    const dir = path.join(args.out!, ex.dir);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "bundle.json"), formatBundle(file));
+    writeFileSync(path.join(dir, "findings.json"), `${JSON.stringify(pass.findings satisfies Finding[], null, 2)}\n`);
+    const verbs = VERBS.filter((v) => pass.verbs[v] > 0).map((v) => `${pass.verbs[v]} ${v}`).join(", ");
+    console.log(`${ex.dir}: ${Object.entries(counts).filter(([, n]) => n).map(([t, n]) => `${t} ${n}`).join(", ")}; ${pass.runs} runs, ${pass.gatedOut.length} gated; ${pass.findings.length} finding(s): ${ex.classes.join(", ")}; ${verbs}`);
+    for (const f of pass.findings) console.log(`  ${f.verb.padEnd(8)} ${f.finding.class.padEnd(24)} ${f.finding.summary}`);
+  }
 }

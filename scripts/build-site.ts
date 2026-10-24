@@ -40,6 +40,7 @@ import { renderTemplate, templateById } from "../src/catalogue/templates.ts";
 import { config } from "../src/config.ts";
 import { DataLayer, type Param, type Params } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
+import { decisionInstant } from "../src/data/instant.ts";
 import {
   HERO_SQL, ORPHAN_RECORD_SQL, ORPHAN_VHOST_SQL, PROXIED_WITHOUT_REAL_IP_SQL, PROXY_SPLIT_SQL, RUNS_SQL, WILDCARD_WITHOUT_REAL_IP_SQL, objects,
 } from "../src/data/queries.ts";
@@ -84,6 +85,8 @@ const FindingRecord = z.looseObject({
     since: z.string(), until: z.string(), summary: z.string(),
   }),
   verb: z.string(),
+  /** The Decider's disposition (src/pipeline.ts DispositionNote); older records have none. */
+  disposition: z.looseObject({ verb: z.string(), reason: z.string(), expires_at: z.string().nullable(), decided_by: z.string(), rule_id: z.string().nullable() }).optional(),
   world: z.looseObject({ before: z.string().nullable(), after: z.string().nullable(), changed: z.boolean(), bytes_unchanged: z.boolean() }).optional(),
   // The exposure line (plan addendum item 4: {since, days, source, still_open_in}); shown as recorded, whatever fields it grows.
   exposure: z.record(z.string(), z.unknown()).nullable().optional(),
@@ -282,15 +285,17 @@ async function checkView(layer: DataLayer, f: FindingRec["finding"], c: CheckRec
 }
 
 /** The decision policy of src/pipeline.ts, as the page states it under every verb. */
-export const DECISION_RULE = "Every check holds and none was rejected: ADOPT, as a candidate pending a judge. Any check fails or was rejected: ESCALATE. HOLD needs a judge to bound it with an expiry, so a pass with no model never issues it.";
+export const DECISION_RULE = "The technician's accepted exception in force decides ADOPT until it expires, and a lapsed one ESCALATE. Next, the MSP's policy rule that governs the setting decides ADOPT, HOLD until an expiry, ESCALATE, ROLLBACK or FIX, and the decision names the rule and the reason. With no governing rule: every check holds and none was rejected, ADOPT, as a candidate pending a judge; any check fails or was rejected, ESCALATE.";
 
-/** Why this verb, from the checks and rejections as recorded. */
+/** Why this verb, from the checks and rejections as recorded, and the Decider's reason when a rule or an exception decided. */
 function decisionOf(rec: FindingRec): string {
   const ran = rec.checks.filter((c) => c.rowCount !== undefined);
   const failing = ran.filter((c) => c.holds === false).map((c) => c.template);
+  const d = rec.disposition;
   return [
     failing.length ? `${failing.length} of ${ran.length} preconditions fail: ${failing.join(", ")}` : `${ran.length} of ${ran.length} preconditions hold`,
     rec.rejected.length ? `${rec.rejected.length} check(s) rejected` : "",
+    d && d.decided_by !== "default" ? `decided by ${d.decided_by}${d.rule_id ? ` under ${d.rule_id}` : ""}: ${d.reason.replace(/\.$/, "")}` : "",
   ].filter(Boolean).join("; ");
 }
 
@@ -346,7 +351,8 @@ async function passOver(bundle: unknown, world: string): Promise<{ pass: Awaited
   const engine = await SqlJsEngine.create();
   try {
     const counts = engine.loadBundle(bundle as Record<string, unknown>);
-    return { pass: await runPass(new DataLayer(engine), { world: new DriftWorld(world) }), counts };
+    // decidedAt: the bundle's own instant (src/data/instant.ts), so a HOLD's expiry is the same on every build
+    return { pass: await runPass(new DataLayer(engine), { world: new DriftWorld(world), decidedAt: decisionInstant(bundle) }), counts };
   } finally {
     engine.close();
   }

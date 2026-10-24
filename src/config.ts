@@ -46,6 +46,15 @@ const Schema = z.object({
   // aliases are the operator's own ssh_config entries; the export dir is where the host's nightly
   // server-config tarball lands (a login's home path belongs here, not in source).
   LINUX_HOSTS: z.string().default(""),
+  // The vault: one git repository per tenant and host alias (and one per tenant for Cloudflare) holding the
+  // collected bytes under their real names, outside the repository. Blank = the vault is off.
+  DRIFT_VAULT_DIR: z.string().default(""),
+  // The MSP's policy as data, read by npm run policy:load and the Decider: a JSON file in the shape of
+  // policy/hackathon.json, the default.
+  DRIFT_POLICY_FILE: z.string().default("policy/hackathon.json"),
+  // The command that runs nginx -t over a vault commit materialised in a temp directory, with {dir} for that
+  // directory. Blank = the platform default (NGINX_T_DEFAULT below: docker, through WSL on Windows).
+  DRIFT_NGINX_T: z.string().default(""),
   LOG_DIR: z.string().default("logs"),
 });
 
@@ -66,6 +75,21 @@ export function parseLinuxHosts(s: string): Record<string, { exportDir: string }
     out[alias] = { exportDir };
   }
   return out;
+}
+
+/**
+ * The nginx -t validator command per platform, {dir} the materialised tree (on win32 the validator turns it
+ * into its /mnt/<drive>/ form). nginx:1.27 is Debian-based and carries both the nginx and the www-data users,
+ * so either host's "user" directive resolves.
+ */
+export const NGINX_T_DEFAULT = {
+  win32: "wsl.exe -d Ubuntu-24.04 -- docker run --rm -v {dir}:/etc/nginx:ro nginx:1.27 nginx -t -c /etc/nginx/nginx.conf",
+  other: "docker run --rm -v {dir}:/etc/nginx:ro nginx:1.27 nginx -t -c /etc/nginx/nginx.conf",
+} as const;
+
+/** DRIFT_NGINX_T when set, else the default for the platform. */
+export function nginxTCommand(platform: NodeJS.Platform = process.platform, configured: string = raw.DRIFT_NGINX_T): string {
+  return configured.trim() || (platform === "win32" ? NGINX_T_DEFAULT.win32 : NGINX_T_DEFAULT.other);
 }
 
 /** The Nightshift runtime writes its bearer token to a file; fall back to it when the env var is blank. */
@@ -102,6 +126,12 @@ export const config = {
   redactWords: raw.REDACT_WORDS.split(",").map((s) => s.trim()).filter(Boolean),
   exportDenyWords: raw.EXPORT_DENY_WORDS.split(",").map((s) => s.trim()).filter(Boolean),
   linuxHosts: parseLinuxHosts(raw.LINUX_HOSTS),
+  /** DRIFT_VAULT_DIR; "" = the vault is off. */
+  vaultDir: raw.DRIFT_VAULT_DIR.trim(),
+  /** DRIFT_POLICY_FILE, default policy/hackathon.json. */
+  policyFile: raw.DRIFT_POLICY_FILE.trim() || "policy/hackathon.json",
+  /** DRIFT_NGINX_T as configured; "" = the platform default (nginxTCommand). */
+  nginxT: raw.DRIFT_NGINX_T.trim(),
   logDir: raw.LOG_DIR,
 } as const;
 

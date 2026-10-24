@@ -16,8 +16,10 @@ import { RUN_COMPLETE_SQL } from "../data/queries.ts";
  * classes come from the estate queries in data/queries.ts over one pass: a proxied CNAME to a direct
  * apex (proxy_split), a proxied name served by a block that trusts no real_ip range
  * (proxied_without_real_ip), a record landing on a host with no enabled block for it (orphan_record)
- * and a server_name with no record and no covering wildcard (orphan_vhost). changed_since_backup and
- * drift_vs_approved have templates and default policies but no detector yet.
+ * and a server_name with no record and no covering wildcard (orphan_vhost). src/pipeline.ts raises
+ * changed_since_backup (a file the host's newest backup lacks or holds with other bytes) and
+ * drift_vs_approved (a setting whose live value differs from its latest approval) through the detectors
+ * of data/queries.ts.
  */
 export const FINDING_CLASSES = [
   "found_but_different", "changed_since_backup", "drift_vs_approved", "dns_change",
@@ -109,7 +111,7 @@ ORDER BY s.snapshot_id`,
   {
     id: "actor_attributed",
     purpose: "An audit event with a named actor touched the resource inside the window.",
-    appliesTo: ["dns_change", "found_but_different", "changed_since_backup", "proxy_split", "proxied_without_real_ip", "orphan_record"],
+    appliesTo: ["dns_change", "found_but_different", "changed_since_backup", "drift_vs_approved", "proxy_split", "proxied_without_real_ip", "orphan_record"],
     params: z.object({ tenant_id: id(), resource_id: id(), since: iso(), until: iso() }),
     sql: `SELECT event_id, source, actor, action, old_value, new_value, occurred_at
 FROM {{t:audit_event}}
@@ -125,7 +127,7 @@ ORDER BY occurred_at, event_id`,
   {
     id: "previous_value_recoverable",
     purpose: "The value the resource had before its latest audit event is on record: either that event carries old_value, or an earlier create or update on the same resource carries the body that was in force (Cloudflare logs no old values; the previous state is the latest earlier body).",
-    appliesTo: ["dns_change", "found_but_different", "proxy_split", "proxied_without_real_ip", "orphan_record"],
+    appliesTo: ["dns_change", "found_but_different", "drift_vs_approved", "proxy_split", "proxied_without_real_ip", "orphan_record"],
     params: z.object({ tenant_id: id(), resource_id: id() }),
     sql: `SELECT e.event_id, e.source, e.action, e.old_value AS previous_value, e.occurred_at AS recorded_at, 'old_value' AS evidence
 FROM {{t:audit_event}} e

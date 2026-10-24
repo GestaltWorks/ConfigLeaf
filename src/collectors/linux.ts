@@ -11,8 +11,8 @@
 //                 three vhost directory listings (symlink targets kept), every fetched file as bytes
 //                 (base64 on the wire so sha256 of what we hold equals sha256sum on the host), systemd
 //                 timers, the backup export folder (listing, mtimes and sha256 of readable nginx copies,
-//                 and the sha256 of every regular-file etc/nginx member of the newest tarball read
-//                 through tar -xO), certbot renewal configs. A stream without the DONE marker is
+//                 and the sha256 of every regular-file member of the newest tarball that holds etc/nginx,
+//                 read through tar -xO), certbot renewal configs. A stream without the DONE marker is
 //                 incomplete: the run is partial.
 //   toRows        Fetched -> rows (src/collectors/types.ts), everything through the Redactor first:
 //                 collection_run with expected_count asserted BEFORE parsing (regular files the ls of
@@ -39,12 +39,21 @@
 //                 names confirm 19 plaintexts behind the exported pseudonyms. inventory_asset per global
 //                 IPv4 and IPv6 address (kind vps). backup_snapshot (kind export) per config tarball in
 //                 the export folder and per folder of plain copies, taken_at = its mtime; backup_item
-//                 (`file`, sha256) for every nginx file the newest tarball or the plain copies hold; a
-//                 member hashed as the empty input (a symlink, or a 0-byte file) is dropped and listed
-//                 in the summary, because a backup_item that equals no live file's bytes would make
-//                 change_in_last_backup say a restore undoes every enabled site.
-//                 approved_setting rows are NOT written here: scripts/approve.ts (TODO) does that from
-//                 a technician's sign-off.
+//                 (`file`, sha256) for every regular-file member of the newest tarball (object id: the
+//                 member's path below the tarball's root, the prefix its etc/nginx members sit under,
+//                 with a leading slash: /etc/nginx/nginx.conf, /etc/letsencrypt/renewal/<name>.conf;
+//                 a member outside the trees the script reads live files from, LIVE_PREFIXES, is stored
+//                 as member-<16 hex>, a salted id of its redacted path, see backupMemberId)
+//                 and every nginx file the plain copies hold, so changed_since_backup reads every file
+//                 the collector fetches against the backup; a member hashed as the empty input (a
+//                 symlink, or a 0-byte file) is dropped and listed in the summary, because a backup_item
+//                 that equals no live file's bytes would make change_in_last_backup say a restore undoes
+//                 every enabled site.
+//                 approved_setting rows come from a technician's sign-off, scripts/approve.ts.
+//                 toRows also returns the raw half for the vault (src/vault/): `files`, the bytes of
+//                 every file that became a `file` row keyed by its real path, and `links`, the
+//                 sites-enabled symlink map; collectHost passes both on in CollectResult, and printable()
+//                 is the redacted half the collect script prints and writes.
 //
 // Host identity is the pseudonym of the ssh alias, not of the machine's hostname: measured 24 Oct, both
 // production hosts report the same hostname, so the hostname is an observation (system.hostname) and
@@ -95,9 +104,10 @@ export const EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca49
  * (status 3), whatever its case. Includes are followed up to four rounds, only under /etc/nginx, and a
  * symlink (sites-enabled/x) is never fetched as a file: its target is. The newest tarball in the export
  * folder that holds etc/nginx members (measured: two tarball families land 52 ms apart, so "the newest"
- * alone is not enough) has its regular-file members (`tar -tv` lines starting with '-': not the symlinks,
- * which tar -xO prints as nothing) hashed through `tar -xO` (stdout only, nothing lands on disk); a
- * tarball over 256 MB is not opened.
+ * alone is not enough) has every regular-file member (`tar -tv` lines starting with '-': not the
+ * symlinks, which tar -xO prints as nothing), whatever directory it sits in, hashed through `tar -xO`
+ * (stdout only, nothing lands on disk); a credential-shaped member name is skipped; a tarball over 256 MB
+ * is not opened.
  */
 export function readScript(exportDir: string): string {
   if (!/^\/[A-Za-z0-9._\/-]+$/.test(exportDir)) throw new CollectorError(`export dir must be an absolute path of [A-Za-z0-9._/-]: ${exportDir}`);
@@ -118,8 +128,8 @@ emit_file() {
 }
 emitted=' '
 emit_once() { case $emitted in *" $1 "*) return ;; esac; emitted="$emitted$1 "; emit_file "$1"; }
-nginx_member_hashes() {
-  tar -tvzf "$1" | grep '^-' | sed -E 's/^[^ ]+ +[^ ]+ +[^ ]+ +[^ ]+ +[^ ]+ +//' | grep -E '(^|/)etc/nginx/' | grep -v '/$' | while IFS= read -r m; do
+member_hashes() {
+  tar -tvzf "$1" | grep '^-' | sed -E 's/^[^ ]+ +[^ ]+ +[^ ]+ +[^ ]+ +[^ ]+ +//' | grep -v '/$' | while IFS= read -r m; do
     if credential_shaped "$m"; then continue; fi
     h=$(tar -xOzf "$1" "$m" 2>/dev/null | sha256sum | cut -d' ' -f1)
     printf '%s  %s\n' "$h" "$m"
@@ -160,7 +170,7 @@ for t in $(ls -1t -- "$EXP"/*.tar.gz "$EXP"/*.tgz 2>/dev/null); do
   [ "$(stat -c %s -- "$t")" -le 268435456 ] || continue
   if tar -tzf "$t" 2>/dev/null | grep -qE '(^|/)etc/nginx/'; then newest=$t; break; fi
 done
-if [ -n "$newest" ]; then section tarsha "$newest" nginx_member_hashes "$newest"; fi
+if [ -n "$newest" ]; then section tarsha "$newest" member_hashes "$newest"; fi
 section renewals /etc/letsencrypt/renewal find /etc/letsencrypt/renewal -maxdepth 1 -name '*.conf' -readable
 for f in $(find /etc/letsencrypt/renewal -maxdepth 1 -name '*.conf' -readable 2>/dev/null); do emit_once "$f"; done
 printf '@@DRIFT@@ DONE\n'
@@ -220,7 +230,7 @@ export interface Fetched {
     listing: Listing | null;
     found: FindEntry[];
     hashes: HashEntry[];
-    /** The newest config tarball's etc/nginx members, hashed on the host; null when there was none to read. */
+    /** The regular-file members of the newest config tarball that holds etc/nginx, hashed on the host; null when there was none to read. */
     tar: { path: string; rc: number; hashes: HashEntry[]; error: string | null } | null;
     error: string | null;
   } | null;
@@ -421,7 +431,7 @@ export interface Summary {
   /** Grammar faults the parser read past: `<file>:<line>: <why>`. */
   malformed: string[];
   timers: string[];
-  export: { dir: string; readable: boolean; mtime: string | null; top_level: string[]; tarballs: number; newest_tarball: string | null; nginx_copies: number; snapshots: number; /** tarball members hashed as the empty input (symlinks, 0-byte files), dropped from backup_item. */ empty_members: string[] } | null;
+  export: { dir: string; readable: boolean; mtime: string | null; top_level: string[]; tarballs: number; newest_tarball: string | null; /** backup_item rows: every regular-file member of the newest tarball and every plain nginx copy. */ backup_items: number; snapshots: number; /** tarball members hashed as the empty input (symlinks, 0-byte files), dropped from backup_item. */ empty_members: string[] } | null;
   renewals: { readable: boolean; count: number } | null;
 }
 
@@ -444,6 +454,43 @@ export function exportCopyToObjectId(p: string): string | null {
   return i >= 0 ? `/etc${p.slice(i)}` : null;
 }
 
+/** A tarball's root: the prefix its first etc/nginx member sits under ("" for `etc/nginx/x`, "./" for `./etc/nginx/x`); "" when no member names etc/nginx. */
+export function tarRoot(members: readonly string[]): string {
+  for (const m of members) {
+    const i = m.indexOf("etc/nginx/");
+    if (i === 0 || (i > 0 && m[i - 1] === "/")) return m.slice(0, i);
+  }
+  return "";
+}
+
+/**
+ * The object id of one tarball member: its path below the tarball's root with a leading slash, the id the
+ * live file carries (`etc/letsencrypt/renewal/x.conf` -> /etc/letsencrypt/renewal/x.conf); a member outside
+ * the root keeps its own path, a leading "./" dropped. Null for a name with nothing left.
+ */
+export function tarMemberToObjectId(member: string, root: string): string | null {
+  const rest = (root && member.startsWith(root) ? member.slice(root.length) : member.replace(/^(?:\.\/)+/, "")).replace(/^\/+/, "");
+  return rest ? `/${rest}` : null;
+}
+
+/** The trees the script reads live files from: the nginx tree and certbot's renewal configs. */
+export const LIVE_PREFIXES: readonly string[] = ["/etc/nginx/", "/etc/letsencrypt/renewal/"];
+
+/**
+ * The object id a backup item is stored under. A member under LIVE_PREFIXES keeps its redacted path, the id
+ * its live file's `file` row carries, so changed_since_backup and change_in_last_backup join the two. Every
+ * other member (a unit file, a cron entry, an application's config) is stored as `member-` plus 16 hex of
+ * the redactor's fingerprint of its redacted path: salted, stable for the tenant, one per path, so the row,
+ * its hash and the count stay while the file name, which names the services and organisations the host
+ * runs, stays on the host. Measured 24 Oct 2026: the newest tarballs of the two hosts hold 82 and 72 regular
+ * members, 67 of them outside LIVE_PREFIXES (systemd units, cron entries, an application's env backups),
+ * and six of those paths (three runner units and their drop-ins) carry an organisation's name in clear.
+ */
+export function backupMemberId(r: Redactor, objectId: string): string {
+  const id = redactText(r, objectId);
+  return LIVE_PREFIXES.some((p) => objectId.startsWith(p)) ? id : `member-${r.fingerprint(id).slice(7, 23)}`;
+}
+
 /**
  * Ids are the deterministic ones of src/data/rows.ts (16 hex of sha256 over the parts), so the same
  * collection yields the same ids and a re-insert is a no-op in the Store: run from (tenant, surface,
@@ -451,7 +498,7 @@ export function exportCopyToObjectId(p: string): string | null {
  * unique within an object; asset from (tenant, redacted address); snapshot from (tenant, host, kind,
  * redacted source path).
  */
-export function toRows(f: Fetched, opts: ToRowsOptions): { rows: CollectedRows; summary: Summary; analysis: Analysis } {
+export function toRows(f: Fetched, opts: ToRowsOptions): { rows: CollectedRows; summary: Summary; analysis: Analysis; files: RawFiles; links: RawLinks } {
   const r = opts.redactor;
   const rtext = (s: string): string => redactText(r, s);
   const now = opts.now ?? new Date();
@@ -548,8 +595,8 @@ export function toRows(f: Fetched, opts: ToRowsOptions): { rows: CollectedRows; 
     rows.inventory_asset.push({ asset_id: assetId(opts.tenantId, address), tenant_id: opts.tenantId, host, address, kind: "vps", source: SOURCE, observed_at: observedAt });
   }
 
-  // Backups: one snapshot per config tarball in the export folder (items for the newest, hashed on the
-  // host), one per folder of plain nginx copies, and the folder itself only when it holds neither. When
+  // Backups: one snapshot per config tarball in the export folder (items for the newest, every regular-file
+  // member hashed on the host), one per folder of plain nginx copies, and the folder itself only when it holds neither. When
   // the host found the tarball that holds etc/nginx, only its family counts (names sharing its stem
   // before the date: server-config-<date>.tar.gz), so an application dump written the same minute is not
   // "the latest backup" the restore templates compare against.
@@ -564,8 +611,8 @@ export function toRows(f: Fetched, opts: ToRowsOptions): { rows: CollectedRows; 
     rows.backup_snapshot.push({ snapshot_id: id, tenant_id: opts.tenantId, host, kind: KIND_EXPORT, taken_at: mtime, source_ref: sourceRef });
     snapshots++;
     for (const it of items) {
-      if (it.sha256 === EMPTY_SHA256) { emptyMembers.push(rtext(it.object_id)); continue; }
-      rows.backup_item.push({ snapshot_id: id, object_id: rtext(it.object_id), setting_path: "file", value_hash: `sha256:${it.sha256}` });
+      if (it.sha256 === EMPTY_SHA256) { emptyMembers.push(backupMemberId(r, it.object_id)); continue; }
+      rows.backup_item.push({ snapshot_id: id, object_id: backupMemberId(r, it.object_id), setting_path: "file", value_hash: `sha256:${it.sha256}` });
       copies++;
     }
   };
@@ -573,9 +620,10 @@ export function toRows(f: Fetched, opts: ToRowsOptions): { rows: CollectedRows; 
     const family = exp.tar && exp.tar.rc === 0 ? tarballStem(path.basename(exp.tar.path)) : null;
     const tarEntries = (exp.listing?.entries ?? []).filter((e) => e.type === "-" && TARBALL.test(e.name) && e.mtime && (family === null || tarballStem(e.name) === family)).sort((a, b) => a.name.localeCompare(b.name));
     tarballs = tarEntries.length;
+    const root = exp.tar ? tarRoot(exp.tar.hashes.map((h) => h.path)) : "";
     for (const e of tarEntries) {
       const p = `${exp.dir}/${e.name}`;
-      const items = exp.tar && exp.tar.rc === 0 && exp.tar.path === p ? exp.tar.hashes.flatMap((h) => { const id = exportCopyToObjectId(h.path); return id ? [{ object_id: id, sha256: h.sha256 }] : []; }) : [];
+      const items = exp.tar && exp.tar.rc === 0 && exp.tar.path === p ? exp.tar.hashes.flatMap((h) => { const id = tarMemberToObjectId(h.path, root); return id ? [{ object_id: id, sha256: h.sha256 }] : []; }) : [];
       snapshot(p, e.mtime!, items);
     }
     const roots = new Map<string, { object_id: string; sha256: string }[]>();
@@ -632,11 +680,12 @@ export function toRows(f: Fetched, opts: ToRowsOptions): { rows: CollectedRows; 
     export: exp ? {
       dir: rtext(exp.dir), readable: exp.rc === 0, mtime: exp.mtime,
       top_level: (exp.listing?.entries ?? []).map((e) => rtext(`${e.mode} ${e.size} ${e.mtime ?? "?"} ${e.name}${e.target ? ` -> ${e.target}` : ""}`)),
-      tarballs, newest_tarball: exp.tar ? rtext(exp.tar.path) : null, nginx_copies: copies, snapshots, empty_members: emptyMembers,
+      tarballs, newest_tarball: exp.tar ? rtext(exp.tar.path) : null, backup_items: copies, snapshots, empty_members: emptyMembers,
     } : null,
     renewals: f.renewals ? { readable: f.renewals.rc === 0, count: f.renewals.paths.length } : null,
   };
-  return { rows, summary, analysis };
+  const byPath = <T>(m: Map<string, T>): Record<string, T> => Object.fromEntries([...m].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  return { rows, summary, analysis, files: byPath(bytesOf), links: byPath(links) };
 }
 
 /**
@@ -667,7 +716,21 @@ export async function storeRows(store: Store, rows: CollectedRows): Promise<Reco
   return written;
 }
 
-export interface CollectResult { rows: CollectedRows; summary: Summary; ssh: { code: number | null; latencyMs: number; stderr: string; bytes: number } }
+/** The fetched files that became `file` rows, as raw bytes keyed by their real path on the host, in path order: what the vault commits (src/vault/). */
+export type RawFiles = Readonly<Record<string, Uint8Array>>;
+/** The sites-enabled symlinks the listing showed: real link path -> real target path, in path order. */
+export type RawLinks = Readonly<Record<string, string>>;
+
+/**
+ * One host's collection. `rows` and `summary` are redacted; `files` and `links` carry real paths and raw
+ * bytes for the vault alone. printable() is what --dry-run prints and --out writes.
+ */
+export interface CollectResult { rows: CollectedRows; summary: Summary; ssh: { code: number | null; latencyMs: number; stderr: string; bytes: number }; files: RawFiles; links: RawLinks }
+
+/** The redacted half of a collection, what scripts/collect-linux.ts prints (--dry-run) and writes (--out): the summary with the ssh outcome, and the rows. */
+export function printable(res: CollectResult): { summary: Summary & { ssh: CollectResult["ssh"] }; rows: CollectedRows } {
+  return { summary: { ...res.summary, ssh: res.ssh }, rows: res.rows };
+}
 
 /** Fetch, parse and build rows for one host; every logged string is redacted first. */
 export async function collectHost(alias: string, opts: { tenantId: string; redactor: Redactor; tracer?: Tracer; timeoutMs?: number }): Promise<CollectResult> {
@@ -677,7 +740,7 @@ export async function collectHost(alias: string, opts: { tenantId: string; redac
   t?.emit({ agent: "collector.linux", action: "observe", status: res.code === 0 ? "ok" : "failed", latency_ms: res.latencyMs, input_summary: `ssh ${SSH_ARGS.join(" ")} ${alias} bash -s`, output_summary: `${res.stdout.length} bytes, exit ${res.code ?? res.signal}`, detail: stderr || undefined });
   if (res.code !== 0 && res.stdout.length === 0) throw new CollectorError(`ssh ${alias} exited ${res.code ?? res.signal}: ${stderr}`);
   const fetched = parseStream(res.stdout);
-  const { rows, summary } = toRows(fetched, { tenantId: opts.tenantId, redactor: opts.redactor, alias });
+  const { rows, summary, files, links } = toRows(fetched, { tenantId: opts.tenantId, redactor: opts.redactor, alias });
   const notes = [
     summary.not_readable.length ? `not readable: ${summary.not_readable.join(", ")}` : "",
     summary.malformed.length ? `malformed: ${summary.malformed.join("; ")}` : "",
@@ -688,7 +751,7 @@ export async function collectHost(alias: string, opts: { tenantId: string; redac
     output_summary: `${alias} -> ${summary.host}: ${summary.run.status}, expected ${summary.run.expected_count ?? "null"} observed ${summary.run.observed_count ?? "null"}, ${rows.observation.length} observations, ${summary.servers.length} server blocks, ${rows.inventory_asset.length} assets, ${rows.backup_snapshot.length} snapshots, ${rows.backup_item.length} backup items`,
     detail: notes.length ? notes.join(" | ") : undefined,
   });
-  return { rows, summary, ssh: { code: res.code, latencyMs: res.latencyMs, stderr, bytes: res.stdout.length } };
+  return { rows, summary, ssh: { code: res.code, latencyMs: res.latencyMs, stderr, bytes: res.stdout.length }, files, links };
 }
 
 export { isVhostPath };

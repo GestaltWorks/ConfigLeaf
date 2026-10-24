@@ -3,7 +3,8 @@
 # Takes no arguments. Reads the export folder path from /etc/drift-collector/export-dir (root 0644, one
 # absolute path of [A-Za-z0-9._/-]) and prints, in the collector's section protocol: the export folder
 # (its own mtime, its listing, mtimes and sha256 of any plain nginx copies in it, and the sha256 of every
-# etc/nginx member of the newest config tarball, read through tar -xO so nothing is extracted to disk)
+# regular-file member of the newest config tarball that holds etc/nginx, read through tar -xO so nothing is
+# extracted to disk)
 # and the certbot renewal configs. Nothing else is read as root; nothing is written. A member or file
 # whose name looks like a credential or key material is never read.
 set -u
@@ -28,9 +29,9 @@ emit_file() {
 }
 
 # Regular-file members only (tar -tv lines starting with '-'): tar -xO prints nothing for a symlink, and the
-# sites-enabled links would otherwise hash as the empty input.
-nginx_member_hashes() {
-  tar -tvzf "$1" | grep '^-' | sed -E 's/^[^ ]+ +[^ ]+ +[^ ]+ +[^ ]+ +[^ ]+ +//' | grep -E '(^|/)etc/nginx/' | grep -v '/$' | while IFS= read -r m; do
+# sites-enabled links would otherwise hash as the empty input. Every directory of the tarball is read.
+member_hashes() {
+  tar -tvzf "$1" | grep '^-' | sed -E 's/^[^ ]+ +[^ ]+ +[^ ]+ +[^ ]+ +[^ ]+ +//' | grep -v '/$' | while IFS= read -r m; do
     if credential_shaped "$m"; then continue; fi
     h=$(tar -xOzf "$1" "$m" 2>/dev/null | sha256sum | cut -d' ' -f1)
     printf '%s  %s\n' "$h" "$m"
@@ -53,7 +54,7 @@ case $EXP in
       [ "$(stat -c %s -- "$t")" -le 268435456 ] || continue
       if tar -tzf "$t" 2>/dev/null | grep -qE '(^|/)etc/nginx/'; then newest=$t; break; fi
     done
-    if [ -n "$newest" ]; then section tarsha "$newest" nginx_member_hashes "$newest"; fi
+    if [ -n "$newest" ]; then section tarsha "$newest" member_hashes "$newest"; fi
     ;;
   *) printf '@@DRIFT@@ BEGIN lsd \n/etc/drift-collector/export-dir is not an absolute path\n@@DRIFT@@ END 2\n' ;;
 esac

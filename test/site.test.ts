@@ -40,7 +40,7 @@ describe("the replay page", () => {
     expect([...built.files.keys()].sort()).toEqual([".nojekyll", "data/index.json", "data/orphans.json", "data/proxy-split.json", "data/wildcard-no-real-ip.json", "index.html"]);
     for (const name of built.files.keys()) expect(existsSync(path.join(tmp, "out", name))).toBe(true);
     expect(built.index.examples.map((e) => [e.dir, e.findings])).toEqual([["proxy-split", 1], ["wildcard-no-real-ip", 1], ["orphans", 7]]);
-    expect(built.index.totals).toMatchObject({ examples: 3, findings: 9, verbs: { ESCALATE: 8, ADOPT: 1 } });
+    expect(built.index.totals).toMatchObject({ examples: 3, findings: 9, verbs: { HOLD: 9 } });
     expect(built.index.examples.every((e) => e.reproduced)).toBe(true);
   });
 
@@ -69,14 +69,15 @@ describe("the replay page", () => {
     expect(built.index.totals.checksRerun).toBe(checks);
   });
 
-  it("shows the real 16 April record: proxy_split, ESCALATE, referent_unchanged fails on its three pieces of evidence, exposed since the 21:12:47 proxied=true body, 190 days", () => {
+  it("shows the real 16 April record: proxy_split, HOLD under the policy, referent_unchanged fails on its three pieces of evidence, exposed since the 21:12:47 proxied=true body, 191 days", () => {
     const [f] = example("proxy-split").findings;
-    expect([f.class, f.verb]).toEqual(["proxy_split", "ESCALATE"]);
+    expect([f.class, f.verb]).toEqual(["proxy_split", "HOLD"]);
     const ru = f.checks.find((c) => c.template === "referent_unchanged")!;
     expect([ru.holds, ru.rowCount, ru.rows?.rows.length]).toEqual([false, 3, 3]);
     expect(ru.sql).toContain("FROM dns_record a");
     expect(f.sample?.match).toBe("same");
-    expect(f.exposure).toEqual({ since: "2026-04-16T21:12:47.270Z", days: 190, bound: "exact", source: "audit:evt-05fa48325110cdcb", still_open_in: "run-f9470e2f5f175899" });
+    // the slice's DNS run is the 21:20:58 UTC collection of 24 Oct 2026, 191 whole days after the body
+    expect(f.exposure).toEqual({ since: "2026-04-16T21:12:47.270Z", days: 191, bound: "exact", source: "audit:evt-05fa48325110cdcb", still_open_in: "run-de1564466df1d59b" });
     expect(f.fields.find((p) => p[0] === "finding id")?.[1]).toMatch(/^fnd-[0-9a-f]{16}$/);
   });
 
@@ -132,7 +133,7 @@ describe("the replay page", () => {
   });
 
   it("an example the pass does not reproduce is refused by name (run npm run examples); --allow-stale publishes it marked stale instead", async () => {
-    const dir = brokenExamples("stale", (fs) => { fs[0].verb = "HOLD"; });              // the checks still re-run to their counts; only the record as a whole differs
+    const dir = brokenExamples("stale", (fs) => { fs[0].verb = "ADOPT"; });              // the checks still re-run to their counts; only the record as a whole differs
     const out = path.join(tmp, "stale-out");
     await expect(buildSite({ examplesDir: dir, outDir: out, samplePath: null })).rejects.toThrow(SiteError);
     await expect(buildSite({ examplesDir: dir, outDir: out, samplePath: null })).rejects.toThrow(/refusing to publish: examples\/proxy-split\/findings\.json is stale: re-running the pass over the slice does not give the committed findings; run npm run examples/);

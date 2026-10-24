@@ -21,10 +21,10 @@ Neither host runs etckeeper or restic (survey, 24 Oct 2026). The backup artefact
 `backup-export.timer`, that writes `server-config-<date>.tar.gz` nightly into a folder:
 `/var/backups/export` on one host and `/home/<login>/backup-export` on the other (the login's own home,
 so the path is configuration, `LINUX_HOSTS` in `.env`, not source; nine days of tarballs on each at the
-time of the runs, beside application dumps written the same minute). The collector hashes the
-regular-file `etc/nginx` members of the newest tarball that holds any, on the host, through `tar -xO`
+time of the runs, beside application dumps written the same minute). The collector hashes every
+regular-file member of the newest tarball that holds `etc/nginx`, on the host, through `tar -xO`
 into `sha256sum`, so nothing is extracted to disk, and the hashes compare with the live files' `file`
-rows; symlink members (the `sites-enabled` links) are left out, because `tar -xO` prints nothing for a
+rows, the certbot renewal configs among them; symlink members (the `sites-enabled` links) are left out, because `tar -xO` prints nothing for a
 symlink and the empty input's hash would read as "every enabled site changed since the backup". Only
 that tarball's family (`server-config-*`) becomes backup snapshots, so an application dump 52 ms younger
 is never "the latest backup". The earlier etckeeper and restic requests are gone from this directory for
@@ -59,7 +59,7 @@ the agent holds equals `sha256sum` on the host. A file or tar member whose name,
 | vhost directories | `ls -l --time-style=full-iso` of `/etc/nginx/conf.d`, `sites-available`, `sites-enabled` (symlink targets shown) | no |
 | nginx files | `base64 -w0` of `/etc/nginx/nginx.conf`, every regular file in `conf.d` and `sites-available`, and every regular file they `include` under `/etc/nginx` (four rounds; a `sites-enabled` symlink is not read as a file, its target is); an include outside `/etc/nginx` (certbot's `options-ssl-nginx.conf`) is recorded as unresolved, not fetched | no, except one 0600 snippet on the sites-enabled host whose name is credential-shaped and is now skipped by name |
 | timers | `systemctl list-timers --all --no-pager` | no |
-| backup export | `ls -ld`, `ls -l`, `find -maxdepth 6 -readable -path '*nginx*'` with mtimes, `find ... -exec sha256sum` for plain copies, and `tar -tvzf` (regular-file lines only) + `tar -xOzf ... | sha256sum` per `etc/nginx` member of the newest `*.tar.gz`/`*.tgz` at most 256 MB | no on either host (both folders and tarballs are world-readable) |
+| backup export | `ls -ld`, `ls -l`, `find -maxdepth 6 -readable -path '*nginx*'` with mtimes, `find ... -exec sha256sum` for plain copies, and `tar -tvzf` (regular-file lines only) + `tar -xOzf ... | sha256sum` per regular-file member of the newest `*.tar.gz`/`*.tgz` that holds `etc/nginx`, at most 256 MB | no on either host (both folders and tarballs are world-readable) |
 | certbot renewals | `find /etc/letsencrypt/renewal -name '*.conf' -readable`, `base64 -w0` of each | no on either host (six and five configs read) |
 
 `drift-collect` runs the first seven as `drift-collector` and hands the last two to

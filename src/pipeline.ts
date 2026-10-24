@@ -37,38 +37,72 @@
 //            A survey finding has no previous observation, so its window is the audit log's reach
 //            (AUDIT_SPAN_SQL) up to the observation; its anchor is the nginx setting the row names, or
 //            the DNS record itself (object_id = record id) when the finding is about the record.
+//            [detectors] Then, over the latest run of each (tenant, surface, host) when it passes the gate
+//            and over the tenant's latest passing DNS run: every setting whose live value differs from its
+//            latest approval (drift_vs_approved, window from the approval to the observation); and over
+//            each such nginx run, every file the host's newest backup lacks or holds with other bytes
+//            (changed_since_backup, window from the backup to the observation).
 //   check    the default precondition policy for the class, bound from the finding and run through
 //            the catalogue; a parameter the finding cannot supply, or a check the SQL guard refuses,
 //            is a recorded rejection, not a guess: it escalates that one finding and the pass goes on.
-//   decide   every check holds and none was rejected -> ADOPT, as a candidate; anything else ->
-//            ESCALATE. HOLD needs a judge to bound it with an expiry, so a pass with no model never
-//            issues it. [stoprule] Between checks the stop rule (src/stoprule.ts) may end checking early;
-//            [exposure] for a finding on a DNS record the step dates its exposure (src/engine/world.ts).
-//            [memory] When the pass is given a TechnicianMemory (src/engine/memory.ts) the Decider recalls
-//            the technician's lessons for the finding first, by exact scope key: an accepted exception in
-//            force yields ADOPT with its expiry on the finding and a trace line naming the lesson; one that
-//            has lapsed re-raises the finding as ESCALATE ("exception lapsed"), whatever the checks say.
-//            The checks still run and are recorded either way; only the verb and the judge call change.
+//   decide   [policy] src/policy/decide.ts, in precedence order: the technician's exception, then the
+//            policy rule that governs the setting (policy_rule rows of the tenant and of "*", read once per
+//            tenant at the start of the pass, resolved per finding by src/policy/resolve.ts), then the
+//            default: every check holds and none was rejected -> ADOPT, as a candidate; anything else ->
+//            ESCALATE. A rule decides ADOPT, HOLD (with an expiry), ESCALATE, ROLLBACK or FIX from the
+//            finding's class, the setting's approval, the vault copies of the approved value with their
+//            latest validation and the probes of the pass on the names the object serves. Without a
+//            governing rule the verbs and the decide line are the default's. [stoprule] Between checks the
+//            stop rule (src/stoprule.ts) may end checking early; [exposure] for a finding on a DNS record
+//            the step dates its exposure (src/engine/world.ts). [memory] When the pass is given a
+//            TechnicianMemory (src/engine/memory.ts) the Decider recalls the technician's lessons for the
+//            finding first, by exact scope key: an accepted exception in force yields ADOPT with its expiry
+//            on the finding and a trace line naming the lesson; one that has lapsed re-raises the finding
+//            as ESCALATE ("exception lapsed"), whatever the checks or the policy say. The checks still run
+//            and are recorded either way. [ledger] Given a Ledger, the pass records one disposition per
+//            finding (src/ledger.ts) and, in the observe step, one referent_fingerprint per dns_name
+//            observation of each passing host run (src/data/fingerprint.ts). One decider line per pass
+//            counts the settings a locked rule governs that have no approved value, and the verbs.
 //   judge    skipped and traced as such: model: none; [stoprule] or "verdict cannot move" when the
 //            withdraw rule says no judge call would be worth spending, or when an exception settled it.
+//
+// Measured 24 Oct 2026 on sample/bundle.json (no policy_rule, approval, copy or probe rows): the 27 findings
+// of the hero query and the survey keep their classes, verbs and decide lines; changed_since_backup adds 11
+// (the certbot renewal configs under /etc/letsencrypt/renewal/, absent from each host's newest export), all
+// ESCALATE by the default; 0 locked settings without an approved value.
 
 import { createHash } from "node:crypto";
 import { defaultChecks, type FindingSummary, type RejectedCheck } from "./catalogue/select.ts";
 import { CATALOGUE, runCheck, type CheckResult, type FindingClass } from "./catalogue/templates.ts";
+import { fingerprintRows } from "./data/fingerprint.ts";
 import { DataLayerError, type DataLayer } from "./data/layer.ts";
 import {
-  auditSpan, hero, listRuns, objects, observationsOf, orphanRecords, orphanVhosts, proxiedWithoutRealIp, proxySplit,
-  resolutions, runComplete, wildcardWithoutRealIp,
+  approvedCopies, auditSpan, changedSinceBackup, driftVsApproved, hero, latestApprovals, listRuns, objects, observationsOf, orphanRecords, orphanVhosts,
+  policyRules, probesOfRun, proxiedWithoutRealIp, proxySplit, resolutions, runComplete, wildcardWithoutRealIp,
 } from "./data/queries.ts";
+import { dispositionId, type DecidedBy, type Disposition, type DispositionVerb, type PolicyRule } from "./data/rows.ts";
 import type { ExceptionLesson, TechnicianMemory } from "./engine/memory.ts";
 import { DriftWorld, recordExposure, type ExposureLine, type ExposureMeasure, type Observation } from "./engine/world.ts";
+import type { Ledger } from "./ledger.ts";
+// [policy] the Decider and the rule that governs a setting (src/policy/).
+import { NO_PROBE_RUN, decide, production, productionText, validCopy, type ApprovedValue, type CopyCandidate, type ExceptionState, type ProbeView } from "./policy/decide.ts";
+import { resolvePolicy } from "./policy/resolve.ts";
+import { PolicyRuleRow, issues } from "./policy/schema.ts";
 import type { Tracer } from "./trace.ts";
 // [stoprule] the verifier's stop rule and the withdraw rule before the judge (src/stoprule.ts).
 import { VERDICT_CANNOT_MOVE, countersSummary, earlyStopSummary, shouldStop, shouldWithdraw, zeroCounters, type StopCounters, type StopPolicy } from "./stoprule.ts";
 
 type Row = Record<string, string>;
 
-export type Verb = "ADOPT" | "ESCALATE";
+/** The five verbs a finding ends in; the default decides ADOPT or ESCALATE, a policy rule any of the five. */
+export type Verb = DispositionVerb;
+export const VERBS: readonly Verb[] = ["ADOPT", "HOLD", "ESCALATE", "ROLLBACK", "FIX"];
+
+/** [policy] What the Decider settled for the finding: the verb, one plain sentence, the expiry (every HOLD has one), who decided and under which rule. */
+export interface DispositionNote { verb: Verb; reason: string; expires_at: string | null; decided_by: DecidedBy; rule_id: string | null }
+
+/** The detail of a decide line the default settled: the default policy in one line. */
+export const DEFAULT_POLICY_DETAIL = "model: none; policy: every check holds -> ADOPT candidate, any fails or unbound -> ESCALATE, HOLD needs a judge";
 
 /** A host run and a DNS run belong to one pass only when they started within this of each other. */
 export const PASS_WINDOW_MS = 6 * 3600 * 1000;
@@ -94,6 +128,8 @@ export interface Finding {
   id: string;
   finding: FindingSummary;
   verb: Verb;
+  /** [policy] The Decider's disposition: the verb above, its reason, expiry, who decided and the rule. The ledger row carries the same fields. */
+  disposition: DispositionNote;
   /** FOUND-BUT-DIFFERENT as the World Model saw it: the referent's fingerprint at the previous and at the current observation. Hero findings only; a survey finding has no previous observation. */
   world?: WorldView;
   checks: CheckOutcome[];
@@ -128,6 +164,14 @@ export interface PassResult {
   verifier: StopCounters;
   /** [memory] What the Decider recalled; null when the pass was given no memory. */
   memory: MemoryCounters | null;
+  /** [policy] Findings per verb, every verb listed. */
+  verbs: Record<Verb, number>;
+  /** [policy] Settings of the pass's latest runs that a locked rule governs and that have no approved value on record. */
+  locked: number;
+  /** [policy] policy_rule rows read for the pass's tenants (their own and every "*" rule), the refused ones left out. */
+  rules: number;
+  /** [ledger] Rows the ledger wrote this pass; null when the pass was given no ledger. */
+  ledger: { dispositions: number; fingerprints: number } | null;
 }
 
 const nul = (s: string): string | null => (s === "" ? null : s);
@@ -147,13 +191,16 @@ function toObservation(o: Row, fingerprint: string | null): Observation {
 
 const sameSetting = (a: Row) => (b: Row): boolean => a.object_id === b.object_id && a.setting_path === b.setting_path;
 
-/** The DNS run among `candidates` nearest in time to `r`, same tenant, within PASS_WINDOW_MS; else undefined. */
-function nearestDns(candidates: Row[], r: Row): Row | undefined {
+/** The run of `surface` among `candidates` nearest in time to `r`, same tenant, within PASS_WINDOW_MS; else undefined. */
+function nearestRun(candidates: Row[], r: Row, surface: string): Row | undefined {
   const t = Date.parse(r.started_at);
   const gap = (d: Row): number => Math.abs(Date.parse(d.started_at) - t);
-  const best = candidates.filter((d) => d.tenant_id === r.tenant_id && d.surface === "cloudflare.dns").sort((a, b) => gap(a) - gap(b))[0];
+  const best = candidates.filter((d) => d.tenant_id === r.tenant_id && d.surface === surface).sort((a, b) => gap(a) - gap(b))[0];
   return best && gap(best) <= PASS_WINDOW_MS ? best : undefined;
 }
+
+/** The DNS run among `candidates` nearest in time to `r`, same tenant, within PASS_WINDOW_MS; else undefined. */
+const nearestDns = (candidates: Row[], r: Row): Row | undefined => nearestRun(candidates, r, "cloudflare.dns");
 
 export interface PassOptions {
   tracer?: Tracer;
@@ -163,7 +210,37 @@ export interface PassOptions {
   memory?: TechnicianMemory;
   /** [memory] The instant lessons are recalled at (ISO 8601 UTC); the memory's clock when absent. */
   at?: string;
+  /**
+   * [policy] Each disposition's decided_at and the base of every HOLD expiry (ISO 8601 UTC); the system clock when absent.
+   * scripts/sample.ts, scripts/examples.ts and scripts/build-site.ts pass the bundle's decisionInstant (src/data/instant.ts),
+   * so two passes over the same rows give the same findings, expiries included.
+   */
+  decidedAt?: string;
+  /** [ledger] Where the pass records its dispositions and referent fingerprints; nothing is written when absent. */
+  ledger?: Ledger;
 }
+
+const h12 = (h: string): string => h.replace(/^sha256:/, "").slice(0, 12);
+const earlier = (a: string, b: string): string => (a < b ? a : b);
+
+/** A policy_rule row as the DataLayer returns it (every value a string, NULL as "") back to its type; a row the schema refuses gives the reason. */
+function ruleOf(r: Row): PolicyRule | { refused: string } {
+  const row = {
+    rule_id: r.rule_id, tenant_id: r.tenant_id, surface: r.surface, object_glob: r.object_glob, setting_glob: r.setting_glob,
+    criticality: r.criticality, lock: Number(r.lock), on_drift: r.on_drift, on_no_copy: r.on_no_copy, hold_max_hours: Number(r.hold_max_hours),
+    alert: r.alert, psa_priority: r.psa_priority, version: Number(r.version), author: r.author, since: r.since, note: nul(r.note),
+  };
+  const p = PolicyRuleRow.safeParse(row);
+  return p.success ? (p.data as PolicyRule) : { refused: issues(p.error).join("; ") };
+}
+
+/** One copy row of APPROVED_COPIES_SQL as the Decider reads it. */
+const copyOf = (r: Row): CopyCandidate => ({
+  copy_id: r.copy_id, run_id: r.run_id, git_commit: r.git_commit, blob_sha256: r.blob_sha256, taken_at: r.taken_at, value_hash: r.value_hash,
+  validator: r.validator, result: r.result, missing_dependencies: r.missing_dependencies, validated_at: r.validated_at,
+});
+
+const NO_PROBES: ProbeView = { run_id: null, rows: [] };
 
 /** `fnd-` plus 16 hex of sha256 over the World Model's finding id: short enough to type, stable across passes. */
 export const shortFindingId = (worldFindingId: string): string => `fnd-${createHash("sha256").update(worldFindingId).digest("hex").slice(0, 16)}`;
@@ -176,12 +253,43 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
   const verifier = zeroCounters();
   const exposureCache = new Map<string, ExposureMeasure>();
   const recalled: MemoryCounters | null = memory ? { lessons: memory.lessons().length, applied: 0, lapsed: 0 } : null;
+  // [policy] every disposition of the pass carries one decided_at; [ledger] the rows go to the ledger at the end.
+  const decidedAt = new Date(opts.decidedAt ?? Date.now()).toISOString();
+  const dispositions: Disposition[] = [];
+  let fingerprints = 0;
 
   /** Why the tenant's audit log may not be consulted this pass, or null when its latest audit run passed the gate. Filled by the gate step. */
   const auditWithheld = new Map<string, string>();
 
-  /** check, decide, judge for one finding, whatever produced it; appends to findings. */
-  const assess = async (finding: FindingSummary, view: WorldView | undefined): Promise<void> => {
+  // [policy] The tenant's rules (read below, once per tenant), the probe rows of each probe run (read on first use), and the
+  // observations of each passing run the pass loaded; the Decider's inputs come from these and from one copy query per drift.
+  const rulesByTenant = new Map<string, PolicyRule[]>();
+  const probeRows = new Map<string, ProbeView["rows"]>();
+  const obsByRun = new Map<string, Row[]>();
+  let runs: Row[] = [];
+  let passingRuns: Row[] = [];
+
+  /** The passing probe run of the tenant nearest in time to the finding's run, within PASS_WINDOW_MS, with its rows; run_id null when there is none. */
+  const probesFor = async (finding: FindingSummary): Promise<ProbeView> => {
+    const own = runs.find((r) => r.run_id === finding.run_id);
+    const run = own ? nearestRun(passingRuns, own, "probe") : undefined;
+    if (!run) return NO_PROBES;
+    if (!probeRows.has(run.run_id)) {
+      const rows = objects(await probesOfRun(layer, { tenant_id: finding.tenant_id, run_id: run.run_id }, { tracer, agent: "decider" }));
+      probeRows.set(run.run_id, rows.map((p) => ({ kind: p.kind, target: p.target, status: p.status })));
+    }
+    return { run_id: run.run_id, rows: probeRows.get(run.run_id)! };
+  };
+
+  /** The redacted names the finding's object serves: a record's own name, or an nginx object's server_name values in the run. */
+  const servedNames = (finding: FindingSummary): string[] => {
+    if (finding.surface === "cloudflare.dns") return finding.dns_name ? [finding.dns_name] : [];
+    const obs = obsByRun.get(finding.run_id) ?? [];
+    return [...new Set(obs.filter((o) => o.object_id === finding.object_id && o.refers_to_type === "dns_name" && o.setting_path.includes(".server_name[")).map((o) => o.refers_to_id))].sort();
+  };
+
+  /** check, decide, judge for one finding, whatever produced it; appends to findings. `approved` is the setting's latest approval, which a drift_vs_approved row carries. */
+  const assess = async (finding: FindingSummary, view: WorldView | undefined, approved: ApprovedValue | null = null): Promise<void> => {
     const cls = finding.class;
     const setting = `${finding.setting_path} in ${finding.object_id}${finding.host ? ` on ${finding.host}` : ""}`;
     const selection = defaultChecks(finding);
@@ -239,7 +347,7 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     }
 
     const failing = checks.filter((c) => !c.holds).map((c) => c.template);
-    const policyVerb: Verb = checks.length > 0 && failing.length === 0 && rejected.length === 0 ? "ADOPT" : "ESCALATE";
+    const policyVerb: "ADOPT" | "ESCALATE" = checks.length > 0 && failing.length === 0 && rejected.length === 0 ? "ADOPT" : "ESCALATE";
     const policyWhy = policyVerb === "ADOPT"
       ? `all ${checks.length} preconditions hold; candidate pending a judge`
       : [
@@ -256,12 +364,24 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     const applied = recall?.applicable.find((l): l is ExceptionLesson => l.kind === "exception") ?? null;
     const lapsed = applied ? null : (recall?.expired.filter((l): l is ExceptionLesson => l.kind === "exception").at(-1) ?? null);
     const lesson = applied ?? lapsed;
-    const verb: Verb = applied ? "ADOPT" : lapsed ? "ESCALATE" : policyVerb;
-    const why = applied
-      ? `accepted exception ${applied.id} holds until ${applied.expiresAt} (${applied.reason}); the checks alone would say ${policyVerb}`
-      : lapsed
-        ? `exception lapsed: ${lapsed.id} expired ${lapsed.expiresAt}; re-raised to the technician, the checks alone would say ${policyVerb}`
-        : policyWhy;
+    // [policy] the rule that governs the setting, and what the Decider needs to weigh it: the vault copies of the approved
+    // value (a drift under a locked or rollback rule), the probes of the pass, the names the object serves. No rule, or an
+    // exception that settles it, and nothing more is read.
+    const rule = resolvePolicy(rulesByTenant.get(finding.tenant_id) ?? [], finding);
+    const exceptionState: ExceptionState = applied
+      ? { state: "applied", lesson: applied.id, expires_at: applied.expiresAt, reason: applied.reason }
+      : lapsed ? { state: "lapsed", lesson: lapsed.id, expires_at: lapsed.expiresAt, reason: lapsed.reason } : { state: "none" };
+    const weigh = rule !== null && lesson === null;
+    const copies = weigh && cls === "drift_vs_approved" && approved && (rule.lock === 1 || rule.on_drift === "rollback")
+      ? objects(await approvedCopies(layer, {
+        tenant_id: finding.tenant_id, surface: finding.surface, host: finding.host ?? "", object_id: finding.object_id, setting_path: finding.setting_path, approved_hash: approved.value_hash,
+      }, { tracer, agent: "decider" })).map(copyOf)
+      : [];
+    const probes = weigh ? await probesFor(finding) : NO_PROBES;
+    const serves = weigh ? servedNames(finding) : [];
+    const decision = decide({ finding: { class: cls }, rule, exception: exceptionState, checks: { verb: policyVerb, why: policyWhy }, approved, copies, probes, serves, decidedAt });
+    const verb: Verb = decision.verb;
+    const why = decision.reason;
     if (applied && recalled) recalled.applied += 1;
     if (lapsed && recalled) recalled.lapsed += 1;
     if (applied) {
@@ -278,11 +398,20 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
         detail: `lesson ${lapsed.id} on ${lapsed.scopeKey} (${lapsed.findingClass}), accepted by ${lapsed.provenance.by} ${lapsed.recordedAt}: ${lapsed.reason}; the exception is not applied; model: none`,
       });
     }
+    // [policy] a rule's decide line names the rule, what the checks alone say, production and the copy weighed; the default's is the default policy.
+    const prod = weigh ? production(probes, serves) : null;
+    const copy = approved ? validCopy(copies, approved.value_hash) : null;
+    const basis = weigh && rule
+      ? `model: none; policy: ${rule.rule_id} (${rule.surface} ${rule.object_glob} ${rule.setting_glob} v${rule.version}: ${rule.criticality}, lock ${rule.lock}, on_drift ${rule.on_drift}, on_no_copy ${rule.on_no_copy}, hold ${rule.hold_max_hours} h); `
+        + `the checks alone say ${policyVerb}; ${productionText(prod!)}`
+        + (approved ? `; approved ${h12(approved.value_hash)}, ${copies.length} copy row(s), ${copy ? `valid copy ${copy.copy_id} at ${copy.git_commit.slice(0, 8)}` : "no valid copy"}` : "")
+      : DEFAULT_POLICY_DETAIL;
     tracer?.emit({
       agent: "decider", action: "decide", status: "ok", input_summary: `${cls} ${setting}`, output_summary: `${verb}: ${why}`,
-      detail: "model: none; policy: every check holds -> ADOPT candidate, any fails or unbound -> ESCALATE, HOLD needs a judge"
+      detail: basis
         + (earlyStop ? `; earlyStop: true (${earlyStop.reason})` : "") // [stoprule] the decide step receives { earlyStop, reason }
-        + (lesson ? `; exception: ${lesson.id} ${applied ? "applied" : "lapsed"}` : ""), // [memory] and the lesson that settled it
+        + (lesson ? `; exception: ${lesson.id} ${applied ? "applied" : "lapsed"}` : "") // [memory] and the lesson that settled it
+        + (lesson && rule ? `; policy: ${rule.rule_id} governs the setting, the exception decides` : ""),
     });
     // [exposure] the decide step records the exposure line: SQL dates it, the World Model keeps it as an open edge.
     const exposure = await recordExposure(layer, world, finding, { tracer, cache: exposureCache });
@@ -302,15 +431,40 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     const exception: ExceptionNote | undefined = lesson
       ? { lesson: lesson.id, status: applied ? "applied" : "lapsed", expires_at: lesson.expiresAt, scope_key: lesson.scopeKey, reason: lesson.reason, accepted_by: lesson.provenance.by, accepted_at: lesson.recordedAt }
       : undefined;
+    const id = shortFindingId(world.findingId(finding));
+    const disposition: DispositionNote = { verb, reason: why, expires_at: decision.expires_at, decided_by: decision.decided_by, rule_id: decision.rule_id };
+    // [ledger] one row per finding per pass, about the live value the decision is about.
+    dispositions.push({
+      disposition_id: dispositionId(finding.tenant_id, finding.surface, finding.host, finding.object_id, finding.setting_path, finding.value_hash, id, finding.run_id),
+      tenant_id: finding.tenant_id, surface: finding.surface, host: finding.host, object_id: finding.object_id, setting_path: finding.setting_path,
+      value_hash: finding.value_hash, ...disposition, finding_id: id, run_id: finding.run_id, decided_at: decidedAt,
+    });
     findings.push({
-      id: shortFindingId(world.findingId(finding)),
-      finding, verb, ...(view ? { world: view } : {}), checks, rejected, judge: "skipped",
+      id,
+      finding, verb, disposition, ...(view ? { world: view } : {}), checks, rejected, judge: "skipped",
       ...(earlyStop ? { earlyStop } : {}), ...(withdraw.withdraw ? { judgeWithheld: withdraw.reason } : {}), ...(exposure ? { exposure } : {}),
       ...(exception ? { exception } : {}),
     });
   };
 
-  const runs = objects(await listRuns(layer, { tracer, agent: "observer" }));
+  runs = objects(await listRuns(layer, { tracer, agent: "observer" }));
+
+  // [policy] the tenant's rules and every "*" rule, once per tenant, at the start of the pass; a row the policy schema refuses is
+  // left out and traced, so only rules the schema accepts decide.
+  let rulesRead = 0;
+  for (const tenant of [...new Set(runs.map((r) => r.tenant_id))].sort()) {
+    const kept: PolicyRule[] = [];
+    for (const row of objects(await policyRules(layer, tenant, { tracer, agent: "decider" }))) {
+      const rule = ruleOf(row);
+      if ("refused" in rule) {
+        tracer?.emit({ agent: "decider", action: "check", status: "not_checked", input_summary: `policy_rule ${row.rule_id}`, output_summary: `policy rule ${row.rule_id} refused for ${tenant}; left out of this pass`, detail: rule.refused });
+        continue;
+      }
+      kept.push(rule);
+    }
+    rulesByTenant.set(tenant, kept);
+    rulesRead += kept.length;
+  }
 
   // gate
   const gatedOut = new Set<string>();
@@ -325,6 +479,7 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     });
   }
   const passing = runs.filter((r) => !gatedOut.has(r.run_id));
+  passingRuns = passing;
   // The audit surface's gate: audit_event rows carry no run_id, so a failing audit run withholds the audit templates per tenant.
   for (const tenant of new Set(runs.map((r) => r.tenant_id))) {
     const latestAudit = runs.filter((r) => r.tenant_id === tenant && r.surface === "cloudflare.audit").at(-1);
@@ -340,7 +495,6 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
   const gatedDnsFor = (r: Row): Row | undefined => nearestDns(runs.filter((x) => gatedOut.has(x.run_id)), r);
 
   // observe
-  const obsByRun = new Map<string, Row[]>();
   const resByRun = new Map<string, Row[]>();
   let observed = 0;
   for (const r of passing.filter((x) => x.host !== "")) {
@@ -352,6 +506,8 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     const fp = new Map<string, string[]>();
     for (const x of res) fp.set(x.obs_id, [...(fp.get(x.obs_id) ?? []), x.content]);
     for (const o of obs) await world.observe(toObservation(o, fp.get(o.obs_id)?.sort().join(",") ?? null));
+    // [ledger] the same fingerprints as rows: what each dns_name setting of the run resolved to in its DNS run.
+    if (opts.ledger && dns) fingerprints += await opts.ledger.recordFingerprints(fingerprintRows(obs, res, dns));
     observed += obs.length;
     tracer?.emit({
       agent: "observer", action: "observe", status: "ok", input_summary: r.run_id,
@@ -500,6 +656,99 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     }
   }
 
+  // [detectors] drift from the latest approval and change since the newest backup, over the latest run of each (tenant,
+  // surface, host) that passed the gate, then drift over each tenant's latest passing DNS run (one observation per record field).
+  const dnsObs = new Map<string, Row[]>();
+  const dnsObservations = async (runId: string, agent: string): Promise<Row[]> => {
+    if (!dnsObs.has(runId)) dnsObs.set(runId, objects(await observationsOf(layer, runId, { tracer, agent })));
+    return dnsObs.get(runId)!;
+  };
+  const driftFinding = (row: Row, run: Row, dnsRunId: string | null, recordName: string | null): FindingSummary => {
+    const isRecord = row.surface === "cloudflare.dns";
+    const what = isRecord ? `${row.setting_path} of record ${row.object_id}${recordName ? ` (${recordName})` : ""}` : `${row.setting_path} in ${row.object_id}${row.host ? ` on ${row.host}` : ""}`;
+    const shown = row.setting_path !== "file" && row.value_redacted && row.value_redacted.length <= 80 ? `${row.value_redacted} (${h12(row.value_hash)})` : h12(row.value_hash);
+    const summary = `${what} is ${shown}, and its latest approval, ${row.approved_at}${row.approved_by ? ` by ${row.approved_by}` : ""}, is ${h12(row.approved_hash)}: the live value drifted from the approved one`;
+    return {
+      class: "drift_vs_approved", tenant_id: run.tenant_id, run_id: run.run_id, surface: row.surface, host: nul(row.host),
+      object_id: row.object_id, setting_path: row.setting_path, value_hash: row.value_hash,
+      // a file's value is its body: the hash names it, so the finding carries no copy of the text
+      value_redacted: row.setting_path === "file" ? null : nul(row.value_redacted),
+      refers_to_type: nul(row.refers_to_type), refers_to_id: nul(row.refers_to_id),
+      dns_name: isRecord ? recordName : null,
+      resolves_to: isRecord && row.setting_path === "content" && row.refers_to_type === "ip" ? row.refers_to_id : null,
+      resource_id: isRecord ? row.object_id : null, dns_run_id: isRecord ? run.run_id : dnsRunId,
+      since: earlier(row.approved_at, row.observed_at), until: row.observed_at, summary,
+    };
+  };
+  const approvalOf = (row: Row): ApprovedValue => ({ value_hash: row.approved_hash, approved_at: row.approved_at, approved_by: nul(row.approved_by) });
+
+  for (const group of groups.values()) {
+    const latest = group[group.length - 1];
+    if (gatedOut.has(latest.run_id)) continue;
+    const dns = dnsFor(latest);
+    const where = `${latest.surface} ${latest.host}`;
+    const drift = objects(await driftVsApproved(layer, { tenant_id: latest.tenant_id, run_id: latest.run_id }, surveyOpts));
+    tracer?.emit({ agent: "detector", action: "detect", status: "ok", input_summary: `drift_vs_approved ${latest.run_id}`, output_summary: `${where}: ${drift.length} setting(s) drifted from their latest approval`, detail: "model: none" });
+    for (const row of drift) {
+      const finding = driftFinding(row, latest, dns?.run_id ?? null, null);
+      tracer?.emit({ agent: "detector", action: "detect", status: "ok", input_summary: `${row.setting_path} in ${row.object_id} on ${row.host}`, output_summary: `drift_vs_approved: ${finding.summary}`, detail: "model: none" });
+      await assess(finding, undefined, approvalOf(row));
+    }
+    if (latest.surface !== "linux.nginx") continue;
+    const backup = objects(await changedSinceBackup(layer, { tenant_id: latest.tenant_id, run_id: latest.run_id, host: latest.host }, surveyOpts));
+    tracer?.emit({ agent: "detector", action: "detect", status: "ok", input_summary: `changed_since_backup ${latest.run_id}`, output_summary: `${where}: ${backup.length} file(s) the host's newest backup lacks or holds with other bytes`, detail: "model: none" });
+    for (const row of backup) {
+      const summary = row.backup_hash === ""
+        ? `${row.object_id} on ${row.host} is absent from the host's newest backup (${row.snapshot_id}, taken ${row.taken_at}): a restore from that backup holds no copy of this file`
+        : `${row.object_id} on ${row.host} is ${h12(row.value_hash)} and its copy in the host's newest backup (${row.snapshot_id}, taken ${row.taken_at}) is ${h12(row.backup_hash)}: the live file and the backup copy differ`;
+      tracer?.emit({ agent: "detector", action: "detect", status: "ok", input_summary: `${row.setting_path} in ${row.object_id} on ${row.host}`, output_summary: `changed_since_backup: ${summary}`, detail: "model: none" });
+      await assess({
+        class: "changed_since_backup", tenant_id: latest.tenant_id, run_id: latest.run_id, surface: latest.surface, host: row.host,
+        object_id: row.object_id, setting_path: row.setting_path, value_hash: row.value_hash, value_redacted: null,
+        refers_to_type: null, refers_to_id: null, dns_name: null, resolves_to: null, resource_id: null, dns_run_id: dns?.run_id ?? null,
+        since: earlier(row.taken_at, row.observed_at), until: row.observed_at, summary,
+      }, undefined);
+    }
+  }
+
+  for (const [tenant, dns] of latestDns) {
+    const drift = objects(await driftVsApproved(layer, { tenant_id: tenant, run_id: dns.run_id }, surveyOpts));
+    tracer?.emit({ agent: "detector", action: "detect", status: "ok", input_summary: `drift_vs_approved ${dns.run_id}`, output_summary: `cloudflare.dns: ${drift.length} record field(s) drifted from their latest approval`, detail: "model: none" });
+    if (!drift.length) continue;
+    const names = new Map((await dnsObservations(dns.run_id, "detector")).filter((o) => o.setting_path === "name").map((o) => [o.object_id, o.value_redacted]));
+    for (const row of drift) {
+      const finding = driftFinding(row, dns, dns.run_id, names.get(row.object_id) || null);
+      tracer?.emit({ agent: "detector", action: "detect", status: "ok", input_summary: `${row.setting_path} of record ${row.object_id}`, output_summary: `drift_vs_approved: ${finding.summary}`, detail: "model: none" });
+      await assess(finding, undefined, approvalOf(row));
+    }
+  }
+
+  // [policy] the settings of the pass's latest passing runs that a locked rule governs and that have no approved value on
+  // record: what a locked rule has nothing to roll back to. Counted, one line per pass, no finding.
+  let locked = 0;
+  const keyOf = (o: Row): string => [o.surface, o.host, o.object_id, o.setting_path].join("\u001f");
+  for (const [tenant, rules] of rulesByTenant) {
+    if (!rules.some((r) => r.lock === 1)) continue;
+    const approvals = new Set(objects(await latestApprovals(layer, tenant, { tracer, agent: "decider" })).map(keyOf));
+    const settings: Row[] = [];
+    for (const group of groups.values()) {
+      const latest = group[group.length - 1];
+      if (latest.tenant_id === tenant && !gatedOut.has(latest.run_id)) settings.push(...(obsByRun.get(latest.run_id) ?? []));
+    }
+    const dns = latestDns.get(tenant);
+    if (dns) settings.push(...await dnsObservations(dns.run_id, "decider"));
+    for (const o of settings) {
+      const rule = resolvePolicy(rules, { tenant_id: o.tenant_id, surface: o.surface, object_id: o.object_id, setting_path: o.setting_path });
+      if (rule?.lock === 1 && !approvals.has(keyOf(o))) locked += 1;
+    }
+  }
+
+  // [ledger] one disposition per finding of the pass.
+  const written = opts.ledger ? await opts.ledger.record(dispositions) : null;
+  const verbs = Object.fromEntries(VERBS.map((v) => [v, findings.filter((f) => f.verb === v).length])) as Record<Verb, number>;
+  const decidedBy = (d: DecidedBy): number => findings.filter((f) => f.disposition.decided_by === d).length;
+  const probeRuns = passing.filter((r) => r.surface === "probe").map((r) => r.run_id);
+
   // [stoprule] one summary line per pass; stopCounters reads the same numbers back from the stop and judge lines.
   tracer?.emit({ agent: "decider", action: "triage", status: "ok", input_summary: "stop rule", output_summary: countersSummary(verifier), detail: "model: none" });
   // [memory] one summary line per pass when a memory was consulted: what it held and what the Decider did with it.
@@ -510,5 +759,17 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
       detail: `${memory!.directory ? "local store" : "in-memory store"}; recall by exact scope key, never by similarity; model: none`,
     });
   }
-  return { runs: runs.length, gatedOut: [...gatedOut], observed, findings, verifier, memory: recalled };
+  // [policy] one line per pass: what the locked rules have no approved value for, the verbs, who decided, the probes and the ledger.
+  tracer?.emit({
+    agent: "decider", action: "triage", status: "ok", input_summary: "policy",
+    output_summary: `locked settings without an approved value: ${locked}`,
+    detail: `${rulesRead} policy rule(s) read; verbs ${VERBS.filter((v) => verbs[v] > 0).map((v) => `${v} ${verbs[v]}`).join(", ") || "none"}; `
+      + `decided by policy ${decidedBy("policy")}, operator ${decidedBy("operator")}, default ${decidedBy("default")}; `
+      + `${probeRuns.length ? `probe run(s) ${probeRuns.join(", ")}` : NO_PROBE_RUN}; `
+      + `${written === null ? "no ledger" : `ledger: ${written} disposition(s) and ${fingerprints} referent fingerprint(s) written`}; model: none`,
+  });
+  return {
+    runs: runs.length, gatedOut: [...gatedOut], observed, findings, verifier, memory: recalled,
+    verbs, locked, rules: rulesRead, ledger: written === null ? null : { dispositions: written, fingerprints },
+  };
 }

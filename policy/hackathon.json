@@ -1,0 +1,23 @@
+{
+  "version": 2,
+  "author": "operator",
+  "since": "2026-10-25T00:00:00.000Z",
+  "tenant": "*",
+  "rules": [
+    { "surface": "linux.nginx", "object_glob": "/etc/nginx/conf.d/*.conf", "setting_glob": "file", "criticality": "critical", "lock": 1, "on_drift": "rollback", "on_no_copy": "investigate_ticket", "hold_max_hours": 24, "alert": "on_fix", "psa_priority": "P1", "note": "a served vhost file is restored to its approved copy when it drifts" },
+    { "surface": "linux.nginx", "object_glob": "/etc/nginx/sites-available/*", "setting_glob": "file", "criticality": "critical", "lock": 1, "on_drift": "rollback", "on_no_copy": "investigate_ticket", "hold_max_hours": 24, "alert": "on_fix", "psa_priority": "P1" },
+    { "surface": "linux.nginx", "object_glob": "/etc/nginx/nginx.conf", "setting_glob": "file", "criticality": "critical", "lock": 1, "on_drift": "rollback", "on_no_copy": "investigate_ticket", "hold_max_hours": 24, "alert": "always", "psa_priority": "P1" },
+    { "surface": "linux.nginx", "object_glob": "/etc/nginx/conf.d/*.conf.*", "setting_glob": "**", "criticality": "low", "lock": 0, "on_drift": "adopt", "on_no_copy": "adopt", "hold_max_hours": 0, "alert": "never", "psa_priority": "P4", "note": "dated copies beside a live file" },
+    { "surface": "linux.nginx", "object_glob": "**/*.bak*", "setting_glob": "**", "criticality": "low", "lock": 0, "on_drift": "adopt", "on_no_copy": "adopt", "hold_max_hours": 0, "alert": "never", "psa_priority": "P4" },
+    { "surface": "linux.nginx", "object_glob": "**/*.pre-symlink*", "setting_glob": "**", "criticality": "low", "lock": 0, "on_drift": "adopt", "on_no_copy": "adopt", "hold_max_hours": 0, "alert": "never", "psa_priority": "P4" },
+    { "surface": "linux.nginx", "object_glob": "/etc/nginx/sites-available/*.bak*", "setting_glob": "**", "criticality": "low", "lock": 0, "on_drift": "adopt", "on_no_copy": "adopt", "hold_max_hours": 0, "alert": "never", "psa_priority": "P4" },
+    { "surface": "linux.nginx", "object_glob": "/etc/nginx/sites-available/*.pre-symlink*", "setting_glob": "**", "criticality": "low", "lock": 0, "on_drift": "adopt", "on_no_copy": "adopt", "hold_max_hours": 0, "alert": "never", "psa_priority": "P4" },
+    { "surface": "linux.nginx", "object_glob": "/etc/nginx/sites-available/*.orig", "setting_glob": "**", "criticality": "low", "lock": 0, "on_drift": "adopt", "on_no_copy": "adopt", "hold_max_hours": 0, "alert": "never", "psa_priority": "P4" },
+    { "surface": "linux.nginx", "object_glob": "/etc/nginx/conf.d/*.bak*", "setting_glob": "**", "criticality": "low", "lock": 0, "on_drift": "adopt", "on_no_copy": "adopt", "hold_max_hours": 0, "alert": "never", "psa_priority": "P4" },
+    { "surface": "linux.nginx", "object_glob": "**", "setting_glob": "server[*].real_ip", "criticality": "high", "lock": 0, "on_drift": "hold", "on_no_copy": "ticket", "hold_max_hours": 72, "alert": "never", "psa_priority": "P3" },
+    { "surface": "cloudflare.dns", "object_glob": "*", "setting_glob": "content", "criticality": "critical", "lock": 1, "on_drift": "rollback", "on_no_copy": "investigate_ticket", "hold_max_hours": 4, "alert": "always", "psa_priority": "P1", "note": "where a name points" },
+    { "surface": "cloudflare.dns", "object_glob": "*", "setting_glob": "proxied", "criticality": "critical", "lock": 1, "on_drift": "rollback", "on_no_copy": "investigate_ticket", "hold_max_hours": 4, "alert": "always", "psa_priority": "P1" },
+    { "surface": "cloudflare.dns", "object_glob": "*", "setting_glob": "ttl", "criticality": "normal", "lock": 0, "on_drift": "adopt", "on_no_copy": "adopt", "hold_max_hours": 0, "alert": "never", "psa_priority": "P4" },
+    { "surface": "*", "object_glob": "**", "setting_glob": "**", "criticality": "normal", "lock": 0, "on_drift": "hold", "on_no_copy": "ticket", "hold_max_hours": 72, "alert": "never", "psa_priority": "P3", "note": "everything else is held with an expiry" }
+  ]
+}

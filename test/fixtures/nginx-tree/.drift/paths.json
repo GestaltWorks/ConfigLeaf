@@ -1,0 +1,6 @@
+{
+  "/etc/nginx/conf.d/host-aaaaaa.tld.conf": "/etc/nginx/conf.d/host-aaaaaa.tld.conf",
+  "/etc/nginx/conf.d/host-bbbbbb.tld.conf": "/etc/nginx/conf.d/host-bbbbbb.tld.conf",
+  "/etc/nginx/mime.types": "/etc/nginx/mime.types",
+  "/etc/nginx/nginx.conf": "/etc/nginx/nginx.conf"
+}

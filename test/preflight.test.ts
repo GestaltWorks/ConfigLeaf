@@ -1,4 +1,4 @@
-// Pre-flight over the recorded bundle (sample/bundle.json, the real estate redacted), model: none. The
+// Pre-flight over the recorded bundle (test/fixtures/recorded-bundle.json, the export of the 07:58 UTC collection of 24 Oct 2026: the real estate redacted), model: none. The
 // verdicts here are what the simulation computed when the tests were written, not targets: a proposal
 // binds or is rejected by the rows, the derived table applies the change as SQL on both engines, and the
 // pass's own findings in the two worlds decide GO, NO-GO, GO-IF or ESCALATE. Nothing is written: the
@@ -17,7 +17,7 @@ import { dnsRecordOverlay, realIpOverlay, simulatedHash } from "../src/preflight
 import { PREREQUISITES, type Prerequisite } from "../src/preflight/prerequisites.ts";
 import { ProposedChange, parseProposal } from "../src/preflight/proposal.ts";
 import { MAX_ITERATIONS, describeVerdict, findingKey, runPreflight, type PreflightResult } from "../src/preflight/run.ts";
-import recorded from "../sample/bundle.json" with { type: "json" };
+import recorded from "./fixtures/recorded-bundle.json" with { type: "json" };
 import a from "../examples/proposals/a-unproxy-www.json" with { type: "json" };
 import b from "../examples/proposals/b-replay-16-april-proxied.json" with { type: "json" };
 import c from "../examples/proposals/c-vhost-real-ip.json" with { type: "json" };
@@ -197,7 +197,7 @@ describe("overlay: derived tables the guard accepts, identical on both engines, 
     for (const p of [a, c, d, proxyClub]) await runPreflight(p, layer, skip);
     const after = await runPass(layer, { world: new DriftWorld("leak_after") });
     expect(JSON.stringify(after)).toBe(JSON.stringify(before));
-    expect(after.findings).toHaveLength(27);
+    expect(after.findings).toHaveLength(38);
     expect(objects(await layer.run(`SELECT proxied FROM {{t:dns_record}} WHERE run_id = {{p:r}} AND record_id = {{p:id}}`, { r: DNS_RUN, id: WWW_RECORD }))).toEqual([{ proxied: "1" }]);
     expect(objects(await layer.run(`SELECT value_redacted FROM {{t:observation}} WHERE run_id = {{p:r}} AND object_id = {{p:o}} AND setting_path LIKE '%.real_ip' ORDER BY setting_path`, { r: SITES_RUN, o: QUEST_FILE }))).toEqual([{ value_redacted: "absent" }, { value_redacted: "absent" }]);
   });
@@ -209,7 +209,7 @@ describe("verdicts on the recorded bundle (what the simulation computed; not tar
   beforeAll(async () => {
     layer = await layerOf();
     baseline = await runPass(layer, { world: new DriftWorld("preflight_verdicts_baseline") });
-    expect(baseline.findings).toHaveLength(27);
+    expect(baseline.findings).toHaveLength(38);
   });
 
   it("(a) un-proxy the www record: GO, removes the proxy_split and the two proxied_without_real_ip findings on its vhost, adds none", async () => {
@@ -217,8 +217,8 @@ describe("verdicts on the recorded bundle (what the simulation computed; not tar
     expect(r.verdict).toBe("GO");
     expect(r.invalid).toBe(false);
     expect(r.bound?.change).toBe(`proxied of dns_record ${WWW_RECORD} (${WWW_NAME}, CNAME, zone ${APEX_NAME}) in run ${DNS_RUN}: 1 -> 0`);
-    expect(r.baseline).toEqual({ runs: 4, gated_out: [], observed: recorded.observation.length, findings: 27 });
-    expect(r.simulations.map((s) => [s.iteration, s.findings, s.added.length, s.removed.length])).toEqual([[0, 24, 0, 3]]);
+    expect(r.baseline).toEqual({ runs: 4, gated_out: [], observed: recorded.observation.length, findings: 38 });
+    expect(r.simulations.map((s) => [s.iteration, s.findings, s.added.length, s.removed.length])).toEqual([[0, 35, 0, 3]]);
     expect(classes(r.removed)).toEqual(["proxied_without_real_ip", "proxied_without_real_ip", "proxy_split"]);
     expect(r.removed.map((f) => f.key)).toEqual([
       `proxy_split|${T}||${WWW_RECORD}|proxied|${WWW_NAME}|${WWW_RECORD}`,
@@ -239,8 +239,8 @@ describe("verdicts on the recorded bundle (what the simulation computed; not tar
     const r = await runPreflight(b, layer, { baseline, ...skip });
     expect(r.verdict).toBe("GO");
     expect(r.bound?.change).toMatch(/: 1 -> 1$/);
-    expect(r.simulations).toEqual([{ iteration: 0, steps: [], findings: 27, added: [], removed: [] }]);
-    expect(r.reason).toBe("the proposed value is already the recorded one; the change alters no finding (27 before and after)");
+    expect(r.simulations).toEqual([{ iteration: 0, steps: [], findings: 38, added: [], removed: [] }]);
+    expect(r.reason).toBe("the proposed value is already the recorded one; the change alters no finding (38 before and after)");
     expect(r.judge).toMatchObject({ status: "skipped", target: null, claim: null, reason: "the change removes no finding; there is no claim whose falsifier could fire" });
     expect(describeVerdict(r)).toContain("The proposed value is already the recorded one");
   });
@@ -248,7 +248,7 @@ describe("verdicts on the recorded bundle (what the simulation computed; not tar
   it("(c) trusted ranges on the vhost that serves www: GO, removes the two proxied_without_real_ip findings on its blocks, adds none", async () => {
     const r = await runPreflight(c, layer, { baseline, ...skip });
     expect(r.verdict).toBe("GO");
-    expect(r.simulations.map((s) => [s.findings, s.added.length, s.removed.length])).toEqual([[25, 0, 2]]);
+    expect(r.simulations.map((s) => [s.findings, s.added.length, s.removed.length])).toEqual([[36, 0, 2]]);
     expect(r.removed.map((f) => [f.class, f.verb])).toEqual([["proxied_without_real_ip", "ADOPT"], ["proxied_without_real_ip", "ADOPT"]]);
     expect(Object.keys(r.overlays)).toEqual(["observation"]);
     expect(r.overlays.observation).toContain(`setting_path IN ('server[${APEX_NAME}:443].real_ip', 'server[${APEX_NAME}:80].real_ip') THEN 'trusted:15 header:CF-Connecting-IP scope:server'`);
@@ -258,7 +258,7 @@ describe("verdicts on the recorded bundle (what the simulation computed; not tar
     const r = await runPreflight(d, layer, { baseline, ...skip });
     expect(r.verdict).toBe("NO-GO");
     expect(r.bound?.change).toBe(`content of dns_record ${APEX_RECORD} (${APEX_NAME}, A, zone ${APEX_NAME}) in run ${DNS_RUN}: ip-6fb86d -> 203.0.113.9`);
-    expect(r.simulations.map((s) => [s.findings, s.added.length, s.removed.length])).toEqual([[27, 2, 2]]);
+    expect(r.simulations.map((s) => [s.findings, s.added.length, s.removed.length])).toEqual([[38, 2, 2]]);
     expect(r.added.map((f) => [f.class, f.verb])).toEqual([["dns_change", "ESCALATE"], ["dns_change", "ESCALATE"]]);
     expect(r.added[0].summary).toBe(`server[${APEX_NAME}:443].server_name[${APEX_NAME}] in ${QUEST_FILE} on ${SITES_HOST} points at ${APEX_NAME}, which resolves to 203.0.113.9, an address not in the inventory`);
     expect(classes(r.removed)).toEqual(["proxied_without_real_ip", "proxied_without_real_ip"]);
@@ -273,7 +273,7 @@ describe("verdicts on the recorded bundle (what the simulation computed; not tar
     const r = await runPreflight(proxyClub, layer, { tracer, baseline, ...skip });
     expect(r.verdict).toBe("GO-IF");
     expect(r.bound?.change).toBe(`proxied of dns_record c3ab0f5df42a331a48ba064687931ce7 (${CLUB_NAME}, A, zone ${CLUB_NAME}) in run ${DNS_RUN}: 0 -> 1`);
-    expect(r.simulations.map((s) => [s.iteration, s.steps, s.findings, s.added.length, s.removed.length])).toEqual([[0, [], 29, 2, 0], [1, ["add_real_ip_block"], 26, 0, 1]]);
+    expect(r.simulations.map((s) => [s.iteration, s.steps, s.findings, s.added.length, s.removed.length])).toEqual([[0, [], 40, 2, 0], [1, ["add_real_ip_block"], 37, 0, 1]]);
     expect(r.simulations[0].added.map((f) => f.key)).toEqual([
       `proxied_without_real_ip|${T}|${CONFD_HOST}|${CLUB_FILE}|server[host-c9c1ae.club:443].real_ip|${CLUB_NAME}|c3ab0f5df42a331a48ba064687931ce7`,
       `proxied_without_real_ip|${T}|${CONFD_HOST}|${CLUB_FILE}|server[host-c9c1ae.club:80].real_ip|${CLUB_NAME}|c3ab0f5df42a331a48ba064687931ce7`,
@@ -333,7 +333,7 @@ describe("verdicts on the recorded bundle (what the simulation computed; not tar
   it("negative control: a proposal that sets a value to what it already is yields the baseline's findings, key for key", async () => {
     const r = await runPreflight({ kind: "dns_record", target: { record_id: APEX_RECORD }, field: "content", to: "ip-6fb86d" }, layer, { baseline, ...skip });
     expect(r.verdict).toBe("GO");
-    expect(r.simulations).toEqual([{ iteration: 0, steps: [], findings: 27, added: [], removed: [] }]);
+    expect(r.simulations).toEqual([{ iteration: 0, steps: [], findings: 38, added: [], removed: [] }]);
     expect(r.removed).toEqual([]);
     expect(r.added).toEqual([]);
     const sim = await runPass(layer.withOverlays(r.overlays), { world: new DriftWorld("negative_control") });
@@ -367,10 +367,10 @@ describe("trace: every step with agent preflight, the pass's own lines labelled 
       ["decide", "ok", r.bound!.change],
     ]);
     expect(own[0].output_summary).toBe(`dns_record: set proxied to 0 on {"record_id":"${WWW_RECORD}"}`);
-    expect(own[1].output_summary).toBe("baseline: 27 finding(s) over 4 run(s), 0 gated out, 1062 observations");
+    expect(own[1].output_summary).toBe("baseline: 38 finding(s) over 4 run(s), 0 gated out, 1062 observations");
     expect(own[3].output_summary).toBe("1 row(s) of dns_record differ from the recorded world");
     expect(own[3].detail).toContain("CASE WHEN record_id IN (");
-    expect(own[4].output_summary).toBe("simulated#0: 24 finding(s); 0 added, 3 removed against the baseline");
+    expect(own[4].output_summary).toBe("simulated#0: 35 finding(s); 0 added, 3 removed against the baseline");
     expect(own[6].output_summary).toBe("GO: the change removes 3 finding(s) and adds none");
     expect(own[6].detail).toBe("iterations 0; simulations 1; judge skipped; nothing written");
     // the two passes' own lines: re-labelled, the world named, the original agent kept
@@ -378,8 +378,8 @@ describe("trace: every step with agent preflight, the pass's own lines labelled 
     expect(new Set(inner.map((e) => e.target_agent))).toEqual(new Set(["observer", "detector", "checker", "decider", "judge"]));
     const worlds = new Set(inner.map((e) => e.detail?.match(/^world=([^;]+)/)?.[1]));
     expect(worlds).toEqual(new Set(["baseline", "simulated#0"]));
-    expect(inner.filter((e) => e.action === "decide" && e.detail?.startsWith("world=baseline"))).toHaveLength(27);
-    expect(inner.filter((e) => e.action === "decide" && e.detail?.startsWith("world=simulated#0"))).toHaveLength(24);
+    expect(inner.filter((e) => e.action === "decide" && e.detail?.startsWith("world=baseline"))).toHaveLength(38);
+    expect(inner.filter((e) => e.action === "decide" && e.detail?.startsWith("world=simulated#0"))).toHaveLength(35);
     // the simulated world's queries ran over the derived table, the baseline's over the base table
     // (input_summary is the first 160 characters of the SQL, so only queries that reach the table early show the derived table)
     const derived = (e: { input_summary?: string }) => e.input_summary?.includes("JOIN (SELECT record_id, run_id, tenant_id, zone") ?? false;
@@ -478,6 +478,8 @@ describe("the recorded verdict files match the simulation", () => {
     const read = (name: string) => JSON.parse(readFileSync(new URL(`../examples/proposals/${name}.verdict.json`, import.meta.url), "utf8")) as PreflightResult;
     expect([read("a-unproxy-www").verdict, read("b-replay-16-april-proxied").verdict, read("c-vhost-real-ip").verdict, read("d-retarget-apex-outside-inventory").verdict]).toEqual(["GO", "GO", "GO", "NO-GO"]);
     expect(read("a-unproxy-www").removed).toHaveLength(3);
-    expect(read("d-retarget-apex-outside-inventory").added.map((f) => f.class)).toEqual(["dns_change", "dns_change"]);
+    // The verdict files are written over sample/bundle.json, whose host runs of 19:56 and 21:21 UTC on 24 Oct 2026 carry the
+    // same bytes: the apex moved outside the inventory makes the two vhost name settings that point at it found_but_different there.
+    expect(read("d-retarget-apex-outside-inventory").added.map((f) => f.class)).toEqual(["found_but_different", "found_but_different"]);
   });
 });
