@@ -112,16 +112,36 @@ export class Nightshift {
     throw lastErr ?? new NightshiftError("chat failed", 0);
   }
 
-  /** Pull a JSON object out of a reply that may carry reasoning or prose around it. */
+  /**
+   * Pull a JSON object out of a reply that may carry reasoning or prose around it.
+   * Measured on 23 Oct: Nemotron 3 Ultra through Nightshift puts its reasoning in `content`
+   * terminated by a `</think>` tag, with the answer after it. So: drop everything through the
+   * last `</think>`, then prefer a fenced block, then the first balanced object in what remains.
+   */
   static extractJson<T = unknown>(content: string): T | null {
-    const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/);
-    const candidates = [fenced?.[1], content];
-    for (const c of candidates) {
+    const afterThink = content.includes("</think>") ? content.slice(content.lastIndexOf("</think>") + 8) : content;
+    const fenced = afterThink.match(/```(?:json)?\s*([\s\S]*?)```/);
+    for (const c of [fenced?.[1], afterThink, content]) {
       if (!c) continue;
-      const start = c.indexOf("{");
-      const end = c.lastIndexOf("}");
-      if (start === -1 || end <= start) continue;
-      try { return JSON.parse(c.slice(start, end + 1)) as T; } catch { /* try next */ }
+      const obj = Nightshift.firstBalancedObject(c);
+      if (obj !== null) return obj as T;
+    }
+    return null;
+  }
+
+  /** The first `{...}` whose braces balance and that parses; skips objects embedded in prose that do not. */
+  private static firstBalancedObject(s: string): unknown | null {
+    for (let start = s.indexOf("{"); start !== -1; start = s.indexOf("{", start + 1)) {
+      let depth = 0, inStr = false, esc = false;
+      for (let i = start; i < s.length; i++) {
+        const ch = s[i];
+        if (inStr) { if (esc) esc = false; else if (ch === "\\") esc = true; else if (ch === '"') inStr = false; continue; }
+        if (ch === '"') inStr = true;
+        else if (ch === "{") depth++;
+        else if (ch === "}" && --depth === 0) {
+          try { return JSON.parse(s.slice(start, i + 1)); } catch { break; }
+        }
+      }
     }
     return null;
   }
