@@ -1,0 +1,66 @@
+[
+  {
+    "finding": {
+      "class": "proxied_without_real_ip",
+      "tenant_id": "client-1",
+      "run_id": "run-67f4d6923cb4838d",
+      "surface": "linux.nginx",
+      "host": "host-aa516a",
+      "object_id": "/etc/nginx/nginx.conf",
+      "setting_path": "http.real_ip",
+      "value_hash": "sha256:87f0360ad43bc8c6813cf5f45e3b53f055b885889b1868e7baa98e96ed25ed8c",
+      "value_redacted": "absent",
+      "refers_to_type": "dns_name",
+      "refers_to_id": "*.host-503b27.ai",
+      "dns_name": "*.host-503b27.ai",
+      "resolves_to": "ip-6b6bba",
+      "resource_id": "c922e6966d55b15bd96b5e8ea932b715",
+      "dns_run_id": "run-f9470e2f5f175899",
+      "since": "2026-10-24T07:58:55.125Z",
+      "until": "2026-10-24T07:59:20.027Z",
+      "summary": "*.host-503b27.ai is proxied through Cloudflare to ip-6b6bba, and no server block on host-aa516a trusts a Cloudflare range (http.real_ip in /etc/nginx/nginx.conf is absent): every name under the wildcard sees Cloudflare's addresses as its visitors"
+    },
+    "verb": "ESCALATE",
+    "checks": [
+      {
+        "template": "run_complete",
+        "holds": true,
+        "rowCount": 0,
+        "explanation": "Run run-67f4d6923cb4838d collected everything it set out to collect."
+      },
+      {
+        "template": "host_in_inventory",
+        "holds": true,
+        "rowCount": 1,
+        "explanation": "ip-6b6bba is in the inventory (1 asset)."
+      }
+    ],
+    "rejected": [
+      {
+        "check": {
+          "template": "actor_attributed",
+          "params": {
+            "tenant_id": "client-1",
+            "resource_id": "c922e6966d55b15bd96b5e8ea932b715",
+            "since": "2026-10-24T07:58:55.125Z",
+            "until": "2026-10-24T07:59:20.027Z"
+          },
+          "why": "default policy for proxied_without_real_ip"
+        },
+        "reason": "actor_attributed: audit log incomplete (no cloudflare.audit run for this tenant)"
+      },
+      {
+        "check": {
+          "template": "previous_value_recoverable",
+          "params": {
+            "tenant_id": "client-1",
+            "resource_id": "c922e6966d55b15bd96b5e8ea932b715"
+          },
+          "why": "default policy for proxied_without_real_ip"
+        },
+        "reason": "previous_value_recoverable: audit log incomplete (no cloudflare.audit run for this tenant)"
+      }
+    ],
+    "judge": "skipped"
+  }
+]

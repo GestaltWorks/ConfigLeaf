@@ -1,0 +1,53 @@
+[
+  {
+    "finding": {
+      "class": "proxy_split",
+      "tenant_id": "client-1",
+      "run_id": "run-f9470e2f5f175899",
+      "surface": "cloudflare.dns",
+      "host": null,
+      "object_id": "bce1ca2bb7caa2de9b6823d5f6ecd3f2",
+      "setting_path": "proxied",
+      "value_hash": "sha256:6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+      "value_redacted": "1",
+      "refers_to_type": "dns_name",
+      "refers_to_id": "host-4c795e.quest",
+      "dns_name": "host-524b42.quest",
+      "resolves_to": "ip-6fb86d",
+      "resource_id": "bce1ca2bb7caa2de9b6823d5f6ecd3f2",
+      "dns_run_id": "run-f9470e2f5f175899",
+      "since": "2026-04-16T21:11:15.232Z",
+      "until": "2026-10-24T07:58:55.125Z",
+      "summary": "host-524b42.quest is proxied and aliases host-4c795e.quest, whose A record is direct to ip-6fb86d: the origin the proxy hides is published on the name it points at"
+    },
+    "verb": "ESCALATE",
+    "checks": [
+      {
+        "template": "run_complete",
+        "holds": true,
+        "rowCount": 0,
+        "explanation": "Run run-f9470e2f5f175899 collected everything it set out to collect."
+      },
+      {
+        "template": "actor_attributed",
+        "holds": true,
+        "rowCount": 2,
+        "explanation": "2 audit events with a named actor touched bce1ca2bb7caa2de9b6823d5f6ecd3f2 between 2026-04-16T21:11:15.232Z and 2026-10-24T07:58:55.125Z."
+      },
+      {
+        "template": "previous_value_recoverable",
+        "holds": true,
+        "rowCount": 1,
+        "explanation": "The audit log records the state bce1ca2bb7caa2de9b6823d5f6ecd3f2 had before its latest change."
+      },
+      {
+        "template": "referent_unchanged",
+        "holds": false,
+        "rowCount": 3,
+        "explanation": "host-524b42.quest changed between 2026-04-16T21:11:15.232Z and 2026-10-24T07:58:55.125Z (3 pieces of evidence)."
+      }
+    ],
+    "rejected": [],
+    "judge": "skipped"
+  }
+]

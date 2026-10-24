@@ -1,0 +1,341 @@
+[
+  {
+    "finding": {
+      "class": "proxy_split",
+      "tenant_id": "client-1",
+      "run_id": "run-f9470e2f5f175899",
+      "surface": "cloudflare.dns",
+      "host": null,
+      "object_id": "bce1ca2bb7caa2de9b6823d5f6ecd3f2",
+      "setting_path": "proxied",
+      "value_hash": "sha256:6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+      "value_redacted": "1",
+      "refers_to_type": "dns_name",
+      "refers_to_id": "host-4c795e.quest",
+      "dns_name": "host-524b42.quest",
+      "resolves_to": "ip-6fb86d",
+      "resource_id": "bce1ca2bb7caa2de9b6823d5f6ecd3f2",
+      "dns_run_id": "run-f9470e2f5f175899",
+      "since": "2026-04-16T21:11:15.232Z",
+      "until": "2026-10-24T07:58:55.125Z",
+      "summary": "host-524b42.quest is proxied and aliases host-4c795e.quest, whose A record is direct to ip-6fb86d: the origin the proxy hides is published on the name it points at"
+    },
+    "verb": "ESCALATE",
+    "checks": [
+      {
+        "template": "run_complete",
+        "holds": true,
+        "rowCount": 0,
+        "explanation": "Run run-f9470e2f5f175899 collected everything it set out to collect."
+      },
+      {
+        "template": "actor_attributed",
+        "holds": true,
+        "rowCount": 2,
+        "explanation": "2 audit events with a named actor touched bce1ca2bb7caa2de9b6823d5f6ecd3f2 between 2026-04-16T21:11:15.232Z and 2026-10-24T07:58:55.125Z."
+      },
+      {
+        "template": "previous_value_recoverable",
+        "holds": true,
+        "rowCount": 1,
+        "explanation": "The audit log records the state bce1ca2bb7caa2de9b6823d5f6ecd3f2 had before its latest change."
+      },
+      {
+        "template": "referent_unchanged",
+        "holds": false,
+        "rowCount": 3,
+        "explanation": "host-524b42.quest changed between 2026-04-16T21:11:15.232Z and 2026-10-24T07:58:55.125Z (3 pieces of evidence)."
+      }
+    ],
+    "rejected": [],
+    "judge": "skipped"
+  },
+  {
+    "finding": {
+      "class": "orphan_record",
+      "tenant_id": "client-1",
+      "run_id": "run-f9470e2f5f175899",
+      "surface": "cloudflare.dns",
+      "host": "host-aa516a",
+      "object_id": "c8b1963847dafe3548b1a4b93f520c0a",
+      "setting_path": "name",
+      "value_hash": "sha256:f34ba5c5d332de0a2a963916858130dce4663fcdd9ff5a21bd0ad7592af1b56c",
+      "value_redacted": "host-3fef97.club",
+      "refers_to_type": "dns_name",
+      "refers_to_id": "host-3fef97.club",
+      "dns_name": "host-3fef97.club",
+      "resolves_to": "ip-6b6bba",
+      "resource_id": "c8b1963847dafe3548b1a4b93f520c0a",
+      "dns_run_id": "run-f9470e2f5f175899",
+      "since": "2026-04-16T21:11:15.232Z",
+      "until": "2026-10-24T07:59:20.027Z",
+      "summary": "host-3fef97.club (A, direct) lands on ip-6b6bba, host-aa516a, where no enabled server block names it: requests for it reach the default server"
+    },
+    "verb": "ESCALATE",
+    "checks": [
+      {
+        "template": "run_complete",
+        "holds": true,
+        "rowCount": 0,
+        "explanation": "Run run-f9470e2f5f175899 collected everything it set out to collect."
+      },
+      {
+        "template": "host_in_inventory",
+        "holds": true,
+        "rowCount": 1,
+        "explanation": "ip-6b6bba is in the inventory (1 asset)."
+      },
+      {
+        "template": "actor_attributed",
+        "holds": false,
+        "rowCount": 0,
+        "explanation": "No audit event names who changed c8b1963847dafe3548b1a4b93f520c0a between 2026-04-16T21:11:15.232Z and 2026-10-24T07:59:20.027Z."
+      },
+      {
+        "template": "previous_value_recoverable",
+        "holds": false,
+        "rowCount": 0,
+        "explanation": "The audit log does not record what c8b1963847dafe3548b1a4b93f520c0a was before its latest change."
+      }
+    ],
+    "rejected": [],
+    "judge": "skipped"
+  },
+  {
+    "finding": {
+      "class": "orphan_record",
+      "tenant_id": "client-1",
+      "run_id": "run-f9470e2f5f175899",
+      "surface": "cloudflare.dns",
+      "host": "host-4b4dc1",
+      "object_id": "b0a17a719bd2118a535a763379ab7ba9",
+      "setting_path": "name",
+      "value_hash": "sha256:ce0395762d254fc09b38254909f82b7ca959721572c151285660b3ba1b114fff",
+      "value_redacted": "host-50b116.com",
+      "refers_to_type": "dns_name",
+      "refers_to_id": "host-50b116.com",
+      "dns_name": "host-50b116.com",
+      "resolves_to": "ip-6fb86d",
+      "resource_id": "b0a17a719bd2118a535a763379ab7ba9",
+      "dns_run_id": "run-f9470e2f5f175899",
+      "since": "2026-04-16T21:11:15.232Z",
+      "until": "2026-10-24T07:59:23.713Z",
+      "summary": "host-50b116.com (A, proxied) lands on ip-6fb86d, host-4b4dc1, where no enabled server block names it: requests for it reach the default server"
+    },
+    "verb": "ESCALATE",
+    "checks": [
+      {
+        "template": "run_complete",
+        "holds": true,
+        "rowCount": 0,
+        "explanation": "Run run-f9470e2f5f175899 collected everything it set out to collect."
+      },
+      {
+        "template": "host_in_inventory",
+        "holds": true,
+        "rowCount": 1,
+        "explanation": "ip-6fb86d is in the inventory (1 asset)."
+      },
+      {
+        "template": "actor_attributed",
+        "holds": false,
+        "rowCount": 0,
+        "explanation": "No audit event names who changed b0a17a719bd2118a535a763379ab7ba9 between 2026-04-16T21:11:15.232Z and 2026-10-24T07:59:23.713Z."
+      },
+      {
+        "template": "previous_value_recoverable",
+        "holds": false,
+        "rowCount": 0,
+        "explanation": "The audit log does not record what b0a17a719bd2118a535a763379ab7ba9 was before its latest change."
+      }
+    ],
+    "rejected": [],
+    "judge": "skipped"
+  },
+  {
+    "finding": {
+      "class": "orphan_record",
+      "tenant_id": "client-1",
+      "run_id": "run-f9470e2f5f175899",
+      "surface": "cloudflare.dns",
+      "host": "host-4b4dc1",
+      "object_id": "25a23b5c40a3de0ea11b6054a7b54d07",
+      "setting_path": "name",
+      "value_hash": "sha256:0d6d5e49ac25f30c9a93c47a8e38776ce0acbc7d2dc19001df6e1cf9050ca4c3",
+      "value_redacted": "host-c10fff.com",
+      "refers_to_type": "dns_name",
+      "refers_to_id": "host-c10fff.com",
+      "dns_name": "host-c10fff.com",
+      "resolves_to": "ip-6fb86d",
+      "resource_id": "25a23b5c40a3de0ea11b6054a7b54d07",
+      "dns_run_id": "run-f9470e2f5f175899",
+      "since": "2026-04-16T21:11:15.232Z",
+      "until": "2026-10-24T07:59:23.713Z",
+      "summary": "host-c10fff.com (A, proxied) lands on ip-6fb86d, host-4b4dc1, where no enabled server block names it: requests for it reach the default server"
+    },
+    "verb": "ESCALATE",
+    "checks": [
+      {
+        "template": "run_complete",
+        "holds": true,
+        "rowCount": 0,
+        "explanation": "Run run-f9470e2f5f175899 collected everything it set out to collect."
+      },
+      {
+        "template": "host_in_inventory",
+        "holds": true,
+        "rowCount": 1,
+        "explanation": "ip-6fb86d is in the inventory (1 asset)."
+      },
+      {
+        "template": "actor_attributed",
+        "holds": true,
+        "rowCount": 1,
+        "explanation": "1 audit event with a named actor touched 25a23b5c40a3de0ea11b6054a7b54d07 between 2026-04-16T21:11:15.232Z and 2026-10-24T07:59:23.713Z."
+      },
+      {
+        "template": "previous_value_recoverable",
+        "holds": false,
+        "rowCount": 0,
+        "explanation": "The audit log does not record what 25a23b5c40a3de0ea11b6054a7b54d07 was before its latest change."
+      }
+    ],
+    "rejected": [],
+    "judge": "skipped"
+  },
+  {
+    "finding": {
+      "class": "orphan_vhost",
+      "tenant_id": "client-1",
+      "run_id": "run-15638d43819ba756",
+      "surface": "linux.nginx",
+      "host": "host-4b4dc1",
+      "object_id": "/etc/nginx/sites-available/host-085e02.com",
+      "setting_path": "server[host-085e02.com:443].server_name[host-085e02.com]",
+      "value_hash": "sha256:194ea5d80cf6fef9f4fba29cfb86fc587c80f06943593be4ccf8a919fb773acb",
+      "value_redacted": "host-085e02.com",
+      "refers_to_type": "dns_name",
+      "refers_to_id": "host-085e02.com",
+      "dns_name": "host-085e02.com",
+      "resolves_to": null,
+      "resource_id": null,
+      "dns_run_id": "run-f9470e2f5f175899",
+      "since": "2026-04-16T21:11:15.232Z",
+      "until": "2026-10-24T07:59:23.713Z",
+      "summary": "host-085e02.com is a server_name in /etc/nginx/sites-available/host-085e02.com on host-4b4dc1 (on disk, not enabled) with no record of that name in the collected zones and no wildcard covering its zone"
+    },
+    "verb": "ADOPT",
+    "checks": [
+      {
+        "template": "run_complete",
+        "holds": true,
+        "rowCount": 0,
+        "explanation": "Run run-15638d43819ba756 collected everything it set out to collect."
+      },
+      {
+        "template": "other_settings_reference",
+        "holds": true,
+        "rowCount": 0,
+        "explanation": "No other setting in run run-15638d43819ba756 points at host-085e02.com."
+      },
+      {
+        "template": "backup_recent",
+        "holds": true,
+        "rowCount": 9,
+        "explanation": "host-4b4dc1 has 9 backup snapshots taken since 2026-04-16T21:11:15.232Z."
+      }
+    ],
+    "rejected": [],
+    "judge": "skipped"
+  },
+  {
+    "finding": {
+      "class": "orphan_vhost",
+      "tenant_id": "client-1",
+      "run_id": "run-15638d43819ba756",
+      "surface": "linux.nginx",
+      "host": "host-4b4dc1",
+      "object_id": "/etc/nginx/sites-available/host-9ac4f1.com",
+      "setting_path": "server[host-9ac4f1.com:443].server_name[host-89f6e7.com]",
+      "value_hash": "sha256:3d8ca55d58a9895b475424119f876a182be0f8a6ecc2a3aad5d594129daa7f3c",
+      "value_redacted": "host-89f6e7.com",
+      "refers_to_type": "dns_name",
+      "refers_to_id": "host-89f6e7.com",
+      "dns_name": "host-89f6e7.com",
+      "resolves_to": null,
+      "resource_id": null,
+      "dns_run_id": "run-f9470e2f5f175899",
+      "since": "2026-04-16T21:11:15.232Z",
+      "until": "2026-10-24T07:59:23.713Z",
+      "summary": "host-89f6e7.com is a server_name in /etc/nginx/sites-available/host-9ac4f1.com on host-4b4dc1 (enabled) with no record of that name in the collected zones and no wildcard covering its zone"
+    },
+    "verb": "ESCALATE",
+    "checks": [
+      {
+        "template": "run_complete",
+        "holds": true,
+        "rowCount": 0,
+        "explanation": "Run run-15638d43819ba756 collected everything it set out to collect."
+      },
+      {
+        "template": "other_settings_reference",
+        "holds": false,
+        "rowCount": 3,
+        "explanation": "3 other settings in run run-15638d43819ba756 also point at host-89f6e7.com."
+      },
+      {
+        "template": "backup_recent",
+        "holds": true,
+        "rowCount": 9,
+        "explanation": "host-4b4dc1 has 9 backup snapshots taken since 2026-04-16T21:11:15.232Z."
+      }
+    ],
+    "rejected": [],
+    "judge": "skipped"
+  },
+  {
+    "finding": {
+      "class": "orphan_vhost",
+      "tenant_id": "client-1",
+      "run_id": "run-15638d43819ba756",
+      "surface": "linux.nginx",
+      "host": "host-4b4dc1",
+      "object_id": "/etc/nginx/sites-available/host-9ac4f1.com",
+      "setting_path": "server[host-9ac4f1.com:443].server_name[host-9ac4f1.com]",
+      "value_hash": "sha256:4ef9ab258c0b9a22981ca22d8b28b30ddf2edf1a341379d508d5a87677b88f7f",
+      "value_redacted": "host-9ac4f1.com",
+      "refers_to_type": "dns_name",
+      "refers_to_id": "host-9ac4f1.com",
+      "dns_name": "host-9ac4f1.com",
+      "resolves_to": null,
+      "resource_id": null,
+      "dns_run_id": "run-f9470e2f5f175899",
+      "since": "2026-04-16T21:11:15.232Z",
+      "until": "2026-10-24T07:59:23.713Z",
+      "summary": "host-9ac4f1.com is a server_name in /etc/nginx/sites-available/host-9ac4f1.com on host-4b4dc1 (enabled) with no record of that name in the collected zones and no wildcard covering its zone"
+    },
+    "verb": "ESCALATE",
+    "checks": [
+      {
+        "template": "run_complete",
+        "holds": true,
+        "rowCount": 0,
+        "explanation": "Run run-15638d43819ba756 collected everything it set out to collect."
+      },
+      {
+        "template": "other_settings_reference",
+        "holds": false,
+        "rowCount": 3,
+        "explanation": "3 other settings in run run-15638d43819ba756 also point at host-9ac4f1.com."
+      },
+      {
+        "template": "backup_recent",
+        "holds": true,
+        "rowCount": 9,
+        "explanation": "host-4b4dc1 has 9 backup snapshots taken since 2026-04-16T21:11:15.232Z."
+      }
+    ],
+    "rejected": [],
+    "judge": "skipped"
+  }
+]

@@ -11,7 +11,18 @@ import type { QueryResult } from "../adapters/zetaris.ts";
 import type { DataLayer, Params, RunOptions } from "../data/layer.ts";
 import { RUN_COMPLETE_SQL } from "../data/queries.ts";
 
-export const FINDING_CLASSES = ["found_but_different", "changed_since_backup", "drift_vs_approved", "dns_change"] as const;
+/**
+ * The DNS-referent classes (found_but_different, dns_change) come from the hero query; the four survey
+ * classes come from the estate queries in data/queries.ts over one pass: a proxied CNAME to a direct
+ * apex (proxy_split), a proxied name served by a block that trusts no real_ip range
+ * (proxied_without_real_ip), a record landing on a host with no enabled block for it (orphan_record)
+ * and a server_name with no record and no covering wildcard (orphan_vhost). changed_since_backup and
+ * drift_vs_approved have templates and default policies but no detector yet.
+ */
+export const FINDING_CLASSES = [
+  "found_but_different", "changed_since_backup", "drift_vs_approved", "dns_change",
+  "proxy_split", "proxied_without_real_ip", "orphan_record", "orphan_vhost",
+] as const;
 export type FindingClass = (typeof FINDING_CLASSES)[number];
 
 export interface Template {
@@ -50,7 +61,7 @@ export const CATALOGUE: readonly Template[] = [
   {
     id: "host_in_inventory",
     purpose: "The address is a known asset in the client's inventory.",
-    appliesTo: ["dns_change", "found_but_different"],
+    appliesTo: ["dns_change", "found_but_different", "proxied_without_real_ip", "orphan_record"],
     params: z.object({ tenant_id: id(), address: z.string().min(1).max(255) }),
     sql: `SELECT asset_id, host, address, kind, source, observed_at
 FROM {{t:inventory_asset}}
@@ -98,7 +109,7 @@ ORDER BY s.snapshot_id`,
   {
     id: "actor_attributed",
     purpose: "An audit event with a named actor touched the resource inside the window.",
-    appliesTo: ["dns_change", "found_but_different", "changed_since_backup"],
+    appliesTo: ["dns_change", "found_but_different", "changed_since_backup", "proxy_split", "proxied_without_real_ip", "orphan_record"],
     params: z.object({ tenant_id: id(), resource_id: id(), since: iso(), until: iso() }),
     sql: `SELECT event_id, source, actor, action, old_value, new_value, occurred_at
 FROM {{t:audit_event}}
@@ -113,18 +124,27 @@ ORDER BY occurred_at, event_id`,
   },
   {
     id: "previous_value_recoverable",
-    purpose: "The most recent audit event on the resource records the value it replaced, so the previous value is known.",
-    appliesTo: ["dns_change", "found_but_different"],
+    purpose: "The value the resource had before its latest audit event is on record: either that event carries old_value, or an earlier create or update on the same resource carries the body that was in force (Cloudflare logs no old values; the previous state is the latest earlier body).",
+    appliesTo: ["dns_change", "found_but_different", "proxy_split", "proxied_without_real_ip", "orphan_record"],
     params: z.object({ tenant_id: id(), resource_id: id() }),
-    sql: `SELECT e.event_id, e.source, e.action, e.old_value, e.new_value, e.occurred_at
+    sql: `SELECT e.event_id, e.source, e.action, e.old_value AS previous_value, e.occurred_at AS recorded_at, 'old_value' AS evidence
 FROM {{t:audit_event}} e
 WHERE e.tenant_id = {{p:tenant_id}} AND e.resource_id = {{p:resource_id}}
   AND e.old_value IS NOT NULL AND e.old_value <> ''
   AND NOT EXISTS (SELECT 1 FROM {{t:audit_event}} x WHERE x.tenant_id = e.tenant_id AND x.resource_id = e.resource_id AND x.occurred_at > e.occurred_at)
-ORDER BY e.event_id`,
+UNION ALL
+SELECT p.event_id, p.source, p.action, p.new_value AS previous_value, p.occurred_at AS recorded_at, 'earlier_event' AS evidence
+FROM {{t:audit_event}} e
+JOIN {{t:audit_event}} p ON p.tenant_id = e.tenant_id AND p.resource_id = e.resource_id AND p.occurred_at < e.occurred_at
+  AND p.action IN ('create', 'update') AND p.new_value IS NOT NULL AND p.new_value <> ''
+WHERE e.tenant_id = {{p:tenant_id}} AND e.resource_id = {{p:resource_id}}
+  AND NOT EXISTS (SELECT 1 FROM {{t:audit_event}} x WHERE x.tenant_id = e.tenant_id AND x.resource_id = e.resource_id AND x.occurred_at > e.occurred_at)
+  AND NOT EXISTS (SELECT 1 FROM {{t:audit_event}} y WHERE y.tenant_id = e.tenant_id AND y.resource_id = e.resource_id AND y.action IN ('create', 'update')
+    AND y.new_value IS NOT NULL AND y.new_value <> '' AND y.occurred_at < e.occurred_at AND y.occurred_at > p.occurred_at)
+ORDER BY evidence, event_id`,
     rowsMean: "holds",
     explain: (p, c) => c > 0
-      ? `The audit log records the value ${s(p, "resource_id")} had before its latest change.`
+      ? `The audit log records the state ${s(p, "resource_id")} had before its latest change.`
       : `The audit log does not record what ${s(p, "resource_id")} was before its latest change.`,
   },
   {
@@ -151,7 +171,7 @@ ORDER BY a.approved_at, a.approval_id`,
   {
     id: "referent_unchanged",
     purpose: "Nothing the name resolves to changed inside the window; rows are the evidence of change, from consecutive DNS observations and from audit events on its records.",
-    appliesTo: ["found_but_different", "dns_change"],
+    appliesTo: ["found_but_different", "dns_change", "proxy_split"],
     params: z.object({ tenant_id: id(), name: z.string().min(1).max(253), since: iso(), until: iso() }),
     sql: `SELECT 'dns_record' AS evidence, a.record_id AS resource_id, a.content AS old_value, b.content AS new_value, b.observed_at AS seen_at
 FROM {{t:dns_record}} a
@@ -173,7 +193,7 @@ ORDER BY seen_at, evidence, resource_id`,
   {
     id: "run_complete",
     purpose: "The collection run observed the whole population it asserted before collecting and finished complete; rows are the run failing that gate.",
-    appliesTo: ["found_but_different", "changed_since_backup", "drift_vs_approved", "dns_change"],
+    appliesTo: [...FINDING_CLASSES],
     params: z.object({ run_id: id() }),
     sql: RUN_COMPLETE_SQL,
     rowsMean: "fails",
@@ -201,7 +221,7 @@ ORDER BY a.approved_at, a.approval_id`,
   {
     id: "other_settings_reference",
     purpose: "Blast radius: no other setting in the same collection run points at the same target; rows are the other settings that do.",
-    appliesTo: ["found_but_different", "dns_change"],
+    appliesTo: ["found_but_different", "dns_change", "orphan_vhost"],
     params: z.object({ tenant_id: id(), refers_to_id: id(), run_id: id(), object_id: id(), setting_path: id() }),
     sql: `SELECT o.host, o.surface, o.object_id, o.setting_path, o.refers_to_type, o.observed_at
 FROM {{t:observation}} o
@@ -215,16 +235,29 @@ ORDER BY o.object_id, o.setting_path`,
   },
   {
     id: "record_reverted",
-    purpose: "A later audit event put the resource back to the value an earlier event (at or after since) replaced.",
-    appliesTo: ["dns_change", "found_but_different"],
+    purpose: "A later audit event put the resource back to the state an earlier event (at or after since) replaced: the change's old_value reappears as a later new_value, or, in a log without old values, a later create or update carries the body that was in force before the change.",
+    appliesTo: ["dns_change", "found_but_different", "proxy_split"],
     params: z.object({ tenant_id: id(), resource_id: id(), since: iso() }),
-    sql: `SELECT e1.event_id AS change_event_id, e1.occurred_at AS changed_at, e1.old_value, e1.new_value,
+    sql: `SELECT e1.event_id AS change_event_id, e1.occurred_at AS changed_at, e1.old_value AS previous_value, e1.new_value AS changed_value,
        e2.event_id AS revert_event_id, e2.actor AS reverted_by, e2.occurred_at AS reverted_at
 FROM {{t:audit_event}} e1
 JOIN {{t:audit_event}} e2 ON e2.tenant_id = e1.tenant_id AND e2.resource_id = e1.resource_id
   AND e2.occurred_at > e1.occurred_at AND e2.new_value = e1.old_value
 WHERE e1.tenant_id = {{p:tenant_id}} AND e1.resource_id = {{p:resource_id}} AND e1.occurred_at >= {{p:since}}
-ORDER BY e2.occurred_at, e2.event_id, e1.event_id`,
+  AND e1.old_value IS NOT NULL AND e1.old_value <> ''
+UNION ALL
+SELECT e2.event_id AS change_event_id, e2.occurred_at AS changed_at, e1.new_value AS previous_value, e2.new_value AS changed_value,
+       e3.event_id AS revert_event_id, e3.actor AS reverted_by, e3.occurred_at AS reverted_at
+FROM {{t:audit_event}} e1
+JOIN {{t:audit_event}} e2 ON e2.tenant_id = e1.tenant_id AND e2.resource_id = e1.resource_id AND e2.occurred_at > e1.occurred_at
+  AND e2.action IN ('create', 'update') AND e2.new_value IS NOT NULL AND e2.new_value <> '' AND e2.new_value <> e1.new_value
+JOIN {{t:audit_event}} e3 ON e3.tenant_id = e2.tenant_id AND e3.resource_id = e2.resource_id AND e3.occurred_at > e2.occurred_at
+  AND e3.action IN ('create', 'update') AND e3.new_value = e1.new_value
+WHERE e1.tenant_id = {{p:tenant_id}} AND e1.resource_id = {{p:resource_id}} AND e2.occurred_at >= {{p:since}}
+  AND e1.action IN ('create', 'update') AND e1.new_value IS NOT NULL AND e1.new_value <> ''
+  AND NOT EXISTS (SELECT 1 FROM {{t:audit_event}} y WHERE y.tenant_id = e1.tenant_id AND y.resource_id = e1.resource_id AND y.action IN ('create', 'update')
+    AND y.new_value IS NOT NULL AND y.new_value <> '' AND y.occurred_at > e1.occurred_at AND y.occurred_at < e2.occurred_at)
+ORDER BY reverted_at, revert_event_id, change_event_id`,
     rowsMean: "holds",
     explain: (p, c) => c > 0
       ? `${s(p, "resource_id")} was put back to its earlier value after ${s(p, "since")}.`
@@ -233,7 +266,7 @@ ORDER BY e2.occurred_at, e2.event_id, e1.event_id`,
   {
     id: "backup_recent",
     purpose: "A backup snapshot of the host exists taken at or after the given time; without one, changed-since-backup has no baseline.",
-    appliesTo: ["changed_since_backup", "drift_vs_approved"],
+    appliesTo: ["changed_since_backup", "drift_vs_approved", "orphan_vhost"],
     params: z.object({ tenant_id: id(), host: id(), since: iso() }),
     sql: `SELECT snapshot_id, kind, taken_at, source_ref
 FROM {{t:backup_snapshot}}

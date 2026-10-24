@@ -4,7 +4,14 @@
 // input to an answer.
 //
 //   gate     runComplete for every collection run. A failing run is traced not_checked and feeds
-//            nothing below: not the World Model, not the hero query, not a finding.
+//            nothing below: not the World Model, not the hero query, not a finding. The audit log has
+//            no run_id on its rows (audit_event is keyed by the vendor's event id so overlapping pulls
+//            dedupe), so its gate works on the checks instead: when a tenant's latest cloudflare.audit
+//            run failed the gate, or the tenant has none, every catalogue template that reads
+//            audit_event (actor_attributed, previous_value_recoverable, record_reverted,
+//            referent_unchanged) is a recorded rejection for that tenant's findings, "audit log
+//            incomplete", and each such finding escalates; a partial pull is never read as "no actor,
+//            no previous state".
 //   observe  every observation of a passing host-bound run goes into the World Model. A dns_name
 //            referent carries a fingerprint: what the name's A and AAAA records resolved to in the
 //            DNS run of the same pass, taken as the passing DNS run nearest in time and within
@@ -21,15 +28,31 @@
 //   check    the default precondition policy for the class, bound from the finding and run through
 //            the catalogue; a parameter the finding cannot supply, or a check the SQL guard refuses,
 //            is a recorded rejection, not a guess: it escalates that one finding and the pass goes on.
+//   survey   the estate queries (data/queries.ts) over the same pass: once per tenant against its DNS
+//            run, a proxied CNAME aliasing a direct address record (proxy_split); per host, against
+//            the latest passing nginx run and that DNS run, a proxied name served by an enabled block
+//            that trusts no real_ip range, or a proxied wildcard landing on a host where nothing does
+//            (proxied_without_real_ip), a record landing on the host with no enabled block naming it
+//            (orphan_record) and a server_name with no record and no covering wildcard (orphan_vhost).
+//            A survey finding has no previous observation, so its window is the audit log's reach
+//            (AUDIT_SPAN_SQL) up to the observation; its anchor is the nginx setting the row names, or
+//            the DNS record itself (object_id = record id) when the finding is about the record.
+//   check    the default precondition policy for the class, bound from the finding and run through
+//            the catalogue; a parameter the finding cannot supply, or a check the SQL guard refuses,
+//            is a recorded rejection, not a guess: it escalates that one finding and the pass goes on.
 //   decide   every check holds and none was rejected -> ADOPT, as a candidate; anything else ->
 //            ESCALATE. HOLD needs a judge to bound it with an expiry, so a pass with no model never
 //            issues it.
 //   judge    skipped and traced as such: model: none.
 
+import { createHash } from "node:crypto";
 import { defaultChecks, type FindingSummary, type RejectedCheck } from "./catalogue/select.ts";
-import { runCheck, type CheckResult, type FindingClass } from "./catalogue/templates.ts";
+import { CATALOGUE, runCheck, type CheckResult, type FindingClass } from "./catalogue/templates.ts";
 import { DataLayerError, type DataLayer } from "./data/layer.ts";
-import { hero, listRuns, objects, observationsOf, resolutions, runComplete } from "./data/queries.ts";
+import {
+  auditSpan, hero, listRuns, objects, observationsOf, orphanRecords, orphanVhosts, proxiedWithoutRealIp, proxySplit,
+  resolutions, runComplete, wildcardWithoutRealIp,
+} from "./data/queries.ts";
 import { DriftWorld, type Observation } from "./engine/world.ts";
 import type { Tracer } from "./trace.ts";
 
@@ -42,11 +65,13 @@ export const PASS_WINDOW_MS = 6 * 3600 * 1000;
 
 export interface CheckOutcome { template: string; holds: boolean; rowCount: number; explanation: string }
 
+export interface WorldView { before: string | null; after: string | null; changed: boolean; bytes_unchanged: boolean }
+
 export interface Finding {
   finding: FindingSummary;
   verb: Verb;
-  /** FOUND-BUT-DIFFERENT as the World Model saw it: the referent's fingerprint at the previous and at the current observation. */
-  world: { before: string | null; after: string | null; changed: boolean; bytes_unchanged: boolean };
+  /** FOUND-BUT-DIFFERENT as the World Model saw it: the referent's fingerprint at the previous and at the current observation. Hero findings only; a survey finding has no previous observation. */
+  world?: WorldView;
   checks: CheckOutcome[];
   /** Checks that did not run: a parameter the finding could not supply, or a check the data layer refused. */
   rejected: RejectedCheck[];
@@ -61,6 +86,11 @@ export interface PassResult {
 }
 
 const nul = (s: string): string | null => (s === "" ? null : s);
+const later = (a: string, b: string): string => (a > b ? a : b);
+/** The templates that consult the audit log: withheld for a tenant whose audit run failed the gate. */
+export const AUDIT_TEMPLATES: readonly string[] = CATALOGUE.filter((t) => t.sql.includes("{{t:audit_event}}")).map((t) => t.id);
+/** A fingerprint for a finding anchored on a DNS record rather than a stored observation: sha256 of the redacted row text, labelled as such. */
+const sha256 = (s: string): string => `sha256:${createHash("sha256").update(s).digest("hex")}`;
 
 function toObservation(o: Row, fingerprint: string | null): Observation {
   return {
@@ -83,6 +113,61 @@ function nearestDns(candidates: Row[], r: Row): Row | undefined {
 export async function runPass(layer: DataLayer, opts: { tracer?: Tracer; world?: DriftWorld } = {}): Promise<PassResult> {
   const { tracer } = opts;
   const world = opts.world ?? new DriftWorld("pass");
+  const findings: Finding[] = [];
+
+  /** Why the tenant's audit log may not be consulted this pass, or null when its latest audit run passed the gate. Filled by the gate step. */
+  const auditWithheld = new Map<string, string>();
+
+  /** check, decide, judge for one finding, whatever produced it; appends to findings. */
+  const assess = async (finding: FindingSummary, view: WorldView | undefined): Promise<void> => {
+    const cls = finding.class;
+    const setting = `${finding.setting_path} in ${finding.object_id}${finding.host ? ` on ${finding.host}` : ""}`;
+    const selection = defaultChecks(finding);
+    const checks: CheckOutcome[] = [];
+    const rejected: RejectedCheck[] = [...selection.rejected];
+    const withheld = auditWithheld.get(finding.tenant_id);
+    for (const c of selection.valid) {
+      if (withheld !== undefined && AUDIT_TEMPLATES.includes(c.template)) {
+        rejected.push({ check: c, reason: `${c.template}: audit log incomplete (${withheld})` });
+        continue;
+      }
+      let r: CheckResult;
+      try {
+        r = await runCheck(layer, c.template, c.params, { tracer, agent: "checker" });
+      } catch (err) {
+        // The guard or the engine refused this one check: record it, escalate this finding, keep the pass going.
+        if (!(err instanceof DataLayerError)) throw err;
+        rejected.push({ check: c, reason: `${c.template}: ${err.message}` });
+        continue;
+      }
+      checks.push({ template: r.template, holds: r.holds, rowCount: r.rowCount, explanation: r.explanation });
+      tracer?.emit({
+        agent: "checker", action: "check", status: r.holds ? "ok" : "failed",
+        input_summary: `${r.template} ${JSON.stringify(c.params)}`.slice(0, 200),
+        output_summary: `${r.template}: ${r.holds ? "holds" : "fails"} (${r.rowCount} rows)`, detail: r.explanation,
+      });
+    }
+    for (const rj of rejected) {
+      tracer?.emit({ agent: "checker", action: "check", status: "not_checked", input_summary: String((rj.check as { template?: unknown })?.template ?? "?"), detail: rj.reason });
+    }
+
+    const failing = checks.filter((c) => !c.holds).map((c) => c.template);
+    const verb: Verb = checks.length > 0 && failing.length === 0 && rejected.length === 0 ? "ADOPT" : "ESCALATE";
+    const why = verb === "ADOPT"
+      ? `all ${checks.length} preconditions hold; candidate pending a judge`
+      : [
+        failing.length ? `${failing.length} of ${checks.length} preconditions fail: ${failing.join(", ")}` : "",
+        rejected.length ? `${rejected.length} check(s) could not be bound from the finding or were refused by the guard` : "",
+        checks.length === 0 && rejected.length === 0 ? "no precondition ran" : "",
+      ].filter(Boolean).join("; ");
+    tracer?.emit({
+      agent: "decider", action: "decide", status: "ok", input_summary: `${cls} ${setting}`, output_summary: `${verb}: ${why}`,
+      detail: "model: none; policy: every check holds -> ADOPT candidate, any fails or unbound -> ESCALATE, HOLD needs a judge",
+    });
+    tracer?.emit({ agent: "judge", action: "judge", status: "skipped", input_summary: finding.summary.slice(0, 160), detail: "model: none (sample)" });
+    findings.push({ finding, verb, ...(view ? { world: view } : {}), checks, rejected, judge: "skipped" });
+  };
+
   const runs = objects(await listRuns(layer, { tracer, agent: "observer" }));
 
   // gate
@@ -98,6 +183,17 @@ export async function runPass(layer: DataLayer, opts: { tracer?: Tracer; world?:
     });
   }
   const passing = runs.filter((r) => !gatedOut.has(r.run_id));
+  // The audit surface's gate: audit_event rows carry no run_id, so a failing audit run withholds the audit templates per tenant.
+  for (const tenant of new Set(runs.map((r) => r.tenant_id))) {
+    const latestAudit = runs.filter((r) => r.tenant_id === tenant && r.surface === "cloudflare.audit").at(-1);
+    const why = !latestAudit ? "no cloudflare.audit run for this tenant" : gatedOut.has(latestAudit.run_id) ? `latest audit run ${latestAudit.run_id} failed the DQ gate` : null;
+    if (why === null) continue;
+    auditWithheld.set(tenant, why);
+    tracer?.emit({
+      agent: "observer", action: "check", status: "not_checked", input_summary: `audit_event ${tenant}`,
+      output_summary: `audit log withheld for ${tenant}: ${why}`, detail: `${AUDIT_TEMPLATES.join(", ")} are rejected for every finding of this tenant this pass`,
+    });
+  }
   const dnsFor = (r: Row): Row | undefined => nearestDns(passing, r);
   const gatedDnsFor = (r: Row): Row | undefined => nearestDns(runs.filter((x) => gatedOut.has(x.run_id)), r);
 
@@ -123,7 +219,6 @@ export async function runPass(layer: DataLayer, opts: { tracer?: Tracer; world?:
   }
 
   // detect, check, decide
-  const findings: Finding[] = [];
   const groups = new Map<string, Row[]>();
   for (const r of runs.filter((x) => x.host !== "")) {
     const k = `${r.tenant_id}|${r.surface}|${r.host}`;
@@ -181,47 +276,87 @@ export async function runPass(layer: DataLayer, opts: { tracer?: Tracer; world?:
         agent: "detector", action: "detect", status: "ok", input_summary: setting, output_summary: `${cls}: ${summary}`,
         detail: `fingerprint ${fbd.before ?? "unknown"} -> ${fbd.after ?? "unknown"}; bytes ${bytesUnchanged ? "unchanged" : prev ? "changed" : "no previous passing run"} (model: none)`,
       });
-
-      const selection = defaultChecks(finding);
-      const checks: CheckOutcome[] = [];
-      const rejected: RejectedCheck[] = [...selection.rejected];
-      for (const c of selection.valid) {
-        let r: CheckResult;
-        try {
-          r = await runCheck(layer, c.template, c.params, { tracer, agent: "checker" });
-        } catch (err) {
-          // The guard or the engine refused this one check: record it, escalate this finding, keep the pass going.
-          if (!(err instanceof DataLayerError)) throw err;
-          rejected.push({ check: c, reason: `${c.template}: ${err.message}` });
-          continue;
-        }
-        checks.push({ template: r.template, holds: r.holds, rowCount: r.rowCount, explanation: r.explanation });
-        tracer?.emit({
-          agent: "checker", action: "check", status: r.holds ? "ok" : "failed",
-          input_summary: `${r.template} ${JSON.stringify(c.params)}`.slice(0, 200),
-          output_summary: `${r.template}: ${r.holds ? "holds" : "fails"} (${r.rowCount} rows)`, detail: r.explanation,
-        });
-      }
-      for (const rj of rejected) {
-        tracer?.emit({ agent: "checker", action: "check", status: "not_checked", input_summary: String((rj.check as { template?: unknown })?.template ?? "?"), detail: rj.reason });
-      }
-
-      const failing = checks.filter((c) => !c.holds).map((c) => c.template);
-      const verb: Verb = checks.length > 0 && failing.length === 0 && rejected.length === 0 ? "ADOPT" : "ESCALATE";
-      const why = verb === "ADOPT"
-        ? `all ${checks.length} preconditions hold; candidate pending a judge`
-        : [
-          failing.length ? `${failing.length} of ${checks.length} preconditions fail: ${failing.join(", ")}` : "",
-          rejected.length ? `${rejected.length} check(s) could not be bound from the finding or were refused by the guard` : "",
-          checks.length === 0 && rejected.length === 0 ? "no precondition ran" : "",
-        ].filter(Boolean).join("; ");
-      tracer?.emit({
-        agent: "decider", action: "decide", status: "ok", input_summary: `${cls} ${setting}`, output_summary: `${verb}: ${why}`,
-        detail: "model: none; policy: every check holds -> ADOPT candidate, any fails or unbound -> ESCALATE, HOLD needs a judge",
-      });
-      tracer?.emit({ agent: "judge", action: "judge", status: "skipped", input_summary: summary.slice(0, 160), detail: "model: none (sample)" });
-      findings.push({ finding, verb, world: { before: fbd.before, after: fbd.after, changed: fbd.changed, bytes_unchanged: bytesUnchanged }, checks, rejected, judge: "skipped" });
+      await assess(finding, { before: fbd.before, after: fbd.after, changed: fbd.changed, bytes_unchanged: bytesUnchanged });
     }
   }
+
+  // survey
+  const spans = new Map<string, string | null>();
+  const auditReach = async (tenant: string): Promise<string | null> => {
+    if (!spans.has(tenant)) spans.set(tenant, nul(objects(await auditSpan(layer, tenant, { tracer, agent: "detector" }))[0]?.first_at ?? ""));
+    return spans.get(tenant) ?? null;
+  };
+  const surveyOpts = { tracer, agent: "detector" };
+
+  const latestDns = new Map<string, Row>();
+  for (const d of passing.filter((r) => r.surface === "cloudflare.dns")) latestDns.set(d.tenant_id, d);
+  for (const [tenant, dns] of latestDns) {
+    const rows = objects(await proxySplit(layer, { tenant_id: tenant, dns_run_id: dns.run_id }, surveyOpts));
+    tracer?.emit({ agent: "detector", action: "detect", status: "ok", input_summary: `proxy_split ${dns.run_id}`, output_summary: `cloudflare.dns: ${rows.length} proxied CNAME(s) alias a direct address record`, detail: "model: none" });
+    for (const row of rows) {
+      const summary = `${row.proxied_name} is proxied and aliases ${row.target_name}, whose ${row.target_type} record is direct to ${row.target_content}: the origin the proxy hides is published on the name it points at`;
+      tracer?.emit({ agent: "detector", action: "detect", status: "ok", input_summary: `proxied record ${row.proxied_record_id}`, output_summary: `proxy_split: ${summary}`, detail: "model: none" });
+      await assess({
+        class: "proxy_split", tenant_id: tenant, run_id: dns.run_id, surface: "cloudflare.dns", host: null,
+        object_id: row.proxied_record_id, setting_path: "proxied", value_hash: sha256("1"), value_redacted: "1",
+        refers_to_type: "dns_name", refers_to_id: row.target_name, dns_name: row.proxied_name, resolves_to: row.target_content,
+        resource_id: row.proxied_record_id, dns_run_id: dns.run_id, since: (await auditReach(tenant)) ?? dns.started_at, until: row.observed_at, summary,
+      }, undefined);
+    }
+  }
+
+  for (const group of groups.values()) {
+    const latest = group[group.length - 1];
+    if (latest.surface !== "linux.nginx" || gatedOut.has(latest.run_id)) continue;
+    const dns = dnsFor(latest);
+    if (!dns) continue;
+    const params = { tenant_id: latest.tenant_id, run_id: latest.run_id, dns_run_id: dns.run_id };
+    const since = (await auditReach(latest.tenant_id)) ?? dns.started_at;
+    const where = `${latest.surface} ${latest.host}`;
+
+    const blocks = objects(await proxiedWithoutRealIp(layer, params, surveyOpts));
+    const wild = objects(await wildcardWithoutRealIp(layer, params, surveyOpts));
+    tracer?.emit({ agent: "detector", action: "detect", status: "ok", input_summary: `proxied_without_real_ip ${latest.run_id} x ${dns.run_id}`, output_summary: `${where}: ${blocks.length} proxied name(s) served by a block that trusts no real_ip range, ${wild.length} proxied wildcard(s) landing where nothing does`, detail: "model: none" });
+    for (const row of [...blocks, ...wild]) {
+      const wildcard = row.setting_path === "http.real_ip";
+      const summary = wildcard
+        ? `${row.name} is proxied through Cloudflare to ${row.origin}, and no server block on ${row.host} trusts a Cloudflare range (${row.setting_path} in ${row.object_id} is absent): every name under the wildcard sees Cloudflare's addresses as its visitors`
+        : `${row.name} is proxied through Cloudflare to ${row.origin}, and ${row.setting_path} in ${row.object_id} on ${row.host} is absent: the block that serves it sees Cloudflare's addresses as its visitors`;
+      tracer?.emit({ agent: "detector", action: "detect", status: "ok", input_summary: `${row.setting_path} in ${row.object_id} on ${row.host}`, output_summary: `proxied_without_real_ip: ${summary}`, detail: "model: none" });
+      await assess({
+        class: "proxied_without_real_ip", tenant_id: latest.tenant_id, run_id: latest.run_id, surface: latest.surface, host: row.host,
+        object_id: row.object_id, setting_path: row.setting_path, value_hash: row.value_hash, value_redacted: row.value_redacted,
+        refers_to_type: "dns_name", refers_to_id: row.name, dns_name: row.name, resolves_to: row.origin, resource_id: row.record_id, dns_run_id: dns.run_id,
+        since, until: later(row.observed_at, row.dns_observed_at), summary,
+      }, undefined);
+    }
+
+    const records = objects(await orphanRecords(layer, params, surveyOpts));
+    tracer?.emit({ agent: "detector", action: "detect", status: "ok", input_summary: `orphan_record ${latest.run_id} x ${dns.run_id}`, output_summary: `${where}: ${records.length} record(s) land here with no enabled server block naming them`, detail: "model: none" });
+    for (const row of records) {
+      const summary = `${row.name} (${row.type}, ${row.proxied === "1" ? "proxied" : "direct"}) lands on ${row.origin}, ${row.host}, where no enabled server block names it: requests for it reach the default server`;
+      tracer?.emit({ agent: "detector", action: "detect", status: "ok", input_summary: `record ${row.record_id}`, output_summary: `orphan_record: ${summary}`, detail: "model: none" });
+      await assess({
+        class: "orphan_record", tenant_id: latest.tenant_id, run_id: dns.run_id, surface: "cloudflare.dns", host: row.host,
+        object_id: row.record_id, setting_path: "name", value_hash: sha256(`${row.type} ${row.name} ${row.content}`), value_redacted: row.name,
+        refers_to_type: "dns_name", refers_to_id: row.name, dns_name: row.name, resolves_to: row.origin, resource_id: row.record_id, dns_run_id: dns.run_id,
+        since, until: later(row.observed_at, latest.started_at), summary,
+      }, undefined);
+    }
+
+    const vhosts = objects(await orphanVhosts(layer, params, surveyOpts));
+    tracer?.emit({ agent: "detector", action: "detect", status: "ok", input_summary: `orphan_vhost ${latest.run_id} x ${dns.run_id}`, output_summary: `${where}: ${vhosts.length} server_name(s) with no record and no covering wildcard`, detail: "model: none" });
+    for (const row of vhosts) {
+      const summary = `${row.server_name} is a server_name in ${row.object_id} on ${row.host} (${row.enabled === "1" ? "enabled" : "on disk, not enabled"}) with no record of that name in the collected zones and no wildcard covering its zone`;
+      tracer?.emit({ agent: "detector", action: "detect", status: "ok", input_summary: `${row.setting_path} in ${row.object_id} on ${row.host}`, output_summary: `orphan_vhost: ${summary}`, detail: "model: none" });
+      await assess({
+        class: "orphan_vhost", tenant_id: latest.tenant_id, run_id: latest.run_id, surface: latest.surface, host: row.host,
+        object_id: row.object_id, setting_path: row.setting_path, value_hash: row.value_hash, value_redacted: row.server_name,
+        refers_to_type: "dns_name", refers_to_id: row.server_name, dns_name: row.server_name, resolves_to: null, resource_id: null, dns_run_id: dns.run_id,
+        since, until: later(row.observed_at, dns.started_at), summary,
+      }, undefined);
+    }
+  }
+
   return { runs: runs.length, gatedOut: [...gatedOut], observed, findings };
 }

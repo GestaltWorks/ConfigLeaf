@@ -128,6 +128,11 @@ const DEFAULT_CHECKS: Record<FindingClass, readonly string[]> = {
   changed_since_backup: ["run_complete", "backup_recent", "change_in_last_backup", "setting_matches_approved"],
   drift_vs_approved: ["run_complete", "setting_matches_approved", "restore_would_regress", "change_in_last_backup"],
   dns_change: ["run_complete", "host_in_inventory", "actor_attributed", "previous_value_recoverable"],
+  // Survey classes: the DNS record is the resource the audit log knows; its window is the log's reach.
+  proxy_split: ["run_complete", "actor_attributed", "previous_value_recoverable", "referent_unchanged"],
+  proxied_without_real_ip: ["run_complete", "host_in_inventory", "actor_attributed", "previous_value_recoverable"],
+  orphan_record: ["run_complete", "host_in_inventory", "actor_attributed", "previous_value_recoverable"],
+  orphan_vhost: ["run_complete", "other_settings_reference", "backup_recent"],
 };
 
 /** Deterministic: the template ids every finding of this class gets when no model answered. */

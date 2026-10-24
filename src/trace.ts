@@ -14,7 +14,7 @@ import { Redactor } from "./redactor.ts";
  * a run and cannot be linked across runs. The agent's own dotted vocabulary (surfaces, setting
  * paths, SQL aliases) survives the pass; see redactor.ts, pass d.
  */
-const redactor = new Redactor(config.redactSalt || randomBytes(16).toString("hex"));
+const redactor = new Redactor(config.redactSalt || randomBytes(16).toString("hex"), config.redactWords);
 
 export type TraceAction =
   | "observe" | "detect" | "triage" | "hypothesise" | "check" | "judge" | "decide"

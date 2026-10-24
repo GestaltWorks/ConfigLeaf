@@ -19,13 +19,13 @@ if (!config.sampleMode) {
 const tracer = new Tracer(`sample_${Date.now().toString(36)}`, { model: "none" });
 const engine = await SqlJsEngine.create();
 const counts = engine.loadBundle(bundle);
-tracer.emit({ agent: "collector", action: "observe", status: "ok", output_summary: `sample/bundle.json loaded into sql.js: ${Object.entries(counts).map(([t, n]) => `${t} ${n}`).join(", ")}`, detail: "model: none (bundled, redacted rows; shapes real, values authored)" });
+tracer.emit({ agent: "collector", action: "observe", status: "ok", output_summary: `sample/bundle.json loaded into sql.js: ${Object.entries(counts).map(([t, n]) => `${t} ${n}`).join(", ")}`, detail: "model: none (recorded, redacted rows exported from the app Postgres; see sample/bundle.json _note)" });
 
 const pass = await runPass(new DataLayer(engine), { tracer, world: new DriftWorld("sample") });
 
 for (const f of pass.findings) console.log(JSON.stringify(f));
 const described = pass.findings.map((f) => {
   const fails = f.checks.filter((c) => !c.holds).map((c) => c.template);
-  return `${f.finding.class} ${f.finding.host} ${f.finding.object_id} ${f.finding.setting_path} -> ${f.verb} (${f.checks.length - fails.length}/${f.checks.length} preconditions hold${fails.length ? `, fails: ${fails.join(", ")}` : ""})`;
+  return `${f.finding.class} ${f.finding.host ?? f.finding.surface} ${f.finding.object_id} ${f.finding.setting_path} -> ${f.verb} (${f.checks.length - fails.length}/${f.checks.length} preconditions hold${fails.length ? `, fails: ${fails.join(", ")}` : ""})`;
 });
 console.log(`SAMPLE: ${pass.runs} collection runs, ${pass.gatedOut.length} failed the DQ gate (${pass.gatedOut.join(", ") || "none"}), ${pass.observed} observations in the World Model, ${pass.findings.length} finding(s): ${described.join("; ") || "none"}; judge skipped (model: none)`);

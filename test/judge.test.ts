@@ -1,6 +1,7 @@
 // The refuting judge with a stub Nightshift (canned replies in the shapes Ultra and Lightning really
 // return) and a stub receipt store holding the two real receipt fixtures. The refuting SQL runs for
-// real against sql.js on sample/bundle.json, so stands/refuted come from rows, not from a canned verdict.
+// real against sql.js on the authored fixture (test/fixtures/authored-bundle.json, the hero story), so
+// stands/refuted come from rows, not from a canned verdict.
 import { beforeAll, describe, expect, it } from "vitest";
 import type { ChatResult, SignedReceipt } from "../src/adapters/nightshift.ts";
 import { config } from "../src/config.ts";
@@ -8,7 +9,7 @@ import { DataLayer, type Params, type RunOptions } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { hero } from "../src/data/queries.ts";
 import { MAX_EVIDENCE_ROWS, SYSTEM_PROMPT, buildMessages, guardRefutation, judgeClaim, type JudgeModel } from "../src/agents/judge.ts";
-import bundle from "../sample/bundle.json" with { type: "json" };
+import bundle from "./fixtures/authored-bundle.json" with { type: "json" };
 import { MemTracer } from "./fixtures/mem-tracer.ts";
 import lightningJson from "./fixtures/receipt-lightning.json" with { type: "json" };
 import ultraJson from "./fixtures/receipt-ultra.json" with { type: "json" };
@@ -113,7 +114,7 @@ describe("buildMessages", () => {
   });
 });
 
-describe("judgeClaim on sample/bundle.json", () => {
+describe("judgeClaim on the authored fixture", () => {
   let layer: CountingLayer;
 
   beforeAll(async () => {

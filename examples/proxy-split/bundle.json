@@ -1,0 +1,21 @@
+{
+  "_note": "proxy_split: one zone's www is a proxied CNAME to its apex, whose A record is direct, so the origin address Cloudflare hides on www is published on the apex. Rows: the DNS and audit runs, the zone's two records, and every audit event on the www record (three updates on 2026-04-16: proxied off, proxied on, content re-pointed by an API token). Cut from sample/bundle.json by scripts/examples.ts; names, addresses and the actor are pseudonyms.",
+  "collection_run": [
+    { "run_id": "run-f9470e2f5f175899", "tenant_id": "client-1", "surface": "cloudflare.dns", "host": null, "started_at": "2026-10-24T07:58:55.125Z", "finished_at": "2026-10-24T07:58:58.469Z", "expected_count": 58, "observed_count": 58, "status": "complete" },
+    { "run_id": "run-507c9939230e60a4", "tenant_id": "client-1", "surface": "cloudflare.audit", "host": null, "started_at": "2026-10-24T07:58:58.469Z", "finished_at": "2026-10-24T07:58:59.651Z", "expected_count": 728, "observed_count": 728, "status": "complete" }
+  ],
+  "observation": [],
+  "approved_setting": [],
+  "backup_snapshot": [],
+  "backup_item": [],
+  "dns_record": [
+    { "record_id": "bce1ca2bb7caa2de9b6823d5f6ecd3f2", "run_id": "run-f9470e2f5f175899", "tenant_id": "client-1", "zone": "host-4c795e.quest", "name": "host-524b42.quest", "type": "CNAME", "content": "host-4c795e.quest", "ttl": 1, "proxied": 1, "observed_at": "2026-10-24T07:58:55.125Z" },
+    { "record_id": "f32e72c0d010752462567852ca872d12", "run_id": "run-f9470e2f5f175899", "tenant_id": "client-1", "zone": "host-4c795e.quest", "name": "host-4c795e.quest", "type": "A", "content": "ip-6fb86d", "ttl": 1, "proxied": 0, "observed_at": "2026-10-24T07:58:55.125Z" }
+  ],
+  "audit_event": [
+    { "event_id": "evt-05fa48325110cdcb", "tenant_id": "client-1", "source": "cloudflare", "actor": "mail-97a420@domain-503b27", "action": "update", "resource_type": "dns_records/", "resource_id": "bce1ca2bb7caa2de9b6823d5f6ecd3f2", "old_value": null, "new_value": "{\"content\":\"host-fa882b.com\",\"name\":\"host-524b42.quest\",\"proxied\":true,\"settings\":{\"flatten_cname\":false},\"tags\":[],\"type\":\"CNAME\"}", "occurred_at": "2026-04-16T21:12:47.270Z" },
+    { "event_id": "evt-2aa74efde1e1b647", "tenant_id": "client-1", "source": "cloudflare", "actor": "mail-97a420@domain-503b27", "action": "update", "resource_type": "dns_records/", "resource_id": "bce1ca2bb7caa2de9b6823d5f6ecd3f2", "old_value": null, "new_value": "{\"content\":\"host-fa882b.com\",\"name\":\"host-524b42.quest\",\"proxied\":false,\"settings\":{\"flatten_cname\":false},\"tags\":[],\"type\":\"CNAME\"}", "occurred_at": "2026-04-16T21:11:15.232Z" },
+    { "event_id": "evt-84aa23daef46c798", "tenant_id": "client-1", "source": "cloudflare", "actor": null, "action": "update", "resource_type": "dns_records/", "resource_id": "bce1ca2bb7caa2de9b6823d5f6ecd3f2", "old_value": null, "new_value": "{\"content\":\"host-4c795e.quest\",\"name\":\"host-524b42.quest\",\"proxied\":true,\"type\":\"CNAME\"}", "occurred_at": "2026-04-16T21:47:29.277Z" }
+  ],
+  "inventory_asset": []
+}
