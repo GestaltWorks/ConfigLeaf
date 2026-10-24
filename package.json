@@ -1,0 +1,32 @@
+{
+  "name": "drift-agent",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Config-drift assurance agent for MSPs: changed since backup, would a restore regress, drift vs golden.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "smoke": "tsx scripts/smoke.ts",
+    "spike:zetaris": "tsx scripts/spike-zetaris.ts",
+    "spike:nightshift": "tsx scripts/spike-nightshift.ts",
+    "spike:world": "tsx scripts/spike-world.ts",
+    "conformance": "tsx scripts/conformance.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "openai": "^7.43.0",
+    "pg": "^8.23.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}
