@@ -65,8 +65,10 @@ and so on). Each is handed to the judge of C2 and C3. The count of strikes is re
 
 1. Checks the model selected; of those, how many were valid (known template, parameters bind) and ran unmodified.
 2. Falsifier queries that passed the guard and ran; of those, how many returned rows (struck the claim).
-3. Claims struck whose label is `does not` (agreed strikes) and whose label is `matters` (wrong strikes).
-4. Verdict agreement with the label: `matters` expects ESCALATE or HOLD, `does not` expects ADOPT; `unsure` is reported separately.
+3. Claims struck whose label is `needs_human: no` (agreed strikes) and whose label is `yes` (wrong strikes).
+4. Verdict agreement with the label. The agent's verbs are ADOPT, HOLD, ESCALATE, ROLLBACK and FIX; `yes` expects
+   ESCALATE or FIX, `no` expects ADOPT, HOLD or ROLLBACK; `unsure` is reported separately. A finding the pass raises
+   that has no item in `items.json` is listed with its class and verb, unscored.
 5. Items filed not judged (model failure, invalid output, failed receipt gate), with the reason.
 6. Served model versus requested tier from the verified receipt. Any substitution makes the run invalid; the submitted run must show zero.
 7. Cache hits, latency and tokens per call, from the receipt.
@@ -74,6 +76,14 @@ and so on). Each is handed to the judge of C2 and C3. The count of strikes is re
 Then, second: accuracy per configuration against the labels with Wilson 95% intervals, and the spread of
 each count over the three runs. At this sample size the intervals mostly overlap; the README says so
 rather than ranking the configurations on them.
+
+## Measures, per configuration
+
+- Determinism: two passes over the same stored rows give the same findings, verbs and reasons; the count of differences is reported and the submitted run shows zero for C0.
+- Coverage: items with a verdict over items in the set, and findings with a disposition over findings raised.
+- False-positive rate: items labelled `no` whose verdict is ESCALATE or FIX, over items labelled `no`.
+- Stability: the spread of each count over the three runs, computed over uncached answers only (receipt `cache.status`).
+- The planted-false-claim strikes of the section above.
 
 ## Rules
 
@@ -92,3 +102,4 @@ catalogue; anything about enforcement.
 ## Changelog
 
 - 2026-10-24: created, before labels.
+- 2026-10-24, evening, before any model run and before the runner exists: items 3 and 4 of "What is counted" now name the `needs_human` scale the committed labels carry (the earlier text named a `matters` / `does not` scale no label uses) and the five verbs of the policy Decider; a "Measures" section defines determinism, coverage, false-positive rate and stability as the runner computes them. Items, labels, split and configurations unchanged.
