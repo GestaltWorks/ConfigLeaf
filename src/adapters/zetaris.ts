@@ -6,6 +6,10 @@
 //   body: { queryId, sql, source: "SqlEditor", limit }
 //   ONE statement per call, no trailing semicolon. Values come back as strings.
 //   REST tables re-fetch on every query; CACHE TABLE after creating them.
+//   The one exception (measured 24 Oct on 2.4.3.1): COMPILE USL ... DDL carries every CREATE TABLE
+//   block, separated by ';', in a single request. opts.allowMultiStatement lets that through and is
+//   refused for any statement that does not start with COMPILE USL.
+//   Error messages and trace lines go through redact(): a CREATE DATASOURCE carries password "...".
 
 import { randomUUID } from "node:crypto";
 import { config, redact } from "../config.ts";
@@ -42,10 +46,14 @@ export class Zetaris {
     };
   }
 
-  /** Run exactly one Lightning SQL statement. A trailing semicolon is stripped; a second statement is refused; a ';' inside a literal is data. */
-  async query(sql: string, opts: { limit?: number; agent?: string; tracer?: Tracer; timeoutMs?: number } = {}): Promise<QueryResult> {
+  /**
+   * Run exactly one Lightning SQL statement. A trailing semicolon is stripped; a second statement is refused; a ';' inside a literal is data.
+   * allowMultiStatement: the COMPILE USL ... DDL request only; set on anything else, the call is refused before it is sent.
+   */
+  async query(sql: string, opts: { limit?: number; agent?: string; tracer?: Tracer; timeoutMs?: number; allowMultiStatement?: boolean } = {}): Promise<QueryResult> {
     const clean = sql.trim().replace(/;+\s*$/, "");
-    if (/;\s*\S/.test(stripLiterals(clean))) throw new ZetarisError("one statement per call", 0);
+    if (opts.allowMultiStatement && !/^compile\s+usl\b/i.test(clean)) throw new ZetarisError("allowMultiStatement is honoured only for COMPILE USL ... DDL", 0);
+    if (!opts.allowMultiStatement && /;\s*\S/.test(stripLiterals(clean))) throw new ZetarisError("one statement per call", 0);
     const queryId = randomUUID();
     const t0 = Date.now();
     const r = await fetch(this.url, {
@@ -60,11 +68,11 @@ export class Zetaris {
     const latencyMs = Date.now() - t0;
     if (!r.ok) {
       const msg = j?.message ?? j?.error ?? text.slice(0, 300);
-      opts.tracer?.emit({ agent: opts.agent ?? "zetaris", action: "query", query_id: queryId, status: "failed", latency_ms: latencyMs, detail: `${r.status}: ${msg}` });
+      opts.tracer?.emit({ agent: opts.agent ?? "zetaris", action: "query", query_id: queryId, status: "failed", latency_ms: latencyMs, detail: redact(`${r.status}: ${msg}`) });
       throw new ZetarisError(`Zetaris ${r.status}: ${msg}`, r.status);
     }
     const result = Zetaris.normalise(j, queryId, latencyMs);
-    opts.tracer?.emit({ agent: opts.agent ?? "zetaris", action: "query", query_id: queryId, status: "ok", latency_ms: latencyMs, output_summary: `${result.rowCount} rows`, input_summary: clean.slice(0, 160) });
+    opts.tracer?.emit({ agent: opts.agent ?? "zetaris", action: "query", query_id: queryId, status: "ok", latency_ms: latencyMs, output_summary: `${result.rowCount} rows`, input_summary: redact(clean).slice(0, 160) });
     return result;
   }
 

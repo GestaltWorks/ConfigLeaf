@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS collection_run (
   finished_at    TEXT,
   expected_count INTEGER,            -- population asserted BEFORE collecting (the DQ gate input)
   observed_count INTEGER,
-  status         TEXT NOT NULL       -- complete | partial | failed
+  status         TEXT NOT NULL       -- running (between Store.beginRun and finishRun) | complete | partial | failed
 );
 CREATE TABLE IF NOT EXISTS observation (
   obs_id         TEXT PRIMARY KEY,
@@ -44,9 +44,9 @@ CREATE TABLE IF NOT EXISTS backup_snapshot (
   snapshot_id    TEXT PRIMARY KEY,
   tenant_id      TEXT NOT NULL,
   host           TEXT NOT NULL,
-  kind           TEXT NOT NULL,      -- restic | etckeeper
+  kind           TEXT NOT NULL,      -- export (a config tarball or a folder of copies) | restic | etckeeper
   taken_at       TEXT NOT NULL,
-  source_ref     TEXT                -- restic snapshot id or etckeeper commit
+  source_ref     TEXT                -- the tarball or folder path (redacted), restic snapshot id or etckeeper commit
 );
 CREATE TABLE IF NOT EXISTS backup_item (
   snapshot_id    TEXT NOT NULL,

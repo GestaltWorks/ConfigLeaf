@@ -11,10 +11,16 @@
   "scripts": {
     "smoke": "tsx scripts/smoke.ts",
     "spike:zetaris": "tsx scripts/spike-zetaris.ts",
+    "zetaris:setup": "tsx scripts/zetaris-setup.ts",
+    "zetaris:queries": "tsx scripts/zetaris-queries.ts",
+    "examples": "tsx scripts/examples.ts",
     "spike:nightshift": "tsx scripts/spike-nightshift.ts",
     "spike:world": "tsx scripts/spike-world.ts",
     "conformance": "tsx scripts/conformance.ts",
     "sample": "tsx scripts/sample.ts",
+    "collect:linux": "tsx scripts/collect-linux.ts",
+    "export:bundle": "tsx scripts/export-bundle.ts",
+    "collect:cloudflare": "tsx scripts/collect-cloudflare.ts",
     "probe:thinking": "tsx scripts/probe-thinking.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
