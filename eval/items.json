@@ -1,0 +1,481 @@
+{
+ "created": "2026-10-24T15:48:45.086Z",
+ "note": "Pseudonymised eval items; labels are added by a human before any model run (pre-registration).",
+ "items": [
+  {
+   "id": "E01",
+   "class": "proxy_split",
+   "source": "sample pass run-f9470e2f5f175899",
+   "question": "One name served direct, its www proxied: the two halves are logged and rate-limited differently. Does this matter?",
+   "agent_says": "ESCALATE (run_complete:holds, actor_attributed:holds, previous_value_recoverable:holds, referent_unchanged:FAILS)",
+   "facts": "host-524b42.quest is proxied and aliases host-4c795e.quest, whose A record is direct to ip-6fb86d: the origin the proxy hides is published on the name it points at",
+   "refs": {
+    "run_id": "run-f9470e2f5f175899",
+    "object_id": "bce1ca2bb7caa2de9b6823d5f6ecd3f2",
+    "host": null,
+    "resource_id": "bce1ca2bb7caa2de9b6823d5f6ecd3f2"
+   }
+  },
+  {
+   "id": "E02",
+   "class": "proxied_without_real_ip",
+   "source": "sample pass run-67f4d6923cb4838d",
+   "question": "A Cloudflare-proxied name reaches this vhost, which trusts no Cloudflare range for the real client address. Does this matter for this site?",
+   "agent_says": "ADOPT (run_complete:holds, host_in_inventory:holds, actor_attributed:holds, previous_value_recoverable:holds)",
+   "facts": "host-aa516a /etc/nginx/conf.d/word-005ed8-prod.conf: host-18efce.ai is proxied through Cloudflare to ip-6b6bba, and server[host-18efce.ai:443].real_ip in /etc/nginx/conf.d/word-005ed8-prod.conf on host-aa516a is absent: the block that serves it sees Cloudflare's addresses as its visitors",
+   "refs": {
+    "run_id": "run-67f4d6923cb4838d",
+    "object_id": "/etc/nginx/conf.d/word-005ed8-prod.conf",
+    "host": "host-aa516a"
+   }
+  },
+  {
+   "id": "E03",
+   "class": "proxied_without_real_ip",
+   "source": "sample pass run-67f4d6923cb4838d",
+   "question": "A Cloudflare-proxied name reaches this vhost, which trusts no Cloudflare range for the real client address. Does this matter for this site?",
+   "agent_says": "ESCALATE (run_complete:holds, host_in_inventory:holds, actor_attributed:FAILS, previous_value_recoverable:FAILS)",
+   "facts": "host-aa516a /etc/nginx/conf.d/host-503b27.ai.conf: host-27618a.ai is proxied through Cloudflare to ip-6b6bba, and server[host-27618a.ai:443].real_ip in /etc/nginx/conf.d/host-503b27.ai.conf on host-aa516a is absent: the block that serves it sees Cloudflare's addresses as its visitors",
+   "refs": {
+    "run_id": "run-67f4d6923cb4838d",
+    "object_id": "/etc/nginx/conf.d/host-503b27.ai.conf",
+    "host": "host-aa516a"
+   }
+  },
+  {
+   "id": "E04",
+   "class": "proxied_without_real_ip",
+   "source": "sample pass run-67f4d6923cb4838d",
+   "question": "A Cloudflare-proxied name reaches this vhost, which trusts no Cloudflare range for the real client address. Does this matter for this site?",
+   "agent_says": "ESCALATE (run_complete:holds, host_in_inventory:holds, actor_attributed:FAILS, previous_value_recoverable:FAILS)",
+   "facts": "host-aa516a /etc/nginx/conf.d/host-e49c58.cloud.conf: host-d39933.cloud is proxied through Cloudflare to ip-6b6bba, and server[host-e49c58.cloud:443].real_ip in /etc/nginx/conf.d/host-e49c58.cloud.conf on host-aa516a is absent: the block that serves it sees Cloudflare's addresses as its visitors",
+   "refs": {
+    "run_id": "run-67f4d6923cb4838d",
+    "object_id": "/etc/nginx/conf.d/host-e49c58.cloud.conf",
+    "host": "host-aa516a"
+   }
+  },
+  {
+   "id": "E05",
+   "class": "proxied_without_real_ip",
+   "source": "sample pass run-67f4d6923cb4838d",
+   "question": "A Cloudflare-proxied name reaches this vhost, which trusts no Cloudflare range for the real client address. Does this matter for this site?",
+   "agent_says": "ESCALATE (run_complete:holds, host_in_inventory:holds, actor_attributed:FAILS, previous_value_recoverable:FAILS)",
+   "facts": "host-aa516a /etc/nginx/nginx.conf: *.host-503b27.ai is proxied through Cloudflare to ip-6b6bba, and no server block on host-aa516a trusts a Cloudflare range (http.real_ip in /etc/nginx/nginx.conf is absent): every name under the wildcard sees Cloudflare's addresses as its visitors",
+   "refs": {
+    "run_id": "run-67f4d6923cb4838d",
+    "object_id": "/etc/nginx/nginx.conf",
+    "host": "host-aa516a"
+   }
+  },
+  {
+   "id": "E06",
+   "class": "orphan_record",
+   "source": "sample pass run-f9470e2f5f175899",
+   "question": "A DNS record points at this host but no enabled server block names it; requests reach the default server. Does this matter?",
+   "agent_says": "ESCALATE (run_complete:holds, host_in_inventory:holds, actor_attributed:FAILS, previous_value_recoverable:FAILS)",
+   "facts": "host-3fef97.club (A, direct) lands on ip-6b6bba, host-aa516a, where no enabled server block names it: requests for it reach the default server",
+   "refs": {
+    "run_id": "run-f9470e2f5f175899",
+    "object_id": "c8b1963847dafe3548b1a4b93f520c0a",
+    "host": "host-aa516a",
+    "resource_id": "c8b1963847dafe3548b1a4b93f520c0a"
+   }
+  },
+  {
+   "id": "E07",
+   "class": "proxied_without_real_ip",
+   "source": "sample pass run-15638d43819ba756",
+   "question": "A Cloudflare-proxied name reaches this vhost, which trusts no Cloudflare range for the real client address. Does this matter for this site?",
+   "agent_says": "ESCALATE (run_complete:holds, host_in_inventory:holds, actor_attributed:FAILS, previous_value_recoverable:FAILS)",
+   "facts": "host-4b4dc1 /etc/nginx/sites-available/host-525a57.com: host-22b64a.com is proxied through Cloudflare to ip-6fb86d, and server[host-22b64a.com:443].real_ip in /etc/nginx/sites-available/host-525a57.com on host-4b4dc1 is absent: the block that serves it sees Cloudflare's addresses as its visitors",
+   "refs": {
+    "run_id": "run-15638d43819ba756",
+    "object_id": "/etc/nginx/sites-available/host-525a57.com",
+    "host": "host-4b4dc1"
+   }
+  },
+  {
+   "id": "E08",
+   "class": "proxied_without_real_ip",
+   "source": "sample pass run-15638d43819ba756",
+   "question": "A Cloudflare-proxied name reaches this vhost, which trusts no Cloudflare range for the real client address. Does this matter for this site?",
+   "agent_says": "ADOPT (run_complete:holds, host_in_inventory:holds, actor_attributed:holds, previous_value_recoverable:holds)",
+   "facts": "host-4b4dc1 /etc/nginx/sites-available/host-4c795e.quest: host-524b42.quest is proxied through Cloudflare to ip-6fb86d, and server[host-4c795e.quest:443].real_ip in /etc/nginx/sites-available/host-4c795e.quest on host-4b4dc1 is absent: the block that serves it sees Cloudflare's addresses as its visitors",
+   "refs": {
+    "run_id": "run-15638d43819ba756",
+    "object_id": "/etc/nginx/sites-available/host-4c795e.quest",
+    "host": "host-4b4dc1"
+   }
+  },
+  {
+   "id": "E09",
+   "class": "proxied_without_real_ip",
+   "source": "sample pass run-15638d43819ba756",
+   "question": "A Cloudflare-proxied name reaches this vhost, which trusts no Cloudflare range for the real client address. Does this matter for this site?",
+   "agent_says": "ESCALATE (run_complete:holds, host_in_inventory:holds, actor_attributed:FAILS, previous_value_recoverable:FAILS)",
+   "facts": "host-4b4dc1 /etc/nginx/sites-available/host-62f7a4.com: host-62f7a4.com is proxied through Cloudflare to ip-6fb86d, and server[host-62f7a4.com:443].real_ip in /etc/nginx/sites-available/host-62f7a4.com on host-4b4dc1 is absent: the block that serves it sees Cloudflare's addresses as its visitors",
+   "refs": {
+    "run_id": "run-15638d43819ba756",
+    "object_id": "/etc/nginx/sites-available/host-62f7a4.com",
+    "host": "host-4b4dc1"
+   }
+  },
+  {
+   "id": "E10",
+   "class": "proxied_without_real_ip",
+   "source": "sample pass run-15638d43819ba756",
+   "question": "A Cloudflare-proxied name reaches this vhost, which trusts no Cloudflare range for the real client address. Does this matter for this site?",
+   "agent_says": "ESCALATE (run_complete:holds, host_in_inventory:holds, actor_attributed:holds, previous_value_recoverable:FAILS)",
+   "facts": "host-4b4dc1 /etc/nginx/sites-available/host-f324df.com: host-f324df.com is proxied through Cloudflare to ip-6fb86d, and server[host-f324df.com:443].real_ip in /etc/nginx/sites-available/host-f324df.com on host-4b4dc1 is absent: the block that serves it sees Cloudflare's addresses as its visitors",
+   "refs": {
+    "run_id": "run-15638d43819ba756",
+    "object_id": "/etc/nginx/sites-available/host-f324df.com",
+    "host": "host-4b4dc1"
+   }
+  },
+  {
+   "id": "E11",
+   "class": "orphan_record",
+   "source": "sample pass run-f9470e2f5f175899",
+   "question": "A DNS record points at this host but no enabled server block names it; requests reach the default server. Does this matter?",
+   "agent_says": "ESCALATE (run_complete:holds, host_in_inventory:holds, actor_attributed:FAILS, previous_value_recoverable:FAILS)",
+   "facts": "host-50b116.com (A, proxied) lands on ip-6fb86d, host-4b4dc1, where no enabled server block names it: requests for it reach the default server",
+   "refs": {
+    "run_id": "run-f9470e2f5f175899",
+    "object_id": "b0a17a719bd2118a535a763379ab7ba9",
+    "host": "host-4b4dc1",
+    "resource_id": "b0a17a719bd2118a535a763379ab7ba9"
+   }
+  },
+  {
+   "id": "E12",
+   "class": "orphan_record",
+   "source": "sample pass run-f9470e2f5f175899",
+   "question": "A DNS record points at this host but no enabled server block names it; requests reach the default server. Does this matter?",
+   "agent_says": "ESCALATE (run_complete:holds, host_in_inventory:holds, actor_attributed:holds, previous_value_recoverable:FAILS)",
+   "facts": "host-c10fff.com (A, proxied) lands on ip-6fb86d, host-4b4dc1, where no enabled server block names it: requests for it reach the default server",
+   "refs": {
+    "run_id": "run-f9470e2f5f175899",
+    "object_id": "25a23b5c40a3de0ea11b6054a7b54d07",
+    "host": "host-4b4dc1",
+    "resource_id": "25a23b5c40a3de0ea11b6054a7b54d07"
+   }
+  },
+  {
+   "id": "E13",
+   "class": "orphan_vhost",
+   "source": "sample pass run-15638d43819ba756",
+   "question": "A server_name on disk has no DNS record in the collected zones. Does this matter?",
+   "agent_says": "ADOPT (run_complete:holds, other_settings_reference:holds, backup_recent:holds)",
+   "facts": "host-085e02.com is a server_name in /etc/nginx/sites-available/host-085e02.com on host-4b4dc1 (on disk, not enabled) with no record of that name in the collected zones and no wildcard covering its zone",
+   "refs": {
+    "run_id": "run-15638d43819ba756",
+    "object_id": "/etc/nginx/sites-available/host-085e02.com",
+    "host": "host-4b4dc1",
+    "resource_id": ""
+   }
+  },
+  {
+   "id": "E14",
+   "class": "orphan_vhost",
+   "source": "sample pass run-15638d43819ba756",
+   "question": "A server_name on disk has no DNS record in the collected zones. Does this matter?",
+   "agent_says": "ESCALATE (run_complete:holds, other_settings_reference:FAILS, backup_recent:holds)",
+   "facts": "host-89f6e7.com is a server_name in /etc/nginx/sites-available/host-9ac4f1.com on host-4b4dc1 (enabled) with no record of that name in the collected zones and no wildcard covering its zone",
+   "refs": {
+    "run_id": "run-15638d43819ba756",
+    "object_id": "/etc/nginx/sites-available/host-9ac4f1.com",
+    "host": "host-4b4dc1",
+    "resource_id": ""
+   }
+  },
+  {
+   "id": "E15",
+   "class": "orphan_vhost",
+   "source": "sample pass run-15638d43819ba756",
+   "question": "A server_name on disk has no DNS record in the collected zones. Does this matter?",
+   "agent_says": "ESCALATE (run_complete:holds, other_settings_reference:FAILS, backup_recent:holds)",
+   "facts": "host-9ac4f1.com is a server_name in /etc/nginx/sites-available/host-9ac4f1.com on host-4b4dc1 (enabled) with no record of that name in the collected zones and no wildcard covering its zone",
+   "refs": {
+    "run_id": "run-15638d43819ba756",
+    "object_id": "/etc/nginx/sites-available/host-9ac4f1.com",
+    "host": "host-4b4dc1",
+    "resource_id": ""
+   }
+  },
+  {
+   "id": "E16",
+   "class": "dns_change_history",
+   "source": "cloudflare audit, record 6dfbfac6",
+   "question": "Here is a record's change sequence. Should the agent have raised this to a technician at the time (matters), ignored it (does not), or asked?",
+   "agent_says": "not yet judged (history item)",
+   "facts": "host-503b27.ai: 2026-03-24T01:24Z CNAME host-922448.ai -> host-9eff2c.com proxied=false (user)",
+   "refs": {
+    "record_id": "6dfbfac693d6faabbaa448bbefe8cf3f",
+    "zone": "host-503b27.ai"
+   }
+  },
+  {
+   "id": "E17",
+   "class": "dns_change_history",
+   "source": "cloudflare audit, record bce1ca2b",
+   "question": "Here is a record's change sequence. Should the agent have raised this to a technician at the time (matters), ignored it (does not), or asked?",
+   "agent_says": "not yet judged (history item)",
+   "facts": "host-4c795e.quest: 2026-04-16T21:11Z CNAME host-524b42.quest -> host-fa882b.com proxied=false (user); 2026-04-16T21:12Z CNAME host-524b42.quest -> host-fa882b.com proxied=true (user); 2026-04-16T21:47Z CNAME host-524b42.quest -> host-4c795e.quest proxied=true (token/system)",
+   "refs": {
+    "record_id": "bce1ca2bb7caa2de9b6823d5f6ecd3f2",
+    "zone": "host-4c795e.quest"
+   }
+  },
+  {
+   "id": "E18",
+   "class": "dns_change_history",
+   "source": "cloudflare audit, record 510ec8f6",
+   "question": "Here is a record's change sequence. Should the agent have raised this to a technician at the time (matters), ignored it (does not), or asked?",
+   "agent_says": "not yet judged (history item)",
+   "facts": "host-525a57.com: 2026-07-02T21:48Z A host-e1e296.com -> ip-6b6bba proxied=false (user)",
+   "refs": {
+    "record_id": "510ec8f604eada42808a4a1ab2287ac6",
+    "zone": "host-525a57.com"
+   }
+  },
+  {
+   "id": "E19",
+   "class": "dns_change_history",
+   "source": "cloudflare audit, record 4c6d2094",
+   "question": "Here is a record's change sequence. Should the agent have raised this to a technician at the time (matters), ignored it (does not), or asked?",
+   "agent_says": "not yet judged (history item)",
+   "facts": "host-525a57.com: 2026-07-02T21:48Z A host-f324df.com -> ip-6fb86d proxied=true (user)",
+   "refs": {
+    "record_id": "4c6d209470c71ee2c4668f5f435a4ae1",
+    "zone": "host-525a57.com"
+   }
+  },
+  {
+   "id": "E20",
+   "class": "dns_change_history",
+   "source": "cloudflare audit, record 82de28f7",
+   "question": "Here is a record's change sequence. Should the agent have raised this to a technician at the time (matters), ignored it (does not), or asked?",
+   "agent_says": "not yet judged (history item)",
+   "facts": "host-503b27.ai: 2026-07-03T21:07Z A host-18efce.ai -> ip-6b6bba proxied=false (user); 2026-07-07T18:01Z A host-18efce.ai -> ip-6b6bba proxied=true (user)",
+   "refs": {
+    "record_id": "82de28f7baf86a005babc11f85b45bc4",
+    "zone": "host-503b27.ai"
+   }
+  },
+  {
+   "id": "E21",
+   "class": "dns_change_history",
+   "source": "cloudflare audit, record 1f75c652",
+   "question": "Here is a record's change sequence. Should the agent have raised this to a technician at the time (matters), ignored it (does not), or asked?",
+   "agent_says": "not yet judged (history item)",
+   "facts": "host-503b27.ai: 2026-07-03T21:25Z A *.zone-redacted.ai -> ip-6b6bba proxied=false (user)",
+   "refs": {
+    "record_id": "1f75c652a377966a1c93c8803d203808",
+    "zone": "host-503b27.ai"
+   }
+  },
+  {
+   "id": "E22",
+   "class": "dns_change_history",
+   "source": "cloudflare audit, record 25a23b5c",
+   "question": "Here is a record's change sequence. Should the agent have raised this to a technician at the time (matters), ignored it (does not), or asked?",
+   "agent_says": "not yet judged (history item)",
+   "facts": "host-525a57.com: 2026-07-06T18:46Z A host-c10fff.com -> ip-6fb86d proxied=true (user)",
+   "refs": {
+    "record_id": "25a23b5c40a3de0ea11b6054a7b54d07",
+    "zone": "host-525a57.com"
+   }
+  },
+  {
+   "id": "E23",
+   "class": "dns_change_history",
+   "source": "cloudflare audit, record 9ee8076d",
+   "question": "Here is a record's change sequence. Should the agent have raised this to a technician at the time (matters), ignored it (does not), or asked?",
+   "agent_says": "not yet judged (history item)",
+   "facts": "host-503b27.ai: 2026-07-07T18:29Z A host-492568.ai -> ip-6b6bba proxied=false (user)",
+   "refs": {
+    "record_id": "9ee8076d949534eb9ceef147017db541",
+    "zone": "host-503b27.ai"
+   }
+  },
+  {
+   "id": "E24",
+   "class": "dns_change_history",
+   "source": "cloudflare audit, record df52e7a3",
+   "question": "Here is a record's change sequence. Should the agent have raised this to a technician at the time (matters), ignored it (does not), or asked?",
+   "agent_says": "not yet judged (history item)",
+   "facts": "host-17a03d.info: 2026-08-12T20:24Z A *.zone-redacted.info -> ip-a80206 proxied=false (user); 2026-08-12T20:46Z A *.zone-redacted.info -> ip-6fb86d proxied=false (user)",
+   "refs": {
+    "record_id": "df52e7a315f8b41b446c5eeecf7ff6cb",
+    "zone": "host-17a03d.info"
+   }
+  },
+  {
+   "id": "E25",
+   "class": "dns_change_history",
+   "source": "cloudflare audit, record 6b6b8a54",
+   "question": "Here is a record's change sequence. Should the agent have raised this to a technician at the time (matters), ignored it (does not), or asked?",
+   "agent_says": "not yet judged (history item)",
+   "facts": "host-17a03d.info: 2026-08-12T20:24Z A host-17a03d.info -> ip-a80206 proxied=false (user); 2026-08-12T20:46Z A host-17a03d.info -> ip-6fb86d proxied=false (user)",
+   "refs": {
+    "record_id": "6b6b8a5464881541716a106e7f10661b",
+    "zone": "host-17a03d.info"
+   }
+  },
+  {
+   "id": "E26",
+   "class": "dns_change_history",
+   "source": "cloudflare audit, record 92d1b88e",
+   "question": "Here is a record's change sequence. Should the agent have raised this to a technician at the time (matters), ignored it (does not), or asked?",
+   "agent_says": "not yet judged (history item)",
+   "facts": "host-17a03d.info: 2026-08-12T20:24Z A host-c2af6d.info -> ip-a80206 proxied=false (user); 2026-08-12T20:46Z A host-c2af6d.info -> ip-6fb86d proxied=false (user)",
+   "refs": {
+    "record_id": "92d1b88e598e4fdd0a47a92d07b9def9",
+    "zone": "host-17a03d.info"
+   }
+  },
+  {
+   "id": "E27",
+   "class": "dns_bulk_delete",
+   "source": "cloudflare audit 2026-10-11",
+   "question": "8 DNS records deleted on 2026-10-11. Was this one deliberate clean-up (does not matter) or something the agent should have flagged (matters)?",
+   "agent_says": "not yet judged (history item)",
+   "facts": "zone(s) host-17a03d.info: host-1f459a.info TXT, host-1f459a.info TXT, host-1f459a.info TXT, host-1f459a.info TXT, host-1f459a.info TXT, host-1f459a.info TXT, host-1f459a.info TXT, host-1f459a.info TXT",
+   "refs": {
+    "day": "2026-10-11"
+   }
+  },
+  {
+   "id": "E28",
+   "class": "dns_bulk_delete",
+   "source": "cloudflare audit 2026-05-22",
+   "question": "6 DNS records deleted on 2026-05-22. Was this one deliberate clean-up (does not matter) or something the agent should have flagged (matters)?",
+   "agent_says": "not yet judged (history item)",
+   "facts": "zone(s) host-503b27.ai: host-65c144.ai TXT, host-65c144.ai TXT, host-65c144.ai TXT, host-65c144.ai TXT, host-65c144.ai TXT, host-65c144.ai TXT",
+   "refs": {
+    "day": "2026-05-22"
+   }
+  },
+  {
+   "id": "E29",
+   "class": "dns_bulk_delete",
+   "source": "cloudflare audit 2026-06-03",
+   "question": "6 DNS records deleted on 2026-06-03. Was this one deliberate clean-up (does not matter) or something the agent should have flagged (matters)?",
+   "agent_says": "not yet judged (history item)",
+   "facts": "zone(s) host-4c795e.quest: host-24f835.quest TXT, host-24f835.quest TXT, host-24f835.quest TXT, host-24f835.quest TXT, host-24f835.quest TXT, host-24f835.quest TXT",
+   "refs": {
+    "day": "2026-06-03"
+   }
+  },
+  {
+   "id": "E30",
+   "class": "drift_vs_approved",
+   "source": "linux collection run-15638d43819ba756",
+   "question": "Dated copies of this vhost sit beside the live file. Which version is the approved one, and does the live file's difference from the newest copy matter?",
+   "agent_says": "not yet judged (history item; approved copy not declared)",
+   "facts": "host-4b4dc1 /etc/nginx/sites-available/host-aeb96b.com: 2 versions; host-aeb96b.com.bak-20260921171317 ≠ live, host-aeb96b.com.bak-20260921170856 ≠ live",
+   "refs": {
+    "host": "host-4b4dc1",
+    "object_id": "/etc/nginx/sites-available/host-aeb96b.com"
+   }
+  },
+  {
+   "id": "E31",
+   "class": "drift_vs_approved",
+   "source": "linux collection run-67f4d6923cb4838d",
+   "question": "Dated copies of this vhost sit beside the live file. Which version is the approved one, and does the live file's difference from the newest copy matter?",
+   "agent_says": "not yet judged (history item; approved copy not declared)",
+   "facts": "host-aa516a /etc/nginx/sites-available/site: 4 versions; site.bak.20260604203018 ≠ live, site.bak.20260604202422 ≠ live, site.bak.20260604203017 ≠ live",
+   "refs": {
+    "host": "host-aa516a",
+    "object_id": "/etc/nginx/sites-available/site"
+   }
+  },
+  {
+   "id": "E32",
+   "class": "drift_vs_approved",
+   "source": "linux collection run-15638d43819ba756",
+   "question": "Dated copies of this vhost sit beside the live file. Which version is the approved one, and does the live file's difference from the newest copy matter?",
+   "agent_says": "not yet judged (history item; approved copy not declared)",
+   "facts": "host-4b4dc1 /etc/nginx/sites-available/host-9ac4f1.com: 2 versions; host-9ac4f1.com.bak.20260602-150607 ≠ live",
+   "refs": {
+    "host": "host-4b4dc1",
+    "object_id": "/etc/nginx/sites-available/host-9ac4f1.com"
+   }
+  },
+  {
+   "id": "E33",
+   "class": "drift_vs_approved",
+   "source": "linux collection run-67f4d6923cb4838d",
+   "question": "Dated copies of this vhost sit beside the live file. Which version is the approved one, and does the live file's difference from the newest copy matter?",
+   "agent_says": "not yet judged (history item; approved copy not declared)",
+   "facts": "host-aa516a /etc/nginx/conf.d/host-9add22.ai.conf: 4 versions; host-9add22.ai.conf.bak-2026-08-12 ≠ live, host-9add22.ai.conf.bak.20260924200401 ≠ live, host-9add22.ai.conf.bak.20260903183931 ≠ live, host-9add22.ai.conf.bak.20261001212949 ≠ live",
+   "refs": {
+    "host": "host-aa516a",
+    "object_id": "/etc/nginx/conf.d/host-9add22.ai.conf"
+   }
+  },
+  {
+   "id": "E34",
+   "class": "drift_vs_approved",
+   "source": "linux collection run-67f4d6923cb4838d",
+   "question": "Dated copies of this vhost sit beside the live file. Which version is the approved one, and does the live file's difference from the newest copy matter?",
+   "agent_says": "not yet judged (history item; approved copy not declared)",
+   "facts": "host-aa516a /etc/nginx/conf.d/host-e49c58.cloud.conf: 2 versions; host-e49c58.cloud.conf.bak ≠ live",
+   "refs": {
+    "host": "host-aa516a",
+    "object_id": "/etc/nginx/conf.d/host-e49c58.cloud.conf"
+   }
+  },
+  {
+   "id": "E35",
+   "class": "drift_vs_approved",
+   "source": "linux collection run-67f4d6923cb4838d",
+   "question": "Dated copies of this vhost sit beside the live file. Which version is the approved one, and does the live file's difference from the newest copy matter?",
+   "agent_says": "not yet judged (history item; approved copy not declared)",
+   "facts": "host-aa516a /etc/nginx/conf.d/word-92cb1d-prod-club.conf: 2 versions; word-92cb1d-prod-club.conf.bak.1783629242 ≠ live",
+   "refs": {
+    "host": "host-aa516a",
+    "object_id": "/etc/nginx/conf.d/word-92cb1d-prod-club.conf"
+   }
+  },
+  {
+   "id": "E36",
+   "class": "drift_vs_approved",
+   "source": "linux collection run-15638d43819ba756",
+   "question": "Dated copies of this vhost sit beside the live file. Which version is the approved one, and does the live file's difference from the newest copy matter?",
+   "agent_says": "not yet judged (history item; approved copy not declared)",
+   "facts": "host-4b4dc1 /etc/nginx/sites-available/host-f2a6b6.com: 2 versions; host-f2a6b6.com.pre-symlink.20260917-235830 ≠ live, host-f2a6b6.com.bak.20260602-150114 ≠ live",
+   "refs": {
+    "host": "host-4b4dc1",
+    "object_id": "/etc/nginx/sites-available/host-f2a6b6.com"
+   }
+  },
+  {
+   "id": "E37",
+   "class": "changed_since_backup",
+   "source": "backup export snap-d53a5d4c13322e31",
+   "question": "Live config versus the newest nightly export. Is 'nothing changed since the backup' the right call here (does not matter), or is something missing from the export that should matter?",
+   "agent_says": "nothing changed since the newest export",
+   "facts": "host-aa516a: newest export 2026-10-24T03:40Z; 26 identical, 0 differ, 6 live files not in the export",
+   "refs": {
+    "host": "host-aa516a",
+    "snapshot_id": "snap-d53a5d4c13322e31"
+   }
+  },
+  {
+   "id": "E38",
+   "class": "changed_since_backup",
+   "source": "backup export snap-4f73ac1594ec4e7c",
+   "question": "Live config versus the newest nightly export. Is 'nothing changed since the backup' the right call here (does not matter), or is something missing from the export that should matter?",
+   "agent_says": "nothing changed since the newest export",
+   "facts": "host-4b4dc1: newest export 2026-10-24T03:40Z; 17 identical, 0 differ, 5 live files not in the export",
+   "refs": {
+    "host": "host-4b4dc1",
+    "snapshot_id": "snap-4f73ac1594ec4e7c"
+   }
+  }
+ ]
+}

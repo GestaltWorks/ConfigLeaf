@@ -17,7 +17,7 @@ import { countLabels } from "../src/redactor.ts";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const WORDS = [...new Set([...config.redactWords, ...config.exportDenyWords])];
 const ALIASES = Object.keys(config.linuxHosts);
-const SURFACES = ["sample", "examples", "README.md", "ops", "scripts", "src", "test", "sql", ".env.example", "package.json"];
+const SURFACES = ["sample", "examples", "eval", "README.md", "ops", "scripts", "src", "test", "sql", ".env.example", "package.json"];
 const TEXT = /\.(?:ts|mts|json|md|sql|example|txt|conf|types|bak|sh)$|^[^.]+$/;
 
 if (!WORDS.length) console.log("leak: skipped (REDACT_WORDS and EXPORT_DENY_WORDS are blank; the deny-list is the operator's configuration)");
