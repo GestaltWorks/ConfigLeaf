@@ -532,7 +532,8 @@ describe("redaction before persistence", () => {
     expect(all).not.toMatch(/bluefin|vendor-zz9q|100\.72\.5|10\.200\.7|2a0e:7d44|web-01/);
     // the .zone sibling carries the zone's pseudonym, the one a Cloudflare '*.<zone>' record gets under the same salt
     expect(rows.observation.find((o) => o.setting_path === `server[${r.text(real.app)}:443].server_name[${r.text(real.app)}].zone`)?.value_redacted).toBe(r.text("bluefin-logistics-zz9q.com"));
-    expect(r.text("*.bluefin-logistics-zz9q.com")).not.toBe(`*.${r.text("bluefin-logistics-zz9q.com")}`); // the redactor's own gap, which the sweep covers
+    // the redactor handles a leading "*." itself since 24 Oct (it was a gap the collector's sweep covered); both paths agree
+    expect(r.text("*.bluefin-logistics-zz9q.com")).toBe(`*.${r.text("bluefin-logistics-zz9q.com")}`);
     expect(redactText(r, "*.bluefin-logistics-zz9q.com")).toBe(`*.${r.text("bluefin-logistics-zz9q.com")}`);
     // a timer unit named after a host (or, with REDACT_WORDS, a label) is redacted in the setting path and in the summary, not only in the value
     const unit = r.text(`sync.${real.app}`); // the whole dotted stem is one host to the redactor
