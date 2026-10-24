@@ -1,0 +1,125 @@
+[
+  {
+    "id": "a0000001-5b2c-4d3e-8f10-000000000001",
+    "account": { "id": "9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b", "name": "Example Account" },
+    "action": { "result": "success", "time": "2026-03-20T01:29:03Z", "type": "create" },
+    "actor": { "type": "system" },
+    "resource": { "id": "6f1d2e3c-4b5a-4968-8776-655443322110", "product": "dns", "scope": null, "type": "record",
+      "value": { "id": "b7e3a9f1c5d20864e1f2a3b4c5d6e7f8", "name": "www.shop.example", "type": "CNAME", "content": "parking.example.net", "proxied": false, "ttl": 1, "settings": {}, "data": {}, "zone_id": "1f2e3d4c5b6a79881f2e3d4c5b6a7988", "zone_name": "shop.example" } },
+    "zone": { "id": "1f2e3d4c5b6a79881f2e3d4c5b6a7988", "name": "shop.example" }
+  },
+  {
+    "id": "a0000002-5b2c-4d3e-8f10-000000000002",
+    "account": { "id": "9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b", "name": "Example Account" },
+    "action": { "description": "Update DNS Record", "result": "success", "time": "2026-04-16T21:11:15.000Z", "type": "update" },
+    "actor": { "context": "dash", "email": "ops.lead@bluefin-logistics-zz9q.com", "id": "0f1e2d3c4b5a69780f1e2d3c4b5a6978", "ip_address": "100.72.5.19", "type": "user" },
+    "raw": { "cf_ray_id": "8a1b2c3d4e5f6a7b", "method": "PATCH", "status_code": 200, "uri": "/client/v4/zones/1f2e3d4c5b6a79881f2e3d4c5b6a7988/dns_records/b7e3a9f1c5d20864e1f2a3b4c5d6e7f8", "user_agent": "Mozilla/5.0" },
+    "resource": { "id": "b7e3a9f1c5d20864e1f2a3b4c5d6e7f8", "product": "dns_records", "scope": "zones", "type": null,
+      "request": { "name": "www.shop.example", "type": "CNAME", "content": "parking.example.net", "proxied": false, "comment": "", "tags": [] } },
+    "zone": { "id": "1f2e3d4c5b6a79881f2e3d4c5b6a7988", "name": "shop.example" }
+  },
+  {
+    "id": "a0000003-5b2c-4d3e-8f10-000000000003",
+    "account": { "id": "9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b", "name": "Example Account" },
+    "action": { "description": "Update DNS Record", "result": "success", "time": "2026-04-16T21:12:47.5Z", "type": "update" },
+    "actor": { "context": "dash", "email": "ops.lead@bluefin-logistics-zz9q.com", "id": "0f1e2d3c4b5a69780f1e2d3c4b5a6978", "ip_address": "100.72.5.19", "type": "user" },
+    "raw": { "cf_ray_id": "8a1b2c3d4e5f6a7c", "method": "PATCH", "status_code": 200, "uri": "/client/v4/zones/1f2e3d4c5b6a79881f2e3d4c5b6a7988/dns_records/b7e3a9f1c5d20864e1f2a3b4c5d6e7f8", "user_agent": "Mozilla/5.0" },
+    "resource": { "id": "b7e3a9f1c5d20864e1f2a3b4c5d6e7f8", "product": "dns_records", "scope": "zones", "type": null,
+      "request": { "name": "www.shop.example", "type": "CNAME", "content": "parking.example.net", "proxied": true, "comment": "", "tags": [] } },
+    "zone": { "id": "1f2e3d4c5b6a79881f2e3d4c5b6a7988", "name": "shop.example" }
+  },
+  {
+    "id": "a0000004-5b2c-4d3e-8f10-000000000004",
+    "account": { "id": "9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b", "name": "Example Account" },
+    "action": { "description": "Update DNS Record", "result": "success", "time": "2026-04-16T21:47:29.04Z", "type": "update" },
+    "actor": { "context": "dash", "email": "ops.lead@bluefin-logistics-zz9q.com", "id": "0f1e2d3c4b5a69780f1e2d3c4b5a6978", "ip_address": "100.72.5.19", "type": "user" },
+    "raw": { "cf_ray_id": "8a1b2c3d4e5f6a7d", "method": "PATCH", "status_code": 200, "uri": "/client/v4/zones/1f2e3d4c5b6a79881f2e3d4c5b6a7988/dns_records/b7e3a9f1c5d20864e1f2a3b4c5d6e7f8", "user_agent": "Mozilla/5.0" },
+    "resource": { "id": "b7e3a9f1c5d20864e1f2a3b4c5d6e7f8", "product": "dns_records", "scope": "zones", "type": null,
+      "request": { "name": "www.shop.example", "type": "CNAME", "content": "shop.example", "proxied": true, "comment": "", "tags": [], "settings": { "flatten_cname": false } } },
+    "zone": { "id": "1f2e3d4c5b6a79881f2e3d4c5b6a7988", "name": "shop.example" }
+  },
+  {
+    "id": "a0000005-5b2c-4d3e-8f10-000000000005",
+    "account": { "id": "9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b", "name": "Example Account" },
+    "action": { "result": "success", "time": "2026-05-02T09:00:00Z", "type": "update" },
+    "actor": { "context": "dash", "email": "jmorales@bluefin-logistics-zz9q.com", "id": "1a2b3c4d5e6f70811a2b3c4d5e6f7081", "ip_address": "100.72.5.20", "type": "user" },
+    "raw": { "cf_ray_id": "8a1b2c3d4e5f6a7e", "method": "PATCH", "status_code": 200, "uri": "/client/v4/accounts/9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b/settings", "user_agent": "Mozilla/5.0" },
+    "resource": { "id": "9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b", "product": "account", "scope": "accounts", "type": "settings" },
+    "zone": null
+  },
+  {
+    "id": "a0000006-5b2c-4d3e-8f10-000000000006",
+    "account": { "id": "9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b", "name": "Example Account" },
+    "action": { "description": "Update DNS Record", "result": "success", "time": "2026-05-02T10:05:00.000Z", "type": "update" },
+    "actor": { "context": "dash", "email": "jmorales@bluefin-logistics-zz9q.com", "id": "1a2b3c4d5e6f70811a2b3c4d5e6f7081", "ip_address": "100.72.5.20", "type": "user" },
+    "raw": { "cf_ray_id": "8a1b2c3d4e5f6a7f", "method": "PATCH", "status_code": 200, "uri": "/client/v4/zones/2a3b4c5d6e7f80912a3b4c5d6e7f8091/dns_records/7a7b7c7d7e7f80818283848586878889", "user_agent": "Mozilla/5.0" },
+    "resource": { "id": "7a7b7c7d7e7f80818283848586878889", "product": "dns_records", "scope": "zones", "type": null,
+      "request": { "name": "www.bluefin-logistics-zz9q.com", "type": "CNAME", "content": "bluefin-logistics-zz9q.com", "proxied": true, "comment": "moved behind the proxy", "tags": [] } },
+    "zone": { "id": "2a3b4c5d6e7f80912a3b4c5d6e7f8091", "name": "bluefin-logistics-zz9q.com" }
+  },
+  {
+    "id": "a0000007-5b2c-4d3e-8f10-000000000007",
+    "account": { "id": "9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b", "name": "Example Account" },
+    "action": { "description": "Delete DNS Record", "result": "success", "time": "2026-06-01T10:00:00Z", "type": "delete" },
+    "actor": { "context": "api_token", "id": "2b3c4d5e6f7081922b3c4d5e6f708192", "ip_address": "100.72.5.21", "token": { "id": "3c4d5e6f708192a33c4d5e6f708192a3", "name": "ci deploy" }, "type": "account" },
+    "raw": { "cf_ray_id": "8a1b2c3d4e5f6a80", "method": "DELETE", "status_code": 200, "uri": "/client/v4/zones/1f2e3d4c5b6a79881f2e3d4c5b6a7988/dns_records/3c3d3e3f404142434445464748494a4b", "user_agent": "curl/8.5.0" },
+    "resource": { "id": "3c3d3e3f404142434445464748494a4b", "product": "dns_records", "scope": "zones", "type": null },
+    "zone": { "id": "1f2e3d4c5b6a79881f2e3d4c5b6a7988", "name": "shop.example" }
+  },
+  {
+    "id": "a0000009-5b2c-4d3e-8f10-000000000009",
+    "account": { "id": "9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b", "name": "Example Account" },
+    "action": { "result": "success", "time": "2026-06-15T00:00:00.000Z", "type": "update" },
+    "actor": { "type": "system" },
+    "resource": { "id": "4d5e6f708192a3b44d5e6f708192a3b4", "product": "certificates", "scope": null, "type": "certificate_pack",
+      "value": { "hosts": ["bluefin-logistics-zz9q.com", "*.bluefin-logistics-zz9q.com"], "status": "active", "type": "universal", "validation_method": "txt" } },
+    "zone": { "id": "2a3b4c5d6e7f80912a3b4c5d6e7f8091", "name": "bluefin-logistics-zz9q.com" }
+  },
+  {
+    "id": "a0000008-5b2c-4d3e-8f10-000000000008",
+    "account": { "id": "9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b", "name": "Example Account" },
+    "action": { "result": "success", "time": "2026-06-01T10:00:00.2Z", "type": "delete" },
+    "actor": { "type": "system" },
+    "resource": { "id": "3c3d3e3f404142434445464748494a4b", "product": "dns", "scope": null, "type": "record",
+      "value": { "id": "3c3d3e3f404142434445464748494a4b", "name": "old.shop.example", "type": "A", "content": "10.40.12.9", "proxied": false, "ttl": 1, "settings": {}, "data": {}, "zone_id": "1f2e3d4c5b6a79881f2e3d4c5b6a7988", "zone_name": "shop.example" } },
+    "zone": { "id": "1f2e3d4c5b6a79881f2e3d4c5b6a7988", "name": "shop.example" }
+  },
+  {
+    "id": "a000000a-5b2c-4d3e-8f10-00000000000a",
+    "account": { "id": "9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b", "name": "Example Account" },
+    "action": { "description": "Create DNS Record", "result": "success", "time": "2026-07-03T09:00:00.123Z", "type": "create" },
+    "actor": { "context": "api_token", "id": "2b3c4d5e6f7081922b3c4d5e6f708192", "ip_address": "100.72.5.21", "token": { "id": "3c4d5e6f708192a33c4d5e6f708192a3", "name": "ci deploy" }, "type": "account" },
+    "raw": { "cf_ray_id": "8a1b2c3d4e5f6a81", "method": "POST", "status_code": 200, "uri": "/client/v4/zones/1f2e3d4c5b6a79881f2e3d4c5b6a7988/dns_records", "user_agent": "curl/8.5.0" },
+    "resource": { "id": null, "product": "dns_records", "scope": "zones", "type": null,
+      "request": { "name": "*.shop.example", "type": "A", "content": "203.0.113.10", "proxied": false } },
+    "zone": { "id": "1f2e3d4c5b6a79881f2e3d4c5b6a7988", "name": "shop.example" }
+  },
+  {
+    "id": "a000000b-5b2c-4d3e-8f10-00000000000b",
+    "account": { "id": "9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b", "name": "Example Account" },
+    "action": { "description": "Update DNS Record", "result": "success", "time": "2026-07-24T12:00:00.000Z", "type": "update" },
+    "actor": { "context": "dash", "email": "ops.lead@bluefin-logistics-zz9q.com", "id": "0f1e2d3c4b5a69780f1e2d3c4b5a6978", "ip_address": "100.72.5.19", "type": "user" },
+    "raw": { "cf_ray_id": "8a1b2c3d4e5f6a82", "method": "PATCH", "status_code": 200, "uri": "/client/v4/zones/1f2e3d4c5b6a79881f2e3d4c5b6a7988/dns_records/e2d4f6a8b0c13579f1e2d3c4b5a69788", "user_agent": "Mozilla/5.0" },
+    "resource": { "id": "e2d4f6a8b0c13579f1e2d3c4b5a69788", "product": "dns_records", "scope": "zones", "type": null,
+      "request": { "name": "*.shop.example", "type": "A", "content": "203.0.113.10", "proxied": true, "comment": "", "tags": [] } },
+    "zone": { "id": "1f2e3d4c5b6a79881f2e3d4c5b6a7988", "name": "shop.example" }
+  },
+  {
+    "id": "a000000c-5b2c-4d3e-8f10-00000000000c",
+    "account": { "id": "9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b", "name": "Example Account" },
+    "action": { "description": "View Datasets", "result": "success", "time": "2026-10-23T08:00:00.41Z", "type": "view" },
+    "actor": { "context": "dash", "email": "jmorales@bluefin-logistics-zz9q.com", "id": "1a2b3c4d5e6f70811a2b3c4d5e6f7081", "ip_address": "100.72.5.20", "type": "user" },
+    "raw": { "cf_ray_id": "8a1b2c3d4e5f6a83", "method": "GET", "status_code": 200, "uri": "/client/v4/accounts/9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b/logs/explorer/datasets", "user_agent": "Mozilla/5.0" },
+    "resource": { "id": null, "product": "logs", "scope": "accounts", "type": "explorer.datasets" },
+    "zone": null
+  },
+  {
+    "id": "a000000d-5b2c-4d3e-8f10-00000000000d",
+    "account": { "id": "9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b", "name": "Example Account" },
+    "action": { "description": "List Zones", "result": "success", "time": "2026-10-24T04:20:07.416Z", "type": "view" },
+    "actor": { "context": "api_token", "id": "2b3c4d5e6f7081922b3c4d5e6f708192", "ip_address": "100.72.5.21", "token": { "id": "3c4d5e6f708192a33c4d5e6f708192a3", "name": "ci deploy" }, "type": "account" },
+    "raw": { "cf_ray_id": "8a1b2c3d4e5f6a84", "method": "GET", "status_code": 200, "uri": "/client/v4/zones", "user_agent": "node" },
+    "resource": { "id": null, "product": "zones", "scope": "accounts", "type": null },
+    "zone": null
+  }
+]

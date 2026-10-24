@@ -28,12 +28,45 @@ const Schema = z.object({
   ZETARIS_ORG_ID: z.string().default("1"),
   ZETARIS_API_KEY: z.string().default(""),
   ZETARIS_DATASOURCE: z.string().default("DRIFT"),
+  // The app Postgres as the Zetaris driver container reaches it, host[:port] (port 5432 when absent):
+  // the container name on zetaris_default, not DATABASE_URL's host. Measured 24 Oct: drift-pg:5432 from
+  // Zetaris, 127.0.0.1:15432 from Windows; host.docker.internal does not resolve in the driver.
+  ZETARIS_PG_HOST: z.string().default("drift-pg"),
+  // Cloudflare API token with Zone:Read, DNS:Read and Account:Audit Logs:Read; the collector only GETs.
+  CLOUDFLARE_API_TOKEN: z.string().default(""),
   // Salt behind the redactor's pseudonyms. Secret-like: with it a published fixture re-identifies.
   REDACT_SALT: z.string().default(""),
+  // The tenant's own labels (zone labels, product names), comma-separated, pseudonymised wherever they stand
+  // alone (redactor pass e): a vhost file named <brand>-prod.conf is not a hostname and survived passes a-d.
+  REDACT_WORDS: z.string().default(""),
+  // Tokens that must never appear in an exported bundle or the committed tree, beyond REDACT_WORDS: the
+  // operator's mailbox local part, real addresses or their prefixes. The export fails when one matches.
+  EXPORT_DENY_WORDS: z.string().default(""),
+  // The hosts the Linux collector may reach, as <ssh alias>=<backup export dir>, comma-separated. The
+  // aliases are the operator's own ssh_config entries; the export dir is where the host's nightly
+  // server-config tarball lands (a login's home path belongs here, not in source).
+  LINUX_HOSTS: z.string().default(""),
   LOG_DIR: z.string().default("logs"),
 });
 
 const raw = Schema.parse(process.env);
+
+const EXPORT_DIR = /^\/[A-Za-z0-9._\/-]+$/;
+const ALIAS = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+/** "host-redacted=/var/backups/export,other=/home/x/backup-export" -> alias -> export dir. Throws on a shape the read script would not accept. */
+export function parseLinuxHosts(s: string): Record<string, { exportDir: string }> {
+  const out: Record<string, { exportDir: string }> = {};
+  for (const entry of s.split(",").map((e) => e.trim()).filter(Boolean)) {
+    const i = entry.indexOf("=");
+    const alias = i >= 0 ? entry.slice(0, i).trim() : "";
+    const exportDir = i >= 0 ? entry.slice(i + 1).trim() : "";
+    if (!ALIAS.test(alias)) throw new Error(`LINUX_HOSTS: alias must be a plain ssh_config alias, got ${JSON.stringify(alias)}`);
+    if (!EXPORT_DIR.test(exportDir)) throw new Error(`LINUX_HOSTS: ${alias}: export dir must be an absolute path of [A-Za-z0-9._/-], got ${JSON.stringify(exportDir)}`);
+    out[alias] = { exportDir };
+  }
+  return out;
+}
 
 /** The Nightshift runtime writes its bearer token to a file; fall back to it when the env var is blank. */
 function runtimeToken(): string {
@@ -60,15 +93,31 @@ export const config = {
     orgId: raw.ZETARIS_ORG_ID,
     apiKey: raw.ZETARIS_API_KEY,
     datasource: raw.ZETARIS_DATASOURCE,
+    pgHost: raw.ZETARIS_PG_HOST,
+  },
+  cloudflare: {
+    token: raw.CLOUDFLARE_API_TOKEN,
   },
   redactSalt: raw.REDACT_SALT,
+  redactWords: raw.REDACT_WORDS.split(",").map((s) => s.trim()).filter(Boolean),
+  exportDenyWords: raw.EXPORT_DENY_WORDS.split(",").map((s) => s.trim()).filter(Boolean),
+  linuxHosts: parseLinuxHosts(raw.LINUX_HOSTS),
   logDir: raw.LOG_DIR,
 } as const;
 
-/** Redact anything that looks like a secret before it reaches a log line or an error message. */
+/**
+ * Redact anything that looks like a secret before it reaches a log line or an error message.
+ * Passwords: the Zetaris option form (CREATE DATASOURCE ... password "x") and its JSON and key=value
+ * cousins, quoted with " or ', backslash escapes honoured, and still caught when a slice cut the value
+ * before its closing quote; an unquoted password=x; and URL userinfo (postgresql://user:x@host).
+ * Idempotent: redacted text redacts to itself.
+ */
 export function redact(s: string): string {
   return s
     .replace(/Bearer\s+[A-Za-z0-9._\-]+/g, "Bearer <redacted>")
     .replace(/nvapi-[A-Za-z0-9_\-]+/g, "nvapi-<redacted>")
-    .replace(/rt-[A-Za-z0-9_\-]{8,}/g, "rt-<redacted>");
+    .replace(/rt-[A-Za-z0-9_\-]{8,}/g, "rt-<redacted>")
+    .replace(/(\bpassword["']?\s*[:=]?\s*)(["'])(?:\\[\s\S]|(?!\2)[^\\])*\2?/gi, "$1$2<redacted>$2")
+    .replace(/(\bpassword=)(?!["'<])[^\s&;"']+/gi, "$1<redacted>")
+    .replace(/(\/\/[^\s:/@]+:)(?!<redacted>@)[^\s/@]+@/g, "$1<redacted>@");
 }

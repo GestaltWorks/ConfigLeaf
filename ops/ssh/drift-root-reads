@@ -1,0 +1,62 @@
+#!/bin/sh
+# drift-root-reads: runs as root through sudo (ops/sudoers/drift-collector), called only by drift-collect.
+# Takes no arguments. Reads the export folder path from /etc/drift-collector/export-dir (root 0644, one
+# absolute path of [A-Za-z0-9._/-]) and prints, in the collector's section protocol: the export folder
+# (its own mtime, its listing, mtimes and sha256 of any plain nginx copies in it, and the sha256 of every
+# etc/nginx member of the newest config tarball, read through tar -xO so nothing is extracted to disk)
+# and the certbot renewal configs. Nothing else is read as root; nothing is written. A member or file
+# whose name looks like a credential or key material is never read.
+set -u
+umask 077
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH LC_ALL=C TZ=UTC
+
+[ "$#" -eq 0 ] || { printf 'refused\n' >&2; exit 2; }
+
+section() { name=$1; arg=$2; shift 2; printf '@@DRIFT@@ BEGIN %s %s\n' "$name" "$arg"; "$@" 2>&1; printf '\n@@DRIFT@@ END %s\n' "$?"; }
+
+credential_shaped() {
+  case $(basename -- "$1" | tr 'A-Z' 'a-z') in
+    *htpasswd*|*passwd*|*api-key*|*api_key*|*apikey*|*secret*|*token*|*credential*|*.pem|*.key|*.crt|*.cer|*.csr|*.p12|*.pfx) return 0 ;;
+  esac
+  return 1
+}
+
+emit_file() {
+  if credential_shaped "$1"; then printf '@@DRIFT@@ BEGIN file %s\ncredential-shaped name, not read\n@@DRIFT@@ END 3\n' "$1"; return; fi
+  section file "$1" base64 -w0 -- "$1"
+}
+
+# Regular-file members only (tar -tv lines starting with '-'): tar -xO prints nothing for a symlink, and the
+# sites-enabled links would otherwise hash as the empty input.
+nginx_member_hashes() {
+  tar -tvzf "$1" | grep '^-' | sed -E 's/^[^ ]+ +[^ ]+ +[^ ]+ +[^ ]+ +[^ ]+ +//' | grep -E '(^|/)etc/nginx/' | grep -v '/$' | while IFS= read -r m; do
+    if credential_shaped "$m"; then continue; fi
+    h=$(tar -xOzf "$1" "$m" 2>/dev/null | sha256sum | cut -d' ' -f1)
+    printf '%s  %s\n' "$h" "$m"
+  done
+}
+
+EXP=
+[ -r /etc/drift-collector/export-dir ] && IFS= read -r EXP < /etc/drift-collector/export-dir
+case $EXP in
+  /*[!A-Za-z0-9._/-]* | '') printf '@@DRIFT@@ BEGIN lsd \n/etc/drift-collector/export-dir missing or not a plain absolute path\n@@DRIFT@@ END 2\n' ;;
+  /*)
+    section lsd "$EXP" ls -ld --time-style=full-iso -- "$EXP"
+    section ls "$EXP" ls -l --time-style=full-iso -- "$EXP"
+    section find "$EXP" find "$EXP" -maxdepth 6 -readable \( -type f -o -type d \) -path '*nginx*' -printf '%TY-%Tm-%TdT%TH:%TM:%TS%Tz\t%y\t%p\n'
+    section sha256 "$EXP" find "$EXP" -maxdepth 6 -type f -readable -path '*nginx*' -exec sha256sum -- {} +
+    # the newest tarball that holds etc/nginx members (two families can land in the same second)
+    newest=
+    for t in $(ls -1t -- "$EXP"/*.tar.gz "$EXP"/*.tgz 2>/dev/null); do
+      [ -r "$t" ] || continue
+      [ "$(stat -c %s -- "$t")" -le 268435456 ] || continue
+      if tar -tzf "$t" 2>/dev/null | grep -qE '(^|/)etc/nginx/'; then newest=$t; break; fi
+    done
+    if [ -n "$newest" ]; then section tarsha "$newest" nginx_member_hashes "$newest"; fi
+    ;;
+  *) printf '@@DRIFT@@ BEGIN lsd \n/etc/drift-collector/export-dir is not an absolute path\n@@DRIFT@@ END 2\n' ;;
+esac
+
+section renewals /etc/letsencrypt/renewal find /etc/letsencrypt/renewal -maxdepth 1 -name '*.conf' -readable
+for f in $(find /etc/letsencrypt/renewal -maxdepth 1 -name '*.conf' -readable 2>/dev/null); do emit_file "$f"; done

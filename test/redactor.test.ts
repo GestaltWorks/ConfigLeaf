@@ -1,5 +1,6 @@
+import { createHash, createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { Redactor, describeRedactions } from "../src/redactor.ts";
+import { Redactor, countLabels, describeRedactions } from "../src/redactor.ts";
 
 const r = new Redactor("test-salt");
 const H6 = "[0-9a-f]{6}";
@@ -218,6 +219,40 @@ describe("Redactor", () => {
     for (const s of [r.text(nginx), r.text(sudoers), r.text(`${CF_KEY} /home/jmorales ops@bluefin-logistics-zz9q.com Bearer ${CF_TOKEN}`)]) expect(r.text(s)).toBe(s);
     expect(r.json(r.json(audit))).toEqual(r.json(audit));
     expect(r.json(r.json(restic))).toEqual(r.json(restic));
+  });
+
+  it("words: the tenant's own labels become word-XXXXXX wherever they stand alone; pseudonyms, markers and longer words are left alone; a no-op twice", () => {
+    // synthetic labels in the shapes the real list holds: a product with a digit, a brand in mixed case, a short zone label
+    const w = new Redactor("test-salt", ["4zephyr", "Kestrel", "acme", "", "ab", "x y"]);
+    const out = w.text("conf.d/4zephyr-prod-club.conf, snippets/kestrel-api-key.conf, /home/svc/backup-export/acme, kestrel, KESTREL, kestrels, 4zephyr.club, host-7f1c00.quest, acme.info, /var/www/kestrel-edu/out, # HTTPS for host-7f1c00.com (Kestrel)");
+    expect(out).toMatch(new RegExp(`^conf.d/word-${H6}-prod-club.conf, snippets/word-${H6}-api-key.conf, /home/user-${H6}/backup-export/word-${H6}, word-${H6}, word-${H6}, kestrels, host-${H6}.club, host-7f1c00.quest, host-${H6}.info, /var/www/word-${H6}-edu/out, # HTTPS for host-7f1c00.com \\(word-${H6}\\)$`));
+    expect(out).not.toMatch(/4zephyr|kestrel(?!s)|acme/i);
+    expect(out.match(/word-[0-9a-f]{6}/g)![3]).toBe(out.match(/word-[0-9a-f]{6}/g)![4]); // kestrel and KESTREL: one label, one pseudonym
+    expect(w.text(out)).toBe(out);
+    expect(new Redactor("test-salt").text("4zephyr-prod-club.conf")).toBe("4zephyr-prod-club.conf"); // no list, no pass
+    expect(describeRedactions("4zephyr kestrel", w.text("4zephyr kestrel"))).toEqual({ word: 2 });
+    // a longer entry wins over a shorter one it contains: kestrel-edu is one pseudonym, not word-X-edu
+    expect(new Redactor("test-salt", ["kestrel", "kestrel-edu"]).text("timer[kestrel-edu-backup.timer] kestrel")).toMatch(new RegExp(`^timer\\[word-${H6}-backup.timer\\] word-${H6}$`));
+  });
+
+  it("fingerprint: sha256:<HMAC-SHA256(salt, value)>, equal under one salt, different under another, never the plain sha256 a dictionary could match", () => {
+    const fp = r.fingerprint("app.bluefin-logistics-zz9q.com");
+    expect(fp).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(fp).toBe(`sha256:${createHmac("sha256", "test-salt").update("app.bluefin-logistics-zz9q.com").digest("hex")}`);
+    expect(fp).toBe(new Redactor("test-salt").fingerprint("app.bluefin-logistics-zz9q.com"));
+    expect(fp).not.toBe(new Redactor("salt-b").fingerprint("app.bluefin-logistics-zz9q.com"));
+    expect(fp).not.toBe(`sha256:${createHash("sha256").update("app.bluefin-logistics-zz9q.com").digest("hex")}`);
+    expect(r.fingerprint("absent")).not.toBe(r.fingerprint("absent "));
+    expect(r.fingerprint(Buffer.from("abc"))).toBe(r.fingerprint("abc"));
+  });
+
+  it("countLabels: the leak probe counts each label standing alone, case-insensitively, with pass e's boundaries; a label inside a longer word is not a hit", () => {
+    const text = "/var/www/kestrel-edu/out, Kestrel, kestrels, enkestrel, 4zephyr.club, timer[acme-backup.timer], 10.200.7.3 10.200.70.1";
+    expect(countLabels(text, ["kestrel", "4zephyr", "acme", "zebra", "", "10.200.7"])).toEqual({ kestrel: 2, "4zephyr": 1, acme: 1, "10.200.7": 1 });
+    expect(countLabels(text, [])).toEqual({});
+    expect(countLabels("", ["kestrel"])).toEqual({});
+    // a label with regex characters is a literal
+    expect(countLabels("a.b+c (a.b+c)", ["a.b+c"])).toEqual({ "a.b+c": 2 });
   });
 
   it("describeRedactions counts what changed, per kind, for the trace line", () => {

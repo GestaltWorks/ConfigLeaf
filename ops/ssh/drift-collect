@@ -1,16 +1,18 @@
 #!/bin/sh
 # drift-collect: the forced command behind the drift-collector key (ops/ssh/authorized_keys.example).
 #
-# sshd puts whatever the client asked to run in SSH_ORIGINAL_COMMAND. This script matches that string
-# whole against a fixed list of read requests and runs the matching fixed command. The client's text
-# is never evaluated as shell and never becomes an argument, with one bounded exception: the path in
-# "cat /etc/nginx/<path>", which must pass the allowlist below before it is handed to cat as a single
-# argv entry. Anything else: "refused" on stderr, exit 2. Root reads go through sudo -n and are the
-# exact lines of ops/sudoers/drift-collector.
-set -eu
+# sshd puts whatever the client asked to run in SSH_ORIGINAL_COMMAND. This script accepts an empty one
+# or the word "collect" and refuses everything else ("refused" on stderr, exit 2); the client's text is
+# never evaluated and never becomes an argument. It then performs the same enumerated reads that
+# src/collectors/linux.ts streams today (readScript), printing the same delimited sections, and hands
+# the reads that may need root (the backup export folder, the certbot renewal configs) to
+# /usr/local/bin/drift-root-reads through sudo -n, the one line ops/sudoers/drift-collector allows.
+# Nothing here writes, restarts, installs or escalates beyond that line. A file whose name looks like a
+# credential or key material is never read (status 3).
+set -u
 umask 077
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
-export PATH
+export PATH LC_ALL=C TZ=UTC
 
 refuse() {
   client=${SSH_CLIENT-unknown}
@@ -19,22 +21,62 @@ refuse() {
   exit 2
 }
 
-req=${SSH_ORIGINAL_COMMAND-}
-
-case $req in
-  'nginx -T')                exec sudo -n /usr/sbin/nginx -T ;;
-  'cat /etc/hosts')          exec /usr/bin/cat /etc/hosts ;;
-  'cat /etc/resolv.conf')    exec /usr/bin/cat /etc/resolv.conf ;;
-  'etckeeper vcs log -n 50') exec sudo -n /usr/bin/etckeeper vcs log -n 50 ;;
-  'restic snapshots --json') exec sudo -n /usr/local/bin/drift-restic-snapshots ;;
-  'cat /etc/nginx/'*)
-    f=${req#cat }
-    # one path: no traversal, no space (sudo's glob sees one argument), no shell metacharacters
-    case $f in *..* | *[!A-Za-z0-9/._-]*) refuse ;; esac
-    # sites-enabled is a tree of symlinks; the target must still live under /etc/nginx
-    case $(readlink -f -- "$f") in /etc/nginx/*) ;; *) refuse ;; esac
-    [ -f "$f" ] || refuse
-    exec sudo -n /usr/bin/cat "$f"
-    ;;
+case ${SSH_ORIGINAL_COMMAND-} in
+  '' | collect) ;;
   *) refuse ;;
 esac
+
+NGX=/etc/nginx
+
+section() { name=$1; arg=$2; shift 2; printf '@@DRIFT@@ BEGIN %s %s\n' "$name" "$arg"; "$@" 2>&1; printf '\n@@DRIFT@@ END %s\n' "$?"; }
+
+credential_shaped() {
+  case $(basename -- "$1" | tr 'A-Z' 'a-z') in
+    *htpasswd*|*passwd*|*api-key*|*api_key*|*apikey*|*secret*|*token*|*credential*|*.pem|*.key|*.crt|*.cer|*.csr|*.p12|*.pfx) return 0 ;;
+  esac
+  return 1
+}
+
+emit_file() {
+  if credential_shaped "$1"; then printf '@@DRIFT@@ BEGIN file %s\ncredential-shaped name, not read\n@@DRIFT@@ END 3\n' "$1"; return; fi
+  section file "$1" base64 -w0 -- "$1"
+}
+
+emitted=' '
+emit_once() { case $emitted in *" $1 "*) return ;; esac; emitted="$emitted$1 "; emit_file "$1"; }
+
+section whoami '' id -un
+section hostname '' hostname
+section date '' date -u +%Y-%m-%dT%H:%M:%SZ
+section ip4 '' ip -4 -o addr show scope global
+section ip6 '' ip -6 -o addr show scope global
+for d in $NGX/conf.d $NGX/sites-available $NGX/sites-enabled; do section ls "$d" ls -l --time-style=full-iso -- "$d"; done
+
+emit_once $NGX/nginx.conf
+for f in $NGX/conf.d/* $NGX/sites-available/*; do [ -f "$f" ] && [ ! -L "$f" ] && emit_once "$f"; done
+
+# Files the fetched configuration includes, under /etc/nginx only, up to four rounds deep; a symlink
+# (sites-enabled/x) is never read as a file of its own, its target is.
+round=0
+while [ $round -lt 4 ]; do
+  round=$((round+1)); added=0
+  pats=$(for f in $emitted; do [ -f "$f" ] && grep -hoE '^[[:space:]]*include[[:space:]]+[^;]+' -- "$f"; done 2>/dev/null | sed -E "s/^[[:space:]]*include[[:space:]]+//; s/[\"']//g" | sort -u)
+  for pat in $pats; do
+    case $pat in /*) ;; *) pat=$NGX/$pat ;; esac
+    case $pat in $NGX/*) ;; *) continue ;; esac
+    for f in $pat; do
+      [ -f "$f" ] || continue
+      [ ! -L "$f" ] || continue
+      case $emitted in *" $f "*) continue ;; esac
+      emit_once "$f"; added=1
+    done
+  done
+  [ $added -eq 1 ] || break
+done
+
+section timers '' systemctl list-timers --all --no-pager
+
+# The export folder and the renewal configs, as root. The helper prints its own sections.
+sudo -n /usr/local/bin/drift-root-reads 2>&1 || printf '@@DRIFT@@ BEGIN rootreads \n%s\n@@DRIFT@@ END %s\n' 'drift-root-reads refused or failed' "$?"
+
+printf '@@DRIFT@@ DONE\n'

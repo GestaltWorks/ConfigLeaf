@@ -1,0 +1,17 @@
+server {
+    listen 443 ssl http2;
+    server_name shop.invalid;
+
+    ssl_certificate     /etc/letsencrypt/live/shop.invalid/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/shop.invalid/privkey.pem;
+    include snippets/cf-realip.conf;
+
+    location / {
+        proxy_pass http://192.0.2.1:9000;
+        proxy_set_header Host $host;
+    }
+
+    location /static/ {
+        alias /srv/shop/static/;
+    }
+}

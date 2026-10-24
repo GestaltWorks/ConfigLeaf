@@ -1,0 +1,51 @@
+@@DRIFT@@ BEGIN whoami
+root
+@@DRIFT@@ END 0
+@@DRIFT@@ BEGIN hostname
+web-1
+@@DRIFT@@ END 0
+@@DRIFT@@ BEGIN date
+2026-10-24T15:32:01Z
+@@DRIFT@@ END 0
+@@DRIFT@@ BEGIN ip4
+2: eth0    inet 198.51.100.23/24 brd 198.51.100.255 scope global noprefixroute eth0\       valid_lft forever preferred_lft forever
+4: wg0    inet 192.0.2.3/24 scope global wg0\       valid_lft forever preferred_lft forever
+@@DRIFT@@ END 0
+@@DRIFT@@ BEGIN ip6 
+2: eth0    inet6 2001:db8:10::23/64 scope global \       valid_lft forever preferred_lft forever
+@@DRIFT@@ END 0
+@@DRIFT@@ BEGIN ls /etc/nginx/conf.d
+total 12
+-rw-r--r--. 1 root root  981 2026-04-16 21:30:12.000000000 +0000 app.invalid.conf
+-rw-r--r--. 1 root root  742 2026-04-01 09:12:44.000000000 +0000 app.invalid.conf.2026-04-01.bak
+-rw-r--r--. 1 root root  498 2026-03-02 17:05:01.000000000 +0000 astro.invalid.conf
+@@DRIFT@@ END 0
+@@DRIFT@@ BEGIN ls /etc/nginx/sites-available
+ls: cannot access '/etc/nginx/sites-available': No such file or directory
+@@DRIFT@@ END 2
+@@DRIFT@@ BEGIN ls /etc/nginx/sites-enabled
+ls: cannot access '/etc/nginx/sites-enabled': No such file or directory
+@@DRIFT@@ END 2
+@@DRIFT@@ BEGIN timers
+NEXT                        LEFT          LAST                        PASSED       UNIT                         ACTIVATES
+Sat 2026-10-25 03:40:00 UTC 12h left      Fri 2026-10-24 03:40:02 UTC 11h ago      backup-export.timer          backup-export.service
+Sat 2026-10-25 06:12:00 UTC 14h left      Fri 2026-10-24 18:40:11 UTC 1h ago       certbot-renew.timer          certbot-renew.service
+Sun 2026-10-26 00:00:00 UTC 1 day left    Sun 2026-10-19 00:00:04 UTC 5 days ago   fstrim.timer                 fstrim.service
+
+3 timers listed.
+@@DRIFT@@ END 0
+@@DRIFT@@ BEGIN lsd /var/backups/export
+ls: cannot access '/var/backups/export': Permission denied
+@@DRIFT@@ END 2
+@@DRIFT@@ BEGIN ls /var/backups/export
+ls: cannot open directory '/var/backups/export': Permission denied
+@@DRIFT@@ END 2
+@@DRIFT@@ BEGIN find /var/backups/export
+find: '/var/backups/export': Permission denied
+@@DRIFT@@ END 1
+@@DRIFT@@ BEGIN sha256 /var/backups/export
+find: '/var/backups/export': Permission denied
+@@DRIFT@@ END 1
+@@DRIFT@@ BEGIN renewals /etc/letsencrypt/renewal
+find: '/etc/letsencrypt/renewal': Permission denied
+@@DRIFT@@ END 1

@@ -1,0 +1,63 @@
+@@DRIFT@@ BEGIN whoami
+svc
+@@DRIFT@@ END 0
+@@DRIFT@@ BEGIN hostname
+web-2
+@@DRIFT@@ END 0
+@@DRIFT@@ BEGIN date
+2026-10-24T15:33:07Z
+@@DRIFT@@ END 0
+@@DRIFT@@ BEGIN ip4
+2: eth0    inet 203.0.113.40/24 brd 203.0.113.255 scope global eth0\       valid_lft forever preferred_lft forever
+3: wg0    inet 192.0.2.1/24 scope global wg0\       valid_lft forever preferred_lft forever
+@@DRIFT@@ END 0
+@@DRIFT@@ BEGIN ip6 
+2: eth0    inet6 2001:db8:20::40/64 scope global dynamic mngtmpaddr \       valid_lft 86399sec preferred_lft 14399sec
+@@DRIFT@@ END 0
+@@DRIFT@@ BEGIN ls /etc/nginx/conf.d
+total 0
+@@DRIFT@@ END 0
+@@DRIFT@@ BEGIN ls /etc/nginx/sites-available
+total 24
+-rw-r--r-- 1 root root 1402 2026-09-30 10:02:15.000000000 +0000 default
+-rw-r--r-- 1 root root  933 2026-07-14 12:11:09.000000000 +0000 games.invalid
+-rw-r--r-- 1 root root  712 2026-05-02 08:30:00.000000000 +0000 origin.invalid
+-rw-r--r-- 1 root root 1288 2026-04-16 21:12:40.000000000 +0000 portal.invalid
+-rw-r--r-- 1 root root 1201 2026-04-10 07:00:00.000000000 +0000 portal.invalid.bak
+-rw-r--r-- 1 root root  640 2026-06-01 09:00:00.000000000 +0000 shop.invalid
+@@DRIFT@@ END 0
+@@DRIFT@@ BEGIN ls /etc/nginx/sites-enabled
+total 0
+lrwxrwxrwx 1 root root 34 2026-01-05 10:00:00.000000000 +0000 default -> /etc/nginx/sites-available/default
+lrwxrwxrwx 1 root root 41 2026-05-02 08:30:10.000000000 +0000 origin.invalid -> /etc/nginx/sites-available/origin.invalid
+lrwxrwxrwx 1 root root 41 2026-04-16 21:12:50.000000000 +0000 portal.invalid -> /etc/nginx/sites-available/portal.invalid
+lrwxrwxrwx 1 root root 29 2026-06-01 09:00:10.000000000 +0000 shop.invalid -> ../sites-available/shop.invalid
+@@DRIFT@@ END 0
+@@DRIFT@@ BEGIN timers
+NEXT                        LEFT          LAST                        PASSED       UNIT                         ACTIVATES
+Sat 2026-10-25 03:40:00 UTC 12h left      Fri 2026-10-24 03:40:02 UTC 11h ago      backup-export.timer          backup-export.service
+Sat 2026-10-25 02:17:00 UTC 10h left      Fri 2026-10-24 14:02:33 UTC 1h ago       certbot.timer                certbot.service
+Sat 2026-10-25 06:00:00 UTC 14h left      Fri 2026-10-24 06:00:01 UTC 9h ago       apt-daily.timer              apt-daily.service
+
+3 timers listed.
+@@DRIFT@@ END 0
+@@DRIFT@@ BEGIN lsd /home/svc/backup-export
+drwxr-xr-x 3 svc svc 4096 2026-10-24 03:40:02.000000000 +0000 /home/svc/backup-export
+@@DRIFT@@ END 0
+@@DRIFT@@ BEGIN ls /home/svc/backup-export
+total 4280
+-rw-r--r-- 1 svc svc 1547219 2026-10-23 03:40:06.090000000 +0000 app-dump-2026-10-23.tar.gz
+-rw-r--r-- 1 svc svc 1548170 2026-10-24 03:40:02.052000000 +0000 app-dump-2026-10-24.tar.gz
+-rw-r--r-- 1 svc svc  611204 2026-10-23 03:40:06.039000000 +0000 server-config-2026-10-23.tar.gz
+-rw-r--r-- 1 svc svc  611871 2026-10-24 03:40:02.000000000 +0000 server-config-2026-10-24.tar.gz
+drwxrwxr-x 2 svc svc    4096 2026-10-22 22:05:48.782000000 +0000 scratch
+@@DRIFT@@ END 0
+@@DRIFT@@ BEGIN find /home/svc/backup-export
+
+@@DRIFT@@ END 0
+@@DRIFT@@ BEGIN sha256 /home/svc/backup-export
+
+@@DRIFT@@ END 0
+@@DRIFT@@ BEGIN renewals /etc/letsencrypt/renewal
+/etc/letsencrypt/renewal/portal.invalid.conf
+@@DRIFT@@ END 0

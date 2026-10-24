@@ -1,32 +1,23 @@
 # /etc/sudoers.d/drift-collector (root:root, 0440)
-# Root reads the drift-collector user may perform without a password, and nothing else. Every line is one
-# request that the forced command /usr/local/bin/drift-collect (ops/ssh/drift-collect) can issue; that
-# script is the only thing the collector key can run, and it never calls sudo for anything not listed here.
+# Root reads the drift-collector user may perform without a password, and nothing else. One line: the
+# helper /usr/local/bin/drift-root-reads (ops/ssh/drift-root-reads), which the forced command
+# /usr/local/bin/drift-collect (ops/ssh/drift-collect) calls once per session. That script is the only
+# thing the collector key can run, and it never calls sudo for anything not listed here.
 # Validate before installing:  visudo -c -f ops/sudoers/drift-collector
 
 # The forced command runs with no-pty, so there is no tty for sudo to insist on.
 Defaults:drift-collector !requiretty
 
-# nginx -T prints the complete, include-resolved configuration. Root because nginx opens every file the
-# configuration references, including ssl_certificate_key paths, before it prints anything.
-drift-collector ALL=(root) NOPASSWD: /usr/sbin/nginx -T
+# Reads the backup export folder (listing, plain nginx copies, the etc/nginx members of the newest
+# server-config-<date>.tar.gz through tar -xO | sha256sum) and the certbot renewal configs as root, and
+# prints them in the collector's section protocol. A dedicated non-root user needs this for
+# /etc/letsencrypt/renewal (0700 root by default) and for any export folder that is root-gathered. The
+# empty string means it may be called with no arguments only; the script refuses any argument itself.
+drift-collector ALL=(root) NOPASSWD: /usr/local/bin/drift-root-reads ""
 
-# Verbatim bytes of one nginx file, for byte-level comparison with the backup copy; conf.d and
-# sites-enabled are often 0640 root. The wildcard spans subdirectories. sudo matches arguments as a
-# single space-separated string, so this glob alone would also accept "cat /etc/nginx/x /etc/shadow";
-# the forced command refuses any path with a space, "..", or a character outside [A-Za-z0-9/._-]
-# before sudo is reached. On sudo 1.9.10 or newer, replace this line with the regex form:
-#   drift-collector ALL=(root) NOPASSWD: ^/usr/bin/cat /etc/nginx/[A-Za-z0-9/._-]+$
-drift-collector ALL=(root) NOPASSWD: /usr/bin/cat /etc/nginx/*
-
-# etckeeper keeps /etc in a root-only repository under /etc/.git; the last 50 commits are the change
-# timeline behind "what changed since the last backup".
-drift-collector ALL=(root) NOPASSWD: /usr/bin/etckeeper vcs log -n 50
-
-# Lists restic snapshots. The wrapper (ops/ssh/drift-restic-snapshots) reads the repository location
-# and password-file path from root-only /etc/drift-collector/restic.env. The empty string means it may
-# be called with no arguments only.
-drift-collector ALL=(root) NOPASSWD: /usr/local/bin/drift-restic-snapshots ""
-
-# Not listed because they are world-readable and the forced command reads them directly:
-# /etc/hosts, /etc/resolv.conf.
+# Not listed because the login user reads them directly (measured 24 Oct 2026 on both hosts with the
+# operator's own login): hostname, ip addr, /etc/nginx/nginx.conf, conf.d, sites-available,
+# sites-enabled and the files they include, systemctl list-timers. In those runs the export folders
+# (/var/backups/export, /home/<login>/backup-export) and /etc/letsencrypt/renewal were readable too, so
+# nothing above was exercised; it is what the dedicated user will need. No etckeeper, no restic on
+# either host, so no lines for them.

@@ -26,14 +26,26 @@
 //                   VOCAB (collection surfaces, nginx block and directive names, the observation
 //                   table) is the agent's, not a TLD a client runs under. A setting path ending in a
 //                   directive outside VOCAB is over-redacted in trace text only; the stored row keeps it.
+//   e  words     -> word-XXXXXX. The tenant's own labels (REDACT_WORDS: zone labels, product names)
+//                   wherever they stand on their own between non-alphanumerics: a vhost file named
+//                   <brand>-prod.conf, a timer unit, an export subfolder named after a zone. Measured 24
+//                   Oct on the real hosts: six such labels survived passes a-d in object_id and timer
+//                   paths because a bare label is not a hostname. The collectors cannot know the
+//                   labels, so the list is per tenant configuration, not collected.
 //
 // Pseudonyms are 6 hex (24 bits): 100 addresses collide with probability 0.03%, 500 with 0.7%.
 // Hex and base64 runs are secrets only next to a key-like word, so sha256 value hashes, restic ids
 // and etckeeper commits stay data. JSON goes through json(): keys are kept, string values are
 // redacted, and a value under a secret-naming key (token, password, X-Auth-Key, ...) is a secret
 // whatever its shape. text() over serialised JSON would also see the keys.
+//
+// fingerprint() is the value_hash of a collected setting: HMAC-SHA256 under the same salt, printed
+// as sha256:<64 hex>. Measured 24 Oct on the first exported bundle: with plain sha256(value), 138
+// guesses built from the six public zone names matched 194 stored hashes and confirmed 19 plaintexts
+// behind their host-XXXXXX pseudonyms; under the salt a guess confirms nothing. A `file` row keeps
+// sha256 of its bytes (src/collectors/linux.ts), because it must equal the export copy's sha256sum.
 
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { isIPv6 } from "node:net";
 
 const PSEUDO_LEN = 6;
@@ -73,7 +85,7 @@ const ALIAS = /^[A-Za-z0-9_]{1,2}\.$/;
  * ends in (server.listen, http.upstream.app.server) and the one schema table a datasource-qualified
  * name ends in (DRIFT.observation). None is a delegated TLD except .events, and no client runs under it.
  */
-const VOCAB = new Set("etc nginx dns audit http server location upstream events stream mail listen root index include observation".split(" "));
+const VOCAB = new Set("etc nginx dns audit http server location upstream events stream mail listen root index include observation metastore drift collection setting referent".split(" "));
 /** Dotted names ending in these are files, not hosts. A few are also ccTLDs (sh, so, md, pl, py); in collected configs the file reading wins. */
 const EXT = new Set(
   "conf cfg ini env log access error json jsonl yaml yml toml txt md pem key crt cer csr pub pid sock socket service timer target mount slice sh bash py pl rb go js ts mjs cjs tf html htm css php so bak old orig dist default sample lock gz tgz tar zip xz bz2 zst deb rpm db sqlite sql csv xml types map list inc tmpl tpl j2 swp tmp save out sig asc gpg sum".split(" "),
@@ -100,11 +112,17 @@ function hostPassesThrough(name: string): boolean {
 }
 
 export class Redactor {
-  constructor(private readonly salt: string) {}
+  private readonly words: RegExp | null;
+
+  /** `words`: the tenant's own labels (pass e), matched case-insensitively; shorter than three characters or empty entries are ignored. */
+  constructor(private readonly salt: string, words: readonly string[] = []) {
+    const list = [...new Set(words.map((w) => w.trim().toLowerCase()).filter((w) => /^[a-z0-9][a-z0-9_-]{2,}$/.test(w)))].sort((a, b) => b.length - a.length);
+    this.words = list.length ? new RegExp(`(?<![A-Za-z0-9])(?:${list.map((w) => w.replace(/[-]/g, "\\-")).join("|")})(?![A-Za-z0-9])`, "gi") : null;
+  }
 
   /** Free text: a config file, a command's output, a log line. */
   text(s: string): string {
-    return this.hosts(this.people(this.addresses(this.secrets(s))));
+    return this.labels(this.hosts(this.people(this.addresses(this.secrets(s)))));
   }
 
   /**
@@ -120,6 +138,11 @@ export class Redactor {
   /** Parsed JSON: keys are kept, every string value goes through text(), and a string under a secret-naming key is a secret whatever its shape. */
   json<T>(v: T): T {
     return this.walk(v, undefined) as T;
+  }
+
+  /** The value_hash of a setting: sha256:<HMAC-SHA256(salt, value) hex>. Equal for equal values under one salt; a guessed plaintext confirms nothing without it. */
+  fingerprint(value: string | Uint8Array): string {
+    return `sha256:${createHmac("sha256", this.salt).update(value).digest("hex")}`;
   }
 
   private walk(v: unknown, key: string | undefined): unknown {
@@ -185,6 +208,11 @@ export class Redactor {
       });
   }
 
+  /** Pass e: a configured label standing on its own becomes word-XXXXXX; pseudonyms and markers are never touched (they carry no label). */
+  private labels(s: string): string {
+    return this.words ? s.replace(this.words, (m) => this.pseudo("word", m.toLowerCase())) : s;
+  }
+
   private hosts(s: string): string {
     return s.replace(HOST, (m, labels: string, tld: string) => {
       if (EXT.has(tld.toLowerCase())) {
@@ -205,7 +233,25 @@ function nearKey(all: string, off: number): boolean {
   return KEYLIKE.test(all.slice(Math.max(lineStart, off - 64), off));
 }
 
-const MARKS = /<secret:([a-z_]+):[0-9a-f]{8}>|\b(ip|user|mail|domain|host)-[0-9a-f]{6}\b/g;
+/**
+ * The leak probe: how often each label of `words` stands on its own in `text` (pass e's rule, case-
+ * insensitive), keyed by the label as given. The export refuses a bundle with any count above zero
+ * (store.ts writeBundle) and test/leak.test.ts scans the tree with the same list; callers print
+ * counts and positions in the list, never the labels, so a log line cannot leak what the list holds.
+ */
+export function countLabels(text: string, words: readonly string[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const w of words) {
+    const label = w.trim();
+    if (!label) continue;
+    const rx = new RegExp(`(?<![A-Za-z0-9])${label.replace(/[.*+?^${}()|[\]\\-]/g, "\\$&")}(?![A-Za-z0-9])`, "gi");
+    const n = text.match(rx)?.length ?? 0;
+    if (n) out[label] = n;
+  }
+  return out;
+}
+
+const MARKS = /<secret:([a-z_]+):[0-9a-f]{8}>|\b(ip|user|mail|domain|host|word)-[0-9a-f]{6}\b/g;
 
 /** Placeholders present in `after` but not in `before`, counted per kind, for the trace line. */
 export function describeRedactions(before: string, after: string): Record<string, number> {

@@ -1,0 +1,13 @@
+# present in sites-available, no symlink in sites-enabled: on disk, not served
+server {
+    listen 80;
+    listen [::]:80;
+    server_name games.invalid;
+
+    root /var/www/games;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+}
