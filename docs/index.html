@@ -76,15 +76,27 @@ tr:last-child td{border-bottom:0}
 footer{margin:48px 0 0;padding:22px 0 40px;border-top:1px solid var(--line);color:var(--muted);font-size:.88rem}
 footer p{max-width:86ch}
 [hidden]{display:none!important}
+.tabs{display:flex;flex-wrap:wrap;gap:2px;margin:18px 0 -13px;position:relative}
+.tabs a{padding:7px 14px;border:1px solid transparent;border-bottom:0;border-radius:6px 6px 0 0;color:var(--muted);text-decoration:none;font-size:.92rem;font-weight:500}
+.tabs a:hover{color:var(--fg)}
+.tabs a[aria-current]{background:var(--bg);border-color:var(--line);color:var(--fg);font-weight:600}
+.md h3{font-size:1.06rem;margin:30px 0 6px}
+.md ul{margin:6px 0 12px;padding-left:20px}
+.md li{margin:4px 0;max-width:110ch}
+.md .scroll{width:max-content;max-width:100%}
+.md>.meta{max-width:86ch}
 @media (max-width:640px){body{font-size:14.5px}h1{font-size:1.4rem}.controls{position:static}dl.fields{grid-template-columns:1fr}dl.fields dt{margin-top:6px}details.finding>summary{padding:12px 10px}.body{padding:0 10px 14px}}
 </style>
 </head>
 <body>
 <header><div class="wrap">
 <h1>drift-agent: every finding, with the SQL behind it</h1>
-<p class="lede">A config-drift assurance pass for MSP technicians, replayed from recorded collections. Open a finding to see the detector query that raised it, each precondition check with the SQL that ran, the rows it returned and the hashes, and the judge step.</p>
+<p class="lede">A config-drift assurance pass for MSP technicians, replayed from recorded collections. Open a finding to see the detector query that raised it, each precondition check with the SQL that ran, the rows it returned and the hashes, and the judge step. The Document tab holds the owner's document over the full recorded bundle, and the Sources tab names the tables and the source behind each finding class.</p>
 <ul class="stats" id="stats"></ul>
+<nav class="tabs" aria-label="Page sections"><a href="#findings">Findings</a><a href="#document">Document</a><a href="#sources">Sources</a></nav>
 </div></header>
+<main>
+<div class="panel" id="findings">
 <div class="controls"><div class="wrap" style="display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;width:100%">
 <label>Class <select id="f-class"><option value="">all</option></select></label>
 <label>Verb <select id="f-verb"><option value="">all</option></select></label>
@@ -92,12 +104,226 @@ footer p{max-width:86ch}
 <button type="button" id="close-all">Close all</button>
 <span class="meta" id="shown"></span>
 </div></div>
-<main class="wrap" id="app"><p class="empty">Loading data/index.json ...</p>
-<noscript><p class="error">This page renders the files in data/ with a short script. Without it, read data/index.json and the per-example files beside it directly.</p></noscript>
+<div class="wrap" id="app"><p class="empty">Loading data/index.json ...</p>
+<noscript><p class="error">This tab renders the files in data/ with a short script. Without it, read data/index.json and the per-example files beside it directly; the Document and Sources tabs below read as they are.</p></noscript>
+</div>
+</div>
+<section class="panel" id="document"><div class="wrap md">
+<h2>Configuration document: client-1</h2>
+<p class="meta">Rendered from SQL over the recorded bundle at the decision instant it states, <code>2026-10-25T03:25:35.412Z</code>. <code>npm run document</code> in sample mode writes it to <code>examples/document.md</code>, and this tab is that markdown as HTML.</p>
+<div class="hashes">examples/document.md sha256:e541fa8caecac10260acc7ff1a3530ac0ce72c206e8325c09035afcb5523818e (19509 bytes, LF)</div>
+<p>What the agent holds for client-1, read through one data layer (sql.js over sample/bundle.json) when this page is rendered. Every number is a count of the rows, or a value of a row, that the queries listed at the end return.</p>
+<h3>Estate</h3>
+<p>26 collection runs on record, 26 passing the DQ gate. 2 hosts and 6 zones in the latest passing runs.</p>
+<div class="scroll"><table>
+<thead><tr><th scope="col">surface</th><th scope="col">host</th><th scope="col">latest passing run</th><th scope="col">finished</th><th scope="col">objects</th><th scope="col">settings</th></tr></thead>
+<tbody>
+<tr><td>cloudflare.dns</td><td>-</td><td>run-9e232bb5e1ebdb81</td><td>2026-10-25T03:25:13.145Z</td><td>58</td><td>290</td></tr>
+<tr><td>linux.nginx</td><td>host-4b4dc1</td><td>run-ea10fdeb1eae1a46</td><td>2026-10-25T03:25:20.736Z</td><td>24</td><td>301</td></tr>
+<tr><td>linux.nginx</td><td>host-aa516a</td><td>run-49fc76bf3b823051</td><td>2026-10-25T03:25:17.527Z</td><td>34</td><td>761</td></tr>
+</tbody>
+</table></div>
+<ul>
+<li>inventory addresses on host-4b4dc1: 2 in the latest run, 0 older rows kept</li>
+<li>inventory addresses on host-aa516a: 5 in the latest run, 3 older rows kept</li>
+</ul>
+<div class="scroll"><table>
+<thead><tr><th scope="col">zone</th><th scope="col">records</th><th scope="col">proxied</th><th scope="col">direct</th></tr></thead>
+<tbody>
+<tr><td>host-17a03d.info</td><td>7</td><td>0</td><td>7</td></tr>
+<tr><td>host-1bf78f.club</td><td>4</td><td>0</td><td>4</td></tr>
+<tr><td>host-4c795e.quest</td><td>2</td><td>1</td><td>1</td></tr>
+<tr><td>host-503b27.ai</td><td>20</td><td>4</td><td>16</td></tr>
+<tr><td>host-525a57.com</td><td>23</td><td>17</td><td>6</td></tr>
+<tr><td>host-e49c58.cloud</td><td>2</td><td>2</td><td>0</td></tr>
+</tbody>
+</table></div>
+<h3>Copies</h3>
+<p>112 vault copies at the latest commit of each repository, each with its latest validation:</p>
+<div class="scroll"><table>
+<thead><tr><th scope="col">repository</th><th scope="col">commit</th><th scope="col">copies</th><th scope="col">ok</th><th scope="col">ok_with_gaps</th><th scope="col">fail</th><th scope="col">not validated</th></tr></thead>
+<tbody>
+<tr><td>host-4b4dc1 (linux.nginx)</td><td>20a8f782</td><td>22</td><td>0</td><td>22</td><td>0</td><td>0</td></tr>
+<tr><td>host-aa516a (linux.nginx)</td><td>c31d9501</td><td>32</td><td>0</td><td>32</td><td>0</td><td>0</td></tr>
+<tr><td>records, zone host-17a03d.info</td><td>36271afe</td><td>7</td><td>7</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>records, zone host-1bf78f.club</td><td>36271afe</td><td>4</td><td>4</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>records, zone host-4c795e.quest</td><td>36271afe</td><td>2</td><td>2</td><td>0</td><td>0</td><td>0</td></tr>
+<tr><td>records, zone host-503b27.ai</td><td>36271afe</td><td>20</td><td>14</td><td>6</td><td>0</td><td>0</td></tr>
+<tr><td>records, zone host-525a57.com</td><td>36271afe</td><td>23</td><td>13</td><td>10</td><td>0</td><td>0</td></tr>
+<tr><td>records, zone host-e49c58.cloud</td><td>36271afe</td><td>2</td><td>2</td><td>0</td><td>0</td><td>0</td></tr>
+</tbody>
+</table></div>
+<p>The gaps the validations name, each a dependency a restore needs from outside the vault:</p>
+<ul>
+<li>host-4b4dc1 (linux.nginx): 13 gaps: /etc/letsencrypt/live/host-17a03d.info/fullchain.pem, /etc/letsencrypt/live/host-17a03d.info/privkey.pem, /etc/letsencrypt/live/host-4c795e.quest/fullchain.pem, /etc/letsencrypt/live/host-4c795e.quest/privkey.pem, /etc/letsencrypt/live/host-525a57.com/fullchain.pem, /etc/letsencrypt/live/host-525a57.com/privkey.pem, /etc/letsencrypt/live/host-9ac4f1.com/fullchain.pem, /etc/letsencrypt/live/host-9ac4f1.com/privkey.pem, /etc/letsencrypt/live/host-f324df.com/fullchain.pem, /etc/letsencrypt/live/host-f324df.com/privkey.pem, /etc/letsencrypt/options-ssl-nginx.conf, /etc/letsencrypt/ssl-dhparams.pem, /etc/nginx/snippets/word-9af24b-api-key.conf</li>
+<li>host-aa516a (linux.nginx): 16 gaps: /etc/letsencrypt/live/host-18efce.ai/fullchain.pem, /etc/letsencrypt/live/host-18efce.ai/privkey.pem, /etc/letsencrypt/live/host-492568.ai/fullchain.pem, /etc/letsencrypt/live/host-492568.ai/privkey.pem, /etc/letsencrypt/live/host-503b27.ai/fullchain.pem, /etc/letsencrypt/live/host-503b27.ai/privkey.pem, /etc/letsencrypt/live/host-a00d2f.ai/fullchain.pem, /etc/letsencrypt/live/host-a00d2f.ai/privkey.pem, /etc/letsencrypt/live/host-c907ae.ai/fullchain.pem, /etc/letsencrypt/live/host-c907ae.ai/privkey.pem, /etc/letsencrypt/live/host-c9c1ae.club/fullchain.pem, /etc/letsencrypt/live/host-c9c1ae.club/privkey.pem, /etc/letsencrypt/options-ssl-nginx.conf, /etc/letsencrypt/ssl-dhparams.pem, /etc/ssl/word-8173ec/origin.crt, /etc/ssl/word-8173ec/origin.key</li>
+<li>records, zone host-503b27.ai: 5 gaps: host-2a9e77.net, host-61d6c2.net, host-9e9da4.net, host-9eff2c.com, host-c0f047.net</li>
+<li>records, zone host-525a57.com: 2 gaps: host-4111e5.com, host-4f380d.com</li>
+</ul>
+<h3>Approvals</h3>
+<p>333 settings have an approval of record, the latest of each:</p>
+<div class="scroll"><table>
+<thead><tr><th scope="col">surface</th><th scope="col">host</th><th scope="col">objects approved</th><th scope="col">settings approved</th></tr></thead>
+<tbody>
+<tr><td>cloudflare.dns</td><td>-</td><td>58</td><td>290</td></tr>
+<tr><td>linux.nginx</td><td>host-4b4dc1</td><td>17</td><td>17</td></tr>
+<tr><td>linux.nginx</td><td>host-aa516a</td><td>26</td><td>26</td></tr>
+</tbody>
+</table></div>
+<p>Locked settings without an approved value: 0.</p>
+<h3>Findings open</h3>
+<p>27 findings are open on the latest passing runs: HOLD 26, ESCALATE 1.</p>
+<div class="scroll"><table>
+<thead><tr><th scope="col">class</th><th scope="col">HOLD</th><th scope="col">ESCALATE</th><th scope="col">total</th></tr></thead>
+<tbody>
+<tr><td>orphan_record</td><td>3</td><td>0</td><td>3</td></tr>
+<tr><td>orphan_vhost</td><td>3</td><td>0</td><td>3</td></tr>
+<tr><td>proxied_without_real_ip</td><td>20</td><td>0</td><td>20</td></tr>
+<tr><td>proxy_split</td><td>0</td><td>1</td><td>1</td></tr>
+</tbody>
+</table></div>
+<p>Drift from the approved values: 0 settings differ from their latest approval (drift_vs_approved), 0 approved settings are absent from their run (approved_missing).</p>
+<p>The HOLDs expire:</p>
+<ul>
+<li>2026-10-27T23:21:06.870Z: 26 (orphan_record 3, orphan_vhost 3, proxied_without_real_ip 20)</li>
+</ul>
+<p>Each open finding, by verb and class, with the reason its disposition records:</p>
+<ul>
+<li>fnd-58b251b5fce8fbff HOLD orphan_record: name in b0a17a719bd2118a535a763379ab7ba9 on host-4b4dc1 (cloudflare.dns, run run-9e232bb5e1ebdb81), until 2026-10-27T23:21:06.870Z. rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-b8d9962485c3ced4.</li>
+<li>fnd-8fc67ccb1e4eebfa HOLD orphan_record: name in 25a23b5c40a3de0ea11b6054a7b54d07 on host-4b4dc1 (cloudflare.dns, run run-9e232bb5e1ebdb81), until 2026-10-27T23:21:06.870Z. rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-b8d9962485c3ced4.</li>
+<li>fnd-d62857e241af66e2 HOLD orphan_record: name in c8b1963847dafe3548b1a4b93f520c0a on host-aa516a (cloudflare.dns, run run-9e232bb5e1ebdb81), until 2026-10-27T23:21:06.870Z. rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-b8d9962485c3ced4.</li>
+<li>fnd-3661fcc541693ada HOLD orphan_vhost: server[host-9ac4f1.com:443].server_name[host-89f6e7.com] in /etc/nginx/sites-available/host-9ac4f1.com on host-4b4dc1 (linux.nginx, run run-ea10fdeb1eae1a46), until 2026-10-27T23:21:06.870Z. rule rule-b8d9962485c3ced4 (normal) holds this orphan_vhost finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-b8d9962485c3ced4.</li>
+<li>fnd-51038b9539a0174a HOLD orphan_vhost: server[host-085e02.com:443].server_name[host-085e02.com] in /etc/nginx/sites-available/host-085e02.com on host-4b4dc1 (linux.nginx, run run-ea10fdeb1eae1a46), until 2026-10-27T23:21:06.870Z. rule rule-b8d9962485c3ced4 (normal) holds this orphan_vhost finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-b8d9962485c3ced4.</li>
+<li>fnd-add52203af12de8a HOLD orphan_vhost: server[host-9ac4f1.com:443].server_name[host-9ac4f1.com] in /etc/nginx/sites-available/host-9ac4f1.com on host-4b4dc1 (linux.nginx, run run-ea10fdeb1eae1a46), until 2026-10-27T23:21:06.870Z. rule rule-b8d9962485c3ced4 (normal) holds this orphan_vhost finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-b8d9962485c3ced4.</li>
+<li>fnd-028260c299ff1cb0 HOLD proxied_without_real_ip: server[host-f324df.com:80].real_ip in /etc/nginx/sites-available/host-f324df.com on host-4b4dc1 (linux.nginx, run run-ea10fdeb1eae1a46), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.</li>
+<li>fnd-05b163bfda4c027f HOLD proxied_without_real_ip: server[host-e49c58.cloud:443].real_ip in /etc/nginx/conf.d/host-e49c58.cloud.conf on host-aa516a (linux.nginx, run run-49fc76bf3b823051), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.</li>
+<li>fnd-2f1b5857f0426b68 HOLD proxied_without_real_ip: server[host-4c795e.quest:443].real_ip in /etc/nginx/sites-available/host-4c795e.quest on host-4b4dc1 (linux.nginx, run run-ea10fdeb1eae1a46), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.</li>
+<li>fnd-385949946c990113 HOLD proxied_without_real_ip: server[host-e49c58.cloud:80].real_ip in /etc/nginx/conf.d/host-e49c58.cloud.conf on host-aa516a (linux.nginx, run run-49fc76bf3b823051), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.</li>
+<li>fnd-4503aff67c556c58 HOLD proxied_without_real_ip: server[host-62f7a4.com:443].real_ip in /etc/nginx/sites-available/host-62f7a4.com on host-4b4dc1 (linux.nginx, run run-ea10fdeb1eae1a46), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.</li>
+<li>fnd-45d5f3f4a2eb0b2e HOLD proxied_without_real_ip: server[host-18efce.ai:443].real_ip in /etc/nginx/conf.d/word-005ed8-prod.conf on host-aa516a (linux.nginx, run run-49fc76bf3b823051), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.</li>
+<li>fnd-5bd1b4c03ee72c7a HOLD proxied_without_real_ip: server[host-503b27.ai:80].real_ip in /etc/nginx/conf.d/host-503b27.ai.conf on host-aa516a (linux.nginx, run run-49fc76bf3b823051), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.</li>
+<li>fnd-7548fb2a2e3cdca4 HOLD proxied_without_real_ip: server[host-5c38db.com:80].real_ip in /etc/nginx/sites-available/host-525a57.com on host-4b4dc1 (linux.nginx, run run-ea10fdeb1eae1a46), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.</li>
+<li>fnd-770d13f327d54d12 HOLD proxied_without_real_ip: server[host-525a57.com:80].real_ip in /etc/nginx/sites-available/host-525a57.com on host-4b4dc1 (linux.nginx, run run-ea10fdeb1eae1a46), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.</li>
+<li>fnd-8a843610aeb1b709 HOLD proxied_without_real_ip: server[host-503b27.ai:80].real_ip in /etc/nginx/conf.d/host-503b27.ai.conf on host-aa516a (linux.nginx, run run-49fc76bf3b823051), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.</li>
+<li>fnd-8fc350e6aa5840d1 HOLD proxied_without_real_ip: server[host-e49c58.cloud:443].real_ip in /etc/nginx/conf.d/host-e49c58.cloud.conf on host-aa516a (linux.nginx, run run-49fc76bf3b823051), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.</li>
+<li>fnd-9bfe1da7d028260c HOLD proxied_without_real_ip: server[host-18efce.ai:80].real_ip in /etc/nginx/conf.d/word-005ed8-prod.conf on host-aa516a (linux.nginx, run run-49fc76bf3b823051), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.</li>
+<li>fnd-a08488f45ff63140 HOLD proxied_without_real_ip: server[host-27618a.ai:443].real_ip in /etc/nginx/conf.d/host-503b27.ai.conf on host-aa516a (linux.nginx, run run-49fc76bf3b823051), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.</li>
+<li>fnd-b0472de6319451c4 HOLD proxied_without_real_ip: server[host-525a57.com:80].real_ip in /etc/nginx/sites-available/host-525a57.com on host-4b4dc1 (linux.nginx, run run-ea10fdeb1eae1a46), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.</li>
+<li>fnd-b3ea13c119d7b589 HOLD proxied_without_real_ip: server[host-4c795e.quest:80].real_ip in /etc/nginx/sites-available/host-4c795e.quest on host-4b4dc1 (linux.nginx, run run-ea10fdeb1eae1a46), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.</li>
+<li>fnd-b91b1690878eaf0e HOLD proxied_without_real_ip: http.real_ip in /etc/nginx/nginx.conf on host-aa516a (linux.nginx, run run-49fc76bf3b823051), until 2026-10-27T23:21:06.870Z. rule rule-b8d9962485c3ced4 (normal) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-b8d9962485c3ced4.</li>
+<li>fnd-d5622dbd2bf43e3e HOLD proxied_without_real_ip: server[host-22b64a.com:443].real_ip in /etc/nginx/sites-available/host-525a57.com on host-4b4dc1 (linux.nginx, run run-ea10fdeb1eae1a46), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.</li>
+<li>fnd-de3c5e8ebdc2d209 HOLD proxied_without_real_ip: server[host-f324df.com:443].real_ip in /etc/nginx/sites-available/host-f324df.com on host-4b4dc1 (linux.nginx, run run-ea10fdeb1eae1a46), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.</li>
+<li>fnd-dfe22fa267b51c91 HOLD proxied_without_real_ip: server[host-503b27.ai:443].real_ip in /etc/nginx/conf.d/host-503b27.ai.conf on host-aa516a (linux.nginx, run run-49fc76bf3b823051), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.</li>
+<li>fnd-f3bcb9860c5a0b3d HOLD proxied_without_real_ip: server[host-e49c58.cloud:80].real_ip in /etc/nginx/conf.d/host-e49c58.cloud.conf on host-aa516a (linux.nginx, run run-49fc76bf3b823051), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.</li>
+<li>fnd-b4a40091cdb4f906 ESCALATE proxy_split: proxied in bce1ca2bb7caa2de9b6823d5f6ecd3f2 (cloudflare.dns, run run-9e232bb5e1ebdb81). hold under rule rule-8e75e1d767980665 expired 2026-10-25T03:21:06.870Z; the finding stands.</li>
+</ul>
+<h3>Where each answer comes from</h3>
+<p>Each finding class answers its question by joining the tables its detector query and its default checks name, and each table holds the rows of one source. The rows are read off the SQL in <code>src/data/queries.ts</code> and <code>src/catalogue/templates.ts</code> and the default checks in <code>src/catalogue/select.ts</code>.</p>
+<div class="scroll"><table>
+<thead><tr><th scope="col">class</th><th scope="col">question</th><th scope="col">tables</th><th scope="col">sources</th></tr></thead>
+<tbody>
+<tr><td><code>proxy_split</code></td><td>Is it fully configured?</td><td><code>collection_run</code>, <code>observation</code>, <code>dns_record</code>, <code>audit_event</code></td><td>live state, DNS, audit log, populations</td></tr>
+<tr><td><code>proxied_without_real_ip</code></td><td>Is it fully configured?</td><td><code>collection_run</code>, <code>observation</code>, <code>dns_record</code>, <code>audit_event</code>, <code>inventory_asset</code></td><td>live state, DNS, audit log, inventory, populations</td></tr>
+<tr><td><code>orphan_record</code></td><td>Does a configuration exist for everything that should?</td><td><code>collection_run</code>, <code>observation</code>, <code>dns_record</code>, <code>audit_event</code>, <code>inventory_asset</code></td><td>live state, DNS, audit log, inventory, populations</td></tr>
+<tr><td><code>orphan_vhost</code></td><td>Does a configuration exist for everything that should?</td><td><code>collection_run</code>, <code>observation</code>, <code>backup_snapshot</code>, <code>dns_record</code></td><td>live state, export, DNS, populations</td></tr>
+<tr><td><code>changed_since_backup</code></td><td>Has it changed since the copy?</td><td><code>collection_run</code>, <code>observation</code>, <code>approved_setting</code>, <code>backup_snapshot</code>, <code>backup_item</code></td><td>live state, export, documentation of record, populations</td></tr>
+<tr><td><code>drift_vs_approved</code></td><td>Has it changed since the copy?</td><td><code>collection_run</code>, <code>observation</code>, <code>approved_setting</code>, <code>backup_snapshot</code>, <code>backup_item</code>, <code>audit_event</code></td><td>live state, export, documentation of record, audit log, populations</td></tr>
+<tr><td><code>approved_missing</code></td><td>Does a configuration exist for everything that should?</td><td><code>collection_run</code>, <code>observation</code>, <code>approved_setting</code>, <code>backup_snapshot</code>, <code>backup_item</code>, <code>dns_record</code>, <code>audit_event</code></td><td>live state, export, documentation of record, DNS, audit log, populations</td></tr>
+<tr><td><code>found_but_different</code></td><td>Is it FOUND-BUT-DIFFERENT?</td><td><code>collection_run</code>, <code>observation</code>, <code>dns_record</code>, <code>audit_event</code>, <code>inventory_asset</code></td><td>live state, DNS, audit log, inventory, populations</td></tr>
+<tr><td><code>dns_change</code></td><td>Is it FOUND-BUT-DIFFERENT?</td><td><code>collection_run</code>, <code>observation</code>, <code>dns_record</code>, <code>audit_event</code>, <code>inventory_asset</code></td><td>live state, DNS, audit log, inventory, populations</td></tr>
+</tbody>
+</table></div>
+<p>The sources:</p>
+<ul>
+<li>live state (<code>observation</code>): each setting as the live host answers it over SSH, and each record field as the DNS provider returns it.</li>
+<li>export (<code>backup_snapshot</code>, <code>backup_item</code>): the nightly export tarball of each host and every regular member of the newest.</li>
+<li>documentation of record (<code>approved_setting</code>): the values a technician approved; IT Glue and Hudu map here.</li>
+<li>DNS (<code>dns_record</code>): the DNS provider&#39;s records, Cloudflare&#39;s in this slice.</li>
+<li>audit log (<code>audit_event</code>): the provider&#39;s audit log, who changed which resource and when.</li>
+<li>inventory (<code>inventory_asset</code>): the hosts&#39; addresses.</li>
+<li>populations (<code>collection_run</code>): each source&#39;s own population, asserted before a row is read, and each run&#39;s status.</li>
+</ul>
+<h3>Work</h3>
+<p>No action is recorded for client-1.</p>
+<p>Tickets by type and status:</p>
+<div class="scroll"><table>
+<thead><tr><th scope="col">type</th><th scope="col">status</th><th scope="col">tickets</th></tr></thead>
+<tbody>
+<tr><td>incident</td><td>open</td><td>1</td></tr>
+</tbody>
+</table></div>
+<ul>
+<li>incident P1 open: https://host-28ea31.com/word-861e90/drift-tickets/issues/2 (github #2, finding fnd-b4a40091cdb4f906)</li>
+</ul>
+<h3>Probes</h3>
+<p>Probe runs passing the DQ gate: 4 of surface probe, every served name probed for the pass, and 0 of surface probe.verify, the Actor&#39;s probes after a write.</p>
+<p>Probe run run-e839e796556a54c3 (surface probe), finished 2026-10-25T03:25:30.464Z: 20 probes fail.</p>
+<div class="scroll"><table>
+<thead><tr><th scope="col">kind</th><th scope="col">ok</th><th scope="col">fail</th></tr></thead>
+<tbody>
+<tr><td>dns</td><td>34</td><td>3</td></tr>
+<tr><td>http</td><td>27</td><td>10</td></tr>
+<tr><td>tls</td><td>30</td><td>7</td></tr>
+</tbody>
+</table></div>
+<p>The failing names:</p>
+<ul>
+<li>dns: host-375750.ai, host-4c2c20.ai, host-f85201.ai</li>
+<li>http: host-375750.ai, host-3f9d65.ai, host-3fef97.club, host-4c2c20.ai, host-50b116.com, host-922448.ai, host-c10fff.com, host-d07e8a.com, host-d8dbd3.ai, host-f85201.ai</li>
+<li>tls: host-375750.ai, host-3f9d65.ai, host-3fef97.club, host-4c2c20.ai, host-922448.ai, host-d8dbd3.ai, host-f85201.ai</li>
+</ul>
+<h3>Queries</h3>
+<ul>
+<li>RUNS_SQL: 1 run, 26 rows</li>
+<li>RUN_COMPLETE_SQL: 26 runs, 0 rows</li>
+<li>DOC_ZONES_SQL: 1 run, 6 rows</li>
+<li>DOC_RUN_SHAPE_SQL: 3 runs, 3 rows</li>
+<li>DOC_INVENTORY_SQL: 2 runs, 2 rows</li>
+<li>DOC_COPIES_SQL: 1 run, 112 rows</li>
+<li>LATEST_APPROVALS_SQL: 1 run, 333 rows</li>
+<li>POLICY_RULES_SQL: 1 run, 26 rows</li>
+<li>DOC_UNAPPROVED_SQL: 3 runs, 1019 rows</li>
+<li>DOC_DISPOSITIONS_OF_RUN_SQL: 3 runs, 27 rows</li>
+<li>DOC_ACTIONS_SQL: 1 run, 0 rows</li>
+<li>DOC_TICKETS_SQL: 1 run, 1 row</li>
+<li>DOC_PROBES_SQL: 1 run, 6 rows</li>
+<li>DOC_PROBE_FAILURES_SQL: 1 run, 20 rows</li>
+</ul>
+<p>Decided at 2026-10-25T03:25:35.412Z.</p>
+</div></section>
+<section class="panel" id="sources"><div class="wrap md">
+<h2>Where each answer comes from</h2>
+<p class="meta">Read off the SQL at build time by <code>sourcesMarkdown()</code> in <code>src/document/render.ts</code>: the section the owner's document and the README carry under this heading, and the table <code>npm run sources</code> prints.</p>
+<p>Each finding class answers its question by joining the tables its detector query and its default checks name, and each table holds the rows of one source. The rows are read off the SQL in <code>src/data/queries.ts</code> and <code>src/catalogue/templates.ts</code> and the default checks in <code>src/catalogue/select.ts</code>.</p>
+<div class="scroll"><table>
+<thead><tr><th scope="col">class</th><th scope="col">question</th><th scope="col">tables</th><th scope="col">sources</th></tr></thead>
+<tbody>
+<tr><td><code>proxy_split</code></td><td>Is it fully configured?</td><td><code>collection_run</code>, <code>observation</code>, <code>dns_record</code>, <code>audit_event</code></td><td>live state, DNS, audit log, populations</td></tr>
+<tr><td><code>proxied_without_real_ip</code></td><td>Is it fully configured?</td><td><code>collection_run</code>, <code>observation</code>, <code>dns_record</code>, <code>audit_event</code>, <code>inventory_asset</code></td><td>live state, DNS, audit log, inventory, populations</td></tr>
+<tr><td><code>orphan_record</code></td><td>Does a configuration exist for everything that should?</td><td><code>collection_run</code>, <code>observation</code>, <code>dns_record</code>, <code>audit_event</code>, <code>inventory_asset</code></td><td>live state, DNS, audit log, inventory, populations</td></tr>
+<tr><td><code>orphan_vhost</code></td><td>Does a configuration exist for everything that should?</td><td><code>collection_run</code>, <code>observation</code>, <code>backup_snapshot</code>, <code>dns_record</code></td><td>live state, export, DNS, populations</td></tr>
+<tr><td><code>changed_since_backup</code></td><td>Has it changed since the copy?</td><td><code>collection_run</code>, <code>observation</code>, <code>approved_setting</code>, <code>backup_snapshot</code>, <code>backup_item</code></td><td>live state, export, documentation of record, populations</td></tr>
+<tr><td><code>drift_vs_approved</code></td><td>Has it changed since the copy?</td><td><code>collection_run</code>, <code>observation</code>, <code>approved_setting</code>, <code>backup_snapshot</code>, <code>backup_item</code>, <code>audit_event</code></td><td>live state, export, documentation of record, audit log, populations</td></tr>
+<tr><td><code>approved_missing</code></td><td>Does a configuration exist for everything that should?</td><td><code>collection_run</code>, <code>observation</code>, <code>approved_setting</code>, <code>backup_snapshot</code>, <code>backup_item</code>, <code>dns_record</code>, <code>audit_event</code></td><td>live state, export, documentation of record, DNS, audit log, populations</td></tr>
+<tr><td><code>found_but_different</code></td><td>Is it FOUND-BUT-DIFFERENT?</td><td><code>collection_run</code>, <code>observation</code>, <code>dns_record</code>, <code>audit_event</code>, <code>inventory_asset</code></td><td>live state, DNS, audit log, inventory, populations</td></tr>
+<tr><td><code>dns_change</code></td><td>Is it FOUND-BUT-DIFFERENT?</td><td><code>collection_run</code>, <code>observation</code>, <code>dns_record</code>, <code>audit_event</code>, <code>inventory_asset</code></td><td>live state, DNS, audit log, inventory, populations</td></tr>
+</tbody>
+</table></div>
+<p>The sources:</p>
+<ul>
+<li>live state (<code>observation</code>): each setting as the live host answers it over SSH, and each record field as the DNS provider returns it.</li>
+<li>export (<code>backup_snapshot</code>, <code>backup_item</code>): the nightly export tarball of each host and every regular member of the newest.</li>
+<li>documentation of record (<code>approved_setting</code>): the values a technician approved; IT Glue and Hudu map here.</li>
+<li>DNS (<code>dns_record</code>): the DNS provider&#39;s records, Cloudflare&#39;s in this slice.</li>
+<li>audit log (<code>audit_event</code>): the provider&#39;s audit log, who changed which resource and when.</li>
+<li>inventory (<code>inventory_asset</code>): the hosts&#39; addresses.</li>
+<li>populations (<code>collection_run</code>): each source&#39;s own population, asserted before a row is read, and each run&#39;s status.</li>
+</ul>
+</div></section>
 </main>
 <footer><div class="wrap">
 <p><b>What this page is.</b> A replay of recorded, redacted real collections taken on 24 Oct 2026 from two production Linux hosts (nginx, over SSH with a fixed script of reads; the key is the operator's, so the read-only property is the script's) and six Cloudflare DNS zones with their audit log. Every name, address, host and actor is a pseudonym keyed by the tenant's salt, and every value hash an HMAC under it; the salt is withheld, so a guess at a real name cannot be confirmed against this page. Nothing is authored: each example is a slice of <code>sample/bundle.json</code> cut by <code>scripts/examples.ts</code>, and each finding is what the pass (<code>src/pipeline.ts</code>) computed over its slice with no model.</p>
-<p><b>How it was built.</b> <code>npm run site</code> binds every check's parameters from its finding the way the pass does, renders the catalogue template through the data layer on sql.js, runs it again over the slice and refuses to publish unless the row count, the verdict and the sentence equal the record; the detector query must return the finding's own row. It also refuses on any template it cannot render, and on any string that matches the operator's deny-list or that the redactor would still replace. A table shows at most 20 rows and 240 characters per cell; the row count and the row hash cover every row and every character.</p>
+<p><b>How it was built.</b> <code>npm run site</code> binds every check's parameters from its finding the way the pass does, renders the catalogue template through the data layer on sql.js, runs it again over the slice and refuses to publish unless the row count, the verdict and the sentence equal the record; the detector query must return the finding's own row. It also refuses on any template it cannot render, and on any string that matches the operator's deny-list or that the redactor would still replace. A table shows at most 20 rows and 240 characters per cell; the row count and the row hash cover every row and every character. The Document and Sources tabs are markdown turned into HTML at build time, every character outside headings, paragraphs, lists, tables, inline code and bold escaped: <code>examples/document.md</code> as <code>npm run document</code> wrote it, and the section <code>sourcesMarkdown()</code> reads off the SQL; the deny-list scan reads both as written.</p>
 <p><b>Reproduce it.</b> In a clone of the repository, with nothing but Node 22 and <code>npm install</code>: <code>SAMPLE_MODE=true npm run sample</code> reproduces the findings from the repo (the full bundle, no credentials, no model); <code>npm run examples</code> recuts these slices and recomputes their findings; <code>npm run site</code> rebuilds this page.</p>
 <p id="sample-line"></p>
 </div></footer>
@@ -225,7 +451,7 @@ footer p{max-width:86ch}
       const show = (!cls || el.dataset.class === cls) && (!verb || el.dataset.verb === verb);
       el.hidden = !show; all++; if (show) n++;
     }
-    for (const s of document.querySelectorAll("main section")) s.hidden = !s.querySelector("details.finding:not([hidden])");
+    for (const s of document.querySelectorAll("#app > section")) s.hidden = !s.querySelector("details.finding:not([hidden])");
     document.getElementById("shown").textContent = n + " of " + all + " findings shown";
   }
   function options(sel, values) { for (const v of values) sel.append(h("option", { value: v }, v)); sel.addEventListener("change", filter); }
@@ -262,6 +488,23 @@ footer p{max-width:86ch}
     const target = location.hash && document.getElementById(location.hash.slice(1));
     if (target && target.tagName === "DETAILS") { target.open = true; target.scrollIntoView(); }
   }
+
+  const tabs = [...document.querySelectorAll(".tabs a")];
+  function showTab() {
+    const on = tabs.find((a) => a.getAttribute("href") === location.hash) || tabs[0];
+    for (const a of tabs) {
+      document.getElementById(a.getAttribute("href").slice(1)).hidden = a !== on;
+      if (a === on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+    }
+  }
+  for (const a of tabs) a.addEventListener("click", (e) => {
+    e.preventDefault();
+    if (location.hash !== a.getAttribute("href")) history.pushState(null, "", a.getAttribute("href"));
+    showTab();
+  });
+  addEventListener("popstate", showTab);
+  addEventListener("hashchange", showTab);
+  showTab();
   main();
 })();
 </script>

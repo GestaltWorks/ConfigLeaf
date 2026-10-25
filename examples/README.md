@@ -89,4 +89,6 @@ findings, every one HOLD by policy:
 - The `proxy_split` above, under rule 13 (4 h, until 2026-10-25T03:36:13.770Z), which the CNAMEs bring with them.
 
 The replay page (`npm run site`, `docs/`) re-runs every check of these nine findings at build time, 33 in all, to
-the recorded count and sentence, and marks each finding `same` against the full sample pass: 9 of 9 on 24 Oct 2026.
+the recorded count and sentence, and marks each finding `same` against the full sample pass: 9 of 9 on 25 Oct 2026.
+Its Document tab is [document.md](document.md) and its Sources tab the table of where each answer comes from, both
+rendered to HTML at build time.

@@ -15,12 +15,20 @@
 // the same way and must return the finding's own row. A live judge record, when one exists, has its falsifier
 // re-guarded and re-run, and its receipt id and signature status shown.
 //
+// Two more tabs carry markdown turned into HTML at build time (markdownToHtml, below: headings, paragraphs, bullet
+// lists, tables, inline code and bold, every other character escaped): Document, the owner's document as
+// `npm run document` in sample mode writes it (examples/document.md, from SQL over the recorded bundle), with its file
+// hash and the decision instant its last line states; and Sources, "Where each answer comes from" as
+// src/document/render.ts sourcesMarkdown() reads it off the SQL. Both are static HTML in index.html, so they read from
+// file:// and with the script off.
+//
 // Refuses to publish (throws, writes nothing) when a check cites a template the catalogue cannot render, or
 // parameters it refuses; when a re-run differs from the record; when a detector does not return its finding;
 // when re-running the pass over a slice does not give its committed findings.json (the example is stale: run
 // npm run examples; `--allow-stale` publishes it marked stale instead, for a deliberate look at the drift);
 // when any output file holds a label of the operator's deny-list (REDACT_WORDS and EXPORT_DENY_WORDS: the
-// leak test's list and its countLabels scan) or a configured ssh alias; when any string in the data files
+// leak test's list and its countLabels scan) or a configured ssh alias, the markdown the two tabs render scanned
+// as written too; when examples/document.md is missing or opens with no heading; when any string in the data files
 // changes under the redactor (a name, address, mail address or secret redaction would still replace, which
 // holds with the deny-list blank too); or when the page and its data exceed MAX_BYTES. Every refusal names
 // the file and the position in the list, never the label.
@@ -44,6 +52,7 @@ import { decisionInstant } from "../src/data/instant.ts";
 import {
   HERO_SQL, ORPHAN_RECORD_SQL, ORPHAN_VHOST_SQL, PROXIED_WITHOUT_REAL_IP_SQL, PROXY_SPLIT_SQL, RUNS_SQL, WILDCARD_WITHOUT_REAL_IP_SQL, objects,
 } from "../src/data/queries.ts";
+import { sourceRows, sourcesMarkdown } from "../src/document/render.ts";
 import { DriftWorld } from "../src/engine/world.ts";
 import { runPass, type Finding } from "../src/pipeline.ts";
 import { Redactor, countLabels, describeRedactions } from "../src/redactor.ts";
@@ -161,8 +170,11 @@ export interface BuildOptions {
   write?: boolean;
   /** false (default) refuses an example whose findings.json the pass over its slice does not reproduce; true publishes it, marked stale on the page. */
   allowStale?: boolean;
+  /** The owner's document the Document tab shows; default examples/document.md. */
+  documentPath?: string;
 }
-export interface BuildResult { outDir: string; files: Map<string, string>; bytes: number; index: SiteIndex; scan: ScanReport }
+export interface DocumentTab { file: string; bytes: number; sha256: string; decidedAt: string | null }
+export interface BuildResult { outDir: string; files: Map<string, string>; bytes: number; index: SiteIndex; scan: ScanReport; document: DocumentTab; sources: number }
 
 // ---- helpers ------------------------------------------------------------------------------------------------
 
@@ -174,6 +186,8 @@ const tally = (xs: string[]): Record<string, number> => {
   return out;
 };
 const rel = (p: string): string => path.relative(ROOT, p).split(path.sep).join("/");
+/** A path as the page names it: relative to the repository, or the bare file name for a file outside it (no machine path). */
+const shownPath = (p: string): string => (rel(p).startsWith("..") || path.isAbsolute(rel(p)) ? path.basename(p) : rel(p));
 
 function rowsView(columns: string[], rows: string[][], total: number): RowsView {
   let cut = 0;
@@ -436,22 +450,24 @@ async function exampleView(dir: string, examplesDir: string, full: Map<string, F
 
 // ---- the deny-list scan ---------------------------------------------------------------------------------------
 
-export interface ScanReport { files: number; labels: number; aliases: number; leaves: number; skipped: string | null }
+export interface ScanReport { files: number; shown: number; labels: number; aliases: number; leaves: number; skipped: string | null }
 
 /**
  * The leak test's scan over the output, refusing on any hit: the operator's labels (REDACT_WORDS and
  * EXPORT_DENY_WORDS, countLabels as test/leak.test.ts runs it) and the configured ssh aliases, over every
- * file; then every string leaf of every JSON file through the redactor under a fresh salt, which must
- * leave it unchanged: a real name, address, mail address or secret would be replaced. The page itself
- * carries no data (it fetches the JSON), and its script's dotted identifiers read as names to the
- * hostname pass, so the redactor half runs over the data files only. Hits name the file, the JSON path
- * and the label's position in the list, never the label or the value.
+ * file and over each markdown text the page renders (`shown`), as written, so an HTML escape cannot hide
+ * a label; then every string leaf of every JSON file through the redactor under a fresh salt, which must
+ * leave it unchanged: a real name, address, mail address or secret would be replaced. The page's script
+ * and its two markdown tabs carry dotted identifiers (a file name, the probe.verify surface) that read as
+ * names to the hostname pass, so the redactor half runs over the data files only; the owner's document
+ * passed npm run document's own label probe before it was written. Hits name the file, the JSON path and
+ * the label's position in the list, never the label or the value.
  */
-export function scanOutput(files: Map<string, string>): ScanReport {
+export function scanOutput(files: Map<string, string>, shown: Map<string, string> = new Map()): ScanReport {
   const words = [...new Set([...config.redactWords, ...config.exportDenyWords])];
   const aliases = Object.keys(config.linuxHosts);
   const hits: string[] = [];
-  for (const [name, text] of files) {
+  for (const [name, text] of [...files, ...shown]) {
     for (const [w, n] of Object.entries(countLabels(text, words))) hits.push(`${name}: label #${words.indexOf(w) + 1} x${n}`);
     for (const [a, n] of Object.entries(countLabels(text, aliases))) hits.push(`${name}: ssh alias #${aliases.indexOf(a) + 1} x${n}`);
   }
@@ -468,9 +484,95 @@ export function scanOutput(files: Map<string, string>): ScanReport {
   for (const [name, text] of files) if (name.endsWith(".json")) walk(name, JSON.parse(text), "$");
   if (hits.length) throw new SiteError(`refusing to publish: ${hits.length} deny-list hit(s): ${hits.slice(0, 12).join("; ")}${hits.length > 12 ? "; ..." : ""}`);
   return {
-    files: files.size, labels: words.length, aliases: aliases.length, leaves,
+    files: files.size, shown: shown.size, labels: words.length, aliases: aliases.length, leaves,
     skipped: words.length ? null : "REDACT_WORDS and EXPORT_DENY_WORDS are blank: the label half of the scan had nothing to look for; the redactor half ran",
   };
+}
+
+// ---- markdown: the subset the owner's document and the sources section use, turned into HTML at build time ---------
+
+const ESC: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+/** Text as HTML: every character markup could read, escaped. */
+export const escapeHtml = (s: string): string => s.replace(/[&<>"']/g, (c) => ESC[c]);
+
+const HEADING = /^(#{1,6})[ \t]+(.*\S)[ \t]*$/;
+const ITEM = /^[-*+][ \t]+(.*)$/;
+const ROW = /^[ \t]*\|.*\|[ \t]*$/;
+const RULE_ROW = /^[ \t]*\|?[ \t]*:?-{3,}:?[ \t]*(?:\|[ \t]*:?-{3,}:?[ \t]*)*\|?[ \t]*$/;
+
+/** One run of text: `code` and **bold**; every other character escaped, an unpaired backtick or ** shown as typed. */
+function inline(s: string): string {
+  return s.split(/(`[^`]+`)/).map((part, i) => (i % 2
+    ? `<code>${escapeHtml(part.slice(1, -1))}</code>`
+    : escapeHtml(part).replace(/\*\*(?=\S)(.+?)\*\*/g, "<b>$1</b>"))).join("");
+}
+
+/** A table row's cells: the outer pipes dropped, split on each pipe not escaped, `\|` read as a pipe. */
+const cellsOf = (row: string): string[] =>
+  row.trim().replace(/^\|/, "").replace(/(?<!\\)\|$/, "").split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, "|"));
+
+/**
+ * Markdown to HTML, the subset npm run document and npm run sources write: ATX headings (`shift` levels down, so a
+ * document's # sits under the page's h1), paragraphs, bullet lists (an indented line continues its item), pipe tables
+ * with a --- rule under the header row, inline code and bold. Every other character is escaped, so the output holds no
+ * tag, attribute or link the renderer did not write. Same input, same bytes.
+ */
+export function markdownToHtml(md: string, shift = 0): string {
+  const lines = lf(md).split("\n");
+  const tableAt = (i: number): boolean => ROW.test(lines[i]) && RULE_ROW.test(lines[i + 1] ?? "");
+  const out: string[] = [];
+  for (let i = 0; i < lines.length;) {
+    const heading = HEADING.exec(lines[i]);
+    if (!lines[i].trim()) i++;
+    else if (heading) {
+      const n = Math.min(6, heading[1].length + shift);
+      out.push(`<h${n}>${inline(heading[2])}</h${n}>`);
+      i++;
+    } else if (tableAt(i)) {
+      const head = cellsOf(lines[i]);
+      const body: string[][] = [];
+      for (i += 2; i < lines.length && ROW.test(lines[i]); i++) body.push(cellsOf(lines[i]));
+      out.push(`<div class="scroll"><table>\n<thead><tr>${head.map((c) => `<th scope="col">${inline(c)}</th>`).join("")}</tr></thead>\n<tbody>\n${body.map((r) => `<tr>${r.map((c) => `<td>${inline(c)}</td>`).join("")}</tr>`).join("\n")}\n</tbody>\n</table></div>`);
+    } else if (ITEM.test(lines[i])) {
+      const items: string[] = [];
+      for (; i < lines.length; i++) {
+        const item = ITEM.exec(lines[i]);
+        if (item) items.push(item[1]);
+        else if (/^[ \t]+\S/.test(lines[i])) items[items.length - 1] += ` ${lines[i].trim()}`;
+        else break;
+      }
+      out.push(`<ul>\n${items.map((x) => `<li>${inline(x)}</li>`).join("\n")}\n</ul>`);
+    } else {
+      const para: string[] = [];
+      for (; i < lines.length && lines[i].trim() && !(para.length && (HEADING.test(lines[i]) || ITEM.test(lines[i]) || tableAt(i))); i++) para.push(lines[i].trim());
+      out.push(`<p>${inline(para.join(" "))}</p>`);
+    }
+  }
+  return `${out.join("\n")}\n`;
+}
+
+/** The Document tab: the document's title, the line on where it comes from, its file hash, then the rest of it. */
+function documentPanel(text: string, file: string): { html: string; decidedAt: string | null } {
+  const [first, ...rest] = text.split("\n");
+  const title = HEADING.exec(first);
+  if (!title) throw new SiteError(`refusing to publish: ${file} opens with no heading; the Document tab shows the owner's document as npm run document writes it`);
+  const decidedAt = /^Decided at (\S+)\.$/m.exec(text)?.[1] ?? null;
+  return {
+    decidedAt,
+    html: `<section class="panel" id="document"><div class="wrap md">
+<h2>${inline(title[2])}</h2>
+<p class="meta">Rendered from SQL over the recorded bundle at the decision instant it states${decidedAt ? `, <code>${escapeHtml(decidedAt)}</code>` : ""}. <code>npm run document</code> in sample mode writes it to <code>${escapeHtml(file)}</code>, and this tab is that markdown as HTML.</p>
+<div class="hashes">${escapeHtml(`${file} ${sha(text)} (${Buffer.byteLength(text)} bytes, LF)`)}</div>
+${markdownToHtml(rest.join("\n"), 1)}</div></section>`,
+  };
+}
+
+/** The Sources tab: "Where each answer comes from", read off the SQL by sourcesMarkdown(). */
+function sourcesPanel(md: string): string {
+  return `<section class="panel" id="sources"><div class="wrap md">
+<h2>Where each answer comes from</h2>
+<p class="meta">Read off the SQL at build time by <code>sourcesMarkdown()</code> in <code>src/document/render.ts</code>: the section the owner's document and the README carry under this heading, and the table <code>npm run sources</code> prints.</p>
+${markdownToHtml(md, 1)}</div></section>`;
 }
 
 // ---- the build --------------------------------------------------------------------------------------------------
@@ -499,7 +601,7 @@ export async function buildSite(opts: BuildOptions = {}): Promise<BuildResult> {
     const { pass } = await passOver(JSON.parse(text), "site_sample");
     full = new Map(pass.findings.map((f) => [keyOf(f.finding), f]));
     sample = {
-      bundle: rel(samplePath).startsWith("..") || path.isAbsolute(rel(samplePath)) ? path.basename(samplePath) : rel(samplePath), sha256: sha(text), runs: pass.runs, gatedOut: pass.gatedOut.length, observed: pass.observed, findings: pass.findings.length,
+      bundle: shownPath(samplePath), sha256: sha(text), runs: pass.runs, gatedOut: pass.gatedOut.length, observed: pass.observed, findings: pass.findings.length,
       classes: tally(pass.findings.map((f) => f.finding.class)), verbs: tally(pass.findings.map((f) => f.verb)),
     };
   }
@@ -525,13 +627,20 @@ export async function buildSite(opts: BuildOptions = {}): Promise<BuildResult> {
     limits: { maxRows: MAX_ROWS, maxCell: MAX_CELL },
   };
 
+  const documentPath = opts.documentPath ?? path.join(ROOT, "examples", "document.md");
+  const docFile = shownPath(documentPath);
+  if (!existsSync(documentPath)) throw new SiteError(`refusing to publish: ${docFile} is missing; SAMPLE_MODE=true npm run document -- --tenant <id> writes it`);
+  const docText = lf(readFileSync(documentPath, "utf8"));
+  const doc = documentPanel(docText, docFile);
+  const sourcesText = sourcesMarkdown();
+
   const files = new Map<string, string>();
-  files.set("index.html", PAGE);
+  files.set("index.html", page(doc.html, sourcesPanel(sourcesText)));
   files.set(".nojekyll", "");
   files.set("data/index.json", `${JSON.stringify(index, null, 2)}\n`);
   for (const e of examples) files.set(`data/${e.dir}.json`, `${JSON.stringify(e, null, 1)}\n`);
 
-  const scan = scanOutput(files);
+  const scan = scanOutput(files, new Map([[`${docFile} (the Document tab)`, docText], ["sourcesMarkdown() (the Sources tab)", sourcesText]]));
   const bytes = [...files.values()].reduce((n, s) => n + Buffer.byteLength(s), 0);
   if (bytes > MAX_BYTES) throw new SiteError(`refusing to publish: the page and its data are ${bytes} bytes, over the ${MAX_BYTES}-byte budget`);
 
@@ -542,12 +651,18 @@ export async function buildSite(opts: BuildOptions = {}): Promise<BuildResult> {
     }
     for (const [name, text] of files) writeFileSync(path.join(outDir, name), text);
   }
-  return { outDir, files, bytes, index, scan };
+  return {
+    outDir, files, bytes, index, scan,
+    document: { file: docFile, bytes: Buffer.byteLength(docText), sha256: sha(docText), decidedAt: doc.decidedAt },
+    sources: sourceRows().length,
+  };
 }
 
 // ---- the page: one file, inline CSS and script, no framework, no CDN, no external font -------------------------
+// Three tabs: Findings (the script renders data/), Document and Sources (static HTML, built above). The script shows
+// the tab the address names (#document, #sources; any other address is Findings); with the script off every tab shows.
 
-const PAGE = `<!doctype html>
+const page = (documentTab: string, sourcesTab: string): string => `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -625,15 +740,27 @@ tr:last-child td{border-bottom:0}
 footer{margin:48px 0 0;padding:22px 0 40px;border-top:1px solid var(--line);color:var(--muted);font-size:.88rem}
 footer p{max-width:86ch}
 [hidden]{display:none!important}
+.tabs{display:flex;flex-wrap:wrap;gap:2px;margin:18px 0 -13px;position:relative}
+.tabs a{padding:7px 14px;border:1px solid transparent;border-bottom:0;border-radius:6px 6px 0 0;color:var(--muted);text-decoration:none;font-size:.92rem;font-weight:500}
+.tabs a:hover{color:var(--fg)}
+.tabs a[aria-current]{background:var(--bg);border-color:var(--line);color:var(--fg);font-weight:600}
+.md h3{font-size:1.06rem;margin:30px 0 6px}
+.md ul{margin:6px 0 12px;padding-left:20px}
+.md li{margin:4px 0;max-width:110ch}
+.md .scroll{width:max-content;max-width:100%}
+.md>.meta{max-width:86ch}
 @media (max-width:640px){body{font-size:14.5px}h1{font-size:1.4rem}.controls{position:static}dl.fields{grid-template-columns:1fr}dl.fields dt{margin-top:6px}details.finding>summary{padding:12px 10px}.body{padding:0 10px 14px}}
 </style>
 </head>
 <body>
 <header><div class="wrap">
 <h1>drift-agent: every finding, with the SQL behind it</h1>
-<p class="lede">A config-drift assurance pass for MSP technicians, replayed from recorded collections. Open a finding to see the detector query that raised it, each precondition check with the SQL that ran, the rows it returned and the hashes, and the judge step.</p>
+<p class="lede">A config-drift assurance pass for MSP technicians, replayed from recorded collections. Open a finding to see the detector query that raised it, each precondition check with the SQL that ran, the rows it returned and the hashes, and the judge step. The Document tab holds the owner's document over the full recorded bundle, and the Sources tab names the tables and the source behind each finding class.</p>
 <ul class="stats" id="stats"></ul>
+<nav class="tabs" aria-label="Page sections"><a href="#findings">Findings</a><a href="#document">Document</a><a href="#sources">Sources</a></nav>
 </div></header>
+<main>
+<div class="panel" id="findings">
 <div class="controls"><div class="wrap" style="display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;width:100%">
 <label>Class <select id="f-class"><option value="">all</option></select></label>
 <label>Verb <select id="f-verb"><option value="">all</option></select></label>
@@ -641,12 +768,16 @@ footer p{max-width:86ch}
 <button type="button" id="close-all">Close all</button>
 <span class="meta" id="shown"></span>
 </div></div>
-<main class="wrap" id="app"><p class="empty">Loading data/index.json ...</p>
-<noscript><p class="error">This page renders the files in data/ with a short script. Without it, read data/index.json and the per-example files beside it directly.</p></noscript>
+<div class="wrap" id="app"><p class="empty">Loading data/index.json ...</p>
+<noscript><p class="error">This tab renders the files in data/ with a short script. Without it, read data/index.json and the per-example files beside it directly; the Document and Sources tabs below read as they are.</p></noscript>
+</div>
+</div>
+${documentTab}
+${sourcesTab}
 </main>
 <footer><div class="wrap">
 <p><b>What this page is.</b> A replay of recorded, redacted real collections taken on 24 Oct 2026 from two production Linux hosts (nginx, over SSH with a fixed script of reads; the key is the operator's, so the read-only property is the script's) and six Cloudflare DNS zones with their audit log. Every name, address, host and actor is a pseudonym keyed by the tenant's salt, and every value hash an HMAC under it; the salt is withheld, so a guess at a real name cannot be confirmed against this page. Nothing is authored: each example is a slice of <code>sample/bundle.json</code> cut by <code>scripts/examples.ts</code>, and each finding is what the pass (<code>src/pipeline.ts</code>) computed over its slice with no model.</p>
-<p><b>How it was built.</b> <code>npm run site</code> binds every check's parameters from its finding the way the pass does, renders the catalogue template through the data layer on sql.js, runs it again over the slice and refuses to publish unless the row count, the verdict and the sentence equal the record; the detector query must return the finding's own row. It also refuses on any template it cannot render, and on any string that matches the operator's deny-list or that the redactor would still replace. A table shows at most ${MAX_ROWS} rows and ${MAX_CELL} characters per cell; the row count and the row hash cover every row and every character.</p>
+<p><b>How it was built.</b> <code>npm run site</code> binds every check's parameters from its finding the way the pass does, renders the catalogue template through the data layer on sql.js, runs it again over the slice and refuses to publish unless the row count, the verdict and the sentence equal the record; the detector query must return the finding's own row. It also refuses on any template it cannot render, and on any string that matches the operator's deny-list or that the redactor would still replace. A table shows at most ${MAX_ROWS} rows and ${MAX_CELL} characters per cell; the row count and the row hash cover every row and every character. The Document and Sources tabs are markdown turned into HTML at build time, every character outside headings, paragraphs, lists, tables, inline code and bold escaped: <code>examples/document.md</code> as <code>npm run document</code> wrote it, and the section <code>sourcesMarkdown()</code> reads off the SQL; the deny-list scan reads both as written.</p>
 <p><b>Reproduce it.</b> In a clone of the repository, with nothing but Node 22 and <code>npm install</code>: <code>SAMPLE_MODE=true npm run sample</code> reproduces the findings from the repo (the full bundle, no credentials, no model); <code>npm run examples</code> recuts these slices and recomputes their findings; <code>npm run site</code> rebuilds this page.</p>
 <p id="sample-line"></p>
 </div></footer>
@@ -774,7 +905,7 @@ footer p{max-width:86ch}
       const show = (!cls || el.dataset.class === cls) && (!verb || el.dataset.verb === verb);
       el.hidden = !show; all++; if (show) n++;
     }
-    for (const s of document.querySelectorAll("main section")) s.hidden = !s.querySelector("details.finding:not([hidden])");
+    for (const s of document.querySelectorAll("#app > section")) s.hidden = !s.querySelector("details.finding:not([hidden])");
     document.getElementById("shown").textContent = n + " of " + all + " findings shown";
   }
   function options(sel, values) { for (const v of values) sel.append(h("option", { value: v }, v)); sel.addEventListener("change", filter); }
@@ -811,6 +942,23 @@ footer p{max-width:86ch}
     const target = location.hash && document.getElementById(location.hash.slice(1));
     if (target && target.tagName === "DETAILS") { target.open = true; target.scrollIntoView(); }
   }
+
+  const tabs = [...document.querySelectorAll(".tabs a")];
+  function showTab() {
+    const on = tabs.find((a) => a.getAttribute("href") === location.hash) || tabs[0];
+    for (const a of tabs) {
+      document.getElementById(a.getAttribute("href").slice(1)).hidden = a !== on;
+      if (a === on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+    }
+  }
+  for (const a of tabs) a.addEventListener("click", (e) => {
+    e.preventDefault();
+    if (location.hash !== a.getAttribute("href")) history.pushState(null, "", a.getAttribute("href"));
+    showTab();
+  });
+  addEventListener("popstate", showTab);
+  addEventListener("hashchange", showTab);
+  showTab();
   main();
 })();
 </script>
@@ -828,7 +976,8 @@ if (invoked === import.meta.url.toLowerCase()) {
     for (const e of r.index.examples) console.log(`${e.dir}: ${e.findings} finding(s), ${e.checks} check(s) rendered and re-run, counts equal; pass over the slice ${e.reproduced ? "reproduces" : "DOES NOT reproduce"} findings.json`);
     const s = r.index.sample;
     if (s) console.log(`sample: ${s.runs} runs, ${s.observed} observations, ${s.findings} findings (${Object.entries(s.classes).map(([k, n]) => `${k} ${n}`).join(", ")})`);
-    console.log(`scan: ${r.scan.files} files, ${r.scan.labels} deny-list label(s), ${r.scan.aliases} ssh alias(es), ${r.scan.leaves} JSON strings through the redactor unchanged${r.scan.skipped ? ` (${r.scan.skipped})` : ""}`);
+    console.log(`tabs: Findings; Document (${r.document.file}, ${r.document.bytes} bytes, decided at ${r.document.decidedAt ?? "no instant stated"}); Sources (${r.sources} finding classes)`);
+    console.log(`scan: ${r.scan.files} files and ${r.scan.shown} rendered markdown text(s), ${r.scan.labels} deny-list label(s), ${r.scan.aliases} ssh alias(es), ${r.scan.leaves} JSON strings through the redactor unchanged${r.scan.skipped ? ` (${r.scan.skipped})` : ""}`);
     for (const [name, text] of r.files) console.log(`  ${rel(path.join(r.outDir, name))} ${Buffer.byteLength(text)} bytes`);
     console.log(`site: ${r.bytes} bytes in ${r.files.size} files (budget ${MAX_BYTES}) -> ${rel(r.outDir) || "."}`);
     if (r.index.examples.some((e) => !e.reproduced)) console.log("warning: published with --allow-stale; at least one example is stale and the page says so. Run npm run examples, then npm run site");
