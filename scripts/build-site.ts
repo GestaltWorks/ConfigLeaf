@@ -29,6 +29,10 @@
 // src/zetaris/setup.ts uslMarkdown() reads it off the USL DDL, the activation SELECTs and DQ_RULES. Both are static
 // HTML in index.html, so they read from file:// and with the script off.
 //
+// The header carries a link, Report, to the owner's report (examples/report.html, src/document/report.ts) as
+// ../examples/report.html with one line saying what the file is: a fixed relative link, so the build stays the same
+// whatever the report holds; it opens when the page is read from a clone of the repository.
+//
 // A fourth static tab, Nemotron, is built from one eval results directory (BuildOptions.resultsDir, `--results`; by
 // default the lexically newest directory under eval/results that holds planted.json and C*-run*.json): the run files'
 // call records grouped by configuration and role (tier and model requested, model served, signatures verified, cache
@@ -102,6 +106,8 @@ const word = (n: number): string => NUMBER_WORDS[n] ?? String(n);
 
 /** The page and every data file together. */
 export const MAX_BYTES = 300_000;
+/** The header's Report link: the owner's report (npm run examples writes it), relative to docs/ in a clone of the repository. */
+export const REPORT_LINK = "../examples/report.html";
 /** Rows shown per query; the count and the rows hash cover every row. */
 export const MAX_ROWS = 20;
 /** Characters shown per cell; a longer value is cut and marked. */
@@ -1119,6 +1125,8 @@ tr:last-child td{border-bottom:0}
 footer{margin:48px 0 0;padding:22px 0 40px;border-top:1px solid var(--line);color:var(--muted);font-size:.88rem}
 footer p{max-width:86ch}
 [hidden]{display:none!important}
+.report{margin:14px 0 0}
+.report a{font-weight:600}
 .tabs{display:flex;flex-wrap:wrap;gap:2px;margin:18px 0 -13px;position:relative}
 .tabs a{padding:7px 14px;border:1px solid transparent;border-bottom:0;border-radius:6px 6px 0 0;color:var(--muted);text-decoration:none;font-size:.92rem;font-weight:500}
 .tabs a:hover{color:var(--fg)}
@@ -1138,6 +1146,7 @@ td pre{white-space:pre-wrap;word-break:break-word;margin:4px 0 0;min-width:36ch;
 <h1>drift-agent: every finding, with the SQL behind it</h1>
 <p class="lede">A config-drift assurance pass for MSP technicians, replayed from recorded collections. Open a finding to see the detector query that raised it, each precondition check with the SQL that ran, the rows it returned and the hashes, and the judge step. The Document tab holds the owner's document over the full recorded bundle, the Sources tab names the tables and the source behind each finding class, and the Nemotron tab holds the eval's Nemotron calls with every SELECT its judges wrote, re-run at build. In a live pass the same detector and check SQL runs as Zetaris Lightning SQL over the <code>${escapeHtml(DATASOURCE)}</code> datasource, with the <code>${escapeHtml(USL_NAME)}</code> semantic layer and its ${word(DQ_RULES.length)} DQ rules over it; on this page it runs on sql.js over the recorded rows, and <code>test/parity.test.ts</code> holds the two engines to the same columns, rows and totals.</p>
 <ul class="stats" id="stats"></ul>
+<p class="report"><a href="${REPORT_LINK}">Report</a><br><span class="meta">The owner's report, <code>examples/report.html</code>: one HTML file over the same recorded bundle as the Document tab, opened from a clone of the repository.</span></p>
 <nav class="tabs" aria-label="Page sections"><a href="#findings">Findings</a><a href="#document">Document</a><a href="#sources">Sources</a><a href="#nemotron">Nemotron</a></nav>
 </div></header>
 <main>

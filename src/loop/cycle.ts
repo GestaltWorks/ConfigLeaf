@@ -11,7 +11,8 @@
 //     and the result names the step and its reason.
 //   - The collect steps hand their new vault commits to validate; the pass step hands its result to explain, act,
 //     tickets and document. Explain writes its causes where act and tickets read them (src/explain/explain.ts
-//     causesByDisposition) and hands them to the cycle as its StepReport's explain.
+//     causesByDisposition) and hands them to the cycle as its StepReport's explain. The document step also gets the
+//     act, tickets and explain results (StoryFacts), the input of the "what happened" block, for the owner's report.
 //   - The screen is the table of src/loop/present.ts: the header, then as each step ends its row (and the lines under
 //     it) from the step's view, its summary when it gives none; a skipped step's row says so, a failing step's row is
 //     red with its reason and the rows end there; once the pass has run, the "what happened" block (present.ts
@@ -34,7 +35,7 @@ import type { QueryTally } from "../data/engines/counting.ts";
 import type { ExplainResult } from "../explain/explain.ts";
 import type { Tracer } from "../trace.ts";
 import type { PassStep } from "./pass.ts";
-import { MODE, PLAIN, Table, passView, summaryView, thousands, whatHappened, type ActFacts, type PresentOptions, type StepView, type TicketFacts } from "./present.ts";
+import { MODE, PLAIN, Table, passView, summaryView, thousands, whatHappened, type ActFacts, type PresentOptions, type StepView, type StoryInput, type TicketFacts } from "./present.ts";
 
 export const SKIPPABLE = ["collect", "probe", "validate", "act", "tickets", "document"] as const;
 export type Skippable = (typeof SKIPPABLE)[number];
@@ -80,8 +81,12 @@ export interface CycleSteps {
   explain(pass: PassStep): Promise<StepReport>;
   act(pass: PassStep): Promise<StepReport>;
   tickets(pass: PassStep): Promise<StepReport>;
-  document(pass: PassStep): Promise<StepReport>;
+  /** `facts`: this cycle's act, tickets and explain results, for the owner's report. */
+  document(pass: PassStep, facts?: StoryFacts): Promise<StepReport>;
 }
+
+/** What the "what happened" block reads besides the pass: the act, tickets and explain results of the cycle. */
+export type StoryFacts = Omit<StoryInput, "pass"> & { causes: NonNullable<StoryInput["causes"]> };
 
 export interface CycleOptions {
   tenant: string;
@@ -217,13 +222,14 @@ export async function runCycle(opts: CycleOptions, steps: CycleSteps, io: CycleI
   const explained = await step("explain", null, () => steps.explain(pass!));
   const acted = await step("act", "act", () => steps.act(pass!));
   const ticketed = await step("tickets", "tickets", () => steps.tickets(pass!));
-  await step("document", "document", () => steps.document(pass!));
+  const actStatus = lines.find((l) => l.step === "act")?.status;
+  const facts: StoryFacts = {
+    act: acted?.act ?? null, actSettled: actStatus === "ok" || actStatus === "skipped", tickets: ticketed?.tickets ?? null, causes: explained?.explain?.causes.map((c) => c.cause) ?? [],
+  };
+  await step("document", "document", () => steps.document(pass!, facts));
 
   if (pass && !present.quiet) {
-    const act = lines.find((l) => l.step === "act")?.status;
-    const story = whatHappened({
-      pass, act: acted?.act ?? null, actSettled: act === "ok" || act === "skipped", tickets: ticketed?.tickets ?? null, causes: explained?.explain?.causes.map((c) => c.cause) ?? [],
-    });
+    const story = whatHappened({ pass, ...facts });
     for (const l of table.story(story)) print(l);
   }
 

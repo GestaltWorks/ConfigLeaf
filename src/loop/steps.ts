@@ -31,8 +31,11 @@
 //                       ticket row and the step's trace lines pass the redactor over REDACT_WORDS and
 //                       EXPORT_DENY_WORDS together (labelledRows, LabelTracer). ok when no operation failed or was
 //                       refused.
-//   document            renderDocument with the pass's finding classes, the deny-list probe (redactor.ts
-//                       countLabels) over the page, then the file; ok when the page is written.
+//   document            renderDocument with the pass's finding classes and the report's reads, then the owner's report
+//                       from the same rows (src/document/report.ts renderReport, the tenant's redactor over every data
+//                       string, this cycle's act, tickets and explain results for What happened, the trace, the tip
+//                       and the Zetaris tally), the deny-list probe (redactor.ts countLabels) over the page and the
+//                       report, then both files, report.html beside document.md; ok when both are written.
 // Every summary passes the tenant's redactor. Each step's view (src/loop/present.ts) is its row on the screen, built
 // from the same results the summary is; the cycle passes every text of it through the redactor again as it prints,
 // the collect:linux subject aside: the ssh alias as LINUX_HOSTS names it. act and tickets also hand the cycle their
@@ -53,6 +56,7 @@ import type { CollectionRun } from "../data/rows.ts";
 import type { DataLayer } from "../data/layer.ts";
 import type { Store } from "../data/store.ts";
 import { renderDocument } from "../document/render.ts";
+import { REPORT_MODE, renderReport, reportPathOf } from "../document/report.ts";
 import type { TechnicianMemory } from "../engine/memory.ts";
 import { CAUSE_CLASSES } from "../explain/cause.ts";
 import { EXPLAINER, explainPass, type CauseSink } from "../explain/explain.ts";
@@ -62,7 +66,7 @@ import type { PopulationRecord } from "../probe/rules.ts";
 import { GithubIssues } from "../psa/github.ts";
 import type { TicketAdapter } from "../psa/index.ts";
 import { storeTicketRows, ticketStep, type TicketRows } from "../psa/step.ts";
-import { countLabels, type Redactor } from "../redactor.ts";
+import { Redactor, countLabels } from "../redactor.ts";
 import type { Tracer } from "../trace.ts";
 import { CLOUDFLARE_REPO, latestCommit, repositoryDir, vaultRepositories } from "../validate/vault.ts";
 import { storeCopies, validateCopies, type CopyStore } from "../validate/run.ts";
@@ -71,7 +75,7 @@ import { vaultCloudflareRun, vaultLinuxRun, type HookResult } from "../vault/hoo
 import type { Vault } from "../vault/vault.ts";
 import type { CollectReport, CycleSteps, NewCommit, PassReport, StepReport } from "./cycle.ts";
 import { passStep, type PassStep } from "./pass.ts";
-import { actView, cloudflareView, documentView, explainView, linuxView, passView, probeView, ticketsView, validateView } from "./present.ts";
+import { actView, cloudflareView, documentView, explainView, linuxView, passView, probeView, ticketsView, validateView, type ActFacts, type CauseFacts, type TicketFacts } from "./present.ts";
 import { LabelTracer } from "./trace.ts";
 
 const runLine = (r: Pick<CollectionRun, "run_id" | "observed_count" | "expected_count" | "status">): string => `${r.run_id} ${r.observed_count ?? 0}/${r.expected_count ?? "?"} ${r.status}`;
@@ -223,18 +227,58 @@ export async function ticketsStep(layer: DataLayer, pass: PassStep, o: { adapter
   return { ok: bad.length === 0, summary: o.labels.text(r.summary), reason: bad.length ? o.labels.text(bad.map((x) => x.line).join("; ")) : undefined, view: ticketsView(r, o.dryRun), tickets: r };
 }
 
-/** document: the owner's page from SQL, through the deny-list probe, to `out`. */
-export async function documentStep(layer: DataLayer, pass: PassStep, o: { out: string; root: string; deny: readonly string[]; source: string; tracer?: Tracer }): Promise<StepReport> {
-  const doc = await renderDocument(layer, { tenant: pass.tenant, classes: new Map(pass.pass.findings.map((f) => [f.id, f.finding.class])), source: o.source, tracer: o.tracer });
+/** What the cycle hands the document step for the owner's report: the act, tickets and explain results of this cycle. */
+export interface ReportFacts { act: ActFacts | null; actSettled: boolean; tickets: TicketFacts | null; causes: readonly CauseFacts[] }
+
+export interface DocumentStepOptions {
+  out: string;
+  root: string;
+  deny: readonly string[];
+  source: string;
+  tracer?: Tracer;
+  /** The owner's report beside the page (src/document/report.ts): its redactor, mode and run facts. Absent, the report is written with the redactor below and no run facts. */
+  report?: {
+    redactor: Redactor;
+    apply: boolean;
+    trace?: { id: string; path: string } | null;
+    tip?: string | null;
+    policyFile?: string | null;
+    /** The queries the cycle's DataLayer has sent through Zetaris so far. */
+    queries?: () => QueryTally;
+    datasource?: string;
+  };
+}
+
+/**
+ * document: the owner's page from SQL and the owner's report from the same rows (report.html beside the page,
+ * src/document/report.ts reportPathOf), both through the deny-list probe, then both files; one match and neither is
+ * written. `facts` carries this cycle's act, tickets and explain results for the report's What happened.
+ */
+export async function documentStep(layer: DataLayer, pass: PassStep, o: DocumentStepOptions, facts?: ReportFacts): Promise<StepReport> {
+  const doc = await renderDocument(layer, { tenant: pass.tenant, classes: new Map(pass.pass.findings.map((f) => [f.id, f.finding.class])), source: o.source, tracer: o.tracer, report: true });
+  const r = o.report;
+  const tally = r?.queries?.();
+  const html = renderReport(doc.data, {
+    redactor: r?.redactor ?? new Redactor(config.redactSalt || "document-report", config.redactWords),
+    mode: r?.apply ? REPORT_MODE.applied : REPORT_MODE.dryRun,
+    trace: r?.trace ?? null, tip: r?.tip ?? null, policyFile: r?.policyFile ?? null,
+    findings: pass.findings, act: facts?.act ?? null, actSettled: facts?.actSettled ?? false, tickets: facts?.tickets ?? null, causes: facts?.causes,
+    zetaris: tally ? { datasource: r?.datasource ?? config.zetaris.datasource, queries: tally.queries, rows: tally.rows, failed: tally.failed } : null,
+  });
+  const reportOut = reportPathOf(o.out);
   const hits = Object.keys(countLabels(doc.markdown, o.deny)).length;
+  const reportHits = Object.keys(countLabels(html, o.deny)).length;
   const rel = path.relative(o.root, o.out).replace(/\\/g, "/");
+  const reportRel = path.relative(o.root, reportOut).replace(/\\/g, "/");
   if (hits) return { ok: false, summary: `document: deny-list probe: ${hits} of ${o.deny.length} configured label(s) appear in the page; nothing written`, reason: `the deny-list probe matched ${hits} label(s) in the page` };
+  if (reportHits) return { ok: false, summary: `document: deny-list probe: ${reportHits} of ${o.deny.length} configured label(s) appear in the report; nothing written`, reason: `the deny-list probe matched ${reportHits} label(s) in the report` };
   writeFileSync(o.out, doc.markdown);
+  writeFileSync(reportOut, html);
   const queries = doc.queries.reduce((n, c) => n + c.runs, 0);
   return {
     ok: true,
-    view: documentView({ file: rel, lines: doc.markdown.split("\n").length - 1 }),
-    summary: `document: ${rel} written for ${pass.tenant}, ${doc.markdown.split("\n").length - 1} lines, ${doc.open} finding(s) open, ${queries} queries; deny-list probe 0 of ${o.deny.length} label(s); ${doc.decidedAt ? `decided at ${doc.decidedAt}` : "no decision on the latest passing runs"}`,
+    view: documentView({ file: rel, lines: doc.markdown.split("\n").length - 1, report: path.basename(reportOut) }),
+    summary: `document: ${rel} and ${reportRel} written for ${pass.tenant}, ${doc.markdown.split("\n").length - 1} lines, ${doc.open} finding(s) open, ${queries} queries; deny-list probe 0 of ${o.deny.length} label(s); ${doc.decidedAt ? `decided at ${doc.decidedAt}` : "no decision on the latest passing runs"}`,
   };
 }
 
@@ -256,10 +300,14 @@ export interface LiveContext {
   memory?: TechnicianMemory;
   /** The layer's query tally so far (src/data/engines/counting.ts); the pass row names the queries the pass sent when given. */
   queries?: () => QueryTally;
-  /** The document's path, and the root it is shown relative to. */
+  /** The document's path, and the root it is shown relative to; the report goes beside it. */
   out: string;
   root: string;
   source: string;
+  /** The cycle's trace file, relative to root, as the report's footer names it. */
+  traceFile?: string;
+  /** The repository's tip commit, when it can be read. */
+  tip?: string | null;
 }
 
 /** The live steps: the operator's hosts and zones, the app Postgres, the vault, Zetaris, Nightshift on --apply, GitHub Issues. */
@@ -290,6 +338,12 @@ export function liveSteps(ctx: LiveContext): CycleSteps {
     tickets: (pass) => ticketsStep(layer, pass, {
       adapter: () => new GithubIssues({ redactor, deny: ctx.deny }), rows: storeTicketRows(store), dryRun: ctx.ticketsDryRun, redactor, labels: ctx.labels, deny: ctx.deny, tracer,
     }),
-    document: (pass) => documentStep(layer, pass, { out: ctx.out, root: ctx.root, deny: ctx.deny, source: ctx.source, tracer }),
+    document: (pass, facts) => documentStep(layer, pass, {
+      out: ctx.out, root: ctx.root, deny: ctx.deny, source: ctx.source, tracer,
+      report: {
+        redactor, apply: ctx.apply, trace: ctx.traceFile ? { id: tracer.traceId, path: ctx.traceFile } : null, tip: ctx.tip ?? null, policyFile: config.policyFile,
+        queries: ctx.queries, datasource: config.zetaris.datasource,
+      },
+    }, facts),
   };
 }

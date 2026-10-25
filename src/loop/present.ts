@@ -601,7 +601,8 @@ export function ticketsView(r: { ops: readonly TicketOp[]; outcomes: readonly Ti
   return { parts: [count(lines.length, "ticket")], sub: lines.map((parts) => ({ parts })) };
 }
 
-export const documentView = (o: { file: string; lines: number }): StepView => ({ parts: [o.file, count(o.lines, "line")] });
+/** document: the page and its lines, then the owner's report beside it when one is written ("document.md · 181 lines · report.html"). */
+export const documentView = (o: { file: string; lines: number; report?: string }): StepView => ({ parts: [o.file, count(o.lines, "line"), ...(o.report ? [o.report] : [])] });
 
 /** Each cause class in a word, in the order the explain row lists them: people and tools, then the agent, then unknown. */
 export const CAUSE_WORD: Readonly<Record<string, string>> = { operator_edit: "operator", automation: "automation", account_change: "account", token_change: "token", agent: "agent", unknown: "unknown" };

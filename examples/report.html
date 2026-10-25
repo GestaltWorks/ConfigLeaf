@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>client-1 · configuration assurance</title>
+<style>
+:root{--bg:#fbfaf7;--fg:#1d1e20;--muted:#62666d;--line:#dedad2;--card:#ffffff;--soft:#f2f0eb;--need:#b3361d;--need-bg:#fbebe6;--adopted:#7b8087;--ok:#2f6b45}
+@media (prefers-color-scheme:dark){:root{--bg:#141517;--fg:#e8e6e1;--muted:#a3a19b;--line:#33353a;--card:#1b1c1f;--soft:#222428;--need:#ff8e74;--need-bg:#3a201a;--adopted:#8e9198;--ok:#8fd1a6}}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;overflow-wrap:anywhere}
+main{max-width:980px;margin:0 auto;padding:0 16px 48px}
+a{color:inherit;text-decoration-thickness:1px;text-underline-offset:2px}
+h1{font-size:1.75rem;line-height:1.2;margin:0 0 6px;letter-spacing:-.01em}
+h2{font-size:1.25rem;margin:44px 0 12px;border-top:1px solid var(--line);padding-top:20px}
+h3{font-size:1.02rem;margin:22px 0 6px}
+p{margin:8px 0;max-width:72ch}
+ul{margin:8px 0;padding-left:20px}
+li{margin:4px 0}
+small{font-size:.6em;color:var(--muted);font-weight:500}
+.top{padding:40px 0 8px}
+.meta{color:var(--muted);font-size:.9rem;margin:0 0 14px}
+.meta span{white-space:nowrap}
+.lede{font-size:1.12rem;line-height:1.55;max-width:66ch}
+.need-lead{color:var(--need);font-weight:650}
+.ok-lead{color:var(--ok);font-weight:650}
+.muted{color:var(--muted)}
+.tiles{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin:22px 0 4px}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.tile .k{margin:0;font-size:.78rem;color:var(--muted);line-height:1.3}
+.tile .v{margin:4px 0 2px;font-size:1.7rem;font-weight:650;line-height:1.15;font-variant-numeric:tabular-nums}
+.tile .s{margin:0;font-size:.8rem;color:var(--muted);line-height:1.4}
+.tile.has-need{border-color:var(--need)}
+.tile.warn .v{color:var(--need)}
+.tile .need{color:var(--need);font-weight:650}
+.tile .adopted{color:var(--adopted)}
+.story{margin:6px 0 10px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin:14px 0;break-inside:avoid}
+.need-card{border-left:4px solid var(--need)}
+.state{margin:0;font-size:.8rem;font-weight:650;letter-spacing:.04em;text-transform:uppercase;color:var(--need)}
+.card h3{margin:4px 0 2px;font-size:1.15rem}
+.where{margin:0 0 10px;color:var(--muted);font-size:.92rem}
+dl{display:grid;grid-template-columns:11em 1fr;gap:6px 16px;margin:10px 0 6px}
+dt{color:var(--muted);font-size:.9rem}
+dd{margin:0}
+dd ul{margin:0;padding-left:18px}
+.fid{margin:10px 0 0;font-size:.78rem;color:var(--muted)}
+.adopted h3,.adopted blockquote{color:var(--adopted)}
+blockquote{margin:10px 0;padding:6px 0 6px 14px;border-left:3px solid var(--adopted);color:var(--adopted);max-width:68ch}
+details{margin:8px 0}
+summary{cursor:pointer;color:var(--muted)}
+ul.plain{list-style:none;padding:0}
+ul.plain li{padding:4px 0;border-bottom:1px solid var(--line)}
+table{border-collapse:collapse;width:100%;margin:10px 0;font-size:.9rem}
+table.narrow{width:auto;min-width:50%}
+th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--line);overflow-wrap:break-word}
+td[data-label^="Time"],td[data-label="Held until"],td[data-label="Last read"],td[data-label="Rows"]{white-space:nowrap}
+th{font-size:.78rem;font-weight:600;color:var(--muted);background:var(--soft)}
+.reason{color:var(--muted);font-size:.86rem}
+.tag{display:inline-block;font-size:.72rem;padding:1px 6px;border-radius:4px;background:var(--soft);color:var(--muted)}
+.fail,.st-failed{color:var(--need);font-weight:600}
+.pass,.st-done{color:var(--ok)}
+.st-refused,.st-unverified,.st-not_judged{color:var(--muted)}
+footer{margin:48px 0 0;padding:18px 0 0;border-top:1px solid var(--line);color:var(--muted);font-size:.86rem}
+footer p{margin:4px 0;max-width:none}
+@media (max-width:860px){.tiles{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:640px){
+body{font-size:15.5px}
+.top{padding-top:24px}
+h1{font-size:1.4rem}
+.tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
+dl{grid-template-columns:1fr;gap:2px}
+dt{margin-top:8px}
+table,thead,tbody,tr,td{display:block;width:100%}
+table.narrow{min-width:0}
+thead{display:none}
+tr{border:1px solid var(--line);border-radius:8px;margin:0 0 10px;padding:6px 10px;background:var(--card)}
+td{border:0;padding:3px 0}
+td::before{content:attr(data-label);display:block;font-size:.74rem;color:var(--muted)}
+}
+@media print{
+:root{--bg:#fff;--card:#fff;--soft:#f3f3f3}
+body{font-size:11pt}
+main{max-width:none;padding:0}
+h2{break-after:avoid}
+tr,.tile{break-inside:avoid}
+summary{display:none}
+a{text-decoration:none}
+}
+</style>
+</head>
+<body>
+<main>
+<header class="top">
+<h1>client-1 · configuration assurance</h1>
+<p class="meta"><span>25 Oct 2026 14:17 UTC</span> · <span>dry run, nothing changed</span> · <span>drift-agent</span> · <span>sample mode, no trace kept with this file</span></p>
+<p class="lede"><span class="need-lead">1 finding needs a person</span>: ticket <a href="https://host-28ea31.com/word-861e90/drift-tickets/issues/2">#2</a> is open for it. Of the rest, 23 are adopted and 3 are held, the first until 27 Oct 2026 23:21 UTC.</p>
+</header>
+<section class="tiles" aria-label="At a glance">
+<div class="tile"><p class="k">Sources read</p><p class="v">3</p><p class="s">1 provider, 2 hosts</p></div>
+<div class="tile"><p class="k">Settings watched</p><p class="v">1,352</p><p class="s">116 objects in the latest runs</p></div>
+<div class="tile"><p class="k">Copies with a valid restore</p><p class="v">112 <small>of 112</small></p><p class="s">ok 42 · with gaps 70 · fail 0</p></div>
+<div class="tile has-need"><p class="k">Findings open</p><p class="v">27</p><p class="s"><span class="adopted">ADOPT 23</span> · HOLD 3 · <span class="need">ESCALATE 1</span></p></div>
+<div class="tile"><p class="k">Actions this cycle</p><p class="v">0</p><p class="s">done 0 · refused 0 · unverified 0</p></div>
+<div class="tile"><p class="k">Tickets open</p><p class="v">1</p><p class="s">#2</p></div>
+</section>
+<section id="what-happened">
+<h2>What happened</h2>
+<p class="story">1 finding is with a technician: name and its www treated differently by the proxy at host-524b42.quest. No record of who changed it: the audit log window of 18 h holds 0 events for the record.</p>
+<p class="story">23 findings are adopted under the technician&#39;s exceptions; 3 are held with an expiry.</p>
+</section>
+<section id="needs" class="needs">
+<h2>Needs a person</h2>
+<article class="card need-card">
+<p class="state">Escalated · with a technician</p>
+<h3>Name and its www treated differently by the proxy</h3>
+<p class="where">DNS record host-524b42.quest (proxied), zone host-4c795e.quest</p>
+<dl>
+<dt>In this state since</dt><dd>16 Apr 2026 21:12 UTC, 191 days</dd>
+<dt>Why it is here</dt><dd>the hold ran out at 25 Oct 03:21 UTC, a technician owns it</dd>
+<dt>Cause</dt><dd>No record of who changed it: the audit log window of 18 h holds 0 events for the record.</dd>
+<dt>Evidence</dt><dd><ul><li>host-524b42.quest is proxied and aliases host-4c795e.quest, whose A record is direct to ip-6fb86d: the origin the proxy hides is published on the name it points at</li><li>host-524b42.quest changed between 2026-03-20T01:29:03.000Z and 2026-10-25T13:53:44.528Z (3 pieces of evidence).</li></ul></dd>
+<dt>What the agent did</dt><dd>The agent changed nothing: an escalation goes to a technician.</dd>
+<dt>Ticket</dt><dd><a href="https://host-28ea31.com/word-861e90/drift-tickets/issues/2">#2</a> <span class="muted">incident, P1, open</span></dd>
+</dl>
+<p class="fid">finding fnd-b4a40091cdb4f906 · ESCALATE by policy under rule-8e75e1d767980665 · decided 25 Oct 2026 14:17 UTC</p>
+</article>
+</section>
+<section id="held">
+<h2>Held with an expiry</h2>
+<p>3 findings are held. At its expiry a held finding becomes an escalation unless a pass finds the setting at its approved value.</p>
+<table>
+<thead><tr><th scope="col">Label</th><th scope="col">Where</th><th scope="col">Held until</th><th scope="col">Reason</th></tr></thead>
+<tbody>
+<tr><td data-label="Label">DNS record with no site behind it</td><td data-label="Where">DNS record host-50b116.com (name), zone host-525a57.com</td><td data-label="Held until">27 Oct 2026 23:21 UTC</td><td data-label="Reason"><span class="reason">rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T13:54:08.785Z under rule rule-b8d9962485c3ced4</span></td></tr>
+<tr><td data-label="Label">DNS record with no site behind it</td><td data-label="Where">DNS record host-c10fff.com (name), zone host-525a57.com</td><td data-label="Held until">27 Oct 2026 23:21 UTC</td><td data-label="Reason"><span class="reason">rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T13:54:08.785Z under rule rule-b8d9962485c3ced4</span></td></tr>
+<tr><td data-label="Label">DNS record with no site behind it</td><td data-label="Where">DNS record host-3fef97.club (name), zone host-1bf78f.club</td><td data-label="Held until">27 Oct 2026 23:21 UTC</td><td data-label="Reason"><span class="reason">rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T13:54:08.785Z under rule rule-b8d9962485c3ced4</span></td></tr>
+</tbody>
+</table>
+</section>
+<section id="adopted" class="adopted">
+<h2>Adopted under the technician's exceptions</h2>
+<p>23 findings are adopted under the technician&#39;s exceptions, each until the exception's expiry.</p>
+<blockquote>Personal estate, known and intentional: proxied names without real_ip and the leftover records are not a production risk.</blockquote>
+<details><summary>The 23 findings</summary>
+<ul class="plain"><li><b>site with no DNS record</b> · sites-available/host-9ac4f1.com (server[host-9ac4f1.com:443].server_name[host-89f6e7.com]) on host-4b4dc1 <span class="muted">until 30 Nov 2026 00:00 UTC</span></li><li><b>site with no DNS record</b> · sites-available/host-085e02.com (server[host-085e02.com:443].server_name[host-085e02.com]) on host-4b4dc1 <span class="muted">until 30 Nov 2026 00:00 UTC</span></li><li><b>site with no DNS record</b> · sites-available/host-9ac4f1.com (server[host-9ac4f1.com:443].server_name[host-9ac4f1.com]) on host-4b4dc1 <span class="muted">until 30 Nov 2026 00:00 UTC</span></li><li><b>proxied name, origin trusts no Cloudflare range</b> · sites-available/host-f324df.com (server[host-f324df.com:80].real_ip) on host-4b4dc1 <span class="muted">until 30 Nov 2026 00:00 UTC</span></li><li><b>proxied name, origin trusts no Cloudflare range</b> · conf.d/host-e49c58.cloud.conf (server[host-e49c58.cloud:443].real_ip) on host-aa516a <span class="muted">until 30 Nov 2026 00:00 UTC</span></li><li><b>proxied name, origin trusts no Cloudflare range</b> · sites-available/host-4c795e.quest (server[host-4c795e.quest:443].real_ip) on host-4b4dc1 <span class="muted">until 30 Nov 2026 00:00 UTC</span></li><li><b>proxied name, origin trusts no Cloudflare range</b> · conf.d/host-e49c58.cloud.conf (server[host-e49c58.cloud:80].real_ip) on host-aa516a <span class="muted">until 30 Nov 2026 00:00 UTC</span></li><li><b>proxied name, origin trusts no Cloudflare range</b> · sites-available/host-62f7a4.com (server[host-62f7a4.com:443].real_ip) on host-4b4dc1 <span class="muted">until 30 Nov 2026 00:00 UTC</span></li><li><b>proxied name, origin trusts no Cloudflare range</b> · conf.d/word-005ed8-prod.conf (server[host-18efce.ai:443].real_ip) on host-aa516a <span class="muted">until 30 Nov 2026 00:00 UTC</span></li><li><b>proxied name, origin trusts no Cloudflare range</b> · conf.d/host-503b27.ai.conf (server[host-503b27.ai:80].real_ip) on host-aa516a <span class="muted">until 30 Nov 2026 00:00 UTC</span></li><li><b>proxied name, origin trusts no Cloudflare range</b> · sites-available/host-525a57.com (server[host-5c38db.com:80].real_ip) on host-4b4dc1 <span class="muted">until 30 Nov 2026 00:00 UTC</span></li><li><b>proxied name, origin trusts no Cloudflare range</b> · sites-available/host-525a57.com (server[host-525a57.com:80].real_ip) on host-4b4dc1 <span class="muted">until 30 Nov 2026 00:00 UTC</span></li><li><b>proxied name, origin trusts no Cloudflare range</b> · conf.d/host-503b27.ai.conf (server[host-503b27.ai:80].real_ip) on host-aa516a <span class="muted">until 30 Nov 2026 00:00 UTC</span></li><li><b>proxied name, origin trusts no Cloudflare range</b> · conf.d/host-e49c58.cloud.conf (server[host-e49c58.cloud:443].real_ip) on host-aa516a <span class="muted">until 30 Nov 2026 00:00 UTC</span></li><li><b>proxied name, origin trusts no Cloudflare range</b> · conf.d/word-005ed8-prod.conf (server[host-18efce.ai:80].real_ip) on host-aa516a <span class="muted">until 30 Nov 2026 00:00 UTC</span></li><li><b>proxied name, origin trusts no Cloudflare range</b> · conf.d/host-503b27.ai.conf (server[host-27618a.ai:443].real_ip) on host-aa516a <span class="muted">until 30 Nov 2026 00:00 UTC</span></li><li><b>proxied name, origin trusts no Cloudflare range</b> · sites-available/host-525a57.com (server[host-525a57.com:80].real_ip) on host-4b4dc1 <span class="muted">until 30 Nov 2026 00:00 UTC</span></li><li><b>proxied name, origin trusts no Cloudflare range</b> · sites-available/host-4c795e.quest (server[host-4c795e.quest:80].real_ip) on host-4b4dc1 <span class="muted">until 30 Nov 2026 00:00 UTC</span></li><li><b>proxied name, origin trusts no Cloudflare range</b> · nginx/nginx.conf (http.real_ip) on host-aa516a <span class="muted">until 30 Nov 2026 00:00 UTC</span></li><li><b>proxied name, origin trusts no Cloudflare range</b> · sites-available/host-525a57.com (server[host-22b64a.com:443].real_ip) on host-4b4dc1 <span class="muted">until 30 Nov 2026 00:00 UTC</span></li><li><b>proxied name, origin trusts no Cloudflare range</b> · sites-available/host-f324df.com (server[host-f324df.com:443].real_ip) on host-4b4dc1 <span class="muted">until 30 Nov 2026 00:00 UTC</span></li><li><b>proxied name, origin trusts no Cloudflare range</b> · conf.d/host-503b27.ai.conf (server[host-503b27.ai:443].real_ip) on host-aa516a <span class="muted">until 30 Nov 2026 00:00 UTC</span></li><li><b>proxied name, origin trusts no Cloudflare range</b> · conf.d/host-e49c58.cloud.conf (server[host-e49c58.cloud:80].real_ip) on host-aa516a <span class="muted">until 30 Nov 2026 00:00 UTC</span></li></ul>
+</details>
+</section>
+<section id="actions">
+<h2>Actions</h2>
+<p class="muted">No action is recorded for client-1.</p>
+</section>
+<section id="coverage">
+<h2>Coverage, so silence is not green</h2>
+<p>61 collection runs on record, 61 passing the DQ gate. The latest read of each source:</p>
+<table>
+<thead><tr><th scope="col">Source</th><th scope="col">What it holds</th><th scope="col">Rows</th><th scope="col">Last read</th><th scope="col">DQ gate</th></tr></thead>
+<tbody>
+<tr><td data-label="Source">DNS records</td><td data-label="What it holds">the provider&#39;s records of every zone, each field as it returns it</td><td data-label="Rows">58 of 58</td><td data-label="Last read">25 Oct 2026 13:53 UTC</td><td data-label="DQ gate"><span class="pass">passes</span></td></tr>
+<tr><td data-label="Source">Provider audit log</td><td data-label="What it holds">who changed which record and when</td><td data-label="Rows">1014 of 1014</td><td data-label="Last read">25 Oct 2026 13:53 UTC</td><td data-label="DQ gate"><span class="pass">passes</span></td></tr>
+<tr><td data-label="Source">nginx on host-4b4dc1</td><td data-label="What it holds">each vhost file and setting as the host answers it over SSH</td><td data-label="Rows">14 of 14</td><td data-label="Last read">25 Oct 2026 13:53 UTC</td><td data-label="DQ gate"><span class="pass">passes</span></td></tr>
+<tr><td data-label="Source">nginx on host-aa516a</td><td data-label="What it holds">each vhost file and setting as the host answers it over SSH</td><td data-label="Rows">24 of 24</td><td data-label="Last read">25 Oct 2026 13:53 UTC</td><td data-label="DQ gate"><span class="pass">passes</span></td></tr>
+<tr><td data-label="Source">Probes from outside</td><td data-label="What it holds">the http, dns and tls answers of every served name</td><td data-label="Rows">111 of 111</td><td data-label="Last read">25 Oct 2026 13:54 UTC</td><td data-label="DQ gate"><span class="pass">passes</span></td></tr>
+</tbody>
+</table>
+<h3>Queries</h3>
+<p>The reads behind this page: 83 queries, 1,636 rows, through sql.js over sample/bundle.json. A live cycle sends the same SQL as Zetaris Lightning SQL over the DRIFT datasource.</p>
+<h3>Probes</h3>
+<p>The latest probe run finished 25 Oct 2026 13:54 UTC: 20 probes fail. 11 probe runs and 0 verification runs pass the DQ gate.</p>
+<table class="narrow">
+<thead><tr><th scope="col">Kind</th><th scope="col">Ok</th><th scope="col">Failing</th><th scope="col">Skipped</th></tr></thead>
+<tbody>
+<tr><td data-label="Kind">dns</td><td data-label="Ok">34</td><td data-label="Failing"><span class="fail">3</span></td><td data-label="Skipped">0</td></tr>
+<tr><td data-label="Kind">http</td><td data-label="Ok">27</td><td data-label="Failing"><span class="fail">10</span></td><td data-label="Skipped">0</td></tr>
+<tr><td data-label="Kind">tls</td><td data-label="Ok">30</td><td data-label="Failing"><span class="fail">7</span></td><td data-label="Skipped">0</td></tr>
+</tbody>
+</table>
+<details><summary>The failing names</summary>
+<ul class="plain"><li>dns: host-375750.ai, host-4c2c20.ai, host-f85201.ai</li><li>http: host-375750.ai, host-3f9d65.ai, host-3fef97.club, host-4c2c20.ai, host-50b116.com, host-922448.ai, host-c10fff.com, host-d07e8a.com, host-d8dbd3.ai, host-f85201.ai</li><li>tls: host-375750.ai, host-3f9d65.ai, host-3fef97.club, host-4c2c20.ai, host-922448.ai, host-d8dbd3.ai, host-f85201.ai</li></ul>
+</details>
+<h3>Validation</h3>
+<p>112 copies at the vault's heads: 42 ok, 70 ok with gaps, 0 fail. A copy with gaps restores once the 34 dependencies the validations name are in place.</p>
+<details><summary>The 34 gaps</summary>
+<ul class="plain"><li>/etc/letsencrypt/live/host-17a03d.info/fullchain.pem</li><li>/etc/letsencrypt/live/host-17a03d.info/privkey.pem</li><li>/etc/letsencrypt/live/host-18efce.ai/fullchain.pem</li><li>/etc/letsencrypt/live/host-18efce.ai/privkey.pem</li><li>/etc/letsencrypt/live/host-492568.ai/fullchain.pem</li><li>/etc/letsencrypt/live/host-492568.ai/privkey.pem</li><li>/etc/letsencrypt/live/host-4c795e.quest/fullchain.pem</li><li>/etc/letsencrypt/live/host-4c795e.quest/privkey.pem</li><li>/etc/letsencrypt/live/host-503b27.ai/fullchain.pem</li><li>/etc/letsencrypt/live/host-503b27.ai/privkey.pem</li><li>/etc/letsencrypt/live/host-525a57.com/fullchain.pem</li><li>/etc/letsencrypt/live/host-525a57.com/privkey.pem</li><li>/etc/letsencrypt/live/host-9ac4f1.com/fullchain.pem</li><li>/etc/letsencrypt/live/host-9ac4f1.com/privkey.pem</li><li>/etc/letsencrypt/live/host-a00d2f.ai/fullchain.pem</li><li>/etc/letsencrypt/live/host-a00d2f.ai/privkey.pem</li><li>/etc/letsencrypt/live/host-c907ae.ai/fullchain.pem</li><li>/etc/letsencrypt/live/host-c907ae.ai/privkey.pem</li><li>/etc/letsencrypt/live/host-c9c1ae.club/fullchain.pem</li><li>/etc/letsencrypt/live/host-c9c1ae.club/privkey.pem</li><li>/etc/letsencrypt/live/host-f324df.com/fullchain.pem</li><li>/etc/letsencrypt/live/host-f324df.com/privkey.pem</li><li>/etc/letsencrypt/options-ssl-nginx.conf</li><li>/etc/letsencrypt/ssl-dhparams.pem</li><li>/etc/nginx/snippets/word-9af24b-api-key.conf</li><li>/etc/ssl/word-8173ec/origin.crt</li><li>/etc/ssl/word-8173ec/origin.key</li><li>host-2a9e77.net</li><li>host-4111e5.com</li><li>host-4f380d.com</li><li>host-61d6c2.net</li><li>host-9e9da4.net</li><li>host-9eff2c.com</li><li>host-c0f047.net</li></ul>
+</details>
+<h3>Notes</h3>
+<ul><li>333 settings have an approval of record; 0 locked settings have no approved value.</li><li>23 findings carry no judge call, withheld by the stop rule.<details><summary>Each one</summary><ul class="plain"><li>fnd-45d5f3f4a2eb0b2e: verdict cannot move: accepted exception mem-7 holds until 2026-11-30T00:00:00.000Z; the technician&#39;s acceptance, not a judge, settles it.</li><li>fnd-9bfe1da7d028260c: verdict cannot move: accepted exception mem-7 holds until 2026-11-30T00:00:00.000Z; the technician&#39;s acceptance, not a judge, settles it.</li><li>fnd-a08488f45ff63140: verdict cannot move: accepted exception mem-9 holds until 2026-11-30T00:00:00.000Z; the technician&#39;s acceptance, not a judge, settles it.</li><li>fnd-5bd1b4c03ee72c7a: verdict cannot move: accepted exception mem-9 holds until 2026-11-30T00:00:00.000Z; the technician&#39;s acceptance, not a judge, settles it.</li><li>fnd-dfe22fa267b51c91: verdict cannot move: accepted exception mem-12 holds until 2026-11-30T00:00:00.000Z; the technician&#39;s acceptance, not a judge, settles it.</li><li>fnd-8a843610aeb1b709: verdict cannot move: accepted exception mem-12 holds until 2026-11-30T00:00:00.000Z; the technician&#39;s acceptance, not a judge, settles it.</li><li>fnd-05b163bfda4c027f: verdict cannot move: accepted exception mem-2 holds until 2026-11-30T00:00:00.000Z; the technician&#39;s acceptance, not a judge, settles it.</li><li>fnd-f3bcb9860c5a0b3d: verdict cannot move: accepted exception mem-2 holds until 2026-11-30T00:00:00.000Z; the technician&#39;s acceptance, not a judge, settles it.</li><li>fnd-8fc350e6aa5840d1: verdict cannot move: accepted exception mem-5 holds until 2026-11-30T00:00:00.000Z; the technician&#39;s acceptance, not a judge, settles it.</li><li>fnd-385949946c990113: verdict cannot move: accepted exception mem-5 holds until 2026-11-30T00:00:00.000Z; the technician&#39;s acceptance, not a judge, settles it.</li><li>fnd-b91b1690878eaf0e: verdict cannot move: accepted exception mem-19 holds until 2026-11-30T00:00:00.000Z; the technician&#39;s acceptance, not a judge, settles it.</li><li>fnd-d5622dbd2bf43e3e: verdict cannot move: accepted exception mem-17 holds until 2026-11-30T00:00:00.000Z; the technician&#39;s acceptance, not a judge, settles it.</li><li>fnd-b0472de6319451c4: verdict cannot move: accepted exception mem-17 holds until 2026-11-30T00:00:00.000Z; the technician&#39;s acceptance, not a judge, settles it.</li><li>fnd-2f1b5857f0426b68: verdict cannot move: accepted exception mem-3 holds until 2026-11-30T00:00:00.000Z; the technician&#39;s acceptance, not a judge, settles it.</li><li>fnd-b3ea13c119d7b589: verdict cannot move: accepted exception mem-3 holds until 2026-11-30T00:00:00.000Z; the technician&#39;s acceptance, not a judge, settles it.</li><li>fnd-770d13f327d54d12: verdict cannot move: accepted exception mem-11 holds until 2026-11-30T00:00:00.000Z; the technician&#39;s acceptance, not a judge, settles it.</li><li>fnd-7548fb2a2e3cdca4: verdict cannot move: accepted exception mem-10 holds until 2026-11-30T00:00:00.000Z; the technician&#39;s acceptance, not a judge, settles it.</li><li>fnd-4503aff67c556c58: verdict cannot move: accepted exception mem-6 holds until 2026-11-30T00:00:00.000Z; the technician&#39;s acceptance, not a judge, settles it.</li><li>fnd-de3c5e8ebdc2d209: verdict cannot move: accepted exception mem-1 holds until 2026-11-30T00:00:00.000Z; the technician&#39;s acceptance, not a judge, settles it.</li><li>fnd-028260c299ff1cb0: verdict cannot move: accepted exception mem-1 holds until 2026-11-30T00:00:00.000Z; the technician&#39;s acceptance, not a judge, settles it.</li><li>fnd-51038b9539a0174a: verdict cannot move: accepted exception mem-8 holds until 2026-11-30T00:00:00.000Z; the technician&#39;s acceptance, not a judge, settles it.</li><li>fnd-3661fcc541693ada: verdict cannot move: accepted exception mem-4 holds until 2026-11-30T00:00:00.000Z; the technician&#39;s acceptance, not a judge, settles it.</li><li>fnd-add52203af12de8a: verdict cannot move: accepted exception mem-16 holds until 2026-11-30T00:00:00.000Z; the technician&#39;s acceptance, not a judge, settles it.</li></ul></details></li></ul>
+</section>
+<footer>
+<p>Policy policy/hackathon.json, version 2 (15 rules).</p>
+<p>Zetaris Lightning SQL over the DRIFT datasource; Meterless World Model and H-MEM; Nemotron through Nightshift, every call on a verified receipt.</p>
+<p>Rendered in sample mode from sample/bundle.json (sha256 4cd4e0555572); the run's trace stays in logs/.</p>
+</footer>
+</main>
+<script>addEventListener("beforeprint",()=>{for(const d of document.querySelectorAll("details:not([open])")){d.open=true;d.dataset.printed="1"}});addEventListener("afterprint",()=>{for(const d of document.querySelectorAll("details[data-printed]")){d.open=false;delete d.dataset.printed}});</script>
+</body>
+</html>

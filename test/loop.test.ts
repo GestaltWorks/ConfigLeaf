@@ -508,7 +508,7 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
       explain: (p) => explainStep(layer, p, { sink: new MemoryCauseSink(engine), vault: base.vault, redactor: base.redactor, tracer }),
       act: (p) => actStep(p, { apply: false, redactor: base.redactor, deps: { ...deps, findingOf: async (d) => p.findings.find((f) => f.id === d.finding_id) ?? null } }),
       tickets: (p) => ticketsStep(layer, p, { adapter: () => { throw new Error("a dry run builds no adapter"); }, rows: null, dryRun: true, redactor: base.redactor, labels: base.redactor, deny: [], tracer, now: () => AT }),
-      document: (p) => documentStep(layer, p, { out, root: dir, deny: ["zz-label-absent"], source: "sql.js over test/fixtures/policy-bundle.json", tracer }),
+      document: (p, facts) => documentStep(layer, p, { out, root: dir, deny: ["zz-label-absent"], source: "sql.js over test/fixtures/policy-bundle.json", tracer }, facts),
     };
     const res = await runCycle({ tenant: TENANT, apply: false, aliases: ["fixture-host"], skip: parseSkip(["collect,probe,validate"]) }, steps, { tracer, print: (l) => printed.push(l) });
     expect(res.stopped).toBeNull();
@@ -533,7 +533,7 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
     expect(res.steps[6].summary).toMatch(/^act: dry run: 5 actions planned \(rollback_file 2, revert_record 1, investigate 1, fix 1\), 1 of them refused on --apply; 0 already recorded; 0 action rows written; scope \d+ disposition\(s\) of \d+ run\(s\)/);
     expect(objects(await tenantActions(layer, TENANT)).length).toBe(0);
     expect(res.steps[7].summary).toMatch(new RegExp(`^TICKETS: tenant client-a, ${pass.findings.length} finding\\(s\\), .*; dry run, nothing sent or written$`));
-    expect(res.steps[8].summary).toMatch(/^document: document\.md written for client-a, \d+ lines, \d+ finding\(s\) open, \d+ queries; deny-list probe 0 of 1 label\(s\); decided at 2026-10-23T03:00:00\.000Z$/);
+    expect(res.steps[8].summary).toMatch(/^document: document\.md and report\.html written for client-a, \d+ lines, \d+ finding\(s\) open, \d+ queries; deny-list probe 0 of 1 label\(s\); decided at 2026-10-23T03:00:00\.000Z$/);
     expect(readFileSync(out, "utf8")).toContain(TENANT);
     expect(res.summary).toMatch(/^CYCLE: tenant client-a, dry run .*: 9 step\(s\): ok 5, skipped 4, failed 0, not run 0; completed;/);
     // the screen: the pass row with its verbs, the classes in plain words and a line per ROLLBACK, FIX and ESCALATE; act's five planned actions
@@ -561,7 +561,8 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
     ]);
     // the what-happened block after the document row: what --apply does for the planned actions, each with its cause on
     // the same line, the escalation with its own, at most five sentences
-    const doc = screen.findIndex((l) => /^  document  document\.md · \d+ lines$/.test(l));
+    const doc = screen.findIndex((l) => /^  document  document\.md · \d+ lines · report\.html$/.test(l));
+    expect(doc).toBeGreaterThan(0);
     const noWrite = "No record of who changed it: the journal window of 90 h holds 0 writes to the file.";
     expect(screen.slice(doc + 1, -1)).toEqual([
       "what happened",
@@ -577,6 +578,13 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
     expect(why).toContain("Who or what changed each setting, from the hosts' journal, the provider's audit log and the agent's own actions (8 findings):");
     expect(why.split("\n").filter((l) => l.startsWith("- "))).toHaveLength(8);
     for (const c of res.explain!.causes) expect(why).toContain(`- ${c.finding_id} ${c.verb} ${c.finding_class}: ${c.cause.summary}\n`);
+    // the owner's report beside the page: its What happened is the block the screen prints, sentence for sentence
+    const report = readFileSync(path.join(dir, "report.html"), "utf8");
+    const story = [...report.matchAll(/<p class="story">(.*?)<\/p>/g)].map((m) => m[1].replace(/&#39;/g, "'").replace(/&amp;/g, "&"));
+    expect(story).toEqual(screen.slice(doc + 2, -1).map((l) => l.slice(2)));
+    expect(report).toContain(`<h1>${TENANT} · configuration assurance</h1>`);
+    expect(report).toContain("<span>dry run, nothing changed</span>");
+    expect(Object.keys(countLabels(report, ["zz-label-absent"]))).toEqual([]);
     expect(printed.at(-1)).toMatch(/^done · 9 steps · 4 skipped · \d+\.\d s$/);
   });
 
@@ -600,5 +608,6 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
     expect(r.ok).toBe(false);
     expect(r.summary).toMatch(/^document: deny-list probe: 1 of 1 configured label\(s\) appear in the page; nothing written$/);
     expect(existsSync(out)).toBe(false);
+    expect(existsSync(path.join(dir, "denied.html"))).toBe(false);
   });
 });

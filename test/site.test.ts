@@ -7,14 +7,15 @@
 // (Sources) as HTML the build renders from their markdown, escaped outside its subset; the Nemotron tab carries the
 // eval results' calls, whose total is the run files' and summary.md's, and every judge SELECT recorded with a row count,
 // re-run equal or counted apart as recorded text that does not run, and a results copy with one recorded count moved
-// by one makes the build throw and write nothing; a second build is byte-identical;
+// by one makes the build throw and write nothing; the header links the owner's report (../examples/report.html), a
+// fixed relative link outside the tab row; a second build is byte-identical;
 // and the committed docs/ is exactly this build (rerun `npm run site` when not).
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { MAX_BYTES, SiteError, buildSite, escapeHtml, markdownToHtml, nemotronView, newestResults, scanOutput, type BuildResult, type ExampleView, type JudgeSelectView } from "../scripts/build-site.ts";
+import { MAX_BYTES, REPORT_LINK, SiteError, buildSite, escapeHtml, markdownToHtml, nemotronView, newestResults, scanOutput, type BuildResult, type ExampleView, type JudgeSelectView } from "../scripts/build-site.ts";
 import { templateById } from "../src/catalogue/templates.ts";
 import { config } from "../src/config.ts";
 import { DataLayer } from "../src/data/layer.ts";
@@ -170,8 +171,19 @@ describe("the replay page", () => {
     // the script and the styles name no host but localhost (the file:// hint); the document's ticket url is text in a list item
     const code = [...html.matchAll(/<(script|style)>([\s\S]*?)<\/\1>/g)].map((m) => m[2]).join("\n");
     expect(code).not.toMatch(/https?:\/\/(?!localhost)/);
-    expect([...html.matchAll(/\b(?:href|src|action)="([^"]*)"/g)].map((m) => m[1])).toEqual(["#findings", "#document", "#sources", "#nemotron"]);
+    // the header's Report link to the owner's report in the repository, then the four tabs
+    expect([...html.matchAll(/\b(?:href|src|action)="([^"]*)"/g)].map((m) => m[1])).toEqual([REPORT_LINK, "#findings", "#document", "#sources", "#nemotron"]);
     expect([...html.matchAll(/fetch\(([^)]*)\)/g)].map((m) => m[1])).toEqual(['"data/index.json"', "e.file"]);
+  });
+
+  it("links the owner's report from the header, ../examples/report.html with one line saying what it is, outside the tab row the script drives", () => {
+    const html = built.files.get("index.html")!;
+    const header = /<header>[\s\S]*?<\/header>/.exec(html)![0];
+    expect(REPORT_LINK).toBe("../examples/report.html");
+    expect(existsSync(path.join(ROOT, "docs", REPORT_LINK))).toBe(true);
+    expect(header).toContain(`<p class="report"><a href="${REPORT_LINK}">Report</a><br><span class="meta">The owner's report, <code>examples/report.html</code>: one HTML file over the same recorded bundle as the Document tab, opened from a clone of the repository.</span></p>`);
+    const nav = /<nav class="tabs"[\s\S]*?<\/nav>/.exec(header)![0];
+    expect(nav).not.toContain(REPORT_LINK);
   });
 
   it("carries the owner's document as the Document tab: every heading, table row and list item of examples/document.md, and the line on where it comes from with its decision instant", () => {

@@ -39,6 +39,12 @@
 //   last line      the decision instant: the latest decided_at of the open dispositions.
 // Every collected text in the tables is redacted before it is stored, so the page carries pseudonyms only.
 //
+// The rows behind the page come back as DocumentResult.data, the input of the owner's report (src/document/report.ts,
+// report.html beside document.md): every run of the tenant with its gate result, the latest runs' shapes, the copies,
+// the rules, the open dispositions with their classes, the causes, the actions, the tickets and the probes. With
+// `report`, the render also reads CAUSES_SQL (when a finding is open) and ACTIONS_SQL after the page is done when the
+// page itself did not read them; those reads count in data.queries and leave the page's Queries section as it is.
+//
 // Measured 25 Oct 2026 over sample/bundle.json, its 108 ledger rows of four live passes in the ledger and the sample
 // pass writing 0 (test/document.test.ts, examples/document.md): 19 runs, all passing; 2 hosts and 6 zones; 112 copies at
 // the heads; 333 approvals; 0 locked settings without an approved value; 27 findings open, HOLD 27, the latest
@@ -66,7 +72,7 @@ import {
   DOC_ACTIONS_SQL, DOC_COPIES_SQL, DOC_DISPOSITIONS_OF_RUN_SQL, DOC_INVENTORY_SQL, DOC_PROBES_SQL, DOC_PROBE_FAILURES_SQL, DOC_RUN_SHAPE_SQL, DOC_TICKETS_SQL, DOC_UNAPPROVED_SQL, DOC_ZONES_SQL,
   ACTIONS_SQL, LATEST_APPROVALS_SQL, POLICY_RULES_SQL, RUNS_SQL, RUN_COMPLETE_SQL, objects,
 } from "../data/queries.ts";
-import type { Action, PolicyRule } from "../data/rows.ts";
+import type { Action, FindingCause, PolicyRule } from "../data/rows.ts";
 import { withRestore } from "../explain/cause.ts";
 import { CAUSES_SQL, causeOf } from "../explain/explain.ts";
 import { TABLE_NAMES } from "../data/schema.ts";
@@ -83,9 +89,79 @@ export interface DocumentOptions {
   /** One phrase naming the data the layer reads, for the opening line ("sql.js over sample/bundle.json"). */
   source?: string;
   tracer?: Tracer;
+  /** Read the causes and the actions for the owner's report too, after the page is done (see the header). */
+  report?: boolean;
 }
 
 export interface QueryCount { name: string; runs: number; rows: number }
+
+/** One collection run of the tenant as RUNS_SQL returns it, and whether it passes the DQ gate (RUN_COMPLETE_SQL). */
+export interface RunGate {
+  run_id: string;
+  surface: string;
+  host: string;
+  started_at: string;
+  finished_at: string;
+  expected_count: string;
+  observed_count: string;
+  status: string;
+  passes: boolean;
+}
+
+/** An open disposition as DOC_DISPOSITIONS_OF_RUN_SQL returns it, with the class the pass raises its finding under ("-" with none). */
+export type OpenDisposition = Readonly<Record<string, string>> & { class: string };
+
+/** The rows the page is rendered from, as the queries returned them; the owner's report renders from the same. */
+export interface DocumentData {
+  tenant: string;
+  /** The phrase naming the data the layer reads; null when none was given. */
+  source: string | null;
+  /** Every collection run of the tenant, in started_at order, each with its gate result. */
+  runs: RunGate[];
+  /** The latest passing run of each surface and host the findings come from, with the objects and settings it observed. */
+  shapes: { surface: string; host: string; run_id: string; finished_at: string; objects: number; settings: number }[];
+  /** The hosts of those runs, in code-unit order. */
+  hosts: string[];
+  /** Per host: the inventory addresses its latest passing run observed and the older rows the Store keeps. */
+  inventory: { host: string; latest: number; older: number }[];
+  /** The zones of the latest passing DNS run (zone, records, proxied, direct). */
+  zones: Readonly<Record<string, string>>[];
+  /** The vault copies at each repository's latest commit with their latest validation (DOC_COPIES_SQL). */
+  copies: Readonly<Record<string, string>>[];
+  /** Settings with an approval of record. */
+  approvals: number;
+  /** The policy rules that can govern the tenant's settings, every version, as ruleOf reads them. */
+  rules: PolicyRule[];
+  /** The settings of the latest passing runs that a locked rule governs with no approved value. */
+  locked: { surface: string; host: string; object_id: string; setting_path: string; rule_id: string }[];
+  /** The open dispositions in the page's order: by verb, class, finding. */
+  open: OpenDisposition[];
+  /** Dispositions on the latest passing runs whose finding the pass leaves unraised at render time. */
+  unraised: number;
+  decidedAt: string | null;
+  /** The tenant's finding_cause rows; null when they were not read. */
+  causes: FindingCause[] | null;
+  /** Why the causes were not read, when the read failed. */
+  causesError: string | null;
+  /** The tenant's actions (ACTIONS_SQL); null when they were not read. */
+  actions: Readonly<Record<string, string>>[] | null;
+  /** The tenant's actions by kind and status (DOC_ACTIONS_SQL). */
+  actionCounts: Readonly<Record<string, string>>[];
+  /** Every ticket of the tenant (DOC_TICKETS_SQL). */
+  tickets: Readonly<Record<string, string>>[];
+  probes: {
+    /** Passing runs of surface probe and of probe.verify. */
+    probeRuns: number;
+    verifyRuns: number;
+    /** The latest passing run of surface probe; null with none. */
+    run: { run_id: string; finished_at: string } | null;
+    /** Its probes by kind and status (kind, status, n), and its failing probes (kind, target, probe_id). */
+    byKind: Readonly<Record<string, string>>[];
+    failing: Readonly<Record<string, string>>[];
+  };
+  /** Every query run for the page and, with `report`, for the report. */
+  queries: QueryCount[];
+}
 
 export interface DocumentResult {
   markdown: string;
@@ -94,6 +170,8 @@ export interface DocumentResult {
   decidedAt: string | null;
   /** The open findings the page lists. */
   open: number;
+  /** The rows the page is rendered from. */
+  data: DocumentData;
 }
 
 /** Rows a document read returns at most; a read that returns more fails rather than print a cut number. */
@@ -232,7 +310,12 @@ export async function renderDocument(layer: DataLayer, opts: DocumentOptions): P
   // ---- the runs and the gate ----
   const runs = (await q("RUNS_SQL", RUNS_SQL)).filter((r) => r.tenant_id === tenant);
   const passing: Row[] = [];
-  for (const r of runs) if ((await q("RUN_COMPLETE_SQL", RUN_COMPLETE_SQL, { run_id: r.run_id })).length === 0) passing.push(r);
+  const gates: RunGate[] = [];
+  for (const r of runs) {
+    const passes = (await q("RUN_COMPLETE_SQL", RUN_COMPLETE_SQL, { run_id: r.run_id })).length === 0;
+    if (passes) passing.push(r);
+    gates.push({ run_id: r.run_id, surface: r.surface, host: r.host, started_at: r.started_at, finished_at: r.finished_at, expected_count: r.expected_count, observed_count: r.observed_count, status: r.status, passes });
+  }
   // RUNS_SQL is in started_at order, so the last passing run of each surface and host is its latest
   const latestOf = new Map<string, Row>();
   for (const r of passing) latestOf.set(`${r.surface}\u001f${r.host}`, r);
@@ -249,14 +332,17 @@ export async function renderDocument(layer: DataLayer, opts: DocumentOptions): P
   const zones = dnsRun ? await q("DOC_ZONES_SQL", DOC_ZONES_SQL, { tenant_id: tenant, dns_run_id: dnsRun.run_id }) : [];
   line("## Estate", "");
   line(`${plural(runs.length, "collection run", "collection runs")} on record, ${passing.length} passing the DQ gate. ${plural(hosts.length, "host", "hosts")} and ${plural(zones.length, "zone", "zones")} in the latest passing runs.`, "");
+  const shapeRows: DocumentData["shapes"] = [];
   if (observed.length) {
     const shapes: (string | number)[][] = [];
     for (const r of observed) {
       const s = (await q("DOC_RUN_SHAPE_SQL", DOC_RUN_SHAPE_SQL, { run_id: r.run_id }))[0] ?? {};
       shapes.push([r.surface, dash(r.host), r.run_id, dash(r.finished_at), s.objects ?? "0", s.settings ?? "0"]);
+      shapeRows.push({ surface: r.surface, host: r.host, run_id: r.run_id, finished_at: r.finished_at, objects: Number(s.objects || 0), settings: Number(s.settings || 0) });
     }
     line(...table(["surface", "host", "latest passing run", "finished", "objects", "settings"], shapes), "");
   }
+  const inventoryRows: DocumentData["inventory"] = [];
   if (hosts.length) {
     const inventory: string[] = [];
     for (const host of hosts) {
@@ -265,6 +351,7 @@ export async function renderDocument(layer: DataLayer, opts: DocumentOptions): P
       const n = (await q("DOC_INVENTORY_SQL", DOC_INVENTORY_SQL, { tenant_id: tenant, host, started_at: started }))[0] ?? {};
       const older = Number(n.older || 0);
       inventory.push(`- inventory addresses on ${host}: ${Number(n.latest || 0)} in the latest run, ${plural(older, "older row", "older rows")} kept`);
+      inventoryRows.push({ host, latest: Number(n.latest || 0), older });
     }
     line(...inventory, "");
   }
@@ -324,18 +411,31 @@ export async function renderDocument(layer: DataLayer, opts: DocumentOptions): P
   const unraised = dispositions.length - open.length;
   const classOf = (d: Row): string => classes?.get(d.finding_id) ?? "-";
   const decidedAt = open.map((d) => d.decided_at).sort(cmp).at(-1) ?? null;
+  // the causes and the actions as read, for the report (DocumentResult.data); null until read
+  let causesRead: FindingCause[] | null = null;
+  let causesError: string | null = null;
+  let actionsRead: Row[] | null = null;
+  const readCauses = async (): Promise<FindingCause[]> => {
+    try {
+      return (causesRead = (await q("CAUSES_SQL", CAUSES_SQL, { tenant_id: tenant })).map(causeOf));
+    } catch (e) {
+      causesError = (e instanceof Error ? e.message : String(e)).split("\n")[0];
+      throw e;
+    }
+  };
+  const readActions = async (): Promise<Row[]> => (actionsRead = await q("ACTIONS_SQL", ACTIONS_SQL, { tenant_id: tenant }));
   /** "Why": each open finding's cause, in the order the findings are listed. */
   const whyLines = async (listed: readonly Row[]): Promise<string[]> => {
     const head = ["### Why", ""];
     let causes;
     try {
-      causes = new Map((await q("CAUSES_SQL", CAUSES_SQL, { tenant_id: tenant })).map(causeOf).map((c) => [c.disposition_id, c]));
+      causes = new Map((await readCauses()).map((c) => [c.disposition_id, c]));
     } catch (e) {
       return [...head, `The causes are not read: ${(e instanceof Error ? e.message : String(e)).split("\n")[0]}.`];
     }
     const shown = listed.flatMap((d) => (causes.has(d.disposition_id) ? [{ d, c: causes.get(d.disposition_id)! }] : []));
     if (!shown.length) return [...head, "No open finding carries a cause: the explain step of a cycle records one for each finding it explains."];
-    const wrote = (await q("ACTIONS_SQL", ACTIONS_SQL, { tenant_id: tenant })).map((a) => ({ disposition_id: a.disposition_id, kind: a.kind as Action["kind"], status: a.status as Action["status"], started_at: a.started_at }));
+    const wrote = (await readActions()).map((a) => ({ disposition_id: a.disposition_id, kind: a.kind as Action["kind"], status: a.status as Action["status"], started_at: a.started_at }));
     return [
       ...head,
       `Who or what changed each setting, from the hosts' journal, the provider's audit log and the agent's own actions (${plural(shown.length, "finding", "findings")}):`,
@@ -343,6 +443,8 @@ export async function renderDocument(layer: DataLayer, opts: DocumentOptions): P
       ...shown.map(({ d, c }) => `- ${d.finding_id} ${d.verb} ${classOf(d)}: ${withRestore(c, wrote)}`),
     ];
   };
+  const rank = (d: Row): number => (VERBS as readonly string[]).indexOf(d.verb);
+  const ordered = [...open].sort((a, b) => rank(a) - rank(b) || cmp(classOf(a), classOf(b)) || cmp(a.finding_id, b.finding_id));
   line("## Findings open", "");
   if (!open.length) line(`The latest passing runs carry no open finding for ${tenant}.`, "");
   else {
@@ -356,8 +458,6 @@ export async function renderDocument(layer: DataLayer, opts: DocumentOptions): P
     const holds = groupBy(open.filter((d) => d.verb === "HOLD"), (d) => d.expires_at);
     if (holds.length) line("The HOLDs expire:", "", ...holds.map(([at, rows]) => `- ${dash(at)}: ${rows.length} (${groupBy(rows, classOf).map(([cls, xs]) => `${cls} ${xs.length}`).join(", ")})`), "");
     line("Each open finding, by verb and class, with the reason its disposition records:", "");
-    const rank = (d: Row): number => (VERBS as readonly string[]).indexOf(d.verb);
-    const ordered = [...open].sort((a, b) => rank(a) - rank(b) || cmp(classOf(a), classOf(b)) || cmp(a.finding_id, b.finding_id));
     for (const d of ordered) {
       const where = d.host ? ` on ${d.host}` : "";
       line(`- ${d.finding_id} ${d.verb} ${classOf(d)}: ${d.setting_path} in ${d.object_id}${where} (${d.surface}, run ${d.run_id})${d.expires_at ? `, until ${d.expires_at}` : ""}. ${d.reason}.`);
@@ -390,10 +490,12 @@ export async function renderDocument(layer: DataLayer, opts: DocumentOptions): P
   line("## Probes", "");
   const ofSurface = (s: string): number => passing.filter((r) => r.surface === s).length;
   line(`Probe runs passing the DQ gate: ${ofSurface(PROBE_SURFACE)} of surface ${PROBE_SURFACE}, every served name probed for the pass, and ${ofSurface(VERIFY_SURFACE)} of surface ${VERIFY_SURFACE}, the Actor's probes after a write.`, "");
+  let byKind: Row[] = [];
+  let failing: Row[] = [];
   if (!probeRun) line(`No probe run of ${tenant} passes the DQ gate.`, "");
   else {
-    const byKind = await q("DOC_PROBES_SQL", DOC_PROBES_SQL, { tenant_id: tenant, run_id: probeRun.run_id });
-    const failing = await q("DOC_PROBE_FAILURES_SQL", DOC_PROBE_FAILURES_SQL, { tenant_id: tenant, run_id: probeRun.run_id });
+    byKind = await q("DOC_PROBES_SQL", DOC_PROBES_SQL, { tenant_id: tenant, run_id: probeRun.run_id });
+    failing = await q("DOC_PROBE_FAILURES_SQL", DOC_PROBE_FAILURES_SQL, { tenant_id: tenant, run_id: probeRun.run_id });
     const kinds = [...new Set(byKind.map((k) => k.kind))].sort(cmp);
     const num = (kind: string, status: string): string => byKind.find((k) => k.kind === kind && k.status === status)?.n ?? "0";
     line(`Probe run ${probeRun.run_id} (surface ${PROBE_SURFACE}), finished ${dash(probeRun.finished_at)}: ${plural(failing.length, "probe fails", "probes fail")}.`, "");
@@ -406,5 +508,18 @@ export async function renderDocument(layer: DataLayer, opts: DocumentOptions): P
   line("## Queries", "");
   line(...ran.map((c) => `- ${c.name}: ${plural(c.runs, "run", "runs")}, ${plural(c.rows, "row", "rows")}`), "");
   line(decidedAt ? `Decided at ${decidedAt}.` : `No decision of ${tenant} is on the latest passing runs.`);
-  return { markdown: `${out.join("\n")}\n`, queries: ran, decidedAt, open: open.length };
+
+  // ---- the report's reads, after the page: counted in data.queries, not in the page's Queries ----
+  if (opts.report) {
+    if (open.length && causesRead === null && causesError === null) await readCauses().catch(() => undefined);
+    if (actionsRead === null) await readActions();
+  }
+  const data: DocumentData = {
+    tenant, source: opts.source ?? null, runs: gates, shapes: shapeRows, hosts, inventory: inventoryRows, zones, copies, approvals: approvals.length, rules,
+    locked: locked.map(({ row, rule }) => ({ surface: row.surface, host: row.host, object_id: row.object_id, setting_path: row.setting_path, rule_id: rule.rule_id })),
+    open: ordered.map((d) => ({ ...d, class: classOf(d) })), unraised, decidedAt, causes: causesRead, causesError, actions: actionsRead, actionCounts: actions, tickets,
+    probes: { probeRuns: ofSurface(PROBE_SURFACE), verifyRuns: ofSurface(VERIFY_SURFACE), run: probeRun ? { run_id: probeRun.run_id, finished_at: probeRun.finished_at } : null, byKind, failing },
+    queries: [...counts.values()],
+  };
+  return { markdown: `${out.join("\n")}\n`, queries: ran, decidedAt, open: open.length, data };
 }

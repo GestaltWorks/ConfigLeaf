@@ -3,7 +3,10 @@
 // SQL over the bundle's rows and the World Model confirms FOUND-BUT-DIFFERENT from what it recorded;
 // nothing here maps an input to a stored answer. Prints one JSON finding per line, then one disposition
 // line per finding as the ledger holds it under the finding's disposition_id, then one CAUSE line per finding
-// the explain step explains, then one summary.
+// the explain step explains, then one summary, then one REPORT line: the owner's report (src/document/report.ts) for
+// the tenant of the bundle's latest DNS run, rendered from the owner's document's rows over the same engine after the
+// explain step and written to examples/report.html once it passes the deny-list probe (src/document/sample.ts
+// sampleReport: no clock, trace or tip in it, so npm run document in sample mode writes the same bytes).
 //
 // The explain step (src/explain/explain.ts) runs after the pass, as a cycle runs it between the pass and act: for
 // each tenant of the pass's findings, from the bundle's own rows, with no vault and no model, one finding_cause row
@@ -23,7 +26,12 @@
 // ledger row), or at the instant the latest lesson was taught when that is later (decisionInstantWith), so two runs
 // over the same bundle and store print the same finding, disposition and summary lines; the trace lines carry their
 // own timestamps and latencies.
+import { readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { config } from "../src/config.ts";
+import { renderDocument } from "../src/document/render.ts";
+import { sampleReport, textSha256 } from "../src/document/sample.ts";
+import { countLabels } from "../src/redactor.ts";
 import { DataLayer } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { decisionInstantWith } from "../src/data/instant.ts";
@@ -84,3 +92,19 @@ const mem = pass.memory ? `; memory: ${pass.memory.lessons} lesson(s), ${pass.me
 const verbs = VERBS.filter((v) => pass.verbs[v] > 0).map((v) => `${v} ${pass.verbs[v]}`).join(", ") || "none";
 const recorded = pass.ledger ? `; ledger: ${pass.ledger.dispositions} disposition(s), ${pass.ledger.fingerprints} referent fingerprint(s)` : "";
 console.log(`SAMPLE: ${pass.runs} collection runs, ${pass.gatedOut.length} failed the DQ gate (${pass.gatedOut.join(", ") || "none"}), ${pass.observed} observations in the World Model, ${pass.findings.length} finding(s): ${described.join("; ") || "none"}; judge skipped (model: none)${mem}; verbs: ${verbs}; policy rules ${pass.rules}, locked settings without an approved value ${pass.locked}${recorded}${explain}`);
+
+// The owner's report for the tenant of the bundle's latest DNS run (client-1), from the page's rows over this engine.
+const reportTenant = [...bundle.collection_run].filter((r) => r.surface === "cloudflare.dns").sort((a, b) => (a.started_at < b.started_at ? -1 : 1)).at(-1)?.tenant_id;
+if (reportTenant) {
+  const doc = await renderDocument(layer, { tenant: reportTenant, classes: new Map(pass.findings.map((f) => [f.id, f.finding.class])), source: "sql.js over sample/bundle.json", tracer, report: true });
+  const html = sampleReport(doc, pass.findings, { path: "sample/bundle.json", sha256: textSha256(readFileSync(new URL("../sample/bundle.json", import.meta.url), "utf8")) });
+  const labels = [...config.redactWords, ...config.exportDenyWords];
+  const hits = Object.keys(countLabels(html, labels)).length;
+  if (hits) {
+    console.error(`REPORT: deny-list probe: ${hits} of ${labels.length} configured label(s) appear in the report; examples/report.html not written`);
+    process.exitCode = 1;
+  } else {
+    writeFileSync(fileURLToPath(new URL("../examples/report.html", import.meta.url)), html);
+    console.log(`REPORT: examples/report.html written for ${reportTenant}, ${Buffer.byteLength(html)} bytes, ${doc.open} finding(s) open, decided at ${doc.decidedAt ?? "none"}; deny-list probe 0 of ${labels.length} label(s)`);
+  }
+}

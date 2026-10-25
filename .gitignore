@@ -6,3 +6,4 @@ logs/
 .world/
 *.log
 /document.md
+/report.html

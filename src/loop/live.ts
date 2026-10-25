@@ -10,7 +10,8 @@
 //     over ZetarisEngine inside a CountingEngine (src/data/engines/counting.ts), the technician's lessons read from
 //     the store DRIFT_MEMORY_DIR names (read only, so a cycle leaves a committed store as committed), and runs
 //     src/loop/cycle.ts over liveSteps with the hosts of LINUX_HOSTS in their configured order. The document goes to
-//     document.md at the repository root (gitignored). Printed text passes the tenant's redactor; the screen is the
+//     document.md at the repository root and the owner's report to report.html beside it (both gitignored), the
+//     report naming the trace file and the repository's tip (git rev-parse, read once per cycle). Printed text passes the tenant's redactor; the screen is the
 //     table of src/loop/present.ts: the pass row names the Lightning SQL queries the pass sent, and the done line the
 //     cycle's Zetaris queries and the trace file.
 
@@ -19,6 +20,7 @@ import { fileURLToPath } from "node:url";
 import { HOSTS } from "../collectors/linux.ts";
 import { config, redact } from "../config.ts";
 import { DataLayer } from "../data/layer.ts";
+import { repoTip } from "../document/report.ts";
 import { CountingEngine } from "../data/engines/counting.ts";
 import { ZetarisEngine } from "../data/engines/zetaris.ts";
 import { Store } from "../data/store.ts";
@@ -75,12 +77,13 @@ export async function liveCycle(o: LiveCycleOptions, shared: LiveShared): Promis
   const deny = [...new Set([...config.redactWords, ...config.exportDenyWords])];
   const counting = new CountingEngine(new ZetarisEngine());
   const queries = () => counting.tally();
+  const traceFile = tracer.logFile.replace(/\\/g, "/");
   const steps = liveSteps({
     tenant: o.tenant, apply: o.apply, ticketsDryRun: o.ticketsDryRun, redactor, labels: new Redactor(config.redactSalt, deny), deny, store: shared.store, vault: shared.vault, vaultDir: config.vaultDir,
     layer: new DataLayer(counting), tracer, memory: new TechnicianMemory({ storage: "read" }), queries,
     out: path.join(ROOT, "document.md"), root: ROOT, source: `Zetaris over the ${config.zetaris.datasource} datasource`,
+    traceFile: path.relative(ROOT, tracer.logFile).replace(/\\/g, "/"), tip: repoTip(ROOT),
   });
-  const traceFile = tracer.logFile.replace(/\\/g, "/");
   const result = await runCycle({ tenant: o.tenant, apply: o.apply, aliases: Object.keys(HOSTS), skip: o.skip }, steps, {
     tracer, print: o.print, scrub: (s) => redactor.text(redact(s)), present: o.present, header: o.header, trace: traceFile, queries,
   });

@@ -28,12 +28,18 @@
 // (src/data/instant.ts decisionInstantWith), as the sample pass does,
 // so an exception in force decides a slice's finding as it decides the full pass's, and a re-run with the same
 // store gives the same findings.json.
+//
+// Then the owner's report over the full bundle for the same tenant, report.html in the output directory
+// (examples/report.html): src/document/sample.ts renderSample and sampleReport, as npm run document writes it in
+// sample mode, through the deny-list probe; a re-run with the same store writes the same bytes.
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { memoryDir } from "../src/config.ts";
+import { config, memoryDir } from "../src/config.ts";
+import { renderSample, sampleReport, textSha256 } from "../src/document/sample.ts";
+import { countLabels } from "../src/redactor.ts";
 import { DataLayer } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { decisionInstant, decisionInstantWith } from "../src/data/instant.ts";
@@ -204,4 +210,13 @@ if (invoked === import.meta.url.toLowerCase()) {
     console.log(`${ex.dir}: ${Object.entries(counts).filter(([, n]) => n).map(([t, n]) => `${t} ${n}`).join(", ")}; ${pass.runs} runs, ${pass.gatedOut.length} gated; ${pass.findings.length} finding(s): ${ex.classes.join(", ")}; ${verbs}${mem}`);
     for (const f of pass.findings) console.log(`  ${f.verb.padEnd(8)} ${f.finding.class.padEnd(24)} ${f.finding.summary}${f.exception ? ` [exception ${f.exception.lesson} ${f.exception.status}]` : ""}`);
   }
+  // the owner's report over the full bundle, for the slices' tenant
+  const text = readFileSync(fileURLToPath(new URL("../sample/bundle.json", import.meta.url)), "utf8");
+  const r = await renderSample(JSON.parse(text) as Record<string, unknown>, { tenant: TENANT, memory, source: "sql.js over sample/bundle.json" });
+  const html = sampleReport(r.doc, r.pass.findings, { path: "sample/bundle.json", sha256: textSha256(text) });
+  const labels = [...config.redactWords, ...config.exportDenyWords];
+  const hits = Object.keys(countLabels(html, labels)).length;
+  if (hits) throw new Error(`report: deny-list probe: ${hits} of ${labels.length} configured label(s) appear in the report; nothing written`);
+  writeFileSync(path.join(args.out!, "report.html"), html);
+  console.log(`report: ${path.join(args.out!, "report.html").replace(/\\/g, "/")} for ${TENANT}, ${Buffer.byteLength(html)} bytes, ${r.doc.open} finding(s) open, decided at ${r.doc.decidedAt ?? "none"}; deny-list probe 0 of ${labels.length} label(s)`);
 }

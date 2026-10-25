@@ -33,8 +33,12 @@ pre-flight proposals and the verdicts the simulator returned for them; its own R
 [document.md](document.md) is the owner's document over the full bundle (`npm run document` in sample mode, 181
 lines): the estate, the copies with their gaps, the approvals, the 27 findings open (ADOPT 23, HOLD 3, ESCALATE 1),
 where each answer comes from, the work and tickets, the probes counted ok, fail and skipped, and the 14 named queries
-it ran, 81 runs in all. [memory/](memory/) is the store itself, `state.json` and `ledger.jsonl` as the vendored H-MEM
-reference writes them; `npm run answer -- --list` prints its 23 lessons.
+it ran, 81 runs in all. [report.html](report.html) is the owner's report over the same bundle and lessons, one HTML
+file rendered from the document's rows (`npm run sample`, `npm run document` in sample mode and `npm run examples`
+write it alike): the one finding that needs a person with its cause and ticket #2, the 3 held until 27 Oct 2026 23:21
+UTC, the 23 adopted under the technician's exceptions, no action, and the latest read of each source with its DQ gate
+result; on 25 Oct 2026, 24,941 bytes. [memory/](memory/) is the store itself, `state.json` and `ledger.jsonl` as the
+vendored H-MEM reference writes them; `npm run answer -- --list` prints its 23 lessons.
 
 ## proxy-split
 

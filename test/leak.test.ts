@@ -4,7 +4,8 @@
 // (LINUX_HOSTS keys, the operator's own ssh_config entries). The list is configuration, never committed, so a
 // clean clone skips this file with one line; on the operator's machine every file a judge will read
 // (sample/, examples/, eval/, README.md, DESIGN.md, ops/, scripts/, src/, test/, sql/, .env.example,
-// package.json, policy/, docs/, lab/; the traces under examples/traces/ included) must hold
+// package.json, policy/, docs/, lab/; the traces under examples/traces/ and the HTML files, docs/index.html and the
+// owner's report examples/report.html, included) must hold
 // none of the labels standing alone (src/redactor.ts countLabels: pass e's boundaries, case-insensitive).
 // The tree names hosts by neutral example aliases (web-01, web-02, lab-a, drift-lab), never by a configured
 // one. A failure names the file, the label's position in the list and the count, never the label.
@@ -18,7 +19,7 @@ import { countLabels } from "../src/redactor.ts";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const WORDS = [...new Set([...config.redactWords, ...config.exportDenyWords, ...Object.keys(config.linuxHosts)])];
 const SURFACES = ["sample", "examples", "eval", "README.md", "DESIGN.md", "ops", "scripts", "src", "test", "sql", ".env.example", "package.json", "policy", "docs", "lab"];
-const TEXT = /\.(?:ts|mts|json|jsonl|md|sql|example|txt|conf|types|bak|sh)$|^[^.]+$/;
+const TEXT = /\.(?:ts|mts|json|jsonl|md|html|sql|example|txt|conf|types|bak|sh)$|^[^.]+$/;
 
 if (!WORDS.length) console.log("leak: skipped (REDACT_WORDS, EXPORT_DENY_WORDS and LINUX_HOSTS are blank; the deny-list is the operator's configuration)");
 
