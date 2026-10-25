@@ -15,10 +15,12 @@
 //     it) from the step's view, its summary when it gives none; a skipped step's row says so, a failing step's row is
 //     red with its reason and the rows end there; once the pass has run, the "what happened" block (present.ts
 //     whatHappened, from the pass's findings and the act and tickets steps' results) comes before the done line; the
-//     done line names the trace. The header's mode is present.ts MODE's, applied or dry run. --verbose prints
-//     after each step's rows its full line, "cycle: [i/n] <step> <status> in <s> s: <summary>", and after the done
-//     line the CYCLE summary line; --quiet prints the header and the done line only. A collect:linux row's subject
-//     is the alias as given (a LINUX_HOSTS key, as the step's name carries it); every other text passes `scrub`.
+//     done line names the trace, and the cycle's Zetaris queries when io.queries gives the tally (the CYCLE summary
+//     then ends "; zetaris: <n> queries, <n> rows, <n> failed"). The header's mode is present.ts MODE's, applied or
+//     dry run. --verbose prints after each step's rows its full line, "cycle: [i/n] <step> <status> in <s> s:
+//     <summary>", and after the done line the CYCLE summary line; --quiet prints the header and the done line only.
+//     A collect:linux row's subject is the alias as given (a LINUX_HOSTS key, as the step's name carries it); every
+//     other text passes `scrub`.
 //   - Every step gives one trace line (agent cycle, action triage, latency_ms the step's time); the cycle ends with
 //     one CYCLE summary line, traced and returned. Printed text passes `scrub` (the tenant's redactor live); the
 //     tracer redacts its own fields.
@@ -27,9 +29,10 @@
 // has the live run.
 
 import { redact } from "../config.ts";
+import type { QueryTally } from "../data/engines/counting.ts";
 import type { Tracer } from "../trace.ts";
 import type { PassStep } from "./pass.ts";
-import { MODE, PLAIN, Table, passView, summaryView, whatHappened, type ActFacts, type PresentOptions, type StepView, type TicketFacts } from "./present.ts";
+import { MODE, PLAIN, Table, passView, summaryView, thousands, whatHappened, type ActFacts, type PresentOptions, type StepView, type TicketFacts } from "./present.ts";
 
 export const SKIPPABLE = ["collect", "probe", "validate", "act", "tickets", "document"] as const;
 export type Skippable = (typeof SKIPPABLE)[number];
@@ -96,6 +99,8 @@ export interface CycleIO {
   header?: { command?: string; mode?: string };
   /** The trace file the done line names. */
   trace?: string;
+  /** The queries the cycle's DataLayer has sent through Zetaris (src/data/engines/counting.ts); the done line and the CYCLE summary name them when given. */
+  queries?: () => QueryTally;
 }
 
 export type StepStatus = "ok" | "failed" | "skipped" | "not_run";
@@ -216,9 +221,11 @@ export async function runCycle(opts: CycleOptions, steps: CycleSteps, io: CycleI
   const count = (s: StepStatus): number => lines.filter((l) => l.status === s).length;
   const mode = opts.apply ? "applied (act carries out its plan)" : "dry run (act plans and writes nothing to a host or a zone; --apply performs it)";
   const end = stopped ? `stopped at ${stopped.step}: ${stopped.reason}` : "completed";
-  const summary = scrub(`CYCLE: tenant ${opts.tenant}, ${mode}: ${lines.length} step(s): ok ${count("ok")}, skipped ${count("skipped")}, failed ${count("failed")}, not run ${count("not_run")}; ${end}; ${seconds(ms)} s`);
+  const q = io.queries?.();
+  const zetaris = q ? `; zetaris: ${thousands(q.queries)} queries, ${thousands(q.rows)} rows, ${thousands(q.failed)} failed` : "";
+  const summary = scrub(`CYCLE: tenant ${opts.tenant}, ${mode}: ${lines.length} step(s): ok ${count("ok")}, skipped ${count("skipped")}, failed ${count("failed")}, not run ${count("not_run")}; ${end}; ${seconds(ms)} s${zetaris}`);
   const at = lines.findIndex((l) => l.status === "failed") + 1;
-  print(table.done({ ms, steps: names.length, skipped: count("skipped"), trace: io.trace, stopped: stopped ? { step: stopped.step, at, of: names.length } : undefined }));
+  print(table.done({ ms, steps: names.length, skipped: count("skipped"), trace: io.trace, stopped: stopped ? { step: stopped.step, at, of: names.length } : undefined, queries: q }));
   if (present.verbose) print(summary);
   io.tracer?.emit({ agent: "cycle", action: "triage", status: stopped ? "failed" : "ok", input_summary: `cycle ${opts.tenant}`, output_summary: summary.slice(0, 1000), latency_ms: ms });
   return { tenant: opts.tenant, apply: opts.apply, steps: lines, stopped, ms, pass, summary };

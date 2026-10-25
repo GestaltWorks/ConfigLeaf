@@ -1,0 +1,171 @@
+{
+  "repository": "https://github.com/Meterless/Meterless",
+  "commit": "1742dec56a66e58eef9dda2d2b865823758ca8cd",
+  "files": [
+    {
+      "path": "vendor/hmem/CONTRACT.md",
+      "upstream": "engines/hmem/AGENTS.md",
+      "blob": "d84c42f89d0ca1e1a199e003cfa9fdce546f5a82"
+    },
+    {
+      "path": "vendor/hmem/LICENSE",
+      "upstream": "engines/hmem/LICENSE",
+      "blob": "d1a6bb88af6e6b79738dd192fb491a99eb2a7fe3"
+    },
+    {
+      "path": "vendor/hmem/README.md",
+      "upstream": "engines/hmem/reference/README.md",
+      "blob": "101d422c7d51fd9eb2ed30ef824cfcc45156e22f"
+    },
+    {
+      "path": "vendor/hmem/conformance/README.md",
+      "upstream": "engines/hmem/conformance/README.md",
+      "blob": "fb5bb7c440eee364ad9704923d6e94aa0e06af65"
+    },
+    {
+      "path": "vendor/hmem/conformance/runner.ts",
+      "upstream": "engines/hmem/conformance/runner.ts",
+      "blob": "dab4c66cac7d50542f73f5484980149072623c86"
+    },
+    {
+      "path": "vendor/hmem/conformance/vectors/vectors.json",
+      "upstream": "engines/hmem/conformance/vectors/vectors.json",
+      "blob": "776b6b6e808e82d25b110db4029b3d24f5eb7dcb"
+    },
+    {
+      "path": "vendor/hmem/package.json",
+      "upstream": "engines/hmem/reference/package.json",
+      "blob": "b9f971137fa4b1509e65f5c15663e7bf7446593a"
+    },
+    {
+      "path": "vendor/hmem/src/conflictDetection.ts",
+      "upstream": "engines/hmem/reference/src/conflictDetection.ts",
+      "blob": "2d444ecb901fa7e8ccd0dbbd90090316cf90660b"
+    },
+    {
+      "path": "vendor/hmem/src/dreaming.ts",
+      "upstream": "engines/hmem/reference/src/dreaming.ts",
+      "blob": "e2c1dd041746d3369a21a38250f4a521bbb333c4"
+    },
+    {
+      "path": "vendor/hmem/src/embeddings.ts",
+      "upstream": "engines/hmem/reference/src/embeddings.ts",
+      "blob": "e9e6ae7f2adb4eabb4f47eeeb1268099a73f960a"
+    },
+    {
+      "path": "vendor/hmem/src/index.ts",
+      "upstream": "engines/hmem/reference/src/index.ts",
+      "blob": "7f20562365b4c3149836d09cdc914b1d076d8997"
+    },
+    {
+      "path": "vendor/hmem/src/memoryMining.ts",
+      "upstream": "engines/hmem/reference/src/memoryMining.ts",
+      "blob": "a3d27743c66720dc36636e6cf61e1b32b8f2d5f4"
+    },
+    {
+      "path": "vendor/hmem/src/memoryRetrieval.ts",
+      "upstream": "engines/hmem/reference/src/memoryRetrieval.ts",
+      "blob": "5c1b924806c203945ceb859fd62f175ed5337674"
+    },
+    {
+      "path": "vendor/hmem/src/memoryStore.ts",
+      "upstream": "engines/hmem/reference/src/memoryStore.ts",
+      "blob": "92c49358c1745cc24cb73ec99892e053b639e22e"
+    },
+    {
+      "path": "vendor/hmem/src/sleepCycle.ts",
+      "upstream": "engines/hmem/reference/src/sleepCycle.ts",
+      "blob": "6d651535d5eb26e03c31ead6e5c05ff39fc3b8bb"
+    },
+    {
+      "path": "vendor/hmem/src/trustLedger.ts",
+      "upstream": "engines/hmem/reference/src/trustLedger.ts",
+      "blob": "716880f548bf682d3e8898c63211b557e9b889a9"
+    },
+    {
+      "path": "vendor/hmem/src/types.ts",
+      "upstream": "engines/hmem/reference/src/types.ts",
+      "blob": "de7838f2dceb471ef60a6b31ac0679b0303ccc91"
+    },
+    {
+      "path": "vendor/hmem/test/smoke.test.ts",
+      "upstream": "engines/hmem/reference/test/smoke.test.ts",
+      "blob": "45bd9af7f6028ca90fcffef2c25289071cf0dbf2"
+    },
+    {
+      "path": "vendor/hmem/tsconfig.json",
+      "upstream": "engines/hmem/reference/tsconfig.json",
+      "blob": "204dd19fc04d2f5014697abeb1c369bb3418ebf4"
+    },
+    {
+      "path": "vendor/world-model/CONTRACT.md",
+      "upstream": "engines/world-model/AGENTS.md",
+      "blob": "4224c9c4ddcbb3d381ace6e41befc1790f1c7206"
+    },
+    {
+      "path": "vendor/world-model/LICENSE",
+      "upstream": "engines/world-model/LICENSE",
+      "blob": "d1a6bb88af6e6b79738dd192fb491a99eb2a7fe3"
+    },
+    {
+      "path": "vendor/world-model/README.md",
+      "upstream": "engines/world-model/reference/README.md",
+      "blob": "c7badc57b5af1e0b01d3f362a4e57f6707031453"
+    },
+    {
+      "path": "vendor/world-model/conformance/README.md",
+      "upstream": "engines/world-model/conformance/README.md",
+      "blob": "05e300a945560ffb22f9895c8795d8ee0c23c2fe"
+    },
+    {
+      "path": "vendor/world-model/conformance/runner.ts",
+      "upstream": "engines/world-model/conformance/runner.ts",
+      "blob": "d4e26f7901b8d5b51cc586b32d2d1aaf2a628ee3"
+    },
+    {
+      "path": "vendor/world-model/package.json",
+      "upstream": "engines/world-model/reference/package.json",
+      "blob": "fa66ea683aeab7570a7ae86a0052acb7da4c6a4e"
+    },
+    {
+      "path": "vendor/world-model/src/index.ts",
+      "upstream": "engines/world-model/reference/src/index.ts",
+      "blob": "ce5d69410f5bbbbff43a512f82be69a4fdc9fe77"
+    },
+    {
+      "path": "vendor/world-model/src/ingest.ts",
+      "upstream": "engines/world-model/reference/src/ingest.ts",
+      "blob": "7e8c5283625da1dcb010385b3ef4c8d9b85bb9a9"
+    },
+    {
+      "path": "vendor/world-model/src/resolve.ts",
+      "upstream": "engines/world-model/reference/src/resolve.ts",
+      "blob": "449cb73118c1f39ba0b8bb782c7f89d58e84e2be"
+    },
+    {
+      "path": "vendor/world-model/src/stableIds.ts",
+      "upstream": "engines/world-model/reference/src/stableIds.ts",
+      "blob": "ad7efafd69f841ec6e5851c6d754b0f424f5c4a8"
+    },
+    {
+      "path": "vendor/world-model/src/store.ts",
+      "upstream": "engines/world-model/reference/src/store.ts",
+      "blob": "eb9c772a278737d6b5b453d658ae7b77091569d6"
+    },
+    {
+      "path": "vendor/world-model/src/types.ts",
+      "upstream": "engines/world-model/reference/src/types.ts",
+      "blob": "dddd2861570309b1e2c6c1e0baea5c7ff81f876e"
+    },
+    {
+      "path": "vendor/world-model/test/smoke.test.ts",
+      "upstream": "engines/world-model/reference/test/smoke.test.ts",
+      "blob": "1c86e88cfd322c525f1435ffdab2ee77b48056a4"
+    },
+    {
+      "path": "vendor/world-model/tsconfig.json",
+      "upstream": "engines/world-model/reference/tsconfig.json",
+      "blob": "e128372a3493722fbefcfd9866b381c8e6ae8321"
+    }
+  ]
+}

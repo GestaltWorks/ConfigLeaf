@@ -1,6 +1,7 @@
 # CI proves what a judge's clean clone proves: the code typechecks, the unit tests pass, both vendored
 # Meterless conformance suites (World Model, H-MEM) pass through our modules, the sample pass runs with
-# no credentials, and the committed replay page (docs/) is exactly the build of the committed examples.
+# no credentials, every committed signed receipt (receipts.json) verifies offline against the call records
+# beside it, and the committed replay page (docs/) is exactly the build of the committed examples.
 # The live sponsor spikes (Nightshift, Zetaris) run locally with `npm run smoke`; they need the
 # runtime on the builder's machine and are recorded in logs/ and in the README instead.
 name: ci
@@ -36,6 +37,11 @@ jobs:
         run: npm run conformance:hmem
       - name: Sample mode runs without credentials
         run: SAMPLE_MODE=true npm run sample
+      - name: Signed receipts verify offline against their call records (every committed receipts.json)
+        run: |
+          files=$(git ls-files -- '*receipts.json')
+          if [ -z "$files" ]; then echo "receipts: no committed receipts.json"; exit 0; fi
+          for f in $files; do npm run -s receipts:verify -- "$(dirname "$f")"; done
       - name: Replay page rebuilds from the committed examples and matches the committed docs/
         run: |
           npm run site

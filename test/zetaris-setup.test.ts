@@ -1,5 +1,6 @@
 // The Zetaris setup with no live call: plan() order and texts (ten USL tables, each activation returning
-// exactly its declared columns, three DQ rules), staleness() of a USL model, the password kept out of every
+// exactly its declared columns, three DQ rules), the semantic layer's table uslRows() and uslMarkdown() read off the
+// DDL, the activation SELECTs and DQ_RULES, staleness() of a USL model, the password kept out of every
 // string that is printed, traced or redact()ed, apply() over a scripted client (an instance already set up,
 // the four-table USL of 24 Oct, a rule listed with another expression, a fresh instance, one that fails),
 // and the adapter's allowMultiStatement and redaction against a stubbed fetch.
@@ -192,6 +193,63 @@ describe("plan()", () => {
       expect(msg).toMatch(why);
       expect(msg).not.toContain(PW);
     }
+  });
+});
+
+describe("uslRows() and uslMarkdown(): the semantic layer's table", () => {
+  const rows = setup.uslRows();
+
+  it("one row per entity in USL_TABLES order, each built from the DRIFT tables its activation SELECT reads, every one in sql/schema.sql", () => {
+    expect(rows.map((r) => r.entity)).toEqual(TEN);
+    expect(Object.fromEntries(rows.map((r) => [r.entity, r.builtFrom]))).toEqual({
+      collection: ["collection_run"], setting: ["observation"], referent: ["observation", "dns_record"],
+      backup_copy: ["backup_item", "backup_snapshot"], policy: ["policy_rule"], copy: ["vault_copy", "copy_validation"],
+      probe: ["probe"], disposition: ["disposition"], action: ["action"], ticket: ["ticket"],
+    });
+    for (const r of rows) for (const t of r.builtFrom) expect(TABLE_NAMES, `${r.entity} reads ${t}`).toContain(t);
+    // the exported activation() is the one plan() sends
+    for (const t of TEN) expect(step(`activate ${t}`).sql).toBe(`ACTIVATE USL TABLE ${USL}.${t} AS ${setup.activation(t as never, "DRIFT")}`);
+  });
+
+  it("an entity over more than one table says how its rows are formed, naming each table; referent is the setting-to-record join of the hero query", () => {
+    for (const r of rows.filter((x) => x.builtFrom.length > 1)) for (const t of r.builtFrom) expect(r.formed, r.entity).toContain(`\`${t}\``);
+    const referent = rows.find((r) => r.entity === "referent")!;
+    expect(referent.builtFrom).toEqual(["observation", "dns_record"]);
+    expect(setup.activation("referent", "DRIFT")).toContain("JOIN DRIFT.dns_record d ON d.tenant_id = o.tenant_id AND d.name = o.refers_to_id WHERE o.refers_to_type = 'dns_name'");
+    expect(referent.formed).toContain("FOUND-BUT-DIFFERENT");
+  });
+
+  it("each key is the DDL's: one primary key column per entity, each foreign key naming a column of another entity", () => {
+    for (const r of rows) {
+      expect(setup.USL_COLUMNS[r.entity][0], r.entity).toBe(r.primaryKey);
+      expect(setup.COMPILE_USL).toContain(`  ${r.primaryKey} varchar(`);
+      for (const f of r.foreignKeys) {
+        const [, entity, column] = /^(\w+)\((\w+)\)$/.exec(f.references)!;
+        expect(TEN, `${r.entity}.${f.column}`).toContain(entity);
+        expect(setup.USL_COLUMNS[entity as never], `${r.entity}.${f.column}`).toContain(column);
+        expect(setup.USL_COLUMNS[r.entity]).toContain(f.column);
+      }
+    }
+    expect(rows.find((r) => r.entity === "action")!.foreignKeys).toEqual([{ column: "disposition_id", references: "disposition(disposition_id)" }]);
+  });
+
+  it("three entities carry a DQ rule, each the rule of DQ_RULES byte for byte; the markdown prints each expression in inline code, one table row per entity, no number measured and no date", () => {
+    const ruled = rows.filter((r) => r.rule);
+    expect(ruled.map((r) => [r.entity, r.rule!.name])).toEqual([["collection", "run_complete"], ["copy", "copy_validated"], ["action", "action_verified"]]);
+    for (const r of ruled) expect(r.rule!.expression).toBe(setup.DQ_RULES.find((d) => d.name === r.rule!.name)!.expression);
+    expect(ruled.map((r) => r.rule!.expression)).toEqual([RUN_COMPLETE_EXPR, "validated = 1", ACTION_VERIFIED_EXPR]);
+    const md = setup.uslMarkdown();
+    const table = md.split("\n").filter((l) => l.startsWith("|"));
+    expect(table).toHaveLength(2 + TEN.length);
+    expect(table[0]).toBe("| entity | built from | key | DQ rule | expression |");
+    for (const [i, r] of rows.entries()) {
+      expect(table[i + 2].startsWith(`| \`${r.entity}\` |`), r.entity).toBe(true);
+      if (r.rule) expect(table[i + 2].endsWith(`| \`${r.rule.name}\` | \`${r.rule.expression}\` |`), r.entity).toBe(true);
+      else expect(table[i + 2].endsWith("|  |  |"), r.entity).toBe(true);
+    }
+    expect(md).toContain("`drift_usl` in `lightning.metastore.drift`");
+    expect(md).not.toMatch(/\b20\d\d\b|\bOct\b|\d+ of \d+/);
+    expect(md.endsWith("|\n")).toBe(true);
   });
 });
 

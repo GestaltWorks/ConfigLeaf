@@ -2,7 +2,8 @@
 // sample/bundle.json, whose numbers are recomputed here from the bundle's own rows and whose committed copy
 // (examples/document.md) is held to the render; and the page over test/fixtures/policy-bundle.json with actions and
 // tickets added, so every section has rows; and "Where each answer comes from", read off the SQL, which the README
-// carries as npm run sources prints it. Offline; nothing is written.
+// carries as npm run sources prints it, and "The semantic layer" (src/zetaris/setup.ts uslMarkdown), which the README
+// carries as npm run sources -- --usl prints it. Offline; nothing is written.
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -22,6 +23,7 @@ import { DriftWorld } from "../src/engine/world.ts";
 import { MemoryLedger } from "../src/ledger.ts";
 import { dispositionIdOf } from "../src/loop/pass.ts";
 import { runPass } from "../src/pipeline.ts";
+import { uslMarkdown } from "../src/zetaris/setup.ts";
 import sample from "../sample/bundle.json" with { type: "json" };
 import policyBundle from "./fixtures/policy-bundle.json" with { type: "json" };
 import { BLOG } from "../scripts/fixtures/policy-bundle.ts";
@@ -320,7 +322,7 @@ describe("the page over test/fixtures/policy-bundle.json with work recorded", ()
 describe("where each answer comes from", () => {
   const ROOT = fileURLToPath(new URL("..", import.meta.url));
   const read = (name: string): string => readFileSync(new URL(`../${name}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
-  /** The block between a heading and the next heading of the same level, trimmed. */
+  /** The block between a heading and the next ## heading, trimmed. */
   const block = (md: string, heading: string): string => {
     const start = md.indexOf(`\n${heading}\n`);
     expect(start, `${heading} is missing`).toBeGreaterThanOrEqual(0);
@@ -364,6 +366,16 @@ describe("where each answer comes from", () => {
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout.replace(/\r\n/g, "\n")).toBe(sourcesMarkdown());
     expect(block(read("README.md"), "## Where each answer comes from"), "README.md is stale: paste the output of npm run sources").toBe(sourcesMarkdown().trim());
+  });
+
+  it("the README carries the semantic layer, the last block of section Zetaris, exactly as npm run sources -- --usl prints it", { timeout: 60_000 }, () => {
+    const r = spawnSync(process.execPath, ["--import", "tsx", "scripts/sources-table.ts", "--usl"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout.replace(/\r\n/g, "\n")).toBe(uslMarkdown());
+    const readme = read("README.md");
+    const zetaris = readme.slice(readme.indexOf("\n## Zetaris\n"), readme.indexOf("\n## Meterless\n"));
+    expect(zetaris, "### The semantic layer sits in section Zetaris").toContain("\n### The semantic layer\n");
+    expect(block(readme, "### The semantic layer"), "README.md is stale: paste the output of npm run sources -- --usl").toBe(uslMarkdown().trim());
   });
 
   it("the owner's document carries the same section, for a tenant with rows and for one with none", async () => {

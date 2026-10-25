@@ -1,4 +1,4 @@
-// npm run site [-- --out docs] [-- --examples examples] [-- --allow-stale]
+// npm run site [-- --out docs] [-- --examples examples] [-- --allow-stale] [-- --results eval/results/<UTC stamp>]
 //
 // The no-install replay page for judges: docs/index.html and docs/data/*.json, which GitHub Pages serves
 // from /docs on main. Built only from what the repo holds, never authored: each examples/<case>/bundle.json
@@ -15,20 +15,43 @@
 // the same way and must return the finding's own row. A live judge record, when one exists, has its falsifier
 // re-guarded and re-run, and its receipt id and signature status shown.
 //
+// Each detector query and each check also carries zetarisSql: its template and parameters rendered through a
+// DataLayer over ZetarisEngine, whose qualify() names each table <ZETARIS_DATASOURCE>.<table> (DRIFT): the SQL text a
+// live pass sends to Zetaris Lightning SQL. Rendering reads qualify() alone, so the build makes no network call; the
+// page shows the text collapsed under the query, and the lede, the Sources tab and the footer name the datasource,
+// the semantic layer and its DQ rules (src/zetaris/setup.ts) and the parity test that holds the two engines equal.
+//
 // Two more tabs carry markdown turned into HTML at build time (markdownToHtml, below: headings, paragraphs, bullet
 // lists, tables, inline code and bold, every other character escaped): Document, the owner's document as
 // `npm run document` in sample mode writes it (examples/document.md, from SQL over the recorded bundle), with its file
 // hash and the decision instant its last line states; and Sources, "Where each answer comes from" as
-// src/document/render.ts sourcesMarkdown() reads it off the SQL. Both are static HTML in index.html, so they read from
-// file:// and with the script off.
+// src/document/render.ts sourcesMarkdown() reads it off the SQL, then the semantic layer's table as
+// src/zetaris/setup.ts uslMarkdown() reads it off the USL DDL, the activation SELECTs and DQ_RULES. Both are static
+// HTML in index.html, so they read from file:// and with the script off.
+//
+// A fourth static tab, Nemotron, is built from one eval results directory (BuildOptions.resultsDir, `--results`; by
+// default the lexically newest directory under eval/results that holds planted.json and C*-run*.json): the run files'
+// call records grouped by configuration and role (tier and model requested, model served, signatures verified, cache
+// hits, substitutions), each run's counts (Lightning's checks selected, valid and run unmodified; labelled no, read
+// yes), every planted claim with its text from eval/planted.json, and every item judge with the templates Lightning
+// chose. The build loads the recording the run files name into a fresh SqlJsEngine with the rows of the policy file
+// they name (loadPolicyFile under a fixed salt, so every machine builds the same page), then re-guards
+// (guardRefutation) and re-runs, LIMIT MAX_LIMIT, every judge SELECT recorded with a row count whose status is not
+// invalid_output or not_judged. A re-run that returns the recorded count is equal; a recorded text the guard or the
+// engine refuses is shown as recorded and counted apart, since the results hold each SELECT as the eval's redactor
+// left it after the run. The tab shows row counts; index.json's totals carry the eval's stamp, set, calls,
+// verified signatures, substitutions and the re-run tally, and the header shows the calls and the re-run tally.
 //
 // Refuses to publish (throws, writes nothing) when a check cites a template the catalogue cannot render, or
-// parameters it refuses; when a re-run differs from the record; when a detector does not return its finding;
+// parameters it refuses; when a re-run differs from the record (a check's, a live judge's, or an eval judge SELECT
+// that runs and returns another count, named by file, configuration, run and claim or item); when a results file
+// does not parse, or its runs name different recordings; when a detector does not return its finding;
 // when re-running the pass over a slice does not give its committed findings.json (the example is stale: run
 // npm run examples; `--allow-stale` publishes it marked stale instead, for a deliberate look at the drift);
 // when any output file holds a label of the operator's deny-list (REDACT_WORDS and EXPORT_DENY_WORDS: the
-// leak test's list and its countLabels scan) or a configured ssh alias, the markdown the two tabs render scanned
-// as written too; when examples/document.md is missing or opens with no heading; when any string in the data files
+// leak test's list and its countLabels scan) or a configured ssh alias, the markdown the two tabs render and the
+// strings the Nemotron tab is built from scanned as written too; when examples/document.md is missing or opens with
+// no heading; when any string in the data files or the Nemotron tab
 // changes under the redactor (a name, address, mail address or secret redaction would still replace, which
 // holds with the deny-list blank too); or when the page and its data exceed MAX_BYTES. Every refusal names
 // the file and the position in the list, never the label.
@@ -38,7 +61,8 @@
 // examples and npm run sample do, so an exception in force decides here as it decided there.
 //
 // Deterministic: no clock in the output, no machine path, so the committed docs/ is exactly the build of the
-// committed examples (test/site.test.ts asserts it). File hashes are over LF text, as git stores it.
+// committed examples and the committed eval results (test/site.test.ts asserts it). File hashes are over LF text,
+// as git stores it.
 
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -52,6 +76,7 @@ import { renderTemplate, templateById } from "../src/catalogue/templates.ts";
 import { config } from "../src/config.ts";
 import { DataLayer, type Param, type Params } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
+import { ZetarisEngine } from "../src/data/engines/zetaris.ts";
 import { decisionInstantWith } from "../src/data/instant.ts";
 import {
   HERO_SQL, ORPHAN_RECORD_SQL, ORPHAN_VHOST_SQL, PROXIED_WITHOUT_REAL_IP_SQL, PROXY_SPLIT_SQL, RUNS_SQL, WILDCARD_WITHOUT_REAL_IP_SQL, objects,
@@ -59,10 +84,20 @@ import {
 import { sourceRows, sourcesMarkdown } from "../src/document/render.ts";
 import { TechnicianMemory } from "../src/engine/memory.ts";
 import { DriftWorld } from "../src/engine/world.ts";
+import { isSubstitution } from "../src/eval/models.ts";
 import { runPass, type Finding } from "../src/pipeline.ts";
+import { loadPolicyFile } from "../src/policy/load.ts";
 import { Redactor, countLabels, describeRedactions } from "../src/redactor.ts";
+import { DQ_RULES, USL_NAME, USL_TABLES, uslMarkdown } from "../src/zetaris/setup.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
+
+/** The datasource a live pass reads through Zetaris (ZETARIS_DATASOURCE, DRIFT by default and in .env.example). */
+const DATASOURCE = config.zetaris.datasource;
+/** The data layer with Zetaris's table names: the SQL text a live pass sends for a template and its parameters. render() reads qualify() alone. */
+const AS_ZETARIS = new DataLayer(new ZetarisEngine());
+const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+const word = (n: number): string => NUMBER_WORDS[n] ?? String(n);
 
 /** The page and every data file together. */
 export const MAX_BYTES = 300_000;
@@ -121,7 +156,12 @@ type JudgeRec = FindingRec["judge"];
 // ---- what the page reads ----------------------------------------------------------------------------------
 
 export interface RowsView { columns: string[]; rows: string[][]; total: number; shown: number; cutCells: number; sha256: string }
-export interface DetectionView { query: string; description: string; sql: string; sqlSha256: string; params: Record<string, Param>; total: number; matched: RowsView }
+export interface DetectionView {
+  query: string; description: string; sql: string; sqlSha256: string;
+  /** The same query as the live pass sends it to Zetaris: each table <datasource>.<table>. */
+  zetarisSql: string;
+  params: Record<string, Param>; total: number; matched: RowsView;
+}
 export interface CheckView {
   template: string; purpose: string; rowsMean: "holds" | "fails"; status: "ran" | "not_run";
   holds: boolean | null; rowCount: number | null; explanation: string | null;
@@ -130,7 +170,10 @@ export interface CheckView {
   bound: "recorded with the check" | "bound from the finding";
   /** Fields the record carries beyond these (a skip reason, say), shown as recorded. */
   extra: Record<string, unknown>;
-  params: Record<string, Param>; sql: string; sqlSha256: string; rows: RowsView | null;
+  params: Record<string, Param>; sql: string; sqlSha256: string;
+  /** The same check as the live pass sends it to Zetaris: each table <datasource>.<table>. */
+  zetarisSql: string;
+  rows: RowsView | null;
 }
 export interface JudgeView {
   status: string; model: string; detail: string;
@@ -160,7 +203,11 @@ export interface SampleSummary { bundle: string; sha256: string; runs: number; g
 export interface SiteIndex {
   title: string;
   examples: { dir: string; file: string; findings: number; checks: number; reproduced: boolean }[];
-  totals: { examples: number; findings: number; checks: number; checksRerun: number; verbs: Record<string, number>; classes: Record<string, number>; judgeModels: Record<string, number> };
+  totals: {
+    examples: number; findings: number; checks: number; checksRerun: number; verbs: Record<string, number>; classes: Record<string, number>; judgeModels: Record<string, number>;
+    /** The eval results the Nemotron tab is built from. */
+    nemotron: NemotronTotals;
+  };
   sample: SampleSummary | null;
   decisionRule: string;
   limits: { maxRows: number; maxCell: number };
@@ -179,9 +226,11 @@ export interface BuildOptions {
   documentPath?: string;
   /** The technician's lessons every pass of the build reads (opened read only); default DRIFT_MEMORY_DIR. */
   memoryDir?: string;
+  /** The eval results directory the Nemotron tab is built from; default the lexically newest under eval/results holding planted.json and C*-run*.json. */
+  resultsDir?: string;
 }
 export interface DocumentTab { file: string; bytes: number; sha256: string; decidedAt: string | null }
-export interface BuildResult { outDir: string; files: Map<string, string>; bytes: number; index: SiteIndex; scan: ScanReport; document: DocumentTab; sources: number }
+export interface BuildResult { outDir: string; files: Map<string, string>; bytes: number; index: SiteIndex; scan: ScanReport; document: DocumentTab; sources: number; nemotron: NemotronView }
 
 // ---- helpers ------------------------------------------------------------------------------------------------
 
@@ -265,7 +314,11 @@ async function detectionView(layer: DataLayer, f: FindingRec["finding"], runs: R
   const rows = objects(res);
   const hit = res.rows.filter((_, i) => d.match(rows[i]));
   if (!hit.length) throw new SiteError(`${where}: the ${d.query} query over the slice returns ${res.total} row(s), none of them this finding's; the page would show a claim its detector does not make`);
-  return { query: d.query, description: d.description, sql: layer.render(d.sql, d.params), sqlSha256: sha(layer.render(d.sql, d.params)), params: { ...d.params }, total: res.total, matched: rowsView(res.columns, hit, hit.length) };
+  const sql = layer.render(d.sql, d.params);
+  return {
+    query: d.query, description: d.description, sql, sqlSha256: sha(sql), zetarisSql: AS_ZETARIS.render(d.sql, d.params),
+    params: { ...d.params }, total: res.total, matched: rowsView(res.columns, hit, hit.length),
+  };
 }
 
 // ---- checks -------------------------------------------------------------------------------------------------
@@ -290,7 +343,7 @@ async function checkView(layer: DataLayer, f: FindingRec["finding"], c: CheckRec
     holds: c.holds ?? null, rowCount: c.rowCount ?? null, explanation: c.explanation ?? null, rerun: null,
     bound: c.params ? "recorded with the check" : "bound from the finding",
     extra: extraOf(c, CHECK_KEYS),
-    params: { ...rendered.params }, sql: rendered.sql, sqlSha256: sha(rendered.sql), rows: null,
+    params: { ...rendered.params }, sql: rendered.sql, sqlSha256: sha(rendered.sql), zetarisSql: AS_ZETARIS.render(t.sql, rendered.params), rows: null,
   };
   // A check with no row count never ran (skipped with a reason, say): its SQL is shown, nothing is re-run.
   if (c.rowCount === undefined) return view;
@@ -328,7 +381,7 @@ async function judgeView(layer: DataLayer, j: JudgeRec, where: string): Promise<
     return {
       ...empty, status: j, model: "none",
       detail: j === "skipped"
-        ? "No model ran in this pass, so the judge step is traced as skipped (model: none). A live pass sends the claim and its rows to Nemotron Ultra for one SELECT that returns rows only if the claim is false, runs it through the same guard and data layer, and keeps the verdict only when the signed receipt names an Ultra."
+        ? "No model ran in this pass, so the judge step is traced as skipped (model: none). Nemotron runs in the Actor's investigation and in the eval; the Nemotron tab re-runs every SELECT its judge wrote there."
         : `judge: ${j}`,
     };
   }
@@ -456,6 +509,297 @@ async function exampleView(dir: string, examplesDir: string, full: Map<string, F
   };
 }
 
+// ---- the Nemotron tab: one eval results directory, every judge SELECT re-run over the recording ---------------------
+
+/** A run file's name: C<config number>-run<run number>.json. */
+const RUN_FILE = /^C(\d+)-run(\d+)\.json$/;
+/** Which text the redactor would rewrite; a fixed salt and no labels, so the answer is the same on every machine. */
+const AS_IS = new Redactor("site-build", []);
+
+// The results as src/eval/run.ts writes them (lenient: a field a later runner adds passes through).
+const EvalCall = z.looseObject({
+  kind: z.string(), requested_tier: z.enum(["lightning", "ultra"]), model_requested: z.string(),
+  served_model: z.string().nullable(), served_tier: z.enum(["lightning", "ultra", "unknown"]), receipt_id: z.string().nullable(),
+  signature_ok: z.boolean().nullable(), cache_status: z.string().nullable(),
+});
+const EvalJudge = z.looseObject({
+  status: z.string(), sql: opt(), rows: z.number().int().nonnegative().nullable().optional(), receipt_id: opt(), served_model: opt(),
+});
+const EvalRun = z.looseObject({
+  config: z.looseObject({ id: z.string(), select: z.looseObject({ kind: z.string() }).nullable().optional() }),
+  run: z.number().int().positive(), valid: z.boolean(), recording: z.string(), tenant: z.string(), set: z.string(),
+  policy: z.looseObject({ file: z.string() }).nullable().optional(),
+  counts: z.looseObject({
+    calls: z.number().int(), checks_selected: z.number().int(), checks_valid: z.number().int(), checks_ran_unmodified: z.number().int(),
+    false_positives: z.number().int(), labelled_no: z.number().int(),
+  }),
+  items: z.array(z.looseObject({
+    id: z.string(),
+    subjects: z.array(z.looseObject({
+      finding_id: z.string(),
+      checks: z.array(z.looseObject({ template: z.string() })).default([]),
+      judge: z.union([EvalJudge, z.looseObject({ withheld: z.string() }), z.null()]).optional(),
+    })).default([]),
+  })),
+  calls: z.array(EvalCall),
+});
+const EvalPlanted = z.looseObject({
+  recording: z.string(),
+  claims: z.array(EvalJudge.extend({ config: z.string(), run: z.number().int().positive(), judge_tier: z.string(), id: z.string(), kind: z.string() })),
+});
+const PlantedText = z.looseObject({ claims: z.array(z.looseObject({ id: z.string(), kind: z.string(), claim: z.string() })) });
+
+/** One judge record of the eval, a planted claim's or an item finding's: its SELECT as recorded and what it returns at build. */
+export interface JudgeSelectView {
+  config: string; run: number;
+  /** The planted claim's id; null for an item judge. */
+  claim: string | null;
+  /** The item and its finding; null for a planted claim. */
+  item: string | null; finding: string | null;
+  /** An item judge's checks: the templates Lightning chose that ran for the finding. */
+  templates: string[] | null;
+  /** The judge's tier as the run requested it (a planted claim's record names it). */
+  tier: string | null;
+  status: string; rowsRecorded: number | null;
+  /** equal: re-run to the recorded count; does_not_run: the recorded text, refused by the guard or the engine; not_run: no SELECT with a row count to re-run. */
+  rerun: "equal" | "does_not_run" | "not_run";
+  rowsAtBuild: number | null; why: string | null;
+  receiptId: string | null; servedModel: string | null; sql: string | null;
+}
+export interface NemotronTotals {
+  stamp: string; set: string; calls: number; signatureVerified: number; cacheHits: number; substitutions: number;
+  /** Judge SELECTs recorded with a row count, of them those re-run equal and those whose recorded text does not run. */
+  judgeSelects: number; rerunEqual: number; notRunnable: number;
+}
+export interface NemotronView {
+  dir: string; recording: string; policy: string | null; tenant: string;
+  totals: NemotronTotals;
+  /** The calls per configuration, role, tier and model requested, and model served. */
+  served: { config: string; role: string; tierRequested: string; modelRequested: string; modelServed: string | null; tierServed: string; calls: number; signatureVerified: number; cacheHits: number; substitutions: number }[];
+  runs: { config: string; run: number; valid: boolean; selects: boolean; calls: number; checksSelected: number; checksValid: number; ranUnmodified: number; falsePositives: number; labelledNo: number }[];
+  claims: { id: string; kind: string; claim: string | null; judges: JudgeSelectView[] }[];
+  items: JudgeSelectView[];
+}
+
+/** The lexically newest directory under `base` that holds planted.json and a C*-run*.json; null when none does. */
+export function newestResults(base: string): string | null {
+  if (!existsSync(base)) return null;
+  const dirs = readdirSync(base)
+    .filter((d) => statSync(path.join(base, d)).isDirectory())
+    .filter((d) => existsSync(path.join(base, d, "planted.json")) && readdirSync(path.join(base, d)).some((f) => RUN_FILE.test(f)))
+    .sort();
+  return dirs.length ? path.join(base, dirs[dirs.length - 1]) : null;
+}
+
+/** A results file through its schema; a refusal names the file and the first fields that fail. */
+function readResults<T>(schema: z.ZodType<T>, file: string, shown: string): T {
+  let json: unknown;
+  try {
+    json = JSON.parse(readFileSync(file, "utf8"));
+  } catch {
+    throw new SiteError(`refusing to publish: ${shown} is missing or is not JSON`);
+  }
+  const r = schema.safeParse(json);
+  if (!r.success) throw new SiteError(`refusing to publish: ${shown} is not an eval results file: ${r.error.issues.slice(0, 3).map((i) => `${i.path.join(".")} ${i.message}`).join("; ")}`);
+  return r.data;
+}
+
+type EvalJudgeRec = z.infer<typeof EvalJudge>;
+
+/**
+ * One judge record against the recording. A record with a SELECT and a row count, whose status is not invalid_output
+ * or not_judged, is re-guarded and re-run at LIMIT MAX_LIMIT: the recorded count is equal, any other count refuses the
+ * build, and a text the guard or the engine refuses is shown as recorded with the reason. Any other record is shown as recorded.
+ */
+async function judgeSelect(layer: DataLayer, at: Omit<JudgeSelectView, "status" | "rowsRecorded" | "rerun" | "rowsAtBuild" | "why" | "receiptId" | "servedModel" | "sql">, j: EvalJudgeRec, where: string): Promise<JudgeSelectView> {
+  const sql = j.sql ?? null;
+  const rows = typeof j.rows === "number" ? j.rows : null;
+  const shown = { ...at, status: j.status, rowsRecorded: rows, receiptId: j.receipt_id ?? null, servedModel: j.served_model ?? null, sql };
+  if (sql === null || rows === null || j.status === "invalid_output" || j.status === "not_judged") return { ...shown, rerun: "not_run", rowsAtBuild: null, why: null };
+  // A refusal's message, each ": " part kept that the redactor leaves as it is: an operand such as "b6a1ec.host" reads
+  // as a name to it, and the SQL beside the reason shows the operand in place.
+  const reason = (err: unknown): string => (err as Error).message.split(": ").filter((part) => AS_IS.text(part) === part).join(": ");
+  let guarded: string;
+  try {
+    guarded = guardRefutation(sql, layer.tables);
+  } catch (err) {
+    return { ...shown, rerun: "does_not_run", rowsAtBuild: null, why: `the guard refuses it: ${reason(err)}` };
+  }
+  let got: number;
+  try {
+    got = (await layer.run(guarded, {}, { limit: MAX_LIMIT })).rowCount;
+  } catch (err) {
+    return { ...shown, rerun: "does_not_run", rowsAtBuild: null, why: `the engine refuses it: ${reason(err)}` };
+  }
+  if (got !== rows) throw new SiteError(`refusing to publish: ${where}: the judge's SELECT re-run over the recording returns ${got} row(s), the record says ${rows}`);
+  return { ...shown, rerun: "equal", rowsAtBuild: got, why: null };
+}
+
+/** The Nemotron tab's content from one results directory, every judge SELECT re-run over the recording the runs name. */
+export async function nemotronView(dir: string): Promise<NemotronView> {
+  const shown = shownPath(dir);
+  const names = readdirSync(dir).flatMap((f) => {
+    const m = RUN_FILE.exec(f);
+    return m ? [{ file: f, config: Number(m[1]), run: Number(m[2]) }] : [];
+  }).sort((a, b) => a.config - b.config || a.run - b.run);
+  if (!names.length) throw new SiteError(`refusing to publish: ${shown} holds no C*-run*.json`);
+  const runs = names.map((n) => ({ file: n.file, r: readResults(EvalRun, path.join(dir, n.file), `${shown}/${n.file}`) }));
+  const planted = readResults(EvalPlanted, path.join(dir, "planted.json"), `${shown}/planted.json`);
+  const text = readResults(PlantedText, path.join(ROOT, "eval", "planted.json"), "eval/planted.json");
+
+  const first = runs[0].r;
+  const policy = first.policy?.file ?? null;
+  for (const { file, r } of runs) {
+    if (r.recording !== first.recording || r.tenant !== first.tenant || r.set !== first.set || (r.policy?.file ?? null) !== policy) {
+      throw new SiteError(`refusing to publish: ${shown}/${file} names another recording, tenant, set or policy file than ${runs[0].file}; one results directory holds one eval`);
+    }
+    if (r.counts.calls !== r.calls.length) throw new SiteError(`refusing to publish: ${shown}/${file} counts ${r.counts.calls} call(s) and holds ${r.calls.length} call record(s)`);
+  }
+  if (planted.recording !== first.recording) throw new SiteError(`refusing to publish: ${shown}/planted.json names another recording than its run files`);
+
+  const engine = await SqlJsEngine.create();
+  try {
+    engine.loadBundle(JSON.parse(readFileSync(path.resolve(ROOT, first.recording), "utf8")) as Record<string, unknown>);
+    if (policy) {
+      // The policy rows as src/eval/policy.ts inserts them, under a fixed salt: every machine and CI builds the same page.
+      try {
+        engine.insertRows("policy_rule", loadPolicyFile(path.resolve(ROOT, policy), { tenant: first.tenant, redactor: new Redactor("eval-runner", []) }).rows);
+      } catch (err) {
+        throw new SiteError(`refusing to publish: ${policy}, the policy file the runs name, does not load: ${(err as Error).message}`);
+      }
+    }
+    const layer = new DataLayer(engine);
+
+    const ids = [...new Set([...text.claims.map((c) => c.id), ...planted.claims.map((c) => c.id)])];
+    const claims: NemotronView["claims"] = [];
+    for (const id of ids) {
+      const recs = planted.claims.filter((c) => c.id === id);
+      if (!recs.length) continue;
+      const judges: JudgeSelectView[] = [];
+      for (const c of recs) {
+        judges.push(await judgeSelect(layer, { config: c.config, run: c.run, claim: c.id, item: null, finding: null, templates: null, tier: c.judge_tier }, c, `${shown}/planted.json ${c.config} run ${c.run} claim ${c.id}`));
+      }
+      const t = text.claims.find((c) => c.id === id);
+      claims.push({ id, kind: t?.kind ?? recs[0].kind, claim: t?.claim ?? null, judges });
+    }
+
+    const items: JudgeSelectView[] = [];
+    for (const { file, r } of runs) {
+      for (const i of r.items) {
+        for (const s of i.subjects) {
+          if (!s.judge || !("status" in s.judge)) continue;
+          items.push(await judgeSelect(layer, {
+            config: r.config.id, run: r.run, claim: null, item: i.id, finding: s.finding_id, templates: s.checks.map((c) => c.template), tier: null,
+          }, s.judge as EvalJudgeRec, `${shown}/${file} ${r.config.id} run ${r.run} item ${i.id} finding ${s.finding_id}`));
+        }
+      }
+    }
+
+    const served = new Map<string, NemotronView["served"][number]>();
+    for (const { r } of runs) {
+      for (const c of r.calls) {
+        const k = [r.config.id, c.kind, c.requested_tier, c.model_requested, c.served_model ?? "", c.served_tier].join("\u001f");
+        const e = served.get(k) ?? { config: r.config.id, role: c.kind, tierRequested: c.requested_tier, modelRequested: c.model_requested, modelServed: c.served_model, tierServed: c.served_tier, calls: 0, signatureVerified: 0, cacheHits: 0, substitutions: 0 };
+        e.calls++;
+        if (c.signature_ok === true) e.signatureVerified++;
+        if (c.cache_status === "hit") e.cacheHits++;
+        if (isSubstitution(c)) e.substitutions++;
+        served.set(k, e);
+      }
+    }
+    const rows = [...served.values()];
+    const judged = [...claims.flatMap((c) => c.judges), ...items].filter((j) => j.rerun !== "not_run");
+    const stamp = path.basename(dir);
+    return {
+      dir: shown, recording: first.recording, policy, tenant: first.tenant,
+      totals: {
+        stamp, set: first.set,
+        calls: runs.reduce((n, x) => n + x.r.counts.calls, 0),
+        signatureVerified: rows.reduce((n, e) => n + e.signatureVerified, 0),
+        cacheHits: rows.reduce((n, e) => n + e.cacheHits, 0),
+        substitutions: rows.reduce((n, e) => n + e.substitutions, 0),
+        judgeSelects: judged.length, rerunEqual: judged.filter((j) => j.rerun === "equal").length, notRunnable: judged.filter((j) => j.rerun === "does_not_run").length,
+      },
+      served: rows,
+      runs: runs.map(({ r }) => ({
+        config: r.config.id, run: r.run, valid: r.valid, selects: r.config.select?.kind === "model", calls: r.counts.calls,
+        checksSelected: r.counts.checks_selected, checksValid: r.counts.checks_valid, ranUnmodified: r.counts.checks_ran_unmodified,
+        falsePositives: r.counts.false_positives, labelledNo: r.counts.labelled_no,
+      })),
+      claims, items,
+    };
+  } finally {
+    engine.close();
+  }
+}
+
+/** Element text: the three characters markup reads in text, escaped (quotes matter in attributes, and the tab's one attribute is a rowspan it counts). */
+const escapeText = (s: string): string => s.replace(/[&<>]/g, (c) => ESC[c]);
+const td = (v: string | number | null): string => `<td>${v === null ? "-" : escapeText(String(v))}</td>`;
+const tableOf = (cols: string[], rows: string[]): string =>
+  `<div class="scroll"><table>\n<thead><tr>${cols.map((c) => `<th scope="col">${escapeText(c)}</th>`).join("")}</tr></thead>\n<tbody>\n${rows.join("\n")}\n</tbody>\n</table></div>`;
+
+/**
+ * The judge records of one claim or one item finding as table rows, `lead` giving each row's first cells. From the
+ * status on: status, rows recorded, rows at build, receipt, served model and the SELECT, collapsed; a SELECT a row of
+ * the same claim or finding above already shows, character for character, is named by that row ("as C3 run 1").
+ */
+function judgeRows(group: JudgeSelectView[], lead: (j: JudgeSelectView) => string): string[] {
+  const first = new Map<string, string>();
+  return group.map((j) => {
+    const atBuild = j.rerun === "equal" ? td(j.rowsAtBuild) : j.rerun === "does_not_run" ? td(`does not run: ${j.why}`) : td(null);
+    const seen = j.sql === null ? undefined : first.get(j.sql);
+    if (j.sql !== null && seen === undefined) first.set(j.sql, `${j.config} run ${j.run}`);
+    const sql = j.sql === null ? td(null) : seen ? td(`as ${seen}`) : `<td><details><summary>SQL</summary><pre>${escapeText(j.sql)}</pre></details></td>`;
+    return `<tr>${lead(j)}${td(j.status)}${td(j.rowsRecorded)}${atBuild}${td(j.receiptId)}${td(j.servedModel)}${sql}</tr>`;
+  });
+}
+
+/** Item judges grouped by item and finding, in the order the runs first name them; each group in run order. */
+function byFinding(items: JudgeSelectView[]): JudgeSelectView[][] {
+  const groups = new Map<string, JudgeSelectView[]>();
+  for (const j of items) {
+    const k = `${j.item}\u001f${j.finding}`;
+    groups.set(k, [...(groups.get(k) ?? []), j]);
+  }
+  return [...groups.values()];
+}
+
+/** The Nemotron tab: static HTML from the results, readable over file:// and with the script off. */
+export function nemotronPanel(v: NemotronView): string {
+  const t = v.totals;
+  const code = (s: string): string => `<code>${escapeText(s)}</code>`;
+  const total = v.served.reduce((a, e) => ({ calls: a.calls + e.calls, verified: a.verified + e.signatureVerified, hits: a.hits + e.cacheHits, subs: a.subs + e.substitutions }), { calls: 0, verified: 0, hits: 0, subs: 0 });
+  const judgeHead = ["status", "rows recorded", "rows at build", "receipt", "served model", "SELECT"];
+  return `<section class="panel" id="nemotron"><div class="wrap md">
+<h2>Nemotron in the eval</h2>
+<p class="meta">Built by <code>npm run site</code> from ${code(v.dir)}, the ${code(t.set)} set over ${code(v.recording)} for tenant ${code(v.tenant)}: the call records of each run file, the planted claims of its <code>planted.json</code> with their text from <code>eval/planted.json</code>, and the item judges. <code>summary.md</code> there holds every measure of the run.</p>
+<p>Lightning returns template ids and parameters from the catalogue, and the catalogue renders the SQL of each check. The judge writes one SELECT that returns rows when the claim is false: Lightning in C2, Ultra in C3. The guard holds it to one SELECT over known tables with LIMIT capped at ${MAX_LIMIT}, and the DataLayer runs it. This build loads ${code(v.recording)} into sql.js${v.policy ? ` with the rules of ${code(v.policy)}` : ""}, as the eval did, then re-guards and re-runs every judge SELECT recorded with a row count: <b>${t.rerunEqual} of ${t.judgeSelects}</b> return the recorded count${t.notRunnable ? `, and the recorded text of ${t.notRunnable} does not run` : ""}. A SELECT that runs and returns another count stops the build. Rows show as counts.</p>
+${t.notRunnable ? `<p class="meta">The results hold each SELECT as the eval's redactor left it after the run, and the recorded status and row count are what the SELECT returned when the eval ran it. A recorded text that does not run is shown as recorded, with the reason the guard or the engine gives.</p>\n` : ""}<h3>Calls, requested and served</h3>
+<p class="meta">Every call record of every run: the tier and model it requested, the model its receipt names, and the receipts whose Ed25519 signature verifies. A served tier other than the one requested is a substitution and invalidates its run.</p>
+${tableOf(["config", "role", "tier requested", "model requested", "model served", "tier served", "calls", "signature verified", "cache hits", "substitutions"], [
+  ...v.served.map((e) => `<tr>${td(e.config)}${td(e.role)}${td(e.tierRequested)}${td(e.modelRequested)}${td(e.modelServed)}${td(e.tierServed)}${td(e.calls)}${td(e.signatureVerified)}${td(e.cacheHits)}${td(e.substitutions)}</tr>`),
+  `<tr><td><b>all</b></td><td></td><td></td><td></td><td></td><td></td><td><b>${total.calls}</b></td><td><b>${total.verified}</b></td><td><b>${total.hits}</b></td><td><b>${total.subs}</b></td></tr>`,
+])}
+<h3>Each run</h3>
+<p class="meta">Lightning's selection in the configurations where a model selects the checks: the checks it selected, those valid against the catalogue and those that ran as selected. Labelled no, read yes: the items labelled no whose verdict reads yes (ESCALATE or FIX).</p>
+${tableOf(["config", "run", "valid run", "calls", "checks selected", "valid", "ran unmodified", "labelled no, read yes"], v.runs.map((r) =>
+  `<tr>${td(r.config)}${td(r.run)}${td(r.valid ? "yes" : "no")}${td(r.calls)}${td(r.selects ? r.checksSelected : null)}${td(r.selects ? r.checksValid : null)}${td(r.selects ? r.ranUnmodified : null)}${td(`${r.falsePositives} / ${r.labelledNo}`)}</tr>`))}
+<h3>Planted false claims</h3>
+<p class="meta">Each claim is false against the rows of the recording. The judge of each judging configuration receives every claim once per run, and a SELECT that returns rows strikes it.</p>
+${v.claims.map((c) => `<h4>${escapeText(c.id)}: ${escapeText(c.kind)}</h4>
+${c.claim ? `<p>${escapeText(c.claim)}</p>\n` : ""}${tableOf(["config", "run", "judge", ...judgeHead], judgeRows(c.judges, (j) => `${td(j.config)}${td(j.run)}${td(j.tier)}`))}`).join("\n")}
+<h3>Item judges</h3>
+<p class="meta">Each finding a judge took, with the checks Lightning chose for it that ran, the judge's status and its SELECT.</p>
+${tableOf(["item", "finding", "config", "run", "Lightning's checks", ...judgeHead], byFinding(v.items).flatMap((g) => judgeRows(g, (j) =>
+  `${j === g[0] ? `<td rowspan="${g.length}">${escapeText(j.item ?? "-")}</td><td rowspan="${g.length}">${escapeText(j.finding ?? "-")}</td>` : ""}${td(j.config)}${td(j.run)}${td(j.templates?.join(", ") ?? null)}`)))}
+</div></section>`;
+}
+
+/** Every string leaf of a value, in order: the text the deny-list scan reads for the Nemotron tab. */
+const leavesOf = (v: unknown): string[] =>
+  typeof v === "string" ? [v] : Array.isArray(v) ? v.flatMap(leavesOf) : v && typeof v === "object" ? Object.values(v).flatMap(leavesOf) : [];
+
 // ---- the deny-list scan ---------------------------------------------------------------------------------------
 
 export interface ScanReport { files: number; shown: number; labels: number; aliases: number; leaves: number; skipped: string | null }
@@ -468,10 +812,11 @@ export interface ScanReport { files: number; shown: number; labels: number; alia
  * leave it unchanged: a real name, address, mail address or secret would be replaced. The page's script
  * and its two markdown tabs carry dotted identifiers (a file name, the probe.verify surface) that read as
  * names to the hostname pass, so the redactor half runs over the data files only; the owner's document
- * passed npm run document's own label probe before it was written. Hits name the file, the JSON path and
- * the label's position in the list, never the label or the value.
+ * passed npm run document's own label probe before it was written. `walked` names values whose every string
+ * leaf goes through the redactor too: the strings the Nemotron tab is built from, which the page carries as HTML.
+ * Hits name the file, the JSON path and the label's position in the list, never the label or the value.
  */
-export function scanOutput(files: Map<string, string>, shown: Map<string, string> = new Map()): ScanReport {
+export function scanOutput(files: Map<string, string>, shown: Map<string, string> = new Map(), walked: Map<string, unknown> = new Map()): ScanReport {
   const words = [...new Set([...config.redactWords, ...config.exportDenyWords])];
   const aliases = Object.keys(config.linuxHosts);
   const hits: string[] = [];
@@ -490,6 +835,7 @@ export function scanOutput(files: Map<string, string>, shown: Map<string, string
     else if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) walk(name, x, `${at}.${k}`);
   };
   for (const [name, text] of files) if (name.endsWith(".json")) walk(name, JSON.parse(text), "$");
+  for (const [name, v] of walked) walk(name, v, "$");
   if (hits.length) throw new SiteError(`refusing to publish: ${hits.length} deny-list hit(s): ${hits.slice(0, 12).join("; ")}${hits.length > 12 ? "; ..." : ""}`);
   return {
     files: files.size, shown: shown.size, labels: words.length, aliases: aliases.length, leaves,
@@ -575,12 +921,22 @@ ${markdownToHtml(rest.join("\n"), 1)}</div></section>`,
   };
 }
 
-/** The Sources tab: "Where each answer comes from", read off the SQL by sourcesMarkdown(). */
-function sourcesPanel(md: string): string {
+/** The Sources tab: "Where each answer comes from", read off the SQL by sourcesMarkdown(), then the semantic layer's table by uslMarkdown(). */
+function sourcesPanel(md: string, usl: string): string {
   return `<section class="panel" id="sources"><div class="wrap md">
 <h2>Where each answer comes from</h2>
 <p class="meta">Read off the SQL at build time by <code>sourcesMarkdown()</code> in <code>src/document/render.ts</code>: the section the owner's document and the README carry under this heading, and the table <code>npm run sources</code> prints.</p>
-${markdownToHtml(md, 1)}</div></section>`;
+${zetarisParagraph()}
+${markdownToHtml(md, 1)}<h3>The semantic layer in Zetaris</h3>
+<p class="meta">Read off the USL DDL, the activation SELECTs and the DQ rules at build time by <code>uslMarkdown()</code> in <code>src/zetaris/setup.ts</code>: the table the README carries under "The semantic layer" and <code>npm run sources -- --usl</code> prints.</p>
+${markdownToHtml(usl, 1)}</div></section>`;
+}
+
+/** The Sources tab's paragraph on Zetaris: the datasource, the semantic layer's entities and DQ rules (src/zetaris/setup.ts), the parity test. */
+function zetarisParagraph(): string {
+  const code = (s: string): string => `<code>${escapeHtml(s)}</code>`;
+  const rules = DQ_RULES.map((r) => `${code(r.name)} on ${code(r.table)}`).join(", ");
+  return `<p>In a live pass every detector and check query runs as Zetaris Lightning SQL over the ${code(DATASOURCE)} datasource, the app Postgres registered in Zetaris, each table named ${code(`${DATASOURCE}.<table>`)}. Over it, the ${code(USL_NAME)} semantic layer holds ${word(USL_TABLES.length)} entities (${USL_TABLES.map(code).join(", ")}) and ${word(DQ_RULES.length)} DQ rules (${rules}). On this page the same SQL runs on sql.js over the recorded rows, and each query on the Findings tab carries the text the live pass sends to Zetaris, rendered at build time. <code>test/parity.test.ts</code> holds the two engines to the same columns, rows and totals; the README's "What it proves" table gives its last measured count.</p>`;
 }
 
 // ---- the build --------------------------------------------------------------------------------------------------
@@ -622,6 +978,10 @@ export async function buildSite(opts: BuildOptions = {}): Promise<BuildResult> {
     throw new SiteError(`refusing to publish: ${stale.join(", ")} ${stale.length === 1 ? "is" : "are"} stale: re-running the pass over the slice does not give the committed findings; run npm run examples, then npm run site (or pass --allow-stale to publish the page marked stale)`);
   }
 
+  const resultsDir = opts.resultsDir ?? newestResults(path.join(ROOT, "eval", "results"));
+  if (!resultsDir) throw new SiteError("refusing to publish: no directory under eval/results holds planted.json and a C*-run*.json; the Nemotron tab is built from one (npm run eval writes it, --results names it)");
+  const nemotron = await nemotronView(resultsDir);
+
   const all = examples.flatMap((e) => e.findings);
   const checks = all.flatMap((f) => f.checks);
   const index: SiteIndex = {
@@ -630,6 +990,7 @@ export async function buildSite(opts: BuildOptions = {}): Promise<BuildResult> {
     totals: {
       examples: examples.length, findings: all.length, checks: checks.length, checksRerun: checks.filter((c) => c.status === "ran").length,
       verbs: tally(all.map((f) => f.verb)), classes: tally(all.map((f) => f.class)), judgeModels: tally(all.map((f) => f.judge.model)),
+      nemotron: nemotron.totals,
     },
     sample,
     decisionRule: DECISION_RULE,
@@ -642,14 +1003,20 @@ export async function buildSite(opts: BuildOptions = {}): Promise<BuildResult> {
   const docText = lf(readFileSync(documentPath, "utf8"));
   const doc = documentPanel(docText, docFile);
   const sourcesText = sourcesMarkdown();
+  const uslText = uslMarkdown();
 
   const files = new Map<string, string>();
-  files.set("index.html", page(doc.html, sourcesPanel(sourcesText)));
+  files.set("index.html", page(doc.html, sourcesPanel(sourcesText, uslText), nemotronPanel(nemotron)));
   files.set(".nojekyll", "");
   files.set("data/index.json", `${JSON.stringify(index, null, 2)}\n`);
   for (const e of examples) files.set(`data/${e.dir}.json`, `${JSON.stringify(e, null, 1)}\n`);
 
-  const scan = scanOutput(files, new Map([[`${docFile} (the Document tab)`, docText], ["sourcesMarkdown() (the Sources tab)", sourcesText]]));
+  const nemotronName = `${nemotron.dir} (the Nemotron tab)`;
+  const scan = scanOutput(
+    files,
+    new Map([[`${docFile} (the Document tab)`, docText], ["sourcesMarkdown() (the Sources tab)", sourcesText], ["uslMarkdown() (the Sources tab)", uslText], [nemotronName, leavesOf(nemotron).join("\n")]]),
+    new Map([[nemotronName, nemotron]]),
+  );
   const bytes = [...files.values()].reduce((n, s) => n + Buffer.byteLength(s), 0);
   if (bytes > MAX_BYTES) throw new SiteError(`refusing to publish: the page and its data are ${bytes} bytes, over the ${MAX_BYTES}-byte budget`);
 
@@ -664,14 +1031,16 @@ export async function buildSite(opts: BuildOptions = {}): Promise<BuildResult> {
     outDir, files, bytes, index, scan,
     document: { file: docFile, bytes: Buffer.byteLength(docText), sha256: sha(docText), decidedAt: doc.decidedAt },
     sources: sourceRows().length,
+    nemotron,
   };
 }
 
 // ---- the page: one file, inline CSS and script, no framework, no CDN, no external font -------------------------
-// Three tabs: Findings (the script renders data/), Document and Sources (static HTML, built above). The script shows
-// the tab the address names (#document, #sources; any other address is Findings); with the script off every tab shows.
+// Four tabs: Findings (the script renders data/), Document, Sources and Nemotron (static HTML, built above). The script
+// shows the tab the address names (#document, #sources, #nemotron; any other address is Findings); with the script off
+// every tab shows.
 
-const page = (documentTab: string, sourcesTab: string): string => `<!doctype html>
+const page = (documentTab: string, sourcesTab: string, nemotronTab: string): string => `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -758,15 +1127,17 @@ footer p{max-width:86ch}
 .md li{margin:4px 0;max-width:110ch}
 .md .scroll{width:max-content;max-width:100%}
 .md>.meta{max-width:86ch}
+td details summary{cursor:pointer;color:var(--accent)}
+td pre{white-space:pre-wrap;word-break:break-word;margin:4px 0 0;min-width:36ch;font-size:11.5px}
 @media (max-width:640px){body{font-size:14.5px}h1{font-size:1.4rem}.controls{position:static}dl.fields{grid-template-columns:1fr}dl.fields dt{margin-top:6px}details.finding>summary{padding:12px 10px}.body{padding:0 10px 14px}}
 </style>
 </head>
 <body>
 <header><div class="wrap">
 <h1>drift-agent: every finding, with the SQL behind it</h1>
-<p class="lede">A config-drift assurance pass for MSP technicians, replayed from recorded collections. Open a finding to see the detector query that raised it, each precondition check with the SQL that ran, the rows it returned and the hashes, and the judge step. The Document tab holds the owner's document over the full recorded bundle, and the Sources tab names the tables and the source behind each finding class.</p>
+<p class="lede">A config-drift assurance pass for MSP technicians, replayed from recorded collections. Open a finding to see the detector query that raised it, each precondition check with the SQL that ran, the rows it returned and the hashes, and the judge step. The Document tab holds the owner's document over the full recorded bundle, the Sources tab names the tables and the source behind each finding class, and the Nemotron tab holds the eval's Nemotron calls with every SELECT its judges wrote, re-run at build. In a live pass the same detector and check SQL runs as Zetaris Lightning SQL over the <code>${escapeHtml(DATASOURCE)}</code> datasource, with the <code>${escapeHtml(USL_NAME)}</code> semantic layer and its ${word(DQ_RULES.length)} DQ rules over it; on this page it runs on sql.js over the recorded rows, and <code>test/parity.test.ts</code> holds the two engines to the same columns, rows and totals.</p>
 <ul class="stats" id="stats"></ul>
-<nav class="tabs" aria-label="Page sections"><a href="#findings">Findings</a><a href="#document">Document</a><a href="#sources">Sources</a></nav>
+<nav class="tabs" aria-label="Page sections"><a href="#findings">Findings</a><a href="#document">Document</a><a href="#sources">Sources</a><a href="#nemotron">Nemotron</a></nav>
 </div></header>
 <main>
 <div class="panel" id="findings">
@@ -778,15 +1149,16 @@ footer p{max-width:86ch}
 <span class="meta" id="shown"></span>
 </div></div>
 <div class="wrap" id="app"><p class="empty">Loading data/index.json ...</p>
-<noscript><p class="error">This tab renders the files in data/ with a short script. Without it, read data/index.json and the per-example files beside it directly; the Document and Sources tabs below read as they are.</p></noscript>
+<noscript><p class="error">This tab renders the files in data/ with a short script. Without it, read data/index.json and the per-example files beside it directly; the Document, Sources and Nemotron tabs below read as they are.</p></noscript>
 </div>
 </div>
 ${documentTab}
 ${sourcesTab}
+${nemotronTab}
 </main>
 <footer><div class="wrap">
 <p><b>What this page is.</b> A replay of recorded, redacted real collections taken on 24 Oct 2026 from two production Linux hosts (nginx, over SSH with a fixed script of reads; the key is the operator's, so the read-only property is the script's) and six Cloudflare DNS zones with their audit log. Every name, address, host and actor is a pseudonym keyed by the tenant's salt, and every value hash an HMAC under it; the salt is withheld, so a guess at a real name cannot be confirmed against this page. Nothing is authored: each example is a slice of <code>sample/bundle.json</code> cut by <code>scripts/examples.ts</code>, and each finding is what the pass (<code>src/pipeline.ts</code>) computed over its slice with no model.</p>
-<p><b>How it was built.</b> <code>npm run site</code> binds every check's parameters from its finding the way the pass does, renders the catalogue template through the data layer on sql.js, runs it again over the slice and refuses to publish unless the row count, the verdict and the sentence equal the record; the detector query must return the finding's own row. It also refuses on any template it cannot render, and on any string that matches the operator's deny-list or that the redactor would still replace. A table shows at most ${MAX_ROWS} rows and ${MAX_CELL} characters per cell; the row count and the row hash cover every row and every character. The Document and Sources tabs are markdown turned into HTML at build time, every character outside headings, paragraphs, lists, tables, inline code and bold escaped: <code>examples/document.md</code> as <code>npm run document</code> wrote it, and the section <code>sourcesMarkdown()</code> reads off the SQL; the deny-list scan reads both as written.</p>
+<p><b>How it was built.</b> <code>npm run site</code> binds every check's parameters from its finding the way the pass does, renders the catalogue template through the data layer on sql.js, and once more with Zetaris's table names (<code>${escapeHtml(DATASOURCE)}.&lt;table&gt;</code>) as the text a live pass sends, shown under each query; it runs the sql.js text again over the slice and refuses to publish unless the row count, the verdict and the sentence equal the record; the detector query must return the finding's own row. It also refuses on any template it cannot render, and on any string that matches the operator's deny-list or that the redactor would still replace. A table shows at most ${MAX_ROWS} rows and ${MAX_CELL} characters per cell; the row count and the row hash cover every row and every character. The Document and Sources tabs are markdown turned into HTML at build time, every character outside headings, paragraphs, lists, tables, inline code and bold escaped: <code>examples/document.md</code> as <code>npm run document</code> wrote it, and the section <code>sourcesMarkdown()</code> reads off the SQL; the deny-list scan reads both as written. The Nemotron tab is static HTML from one eval results directory, the newest under <code>eval/results</code> unless <code>--results</code> names another: the build loads the recording and the policy rows its runs name into sql.js, re-guards and re-runs every judge SELECT recorded with a row count, and refuses to publish when one that runs returns another count; every string the tab is built from passes the deny-list scan and the redactor.</p>
 <p><b>Reproduce it.</b> In a clone of the repository, with nothing but Node 22 and <code>npm install</code>: <code>SAMPLE_MODE=true npm run sample</code> reproduces the findings from the repo (the full bundle, no credentials, no model); <code>npm run examples</code> recuts these slices and recomputes their findings; <code>npm run site</code> rebuilds this page.</p>
 <p id="sample-line"></p>
 </div></footer>
@@ -818,6 +1190,7 @@ ${sourcesTab}
   }
   const hashes = (pairs) => h("div", { class: "hashes" }, pairs.filter((p) => p[1]).map(([k, v]) => h("div", null, k + " " + v)));
   const params = (p) => Object.entries(p).map(([k, v]) => k + " = " + (v === null ? "NULL" : JSON.stringify(v))).join("\\n");
+  const asZetaris = (sql) => sql ? h("details", null, h("summary", { class: "meta" }, "as the live pass sends it to Zetaris"), h("pre", null, sql)) : null;
   const extras = (o) => Object.keys(o || {}).length
     ? h("dl", { class: "fields" }, Object.entries(o).map(([k, v]) => [h("dt", null, k), h("dd", null, typeof v === "string" ? v : JSON.stringify(v))]))
     : null;
@@ -835,6 +1208,7 @@ ${sourcesTab}
       extras(c.extra),
       h("pre", null, c.sql),
       h("details", null, h("summary", { class: "meta" }, "parameters"), h("pre", null, params(c.params))),
+      asZetaris(c.zetarisSql),
       c.status === "ran" ? table(c.rows) : null,
       hashes([["sql", c.sqlSha256], ["rows", c.rows && c.rows.sha256]]));
   }
@@ -880,7 +1254,7 @@ ${sourcesTab}
         f.world ? h("p", { class: "meta" }, "World Model: referent fingerprint " + (f.world.before || "unknown") + " then, " + (f.world.after || "unknown") + " now; bytes " + (f.world.bytes_unchanged ? "unchanged" : "changed or no previous run")) : null,
         exposure(f.exposure),
         h("h4", null, "Detected by"),
-        d ? [h("p", null, code(d.query), " ", d.description), h("pre", null, d.sql),
+        d ? [h("p", null, code(d.query), " ", d.description), h("pre", null, d.sql), asZetaris(d.zetarisSql),
           h("p", { class: "meta" }, "over this slice it returns " + plural(d.total, "row") + "; the one this finding came from:"),
           table(d.matched), hashes([["sql", d.sqlSha256], ["row", d.matched.sha256]])]
           : h("p", { class: "empty" }, "no detector query is mapped for this class"),
@@ -937,7 +1311,9 @@ ${sourcesTab}
       h("li", null, h("b", null, count(t.verbs)), "verbs"),
       h("li", null, h("b", null, t.checksRerun + " / " + t.checks), "checks re-run at build, counts equal"),
       h("li", null, h("b", null, Object.keys(t.classes).length), "finding classes"),
-      h("li", null, h("b", null, Object.keys(t.judgeModels).join(", ")), "judge model in these runs"));
+      h("li", null, h("b", null, h("a", { href: "#nemotron" }, String(t.nemotron.calls))), "Nemotron calls in eval " + t.nemotron.stamp + ", " + t.nemotron.signatureVerified + " receipts verified"),
+      h("li", null, h("b", null, h("a", { href: "#nemotron" }, t.nemotron.rerunEqual + " / " + t.nemotron.judgeSelects)),
+        "Nemotron judge SELECTs re-run at build, counts equal" + (t.nemotron.notRunnable ? "; " + t.nemotron.notRunnable + " recorded text does not run" : "")));
     options(document.getElementById("f-class"), Object.keys(t.classes));
     options(document.getElementById("f-verb"), Object.keys(t.verbs));
     app.replaceChildren(...examples.map(example));
@@ -979,14 +1355,19 @@ ${sourcesTab}
 
 const invoked = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href.toLowerCase() : "";
 if (invoked === import.meta.url.toLowerCase()) {
-  const { values: args } = parseArgs({ options: { out: { type: "string" }, examples: { type: "string" }, "allow-stale": { type: "boolean" } } });
+  const { values: args } = parseArgs({ options: { out: { type: "string" }, examples: { type: "string" }, "allow-stale": { type: "boolean" }, results: { type: "string" } } });
   try {
-    const r = await buildSite({ outDir: args.out ? path.resolve(args.out) : undefined, examplesDir: args.examples ? path.resolve(args.examples) : undefined, allowStale: args["allow-stale"] === true });
+    const r = await buildSite({
+      outDir: args.out ? path.resolve(args.out) : undefined, examplesDir: args.examples ? path.resolve(args.examples) : undefined, allowStale: args["allow-stale"] === true,
+      resultsDir: args.results ? path.resolve(args.results) : undefined,
+    });
     for (const e of r.index.examples) console.log(`${e.dir}: ${e.findings} finding(s), ${e.checks} check(s) rendered and re-run, counts equal; pass over the slice ${e.reproduced ? "reproduces" : "DOES NOT reproduce"} findings.json`);
     const s = r.index.sample;
     if (s) console.log(`sample: ${s.runs} runs, ${s.observed} observations, ${s.findings} findings (${Object.entries(s.classes).map(([k, n]) => `${k} ${n}`).join(", ")})`);
-    console.log(`tabs: Findings; Document (${r.document.file}, ${r.document.bytes} bytes, decided at ${r.document.decidedAt ?? "no instant stated"}); Sources (${r.sources} finding classes)`);
-    console.log(`scan: ${r.scan.files} files and ${r.scan.shown} rendered markdown text(s), ${r.scan.labels} deny-list label(s), ${r.scan.aliases} ssh alias(es), ${r.scan.leaves} JSON strings through the redactor unchanged${r.scan.skipped ? ` (${r.scan.skipped})` : ""}`);
+    const n = r.nemotron.totals;
+    console.log(`nemotron: ${n.stamp} ${n.set}: ${n.calls} calls, ${n.signatureVerified} receipts verified, ${n.substitutions} substitutions; ${n.judgeSelects} judge SELECTs, ${n.rerunEqual} re-run equal, ${n.notRunnable} recorded text does not run`);
+    console.log(`tabs: Findings; Document (${r.document.file}, ${r.document.bytes} bytes, decided at ${r.document.decidedAt ?? "no instant stated"}); Sources (${r.sources} finding classes); Nemotron (${r.nemotron.dir}, ${r.nemotron.claims.length} planted claims, ${r.nemotron.items.length} item judges)`);
+    console.log(`scan: ${r.scan.files} files and ${r.scan.shown} rendered markdown text(s), ${r.scan.labels} deny-list label(s), ${r.scan.aliases} ssh alias(es), ${r.scan.leaves} data and Nemotron tab strings through the redactor unchanged${r.scan.skipped ? ` (${r.scan.skipped})` : ""}`);
     for (const [name, text] of r.files) console.log(`  ${rel(path.join(r.outDir, name))} ${Buffer.byteLength(text)} bytes`);
     console.log(`site: ${r.bytes} bytes in ${r.files.size} files (budget ${MAX_BYTES}) -> ${rel(r.outDir) || "."}`);
     if (r.index.examples.some((e) => !e.reproduced)) console.log("warning: published with --allow-stale; at least one example is stale and the page says so. Run npm run examples, then npm run site");

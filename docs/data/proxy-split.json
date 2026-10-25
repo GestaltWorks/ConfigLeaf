@@ -113,6 +113,7 @@
     "description": "A proxied CNAME whose target in the same DNS run is a direct A or AAAA record: the address the proxy hides on one name is published on the other.",
     "sql": "SELECT c.zone, c.name AS proxied_name, c.record_id AS proxied_record_id, a.name AS target_name, a.type AS target_type,\n       a.content AS target_content, a.record_id AS target_record_id, c.observed_at\nFROM dns_record c\nJOIN dns_record a ON a.tenant_id = c.tenant_id AND a.run_id = c.run_id AND a.name = c.content AND a.type IN ('A', 'AAAA') AND a.proxied = 0\nWHERE c.tenant_id = 'client-1' AND c.run_id = 'run-9d48791b00433777' AND c.type = 'CNAME' AND c.proxied = 1\nORDER BY c.zone, c.name, c.record_id, a.record_id",
     "sqlSha256": "sha256:7aa2967a6324b1ac5654652b410938b75064c4e61510539267d64aad7dd4d885",
+    "zetarisSql": "SELECT c.zone, c.name AS proxied_name, c.record_id AS proxied_record_id, a.name AS target_name, a.type AS target_type,\n       a.content AS target_content, a.record_id AS target_record_id, c.observed_at\nFROM DRIFT.dns_record c\nJOIN DRIFT.dns_record a ON a.tenant_id = c.tenant_id AND a.run_id = c.run_id AND a.name = c.content AND a.type IN ('A', 'AAAA') AND a.proxied = 0\nWHERE c.tenant_id = 'client-1' AND c.run_id = 'run-9d48791b00433777' AND c.type = 'CNAME' AND c.proxied = 1\nORDER BY c.zone, c.name, c.record_id, a.record_id",
     "params": {
      "tenant_id": "client-1",
      "dns_run_id": "run-9d48791b00433777"
@@ -167,6 +168,7 @@
      },
      "sql": "SELECT c.run_id, c.tenant_id, c.surface, c.host, c.expected_count, c.observed_count, c.status\nFROM collection_run c\nWHERE c.run_id = 'run-9d48791b00433777'\n  AND (c.observed_count < c.expected_count OR c.status <> 'complete'\n    OR c.expected_count IS NULL OR c.observed_count IS NULL\n    OR (c.surface LIKE 'linux.%' AND c.expected_count > (SELECT COUNT(*) FROM observation x WHERE x.run_id = c.run_id)))",
      "sqlSha256": "sha256:c715db73efa516706bff77cd2772a47770aab8a5ddc0efd1725e720b08800333",
+     "zetarisSql": "SELECT c.run_id, c.tenant_id, c.surface, c.host, c.expected_count, c.observed_count, c.status\nFROM DRIFT.collection_run c\nWHERE c.run_id = 'run-9d48791b00433777'\n  AND (c.observed_count < c.expected_count OR c.status <> 'complete'\n    OR c.expected_count IS NULL OR c.observed_count IS NULL\n    OR (c.surface LIKE 'linux.%' AND c.expected_count > (SELECT COUNT(*) FROM DRIFT.observation x WHERE x.run_id = c.run_id)))",
      "rows": {
       "columns": [
        "run_id",
@@ -206,6 +208,7 @@
      },
      "sql": "SELECT event_id, source, actor, action, old_value, new_value, occurred_at\nFROM audit_event\nWHERE tenant_id = 'client-1' AND resource_id = 'bce1ca2bb7caa2de9b6823d5f6ecd3f2'\n  AND occurred_at >= '2026-04-16T21:11:15.232Z' AND occurred_at <= '2026-10-25T13:53:44.528Z'\n  AND actor IS NOT NULL AND actor <> ''\nORDER BY occurred_at, event_id",
      "sqlSha256": "sha256:d83d34403d55de0b3207cf057e69cadee98741ee7aa6c2b6dd0d132531ce35aa",
+     "zetarisSql": "SELECT event_id, source, actor, action, old_value, new_value, occurred_at\nFROM DRIFT.audit_event\nWHERE tenant_id = 'client-1' AND resource_id = 'bce1ca2bb7caa2de9b6823d5f6ecd3f2'\n  AND occurred_at >= '2026-04-16T21:11:15.232Z' AND occurred_at <= '2026-10-25T13:53:44.528Z'\n  AND actor IS NOT NULL AND actor <> ''\nORDER BY occurred_at, event_id",
      "rows": {
       "columns": [
        "event_id",
@@ -262,6 +265,7 @@
      },
      "sql": "SELECT e.event_id, e.source, e.action, e.old_value AS previous_value, e.occurred_at AS recorded_at, 'old_value' AS evidence\nFROM audit_event e\nWHERE e.tenant_id = 'client-1' AND e.resource_id = 'bce1ca2bb7caa2de9b6823d5f6ecd3f2'\n  AND e.old_value IS NOT NULL AND e.old_value <> ''\n  AND NOT EXISTS (SELECT 1 FROM audit_event x WHERE x.tenant_id = e.tenant_id AND x.resource_id = e.resource_id AND x.occurred_at > e.occurred_at)\nUNION ALL\nSELECT p.event_id, p.source, p.action, p.new_value AS previous_value, p.occurred_at AS recorded_at, 'earlier_event' AS evidence\nFROM audit_event e\nJOIN audit_event p ON p.tenant_id = e.tenant_id AND p.resource_id = e.resource_id AND p.occurred_at < e.occurred_at\n  AND p.action IN ('create', 'update') AND p.new_value IS NOT NULL AND p.new_value <> ''\nWHERE e.tenant_id = 'client-1' AND e.resource_id = 'bce1ca2bb7caa2de9b6823d5f6ecd3f2'\n  AND NOT EXISTS (SELECT 1 FROM audit_event x WHERE x.tenant_id = e.tenant_id AND x.resource_id = e.resource_id AND x.occurred_at > e.occurred_at)\n  AND NOT EXISTS (SELECT 1 FROM audit_event y WHERE y.tenant_id = e.tenant_id AND y.resource_id = e.resource_id AND y.action IN ('create', 'update')\n    AND y.new_value IS NOT NULL AND y.new_value <> '' AND y.occurred_at < e.occurred_at AND y.occurred_at > p.occurred_at)\nORDER BY evidence, event_id",
      "sqlSha256": "sha256:9e4a63c9e3aa1970fc6345b11edb1c0985863fba7bab6561173658870e2dad09",
+     "zetarisSql": "SELECT e.event_id, e.source, e.action, e.old_value AS previous_value, e.occurred_at AS recorded_at, 'old_value' AS evidence\nFROM DRIFT.audit_event e\nWHERE e.tenant_id = 'client-1' AND e.resource_id = 'bce1ca2bb7caa2de9b6823d5f6ecd3f2'\n  AND e.old_value IS NOT NULL AND e.old_value <> ''\n  AND NOT EXISTS (SELECT 1 FROM DRIFT.audit_event x WHERE x.tenant_id = e.tenant_id AND x.resource_id = e.resource_id AND x.occurred_at > e.occurred_at)\nUNION ALL\nSELECT p.event_id, p.source, p.action, p.new_value AS previous_value, p.occurred_at AS recorded_at, 'earlier_event' AS evidence\nFROM DRIFT.audit_event e\nJOIN DRIFT.audit_event p ON p.tenant_id = e.tenant_id AND p.resource_id = e.resource_id AND p.occurred_at < e.occurred_at\n  AND p.action IN ('create', 'update') AND p.new_value IS NOT NULL AND p.new_value <> ''\nWHERE e.tenant_id = 'client-1' AND e.resource_id = 'bce1ca2bb7caa2de9b6823d5f6ecd3f2'\n  AND NOT EXISTS (SELECT 1 FROM DRIFT.audit_event x WHERE x.tenant_id = e.tenant_id AND x.resource_id = e.resource_id AND x.occurred_at > e.occurred_at)\n  AND NOT EXISTS (SELECT 1 FROM DRIFT.audit_event y WHERE y.tenant_id = e.tenant_id AND y.resource_id = e.resource_id AND y.action IN ('create', 'update')\n    AND y.new_value IS NOT NULL AND y.new_value <> '' AND y.occurred_at < e.occurred_at AND y.occurred_at > p.occurred_at)\nORDER BY evidence, event_id",
      "rows": {
       "columns": [
        "event_id",
@@ -309,6 +313,7 @@
      },
      "sql": "SELECT 'dns_record' AS evidence, a.record_id AS resource_id, a.content AS old_value, b.content AS new_value, b.observed_at AS seen_at\nFROM dns_record a\nJOIN dns_record b ON b.tenant_id = a.tenant_id AND b.record_id = a.record_id AND b.observed_at > a.observed_at AND b.content <> a.content\nWHERE a.tenant_id = 'client-1' AND a.name = 'host-524b42.quest' AND b.name = 'host-524b42.quest'\n  AND a.observed_at >= '2026-04-16T21:11:15.232Z' AND b.observed_at <= '2026-10-25T13:53:44.528Z'\n  AND NOT EXISTS (SELECT 1 FROM dns_record m WHERE m.tenant_id = a.tenant_id AND m.record_id = a.record_id AND m.observed_at > a.observed_at AND m.observed_at < b.observed_at)\nUNION ALL\nSELECT 'audit_event' AS evidence, e.resource_id, e.old_value, e.new_value, e.occurred_at AS seen_at\nFROM audit_event e\nWHERE e.tenant_id = 'client-1' AND e.occurred_at >= '2026-04-16T21:11:15.232Z' AND e.occurred_at <= '2026-10-25T13:53:44.528Z'\n  AND e.resource_id IN (SELECT d.record_id FROM dns_record d WHERE d.tenant_id = 'client-1' AND d.name = 'host-524b42.quest')\nORDER BY seen_at, evidence, resource_id",
      "sqlSha256": "sha256:712f21f759d0b1f73d537a2eae0d1d57d164e8e57aa55b4e687ed21f9de843aa",
+     "zetarisSql": "SELECT 'dns_record' AS evidence, a.record_id AS resource_id, a.content AS old_value, b.content AS new_value, b.observed_at AS seen_at\nFROM DRIFT.dns_record a\nJOIN DRIFT.dns_record b ON b.tenant_id = a.tenant_id AND b.record_id = a.record_id AND b.observed_at > a.observed_at AND b.content <> a.content\nWHERE a.tenant_id = 'client-1' AND a.name = 'host-524b42.quest' AND b.name = 'host-524b42.quest'\n  AND a.observed_at >= '2026-04-16T21:11:15.232Z' AND b.observed_at <= '2026-10-25T13:53:44.528Z'\n  AND NOT EXISTS (SELECT 1 FROM DRIFT.dns_record m WHERE m.tenant_id = a.tenant_id AND m.record_id = a.record_id AND m.observed_at > a.observed_at AND m.observed_at < b.observed_at)\nUNION ALL\nSELECT 'audit_event' AS evidence, e.resource_id, e.old_value, e.new_value, e.occurred_at AS seen_at\nFROM DRIFT.audit_event e\nWHERE e.tenant_id = 'client-1' AND e.occurred_at >= '2026-04-16T21:11:15.232Z' AND e.occurred_at <= '2026-10-25T13:53:44.528Z'\n  AND e.resource_id IN (SELECT d.record_id FROM DRIFT.dns_record d WHERE d.tenant_id = 'client-1' AND d.name = 'host-524b42.quest')\nORDER BY seen_at, evidence, resource_id",
      "rows": {
       "columns": [
        "evidence",
@@ -360,7 +365,7 @@
     "extra": {},
     "status": "skipped",
     "model": "none",
-    "detail": "No model ran in this pass, so the judge step is traced as skipped (model: none). A live pass sends the claim and its rows to Nemotron Ultra for one SELECT that returns rows only if the claim is false, runs it through the same guard and data layer, and keeps the verdict only when the signed receipt names an Ultra."
+    "detail": "No model ran in this pass, so the judge step is traced as skipped (model: none). Nemotron runs in the Actor's investigation and in the eval; the Nemotron tab re-runs every SELECT its judge wrote there."
    },
    "sample": {
     "match": "same",

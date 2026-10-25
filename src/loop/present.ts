@@ -11,6 +11,11 @@
 //     pass's tally line, wrapped onto further indented lines at the width, and each finding line, the verb first, then
 //     the class's words, then the object. An action line names its kind as the ledger does (rollback_file,
 //     revert_record), then the object in plain words ("DNS record <name>", "<dir>/<file> on <host>").
+//   - An investigation that is done names both Nemotron calls from its record (nemotronOf): the checks Lightning picked,
+//     or the default checks when Lightning's selection held none, then Ultra's refuting SELECT with its row count and
+//     verdict, each call's served model (its last path segment) and receipt id, wrapped at the width. A record without
+//     the judge's line gives the count form: "<n> checks, judge <verdict> · <n> receipts". Its what-happened sentence
+//     names Lightning and Ultra, each on a verified receipt, when Lightning picked the checks and Ultra ruled.
 //   - What happened (whatHappened, a cycle's screen only): between the last row and the done line, at most STORY_MAX
 //     sentences of one line each, built from the pass's findings, the act step's outcomes or plan and the tickets
 //     step's operations: one per action, one for the tickets closed as resolved, one for the findings with a
@@ -31,6 +36,9 @@
 //     name the step carries ("collect:linux <alias>") and the one carrier test/leak.test.ts allows.
 //   - A failing step is one red row, "<step> failed <reason, one line>"; the done line then reads "stopped at <step> ·
 //     <i> of <n>".
+//   - Zetaris: given the queries the pass sent (passView's second argument), the first line under the pass row reads
+//     "Zetaris Lightning SQL over <datasource> · <n> queries · <n> rows · <n> failed", the failures red above 0;
+//     given the cycle's tally, the done line names "<n> Zetaris queries, <n> failed" before the trace.
 //   - The callers print the old full line after a step's rows under --verbose (the old formatters stay) and only the
 //     header and the done line under --quiet.
 //
@@ -39,6 +47,7 @@
 import type { ActResult } from "../actions/act.ts";
 import type { ActionOutcome, PlanItem } from "../actions/plan.ts";
 import type { FindingClass } from "../catalogue/templates.ts";
+import type { QueryTally } from "../data/engines/counting.ts";
 import type { Action } from "../data/rows.ts";
 import type { Finding, Verb } from "../pipeline.ts";
 import type { TicketOp } from "../psa/index.ts";
@@ -159,7 +168,15 @@ export interface DoneInfo {
   skipped?: number;
   trace?: string;
   stopped?: { step: string; at: number; of: number };
+  /** The queries the cycle sent through Zetaris (src/data/engines/counting.ts); absent, the line names none. */
+  queries?: Pick<QueryTally, "queries" | "failed">;
 }
+
+/** The queries a step sent through Zetaris, with the datasource they read. */
+export type ZetarisFacts = Pick<QueryTally, "queries" | "rows" | "failed"> & { datasource: string };
+
+/** "<n> failed", red above 0. */
+const failedSeg = (n: number): Seg => (n > 0 ? { text: `${thousands(n)} failed`, tone: "red" } : "0 failed");
 
 export class Table {
   readonly subjectWidth: number;
@@ -244,7 +261,8 @@ export class Table {
     const lead = d.stopped
       ? `${paint(`stopped at ${this.clean(d.stopped.step)}`, "red", this.o.color)} · ${d.stopped.at} of ${d.stopped.of}`
       : [paint("done", "green", this.o.color), ...(d.steps === undefined ? [] : [count(d.steps, "step")]), ...(d.skipped ? [`${d.skipped} skipped`] : [])].join(" · ");
-    return [lead, seconds(d.ms), ...(d.trace ? [`trace ${this.clean(d.trace)}`] : [])].join(" · ");
+    const q = d.queries ? [`${count(d.queries.queries, "Zetaris query", "Zetaris queries")}, ${paint(`${thousands(d.queries.failed)} failed`, d.queries.failed > 0 ? "red" : undefined, this.o.color)}`] : [];
+    return [lead, seconds(d.ms), ...q, ...(d.trace ? [`trace ${this.clean(d.trace)}`] : [])].join(" · ");
   }
 }
 
@@ -344,11 +362,17 @@ export function findingLine(f: Finding): SubLine {
   };
 }
 
-/** pass: the findings by verb; under it the classes in plain words, then one line per ROLLBACK, FIX and ESCALATE. */
-export function passView(p: Pick<PassStep, "findings">): StepView {
+/**
+ * pass: the findings by verb; under it, given `zetaris`, the queries the pass sent through Zetaris, then the classes in
+ * plain words, then one line per ROLLBACK, FIX and ESCALATE.
+ */
+export function passView(p: Pick<PassStep, "findings">, zetaris?: ZetarisFacts): StepView {
   const fs = p.findings;
   const parts: Phrase[] = VERB_ORDER.map((v) => [v, fs.filter((f) => f.verb === v).length] as const).filter(([, n]) => n > 0).map(([v, n]) => [verbSpan(v), ` ${thousands(n)}`]);
   const sub: SubLine[] = [];
+  if (zetaris) {
+    sub.push({ parts: [`Zetaris Lightning SQL over ${zetaris.datasource}`, count(zetaris.queries, "query", "queries"), count(zetaris.rows, "row"), [failedSeg(zetaris.failed)]], wrap: true });
+  }
   const classes = tallyDesc(fs.map((f) => f.finding.class));
   if (classes.length) sub.push({ parts: classes.map(([c, n]) => `${classLabel(c)} ${thousands(n)}`), wrap: true });
   const moving = MOVING.flatMap((v) => fs.filter((f) => f.verb === v));
@@ -427,9 +451,42 @@ export function actionObject(a: Pick<Action, "target" | "disposition_id">, pass?
   return w.length >= 3 ? `${tail(w[2])} on ${w[1]}` : a.target;
 }
 
+/** One Nemotron call an investigation's record names: its receipt id and its served model, shortened. */
+export interface NemotronCall { receipt: string; model: string }
+export interface NemotronFacts {
+  /** Lightning's gated selection and the valid checks it picked; null when the record holds no selection line. */
+  lightning: (NemotronCall & { checks: number }) | null;
+  /** Ultra's verdict on a gated receipt and the refuting SELECT's row count (null when it gave none); null when the record holds no such judge line. */
+  judge: (NemotronCall & { status: "stands" | "refuted" | "invalid_output"; rows: number | null }) | null;
+}
+
+/** The lines src/actions/investigate.ts records for Lightning's gated selection and for the judge's verdict. */
+const LIGHTNING_LINE = /^Lightning selection \(receipt (\S+), ([^,]+),.*?\): (\d+) valid checks?/;
+const JUDGE_LINE = /^judge (stands|refuted|invalid_output) \(receipt (\S+), ([^,)]+).*?(?:, (\d+) rows?)?$/s;
+
+/** A served model as its last path segment, less a ":free" suffix: openrouter/nvidia/nemotron-3-ultra-550b-a55b:free reads nemotron-3-ultra-550b-a55b. */
+export const shortModel = (m: string): string => (m.split("/").at(-1) ?? m).replace(/:free$/, "");
+
+/** The two Nemotron calls an investigation's record names, each null when its line is absent. */
+export function nemotronOf(record: readonly string[]): NemotronFacts {
+  let lightning: NemotronFacts["lightning"] = null;
+  let judge: NemotronFacts["judge"] = null;
+  for (const l of record) {
+    const s: RegExpMatchArray | null = lightning ? null : l.match(LIGHTNING_LINE);
+    if (s) lightning = { receipt: s[1], model: shortModel(s[2].trim()), checks: Number(s[3]) };
+    const j: RegExpMatchArray | null = judge ? null : l.match(JUDGE_LINE);
+    if (j) judge = { status: j[1] as "stands" | "refuted" | "invalid_output", receipt: j[2], model: shortModel(j[3].trim()), rows: j[4] === undefined ? null : Number(j[4]) };
+  }
+  return { lightning, judge };
+}
+
+/** Lightning's call when its selection held a valid check; null when the default checks ran. */
+const lightningPicked = (n: NemotronFacts): NemotronFacts["lightning"] => (n.lightning && n.lightning.checks > 0 ? n.lightning : null);
+
 /**
  * One line under the act row for an applied action. `all` gives an investigation its verb: FIX when a fix follows it
- * on the same disposition. A rollback_file or revert_record names its object, from `pass` when given.
+ * on the same disposition. A rollback_file or revert_record names its object, from `pass` when given. An investigation
+ * that is done names its Nemotron calls when its record holds the judge's line, its parts wrapped at the width.
  */
 export function outcomeLine(o: ActionOutcome, all: readonly ActionOutcome[] = [o], pass?: PassFindings): SubLine {
   const a = o.action;
@@ -440,6 +497,18 @@ export function outcomeLine(o: ActionOutcome, all: readonly ActionOutcome[] = [o
     const v: Verb = all.some((x) => x.action.kind === "fix" && x.action.disposition_id === a.disposition_id) ? "FIX" : "ESCALATE";
     if (a.status !== "done") return { label, parts: [[verbSpan(v)], [st], a.status === "refused" ? refuseClause(o.reason) : clause(o.reason)] };
     const m = o.reason.match(/(\d+) checks? ran \(\d+ hold, \d+ fail\); the judge's verdict counted: (\w+)/);
+    const n = nemotronOf(o.record);
+    const picked = lightningPicked(n);
+    if (n.judge && (picked || m)) {
+      const j = n.judge;
+      const checks: Phrase[] = picked ? [`Lightning picked ${count(picked.checks, "check")}`, `${picked.model} on ${picked.receipt}`] : [`default checks: ${thousands(Number(m![1]))}`];
+      const verdict = `${j.rows === null ? "" : `${count(j.rows, "row")}, `}${j.status.replace(/_/g, " ")}`;
+      return {
+        label,
+        parts: [[verbSpan(v)], ...checks, `Ultra's refuting SELECT: ${verdict}`, `${j.model} on ${j.receipt}`, picked ? "both receipts verified" : "receipt verified", [st, ` ${took}`]],
+        wrap: true,
+      };
+    }
     return { label, parts: [[verbSpan(v)], m ? `${count(Number(m[1]), "check")}, judge ${m[2]}` : clause(o.reason), count(a.receipts.split(",").filter(Boolean).length, "receipt"), [st, ` ${took}`]] };
   }
   if (a.kind === "fix") return { label, parts: [[st], a.status === "refused" ? refuseClause(o.reason) : clause(o.reason)] };
@@ -618,11 +687,14 @@ function rollbackSentence(o: ActionOutcome, f: Finding | undefined, m: Move | un
 function investigateSentence(inv: ActionOutcome, fix: boolean, f: Finding | undefined, m: Move | undefined): string {
   const subject = investigateSubject(fix, f);
   const s = inv.action.status;
-  const did = s === "done" ? "the agent investigated with Nemotron"
+  const n = s === "done" ? nemotronOf(inv.record) : null;
+  const judged = n && lightningPicked(n) && n.judge && n.judge.status !== "invalid_output" ? n.judge.status : null;
+  const did = judged ? `Nemotron Lightning picked the checks and Nemotron Ultra's refuting SELECT ${judged === "stands" ? "left the claim standing" : "refuted the claim"}, each on a verified receipt`
+    : s === "done" ? "the agent investigated with Nemotron"
     : s === "not_judged" ? `the agent ran its checks (${clause(inv.reason)})`
     : `the investigation stopped (${s === "refused" ? refuseClause(inv.reason) : clause(inv.reason)})`;
   if (!m) return `${subject}; ${did}.`;
-  if (m.out.status === "created") return `${subject}; ${did} and opened ${ticketName(m)} for a technician.`;
+  if (m.out.status === "created") return judged ? `${subject}; ${did}; the agent opened ${ticketName(m)} for a technician.` : `${subject}; ${did} and opened ${ticketName(m)} for a technician.`;
   return `${subject}; ${did}, and ${ticketState(m, "is open for a technician")}.`;
 }
 

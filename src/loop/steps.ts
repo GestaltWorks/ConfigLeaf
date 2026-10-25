@@ -20,6 +20,8 @@
 //                       off); ok when the run is complete.
 //   validate            validateCopies over every repository's head when the collect steps made a new commit, else
 //                       nothing; ok when every repository validated, whatever each result.
+//   pass                passStep with the PgLedger; its row names the queries the pass sent through Zetaris, the
+//                       context's query tally (LiveContext queries) read before and after it, with the datasource.
 //   act                 act() over the dispositions of the runs the pass's findings came from, dry run unless apply;
 //                       a pass with no finding for the tenant gives an empty plan without a read. ok when act returns.
 //   tickets             ticketStep with the cycle's pass; a dry run has no adapter and no rows. The url stored on a
@@ -42,6 +44,8 @@ import { act, actSummary, type ActorDeps } from "../actions/act.ts";
 import { liveActorDeps } from "../actions/live.ts";
 import { Cloudflare, collectCloudflare } from "../collectors/cloudflare.ts";
 import { collectHost, storeRows, type CollectResult } from "../collectors/linux.ts";
+import { config } from "../config.ts";
+import { tallySince, type QueryTally } from "../data/engines/counting.ts";
 import type { CollectionRun } from "../data/rows.ts";
 import type { DataLayer } from "../data/layer.ts";
 import type { Store } from "../data/store.ts";
@@ -226,6 +230,8 @@ export interface LiveContext {
   layer: DataLayer;
   tracer: Tracer;
   memory?: TechnicianMemory;
+  /** The layer's query tally so far (src/data/engines/counting.ts); the pass row names the queries the pass sent when given. */
+  queries?: () => QueryTally;
   /** The document's path, and the root it is shown relative to. */
   out: string;
   root: string;
@@ -246,8 +252,10 @@ export function liveSteps(ctx: LiveContext): CycleSteps {
     },
     validate: (commits) => validateStep(commits, { tenant, vaultDir: ctx.vaultDir, store: storeCopies(store), redactor }),
     pass: async (): Promise<PassReport> => {
+      const before = ctx.queries?.();
       const r = await passStep(layer, { tenant, ledger: new PgLedger(store), memory: ctx.memory, tracer });
-      return { ok: true, summary: redactor.text(r.summary), pass: r, view: passView(r) };
+      const sent = before && ctx.queries ? { datasource: config.zetaris.datasource, ...tallySince(before, ctx.queries()) } : undefined;
+      return { ok: true, summary: redactor.text(r.summary), pass: r, view: passView(r, sent) };
     },
     act: (pass) => {
       const deps = liveActorDeps({ tenantId: tenant, apply: ctx.apply, layer, store, vault, redactor, tracer });

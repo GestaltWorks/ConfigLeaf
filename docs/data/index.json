@@ -41,6 +41,17 @@
     },
     "judgeModels": {
       "none": 9
+    },
+    "nemotron": {
+      "stamp": "2026-10-25T09-25-44Z",
+      "set": "dev",
+      "calls": 389,
+      "signatureVerified": 383,
+      "cacheHits": 0,
+      "substitutions": 0,
+      "judgeSelects": 162,
+      "rerunEqual": 161,
+      "notRunnable": 1
     }
   },
   "sample": {
