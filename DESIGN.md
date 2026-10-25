@@ -300,8 +300,25 @@ tree.
 
 `npm run probe` asks every served name from outside, as one collection run of surface `probe` per tenant. The
 population is read live from the Cloudflare API before any probe: the distinct names of the account's A, AAAA and
-CNAME records, wildcards left out; `expected_count` is three per name. Four probes run at once, and every target,
-expected and observed string is redacted before it is stored or printed.
+CNAME records, wildcards left out, plus each name the hosts serve that a wildcard of its zone covers; `expected_count`
+is three per name. Four probes run at once, and every target, expected and observed string is redacted before it is
+stored or printed.
+
+The served names are real, so they come from the vault: the enabled `server_name` values at the head of each host
+repository, the latest complete run of each host (`vaultServedNames` in `src/probe/run.ts`); the observation rows
+carry pseudonyms. One rule matches a served name to the records, `matchName` in `src/probe/rules.ts`: the name's own
+A, AAAA or CNAME records first; then the nearest `*.<parent>` wildcard from its parent down to its zone, the walk
+stopping at a parent that exists without one (RFC 4592's closest encloser); then none. A covered name takes the
+wildcard's records under its own name, so a proxied wildcard expects `cf-ray` present and its content in no
+resolution, a direct one expects `cf-ray` absent and its content in every resolution, and both expected strings name
+the wildcard. The Actor's verification after a rollback applies the same rule to the restored file's real names,
+read from its vault copy (`serverNames` in `src/collectors/nginx.ts`) and handed to the probe function beside their
+pseudonyms. Measured 25 Oct 2026 at 16:12 UTC (`run-e1e626eaa8ec20aa`): of 22 served names, 18 have records of their
+own, 2 sit under a proxied wildcard and 2 match none; 39 names and 117 of 117 probes, http 29 ok and 10 fail, dns 36
+ok and 3 fail, tls 32 ok and 7 fail. The one name of the file of ticket #5, whose rollback at 15:54 UTC ended
+unverified with no record of it in the population, is one of the 2, and its http, dns and tls probes are ok. The
+cycle's probe step (`src/loop/steps.ts`) reads the account's records alone, 37 names; passing it
+`served: () => vaultServedNames(vault, tenant)` gives it the covered names too.
 
 - **http**: `GET https://<name>/`, `redirect: manual`, 10 s timeout. Expected: an answer below status 500, with the
   `cf-ray` header present for a proxied record and absent for a direct one.

@@ -6,6 +6,14 @@
 //     real names and contents (they go on the wire). A target is one distinct name; wildcard names are
 //     left out of the targets. Names are lower-cased with a trailing dot dropped, addresses normalised
 //     (IPv6 to its compressed form) before any comparison.
+//   - A served name (an nginx server_name, real) meets the records by one rule, matchName, which the probe
+//     population (coveredRecords) and the Actor's verification share: a name with A, AAAA or CNAME records of
+//     its own matches them, whatever wildcard its zone holds; otherwise the nearest wildcard enclosing it,
+//     *.<parent> for each parent from the nearest down to its zone (the last two labels, the collector's
+//     .zone), the walk stopping at a parent that exists without one (records of its own or names below it:
+//     RFC 4592's closest encloser, as far as the A, AAAA and CNAME records show it); otherwise none. A name
+//     a wildcard covers joins the population as the wildcard's records under its own name, `wildcard` set,
+//     so the wildcard's proxied flag decides its edge and its addresses by the rules below.
 //   - The edge a name answers from (http's cf-ray): a proxied record answers at Cloudflare's edge
 //     ("present"); a direct A or AAAA record answers at its origin ("absent"); a direct CNAME takes its
 //     target's flag when the target is a record of the collected zones, followed one level (a direct
@@ -29,7 +37,9 @@
 //     redacts the whole string once more before it is stored or printed.
 //
 // Measured 24 Oct 2026 on the operator's account (PROBE_LIVE=true, test/probe.test.ts): 37 targets after
-// wildcards, so a full run asserts expected_count 111.
+// wildcards, so a full run asserts expected_count 111. Measured 25 Oct 2026 at 16:12 UTC (npm run probe,
+// run-e1e626eaa8ec20aa): of the 22 served names at the vault's host heads, 18 match records of their own, 2 a
+// proxied wildcard and 2 none; 39 targets, expected_count 117, the 6 probes of the 2 covered names ok.
 
 import type { ProbeOverride } from "../config.ts";
 import type { ProbeKind } from "../data/rows.ts";
@@ -61,6 +71,8 @@ export interface PopulationRecord {
   proxied: number | null;
   /** Set for a PROBE_TARGETS_OVERRIDE entry: the address and port the name is asked at over plain http. */
   via?: Via;
+  /** Set for a served name a wildcard covers (coveredRecords): the wildcard's name; type, content and proxied are its record's. */
+  wildcard?: string;
 }
 
 /** Where an override target is asked: the address and port of its plain-http listener. */
@@ -82,6 +94,8 @@ export interface ProbeTarget {
   dns: DnsExpectation;
   /** Present for a PROBE_TARGETS_OVERRIDE target. */
   via?: Via;
+  /** Present for a served name a wildcard covers: the wildcard's name, real. */
+  wildcard?: string;
 }
 
 /** PROBE_TARGETS_OVERRIDE's entries as population records: a direct A (AAAA for an IPv6 address) record of the address, `via` set. */
@@ -133,8 +147,8 @@ export function recordAddresses(r: PopulationRecord, byName: ByName): DnsExpecta
 
 const uniqSorted = (xs: readonly string[]): string[] => [...new Set(xs)].sort();
 
-/** The population as targets: one per distinct non-wildcard name of an A, AAAA or CNAME record, in name order. */
-export function buildTargets(records: readonly PopulationRecord[]): ProbeTarget[] {
+/** The A, AAAA and CNAME records by normalised name. */
+function recordsByName(records: readonly PopulationRecord[]): Map<string, PopulationRecord[]> {
   const byName = new Map<string, PopulationRecord[]>();
   for (const raw of records) {
     const type = raw.type.toUpperCase();
@@ -142,15 +156,73 @@ export function buildTargets(records: readonly PopulationRecord[]): ProbeTarget[
     const r = { ...raw, type, name: normName(raw.name) };
     byName.set(r.name, [...(byName.get(r.name) ?? []), r]);
   }
+  return byName;
+}
+
+/** How a served name meets the account's records (matchName). */
+export type NameMatch =
+  | { by: "record"; records: PopulationRecord[] }
+  | { by: "wildcard"; wildcard: string; records: PopulationRecord[] }
+  | { by: "none" };
+
+/** The records by name and every name that exists in the zones: each record's name and the names above it (a wildcard's star dropped). */
+interface RecordIndex { byName: ReadonlyMap<string, readonly PopulationRecord[]>; exists: ReadonlySet<string> }
+
+function indexRecords(records: readonly PopulationRecord[]): RecordIndex {
+  const byName = recordsByName(records);
+  const exists = new Set<string>();
+  for (const n of byName.keys()) {
+    const labels = n.split(".");
+    for (let i = isWildcard(labels[0]) ? 1 : 0; i < labels.length; i++) exists.add(labels.slice(i).join("."));
+  }
+  return { byName, exists };
+}
+
+function matchIn(name: string, idx: RecordIndex): NameMatch {
+  const n = normName(name);
+  if (!n || isWildcard(n) || n.startsWith(".")) return { by: "none" };
+  const own = idx.byName.get(n);
+  if (own) return { by: "record", records: [...own] };
+  if (idx.exists.has(n)) return { by: "none" };
+  const labels = n.split(".");
+  for (let i = 1; i <= labels.length - 2; i++) {
+    const parent = labels.slice(i).join(".");
+    const wild = idx.byName.get(`*.${parent}`);
+    if (wild) return { by: "wildcard", wildcard: `*.${parent}`, records: [...wild] };
+    if (idx.exists.has(parent)) break;
+  }
+  return { by: "none" };
+}
+
+/** The match rule for one served name (see the header): its own records, the wildcard that covers it, or none. */
+export const matchName = (name: string, records: readonly PopulationRecord[]): NameMatch => matchIn(name, indexRecords(records));
+
+/**
+ * The records the population gains for the served names a wildcard covers: each record of that wildcard under the
+ * served name, `wildcard` naming it. A name with records of its own, or with neither, adds nothing. Real values.
+ */
+export function coveredRecords(records: readonly PopulationRecord[], served: readonly string[]): PopulationRecord[] {
+  const idx = indexRecords(records);
+  return uniqSorted(served.map(normName)).flatMap((name) => {
+    const m = matchIn(name, idx);
+    return m.by === "wildcard" ? m.records.map((r) => ({ name, type: r.type, content: r.content, proxied: r.proxied, wildcard: m.wildcard })) : [];
+  });
+}
+
+/** The population as targets: one per distinct non-wildcard name of an A, AAAA or CNAME record, in name order. */
+export function buildTargets(records: readonly PopulationRecord[]): ProbeTarget[] {
+  const byName = recordsByName(records);
   return [...byName.keys()].filter((n) => !isWildcard(n)).sort().map((name) => {
     const own = byName.get(name)!;
     const dns = own.map((r) => recordAddresses(r, byName));
     const via = own.find((r) => r.via)?.via;
+    const wildcard = own.find((r) => r.wildcard)?.wildcard;
     return {
       name,
       edge: combine(own.map((r) => recordEdge(r, byName))),
       dns: { contain: uniqSorted(dns.flatMap((d) => d.contain)), omit: uniqSorted(dns.flatMap((d) => d.omit)) },
       ...(via ? { via: { host: via.host, port: via.port } } : {}),
+      ...(wildcard ? { wildcard } : {}),
     };
   });
 }
@@ -199,8 +271,11 @@ const list = (xs: readonly string[], red: Red): string => xs.map(red).sort().joi
 /** "plain http at <address>:<port> (override)": where an override target's http probe asked. */
 const viaText = (via: Via, red: Red): string => `plain http at ${red(via.host.includes(":") ? `[${via.host}]` : via.host)}:${via.port} (override)`;
 
-export const httpExpected = (edge: Edge, via?: Via, red: Red = (s) => s): string =>
-  `answers (status below ${HTTP_FAIL_STATUS})${via ? ` over ${viaText(via, red)}` : ""}; cf-ray ${edge}`;
+/** "; under the wildcard *.<zone>": the record a covered name's expectation comes from. */
+const underText = (wildcard: string | undefined, red: Red): string => (wildcard ? `; under the wildcard ${red(wildcard)}` : "");
+
+export const httpExpected = (edge: Edge, via?: Via, red: Red = (s) => s, wildcard?: string): string =>
+  `answers (status below ${HTTP_FAIL_STATUS})${via ? ` over ${viaText(via, red)}` : ""}; cf-ray ${edge}${underText(wildcard, red)}`;
 
 export function httpObserved(o: HttpObservation, red: Red, via?: Via): string {
   const over = via ? `; over ${viaText(via, red)}` : "";
@@ -215,11 +290,11 @@ export const dnsOverrideObserved = (via: Via, red: Red): string => `override [${
 /** An override target's tls observation: the lab serves plain http, so no handshake is made. */
 export const TLS_SKIPPED = "skipped: no TLS on this target";
 
-export function dnsExpected(e: DnsExpectation, red: Red): string {
+export function dnsExpected(e: DnsExpectation, red: Red, wildcard?: string): string {
   const parts = ["each resolver answers with an address"];
   if (e.contain.length) parts.push(`contains ${list(e.contain, red)}`);
   if (e.omit.length) parts.push(`omits ${list(e.omit, red)} (proxied: the origin stays hidden)`);
-  return parts.join("; ");
+  return parts.join("; ") + underText(wildcard, red);
 }
 
 export function dnsObserved(answers: readonly ResolverAnswer[], red: Red): string {

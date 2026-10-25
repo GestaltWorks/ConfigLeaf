@@ -4,21 +4,26 @@
 // injected, through a fake sink in Store's shape. PROBE_LIVE=true adds one http probe against one name read
 // from the live API (CLOUDFLARE_API_TOKEN) and asserts the row's shape; skipped otherwise, with one line.
 import { randomBytes } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
 import http from "node:http";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { config, parseProbeOverride, type ProbeOverride } from "../src/config.ts";
 import { Cloudflare, dnsRecordRow, type CfRecord, type CfZone } from "../src/collectors/cloudflare.ts";
+import { serverNames } from "../src/collectors/nginx.ts";
 import { probeId, runId, type Probe } from "../src/data/rows.ts";
 import type { RunStart } from "../src/data/store.ts";
 import {
-  PROBE_CONCURRENCY, RESOLVERS, TLS_EXPECTED, TLS_SKIPPED, buildTargets, dnsExpected, dnsObserved, dnsOk, errorCode, httpExpected, httpObserved, httpOk,
-  normAddress, overridePopulation, tlsDaysLeft, tlsObserved, tlsOk, type PopulationRecord, type ProbeTarget, type ResolverAnswer,
+  PROBE_CONCURRENCY, RESOLVERS, TLS_EXPECTED, TLS_SKIPPED, buildTargets, coveredRecords, dnsExpected, dnsObserved, dnsOk, errorCode, httpExpected, httpObserved, httpOk,
+  matchName, normAddress, overridePopulation, tlsDaysLeft, tlsObserved, tlsOk, type PopulationRecord, type ProbeTarget, type ResolverAnswer,
 } from "../src/probe/rules.ts";
 import {
-  defaultDeps, nodePlainHttp, observeHttp, observeResolver, observeTls, pool, probeOne, probePopulation, readPopulation, runProbes,
+  defaultDeps, nodePlainHttp, observeHttp, observeResolver, observeTls, pool, probeOne, probePopulation, readPopulation, runProbes, vaultServedNames,
   type DnsResolver, type ProbeDeps, type ProbeSink,
 } from "../src/probe/run.ts";
 import { Redactor } from "../src/redactor.ts";
+import { Vault } from "../src/vault/vault.ts";
 import { TOKEN, fakeApi } from "./fixtures/cloudflare/fake-api.ts";
 import zonesFile from "./fixtures/cloudflare/zones.json" with { type: "json" };
 import recordsFile from "./fixtures/cloudflare/records.json" with { type: "json" };
@@ -216,6 +221,106 @@ describe("expectations per record", () => {
 
   it("addresses compare in normal form: IPv6 lower-cased and compressed, IPv4 as given", () => {
     expect([normAddress("2001:0DB8:0000:0000:0000:0000:0000:0001"), normAddress(" 203.0.113.9 "), normAddress("not-an-address:x")]).toEqual(["2001:db8::1", "203.0.113.9", "not-an-address:x"]);
+  });
+});
+
+describe("served names and wildcards: matchName, the rule the probe population and the Actor's verification share", () => {
+  const SHOP = [rec("shop.example", "A", "203.0.113.10", 0), rec("*.shop.example", "A", "203.0.113.10", 1), rec("www.shop.example", "CNAME", "shop.example", 1)];
+  const DIRECT = [rec("direct.example", "A", "198.51.100.40", 0), rec("*.direct.example", "A", "198.51.100.40", 0)];
+  /** The population with the served names added, as the probe run builds it, and its target of `name`. */
+  const covered = (records: PopulationRecord[], name: string): ProbeTarget | undefined => buildTargets([...records, ...coveredRecords(records, [name])]).find((t) => t.name === name);
+
+  it("a name with a record of its own matches its records, as today, and the population gains nothing", () => {
+    const records = [rec("mail.post.example", "A", "198.51.100.25", 0)];
+    expect(matchName("Mail.Post.Example.", records)).toEqual({ by: "record", records: [rec("mail.post.example", "A", "198.51.100.25", 0)] });
+    expect(coveredRecords(records, ["mail.post.example"])).toEqual([]);
+    expect(covered(records, "mail.post.example")).toEqual({ name: "mail.post.example", edge: "absent", dns: { contain: ["198.51.100.25"], omit: [] } });
+  });
+
+  it("a name a proxied wildcard covers is probed under it: cf-ray present, the wildcard's content in no resolution, both expected strings naming the wildcard", () => {
+    expect(matchName("api.shop.example", SHOP)).toEqual({ by: "wildcard", wildcard: "*.shop.example", records: [rec("*.shop.example", "A", "203.0.113.10", 1)] });
+    expect(coveredRecords(SHOP, ["API.shop.example."])).toEqual([{ name: "api.shop.example", type: "A", content: "203.0.113.10", proxied: 1, wildcard: "*.shop.example" }]);
+    const t = covered(SHOP, "api.shop.example")!;
+    expect(t).toEqual({ name: "api.shop.example", edge: "present", dns: { contain: [], omit: ["203.0.113.10"] }, wildcard: "*.shop.example" });
+    expect(httpExpected(t.edge, t.via, red, t.wildcard)).toBe("answers (status below 500); cf-ray present; under the wildcard *.shop.example");
+    expect(dnsExpected(t.dns, red, t.wildcard)).toBe("each resolver answers with an address; omits 203.0.113.10 (proxied: the origin stays hidden); under the wildcard *.shop.example");
+  });
+
+  it("a name a direct wildcard covers is probed under it: cf-ray absent, the wildcard's content in every resolution", () => {
+    expect(covered(DIRECT, "app.direct.example")).toEqual({ name: "app.direct.example", edge: "absent", dns: { contain: ["198.51.100.40"], omit: [] }, wildcard: "*.direct.example" });
+  });
+
+  it("a name with neither a record nor a wildcard matches none: the population gains nothing, so no probe of it runs", () => {
+    const records = [...SHOP, rec("other.example", "A", "198.51.100.9", 0)];
+    for (const name of ["api.other.example", "ghost.example.net", "other.example.org"]) {
+      expect(matchName(name, records), name).toEqual({ by: "none" });
+      expect(covered(records, name), name).toBeUndefined();
+    }
+  });
+
+  it("a name with a record of its own and a wildcard of its zone: its own record wins", () => {
+    expect(matchName("www.shop.example", SHOP)).toEqual({ by: "record", records: [rec("www.shop.example", "CNAME", "shop.example", 1)] });
+    expect(coveredRecords(SHOP, ["www.shop.example", "shop.example"])).toEqual([]);
+    expect(covered(SHOP, "www.shop.example")).toEqual(target(SHOP, "www.shop.example"));
+  });
+
+  it("the nearest wildcard wins; a parent that exists without one stops the walk (the closest encloser); a wildcard or a name with names below it matches none", () => {
+    const records = [...SHOP, rec("*.b.shop.example", "A", "203.0.113.11", 0), rec("deep.shop.example", "A", "203.0.113.12", 0), rec("x.mid.shop.example", "A", "203.0.113.13", 0)];
+    expect(matchName("a.b.shop.example", records)).toMatchObject({ by: "wildcard", wildcard: "*.b.shop.example" });
+    expect(matchName("x.deep.shop.example", records)).toEqual({ by: "none" });
+    expect(matchName("y.mid.shop.example", records)).toEqual({ by: "none" });
+    expect(matchName("mid.shop.example", records)).toEqual({ by: "none" });
+    expect(matchName("b.shop.example", records)).toEqual({ by: "none" });
+    expect(matchName("*.shop.example", records)).toEqual({ by: "none" });
+    expect(matchName(".shop.example", records)).toEqual({ by: "none" });
+    expect(matchName("shop.example", [rec("*.shop.example", "A", "203.0.113.10", 1)])).toEqual({ by: "none" });
+  });
+
+  it("probePopulation with served names: the account's records plus the covered names; the run probes them by pseudonym, the wildcard redacted in the strings", async () => {
+    const served = ["api.shop.example", "shop.example", "www.shop.example", `app.${BLUE}`, "nowhere.example.net"];
+    const population = await probePopulation({ source: fixtureCloudflare, override: [], served: async () => served, agent: "probe" })();
+    expect(population.length).toBe(9);
+    expect(population.filter((x) => x.wildcard).map((x) => [x.name, x.wildcard])).toEqual([["api.shop.example", "*.shop.example"], [`app.${BLUE}`, `*.${BLUE}`]]);
+    const world: World = {
+      http: { ...HEALTHY.http, "api.shop.example": { status: 200, cfRay: true }, [`app.${BLUE}`]: { status: 200, cfRay: true } },
+      dns: { ...HEALTHY.dns, "api.shop.example": [EDGE4], [`app.${BLUE}`]: [EDGE4, EDGE6] },
+      tls: { ...HEALTHY.tls, "api.shop.example": { authorized: true, days: 30 }, [`app.${BLUE}`]: { authorized: true, days: 30 } },
+    };
+    const res = await runProbes({ tenantId: T, population: async () => population, redactor: r, deps: fakeDeps(world) });
+    expect([res.names, res.covered, res.run.expected_count, res.run.status]).toEqual([7, 2, 21, "complete"]);
+    expect(res.rows.every((p) => p.status === "ok")).toBe(true);
+    const app = res.rows.filter((p) => p.target === r.text(`app.${BLUE}`));
+    expect(app.map((p) => p.kind)).toEqual(["http", "dns", "tls"]);
+    expect(app[0].expected).toBe(`answers (status below 500); cf-ray present; under the wildcard *.${r.text(BLUE)}`);
+    expect(RAW_LEAK.test(JSON.stringify(res.rows))).toBe(false);
+  });
+
+  it("serverNames reads one file's server blocks from its bytes: DNS names lower-cased, no trailing dot, upstream servers and _ left out", () => {
+    const src = "http {\n  upstream u { server 127.0.0.1:8000; }\n  server { listen 443 ssl; server_name App.Shop.Example. _ *.shop.example; }\n  server { server_name 203.0.113.9 www.shop.example; }\n}\nserver { server_name ~^re\\.shop\\.example$ api.shop.example; }\n";
+    expect(serverNames(src, "/etc/nginx/conf.d/app.conf")).toEqual(["*.shop.example", "api.shop.example", "app.shop.example", "www.shop.example"]);
+  });
+
+  it("vaultServedNames reads the enabled server_names at the head of each host repository: a .bak and an unlinked site are not served", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "drift-served-"));
+    try {
+      const vault = new Vault(root, r);
+      const file = (p: string, text: string) => ({ path: p, objectId: r.text(p), bytes: Buffer.from(text) });
+      vault.commitRun({
+        tenantId: T, repo: "web-a", run: { run_id: "run-web-a-1", surface: "linux.nginx", host: "host-a", started_at: NOW.toISOString(), status: "complete" },
+        files: [
+          file("/etc/nginx/nginx.conf", "events {}\nhttp {\n  include /etc/nginx/conf.d/*.conf;\n  include /etc/nginx/sites-enabled/*;\n}\n"),
+          file("/etc/nginx/conf.d/api.conf", "server { server_name api.shop.example www.shop.example; }\n"),
+          file("/etc/nginx/conf.d/api.conf.bak", "server { server_name old.shop.example; }\n"),
+          file("/etc/nginx/sites-available/site", "server { server_name Site.Shop.Example _; }\n"),
+          file("/etc/nginx/sites-available/unlinked", "server { server_name unlinked.shop.example; }\n"),
+        ],
+        links: { "/etc/nginx/sites-enabled/site": "/etc/nginx/sites-available/site" },
+      });
+      expect(vaultServedNames(vault, T)).toEqual(["api.shop.example", "site.shop.example", "www.shop.example"]);
+      expect(vaultServedNames(vault, "client-none")).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

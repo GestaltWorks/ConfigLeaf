@@ -21,6 +21,7 @@ import { MemoryLedger, type Ledger } from "../src/ledger.ts";
 import { SKIPPABLE, parseSkip, runCycle, stepNames, type CycleSteps, type StepReport } from "../src/loop/cycle.ts";
 import { LoopError, TenantLedger, dispositionIdOf, passStep, type PassStep } from "../src/loop/pass.ts";
 import { actStep, collectCloudflareStep, collectLinuxStep, documentStep, labelledRows, probeStep, ticketsStep, validateStep } from "../src/loop/steps.ts";
+import { PLAIN } from "../src/loop/present.ts";
 import { LabelTracer } from "../src/loop/trace.ts";
 import { sleep, watch } from "../src/loop/watch.ts";
 import { MemoryTicketRows } from "../src/psa/step.ts";
@@ -70,9 +71,15 @@ describe("runCycle over fake steps", () => {
     expect(calls).toEqual(["collect:cloudflare", "collect:linux a1", "collect:linux a2", "probe", "validate t1/cloudflare,t1/a1,t1/a2", "pass", "act t1", "tickets t1", "document t1"]);
     expect(res.steps.map((s) => `${s.step} ${s.status}`)).toEqual(stepNames(["a1", "a2"]).map((s) => `${s} ok`));
     expect(res.stopped).toBeNull();
-    expect(printed[0]).toBe("cycle: [1/9] collect:cloudflare ok in 0.1 s: collect:cloudflare: fine");
-    expect(printed[5]).toBe("cycle: [6/9] pass ok in 0.1 s: PASS: fine");
-    expect(printed.at(-1)).toBe(res.summary);
+    // the table: the header, one row per step from its summary (the pass's from its result), each time at column 90
+    expect(printed[0]).toBe("drift-agent · cycle · tenant t1 · 1970-01-01 00:00 UTC · dry run");
+    expect(printed[1]).toBe(`${"  collect   cloudflare    fine".padEnd(85)}0.1 s`);
+    expect(printed[2]).toBe(`${"  collect   a1            fine".padEnd(85)}0.1 s`);
+    expect(printed[6]).toBe(`${"  pass      0 findings".padEnd(85)}0.1 s`);
+    expect(printed[9]).toBe(`${"  document  fine".padEnd(85)}0.1 s`);
+    expect(printed.slice(1, -1).every((l) => l.length === 90)).toBe(true);
+    expect(printed.at(-1)).toMatch(/^done · 9 steps · \d+\.\d s$/);
+    expect(printed.join("\n")).not.toMatch(/cycle: \[|CYCLE:/);
     expect(res.summary).toMatch(/^CYCLE: tenant t1, dry run \(act plans and writes nothing to a host or a zone; --apply performs it\): 9 step\(s\): ok 9, skipped 0, failed 0, not run 0; completed; \d+\.\d s$/);
     // one trace line per step and one for the cycle, agent cycle, the step's time as latency
     expect(tracer.events.length).toBe(10);
@@ -82,22 +89,59 @@ describe("runCycle over fake steps", () => {
 
   it("skips the named groups, runs the pass in every cycle, and gives validate no commit when collect is skipped", async () => {
     const calls: string[] = [];
-    const res = await runCycle({ tenant: "t1", apply: true, aliases: ["a1"], skip: parseSkip(["collect,probe", "tickets"]) }, fakeSteps(calls), { print: () => undefined, clock: ticking() });
+    const printed: string[] = [];
+    const res = await runCycle({ tenant: "t1", apply: true, aliases: ["a1"], skip: parseSkip(["collect,probe", "tickets"]) }, fakeSteps(calls), { print: (l) => printed.push(l), clock: ticking() });
     expect(calls).toEqual(["validate ", "pass", "act t1", "document t1"]);
     expect(res.steps.map((s) => s.status)).toEqual(["skipped", "skipped", "skipped", "ok", "ok", "ok", "skipped", "ok"]);
     expect(res.steps[0].summary).toBe("skipped (--skip collect)");
     expect(res.summary).toMatch(/^CYCLE: tenant t1, applied \(act carries out its plan\): 8 step\(s\): ok 4, skipped 4, failed 0, not run 0; completed;/);
+    expect(printed[0]).toMatch(/ · applied$/);
+    expect(printed.slice(1, 4)).toEqual(["  collect   cloudflare    skipped", "  collect   a1            skipped", "  probe     skipped"]);
+    expect(printed[7]).toBe("  tickets   skipped");
+    expect(printed.at(-1)).toMatch(/^done · 8 steps · 4 skipped · \d+\.\d s$/);
   });
 
   it("stops at the first failing step with its reason; every later step is not run", async () => {
     const calls: string[] = [];
+    const printed: string[] = [];
     const steps = fakeSteps(calls, { probe: async () => { calls.push("probe"); return { ok: false, summary: "probe: run r1 100/111 partial", reason: "probe run r1 is partial" }; } });
-    const res = await runCycle({ tenant: "t1", apply: false, aliases: [], skip: new Set() }, steps, { print: () => undefined, clock: ticking() });
+    const res = await runCycle({ tenant: "t1", apply: false, aliases: [], skip: new Set() }, steps, { print: (l) => printed.push(l), clock: ticking(), trace: "logs/cycle_test.jsonl" });
     expect(calls).toEqual(["collect:cloudflare", "probe"]);
     expect(res.stopped).toEqual({ step: "probe", reason: "probe run r1 is partial" });
     expect(res.steps.map((s) => s.status)).toEqual(["ok", "failed", "not_run", "not_run", "not_run", "not_run", "not_run"]);
     expect(res.steps[2].summary).toBe("the cycle stopped at probe");
     expect(res.summary).toContain("ok 1, skipped 0, failed 1, not run 5; stopped at probe: probe run r1 is partial;");
+    // the failing step's row carries its reason; a step not run has no row
+    expect(printed).toHaveLength(4);
+    expect(printed[2]).toBe(`${"  probe     failed        probe run r1 is partial".padEnd(85)}0.1 s`);
+    expect(printed[3]).toMatch(/^stopped at probe · 2 of 7 · \d+\.\d s · trace logs\/cycle_test\.jsonl$/);
+  });
+
+  it("shows each collect:linux row's alias as the cycle was given it; the row's detail passes the redactor", async () => {
+    const printed: string[] = [];
+    const scrub = (s: string): string => s.replace(/fixture-alias/g, "word-aaaaaa");
+    const steps = fakeSteps([], { collectLinux: async (a) => ({ ok: true, summary: `collect:linux ${a}: read ${a}`, commits: [] }) });
+    await runCycle({ tenant: "t1", apply: false, aliases: ["fixture-alias"], skip: new Set() }, steps, { print: (l) => printed.push(l), clock: ticking(), scrub });
+    expect(printed[2]).toBe(`${"  collect   fixture-alias read word-aaaaaa".padEnd(85)}0.1 s`);
+    const skipped: string[] = [];
+    await runCycle({ tenant: "t1", apply: false, aliases: ["fixture-alias"], skip: parseSkip(["collect"]) }, fakeSteps([]), { print: (l) => skipped.push(l), clock: ticking(), scrub });
+    expect(skipped.slice(1, 3)).toEqual(["  collect   cloudflare    skipped", "  collect   fixture-alias skipped"]);
+  });
+
+  it("prints the header and the done line only under quiet, and each step's full line after its row under verbose", async () => {
+    const quiet: string[] = [];
+    await runCycle({ tenant: "t1", apply: false, aliases: [], skip: new Set() }, fakeSteps([]), { print: (l) => quiet.push(l), clock: ticking(), present: { ...PLAIN, quiet: true } });
+    expect(quiet).toHaveLength(2);
+    expect(quiet[0]).toMatch(/^drift-agent · cycle · tenant t1 · /);
+    expect(quiet[1]).toMatch(/^done · 7 steps · /);
+    const verbose: string[] = [];
+    const res = await runCycle({ tenant: "t1", apply: false, aliases: [], skip: new Set() }, fakeSteps([]), { print: (l) => verbose.push(l), clock: ticking(), present: { ...PLAIN, verbose: true } });
+    expect(verbose[1]).toMatch(/^  collect   cloudflare    fine +0\.1 s$/);
+    expect(verbose[2]).toBe("cycle: [1/7] collect:cloudflare ok in 0.1 s: collect:cloudflare: fine");
+    expect(verbose[3]).toMatch(/^  probe     fine +0\.1 s$/);
+    expect(verbose[4]).toBe("cycle: [2/7] probe ok in 0.1 s: probe: fine");
+    expect(verbose.at(-2)).toMatch(/^done · 7 steps · /);
+    expect(verbose.at(-1)).toBe(res.summary);
   });
 
   it("fails a step that throws with its message, scrubbed, and stops there", async () => {
@@ -136,11 +180,34 @@ describe("watch", () => {
     });
     expect(res).toEqual({ cycles: 4, stopped: 1, threw: 1 });
     expect(waits).toEqual([540_000, 0, 570_000]);
+    // each cycle prints its own table; the watcher the time of the next one, a throw as a failed row, a blank line between cycles
     expect(printed).toEqual([
+      "next cycle 2 at 2026-10-24 00:10 UTC",
+      "",
+      "next cycle 3 at 2026-10-24 00:21 UTC",
+      "",
+      "  cycle     failed        the cycle threw: token Bearer <redacted> leaked",
+      "next cycle 4 at 2026-10-24 00:31 UTC",
+      "",
+      "stopping after cycle 4",
+    ]);
+  });
+
+  it("adds the full WATCH line after its short one under verbose", async () => {
+    let t = Date.parse("2026-10-24T00:00:00.000Z");
+    const ac = new AbortController();
+    const printed: string[] = [];
+    await watch({
+      everyMs: 600_000, signal: ac.signal, now: () => new Date(t), print: (l) => printed.push(l), present: { ...PLAIN, verbose: true },
+      sleep: async (ms) => { t += ms; },
+      cycle: async (n) => { t += 60_000; if (n === 2) ac.abort(); return { summary: `CYCLE ${n}`, stopped: null }; },
+    });
+    expect(printed).toEqual([
+      "next cycle 2 at 2026-10-24 00:10 UTC",
       "WATCH 1 2026-10-24T00:00:00.000Z: CYCLE 1; next cycle at 2026-10-24T00:10:00.000Z",
-      "WATCH 2 2026-10-24T00:10:00.000Z: CYCLE 2; next cycle at 2026-10-24T00:21:40.000Z",
-      "WATCH 3 2026-10-24T00:21:40.000Z: the cycle threw: token Bearer <redacted> leaked; next cycle at 2026-10-24T00:31:40.000Z",
-      "WATCH 4 2026-10-24T00:31:40.000Z: CYCLE 4; stopping",
+      "",
+      "stopping after cycle 2",
+      "WATCH 2 2026-10-24T00:10:00.000Z: CYCLE 2; stopping",
     ]);
   });
 
@@ -259,6 +326,11 @@ describe("the collect, probe and validate steps", () => {
     expect(partial.ok).toBe(false);
     expect(partial.reason).toBe("run run-l1 of fixture-host is partial (not readable: /etc/nginx/conf.d/word-aaaaaa.conf)");
     expect(stored).toEqual(["run-l1", "run-l1"]);
+    // the row's subject is the alias as LINUX_HOSTS names it, while the summary carries the tenant's pseudonym for it
+    const words = new Redactor("loop-test-salt", ["fixture"]);
+    const named = await collectLinuxStep("fixture-host", { tenant: "t1", redactor: words, store: {} as Store, vault: null, collect: async () => linuxResult("complete"), storeRows });
+    expect(named.summary).toMatch(/^collect:linux word-[0-9a-f]{6}-host: /);
+    expect(named.view).toEqual({ subject: "fixture-host", alias: true, parts: ["3 files", "2 blocks", "0 settings", [{ text: "vault off", tone: "dim" }]] });
   });
 
   it("probe is ok on a complete run and fails when the population cannot be read", async () => {
@@ -273,7 +345,9 @@ describe("the collect, probe and validate steps", () => {
   });
 
   it("validate validates nothing when the cycle made no new vault commit", async () => {
-    expect(await validateStep([], { tenant: "t1", vaultDir: "", store: null, redactor })).toEqual({ ok: true, summary: "validate:copies: no new vault commit this cycle; nothing validated" });
+    expect(await validateStep([], { tenant: "t1", vaultDir: "", store: null, redactor })).toEqual({
+      ok: true, summary: "validate:copies: no new vault commit this cycle; nothing validated", view: { parts: ["no new vault commit", "nothing validated"] },
+    });
   });
 });
 
@@ -347,7 +421,29 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
     expect(res.steps[6].summary).toMatch(new RegExp(`^TICKETS: tenant client-a, ${pass.findings.length} finding\\(s\\), .*; dry run, nothing sent or written$`));
     expect(res.steps[7].summary).toMatch(/^document: document\.md written for client-a, \d+ lines, \d+ finding\(s\) open, \d+ queries; deny-list probe 0 of 1 label\(s\); decided at 2026-10-23T03:00:00\.000Z$/);
     expect(readFileSync(out, "utf8")).toContain(TENANT);
-    expect(printed.at(-1)).toMatch(/^CYCLE: tenant client-a, dry run .*: 8 step\(s\): ok 4, skipped 4, failed 0, not run 0; completed;/);
+    expect(res.summary).toMatch(/^CYCLE: tenant client-a, dry run .*: 8 step\(s\): ok 4, skipped 4, failed 0, not run 0; completed;/);
+    // the screen: the pass row with its verbs, the classes and a line per ROLLBACK, FIX and ESCALATE; act's five planned actions
+    const screen = printed.map((l) => l.replace(/ +\d+\.\d s$/, ""));
+    const at = screen.findIndex((l) => l.startsWith("  pass "));
+    expect(screen.slice(at, at + 7)).toEqual([
+      "  pass      12 findings   ROLLBACK 3 · FIX 1 · ADOPT 2 · HOLD 5 · ESCALATE 1",
+      "            drift_vs_approved 5 · changed_since_backup 3 · found_but_different 2 · approved_missing 1 · proxy_split 1",
+      expect.stringMatching(/^            ROLLBACK  conf\.d\/app\.conf on host-7f1c · drifted from approved [0-9a-f]{8} · copy [0-9a-f]{8} validated ok$/),
+      expect.stringMatching(/^            ROLLBACK  conf\.d\/blog\.conf on host-7f1c · approved [0-9a-f]{8} absent · copy [0-9a-f]{8} validated ok$/),
+      expect.stringMatching(/^            ROLLBACK  mail\.example\.invalid content · drifted from approved ad2e4ad7 · copy [0-9a-f]{8} validated ok$/),
+      "            FIX       drift_vs_approved conf.d/shop.conf on host-7f1c · no valid copy · production affected, 1 failing probe",
+      "            ESCALATE  proxy_split www.example.invalid · hold expired 23 Oct 00:00 UTC",
+    ]);
+    expect(screen.slice(at + 7, at + 13)).toEqual([
+      "  act       5 actions planned",
+      expect.stringMatching(/^            rollback_file  conf\.d\/app\.conf on host-7f1c · from vault [0-9a-f]{8} · then nginx -t, reload, 1 probe$/),
+      expect.stringMatching(/^            rollback_file  conf\.d\/blog\.conf on host-7f1c · from vault [0-9a-f]{8} · then nginx -t, reload, 1 probe$/),
+      expect.stringMatching(/^            revert_record  mail\.example\.invalid A · from vault [0-9a-f]{8} · then read back, dns probe$/),
+      "            investigate    FIX · conf.d/shop.conf on host-7f1c · checks, then the judge",
+      "            fix            refused on --apply · no fix is allowed without a valid copy",
+    ]);
+    expect(screen.at(-2)).toMatch(/^  document  document\.md · \d+ lines$/);
+    expect(printed.at(-1)).toMatch(/^done · 8 steps · 4 skipped · \d+\.\d s$/);
   });
 
   it("a second pass over the same runs at a later instant writes a row per finding of its own; one more at that instant writes none and counts them kept", async () => {

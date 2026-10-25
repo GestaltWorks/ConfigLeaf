@@ -1,4 +1,4 @@
-// npm run act -- --tenant <id> [--run <pass run id>]... [--apply] [--only rollback_file,revert_record,investigate] [--schema <name>] [--help]
+// npm run act -- --tenant <id> [--run <pass run id>]... [--apply] [--only rollback_file,revert_record,investigate] [--schema <name>] [--verbose|--quiet] [--help]
 //
 // The Actor (src/actions/act.ts) over the pass's dispositions in the ledger: ROLLBACK on an nginx file -> rollback_file,
 // ROLLBACK on a record field -> revert_record, FIX -> investigate then fix (refused under this policy), ESCALATE under an
@@ -6,6 +6,9 @@
 // DataLayer over ZetarisEngine, every table as DRIFT.<table>) and the vault (DRIFT_VAULT_DIR); with SAMPLE_MODE=true
 // the pass runs over sample/bundle.json into an in-memory ledger first and the Actor reads that.
 //
+// Prints the cycle's act section (src/loop/present.ts): the header, the act row with one line per action planned or
+// done, and the done line naming the trace (logs/act_<base36 ms>.jsonl). --verbose adds the full output, the plan's
+// or the outcomes' lines and the summary line; --quiet prints the header and the done line.
 // Dry run by default: the plan, redacted (what would be written where, from which vault commit, which checks and
 // probes follow), and nothing written anywhere, the action table included. --apply performs it: the write session over
 // the host's ssh alias, the Cloudflare record writes, the probes into the Store, Nemotron through Nightshift, and one
@@ -25,23 +28,27 @@ import { ZetarisEngine } from "../src/data/engines/zetaris.ts";
 import { decisionInstant } from "../src/data/instant.ts";
 import { Store } from "../src/data/store.ts";
 import { MemoryLedger } from "../src/ledger.ts";
+import { Table, actView, presentOptions } from "../src/loop/present.ts";
+import { FileTracer } from "../src/loop/trace.ts";
 import { runPass } from "../src/pipeline.ts";
 import { TENANT } from "../src/policy/schema.ts";
 import { Redactor } from "../src/redactor.ts";
-import { Tracer } from "../src/trace.ts";
 import { Vault } from "../src/vault/vault.ts";
 
-const USAGE = `usage: npm run act -- --tenant <id> [--run <pass run id>]... [--apply] [--only ${ONLY_KINDS.join(",")}] [--schema <name>] [--help]`;
+const USAGE = `usage: npm run act -- --tenant <id> [--run <pass run id>]... [--apply] [--only ${ONLY_KINDS.join(",")}] [--schema <name>] [--verbose|--quiet] [--help]`;
 
 function usage(msg: string): never {
   console.error(`act: ${msg}\n${USAGE}`);
   process.exit(2);
 }
 
-let args: { tenant?: string; run?: string[]; apply?: boolean; only?: string; schema?: string; help?: boolean };
+let args: { tenant?: string; run?: string[]; apply?: boolean; only?: string; schema?: string; verbose?: boolean; quiet?: boolean; help?: boolean };
 try {
   args = parseArgs({
-    options: { tenant: { type: "string" }, run: { type: "string", multiple: true }, apply: { type: "boolean" }, only: { type: "string" }, schema: { type: "string" }, help: { type: "boolean" } },
+    options: {
+      tenant: { type: "string" }, run: { type: "string", multiple: true }, apply: { type: "boolean" }, only: { type: "string" }, schema: { type: "string" },
+      verbose: { type: "boolean" }, quiet: { type: "boolean" }, help: { type: "boolean" },
+    },
   }).values;
 } catch (e) {
   usage((e as Error).message);
@@ -52,6 +59,7 @@ if (args.help) {
   process.exit(0);
 }
 if (!args.tenant || !TENANT.test(args.tenant) || args.tenant === "*") usage("--tenant is required: a tenant id ([A-Za-z0-9._-], up to 64)");
+if (args.verbose && args.quiet) usage("--verbose and --quiet exclude each other");
 const only = (args.only ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 for (const k of only) if (!(ONLY_KINDS as readonly string[]).includes(k)) usage(`--only takes ${ONLY_KINDS.join(", ")}, got ${k}`);
 const apply = args.apply === true;
@@ -66,8 +74,14 @@ if (!config.sampleMode && !config.zetaris.apiKey) usage("ZETARIS_API_KEY is blan
 if (!config.redactSalt) console.error("warning: REDACT_SALT is blank; host aliases map to no stored host pseudonym in this dry run");
 
 const redactor = new Redactor(config.redactSalt || randomBytes(16).toString("hex"), config.redactWords);
-const tracer = new Tracer(`act_${Date.now().toString(36)}`, apply ? {} : { model: "none" });
+const tracer = new FileTracer(`act_${Date.now().toString(36)}`, apply ? {} : { model: "none" });
+const trace = tracer.logFile.replace(/\\/g, "/");
+const present = presentOptions(args);
+const table = new Table(present, (s) => redactor.text(redact(s)));
+const t0 = Date.now();
+console.log(table.header({ command: "act", tenant, at: new Date(t0), mode: apply ? "applied" : config.sampleMode ? "dry run over sample/bundle.json" : "dry run" }));
 let store: Store | null = null;
+const verbose: string[] = [];
 try {
   let layer: DataLayer;
   if (config.sampleMode) {
@@ -76,7 +90,7 @@ try {
     engine.loadBundle(bundle);
     layer = new DataLayer(engine);
     const pass = await runPass(layer, { tracer, ledger: new MemoryLedger(engine), decidedAt: decisionInstant(bundle) });
-    console.log(`act: sample pass over sample/bundle.json: ${pass.findings.length} finding(s), ${pass.ledger?.dispositions ?? 0} disposition(s) in the in-memory ledger`);
+    verbose.push(`act: sample pass over sample/bundle.json: ${pass.findings.length} finding(s), ${pass.ledger?.dispositions ?? 0} disposition(s) in the in-memory ledger`);
   } else {
     layer = new DataLayer(new ZetarisEngine());
   }
@@ -90,9 +104,16 @@ try {
   store = apply ? Store.fromEnv({ schema: args.schema }) : null;
   const deps = liveActorDeps({ tenantId: tenant, apply, layer, store, vault, redactor, tracer });
   const res = await act({ tenantId: tenant, apply, only: only as OnlyKind[], runIds: args.run }, deps);
-  for (const l of actLines(tenant, res, redactor)) console.log(l);
+  const ms = Date.now() - t0;
+  if (!present.quiet) for (const l of table.row("act", actView(res), ms)) console.log(l);
+  if (present.verbose) for (const l of [...verbose, ...actLines(tenant, res, redactor)]) console.log(l);
+  console.log(table.done({ ms, trace }));
 } catch (e) {
-  console.error(`act: ${redactor.text(redact((e as Error)?.message ?? String(e)))}`);
+  const msg = redactor.text(redact((e as Error)?.message ?? String(e)));
+  const ms = Date.now() - t0;
+  if (present.quiet) console.error(`act: ${msg}`);
+  else console.log(table.failed("act", msg, ms));
+  console.log(table.done({ ms, trace, stopped: { step: "act", at: 1, of: 1 } }));
   process.exitCode = 1;
 } finally {
   await store?.close();

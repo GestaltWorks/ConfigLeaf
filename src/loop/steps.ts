@@ -15,7 +15,9 @@
 //                       hook; ok when the run is complete and the hook committed or is off. commits: the run's new
 //                       commit.
 //   probe               runProbes over the account's served names (PROBE_TARGETS_OVERRIDE's when it is set, a lab
-//                       aid: src/probe/run.ts probePopulation) into the Store; ok when the run is complete.
+//                       aid: src/probe/run.ts probePopulation) into the Store, with the names the vault's host heads
+//                       serve under a wildcard record (vaultServedNames; the account's records alone when the vault is
+//                       off); ok when the run is complete.
 //   validate            validateCopies over every repository's head when the collect steps made a new commit, else
 //                       nothing; ok when every repository validated, whatever each result.
 //   act                 act() over the dispositions of the runs the pass's findings came from, dry run unless apply;
@@ -26,7 +28,9 @@
 //                       refused.
 //   document            renderDocument with the pass's finding classes, the deny-list probe (redactor.ts
 //                       countLabels) over the page, then the file; ok when the page is written.
-// Every summary passes the tenant's redactor.
+// Every summary passes the tenant's redactor. Each step's view (src/loop/present.ts) is its row on the screen, built
+// from the same results the summary is; the cycle passes every text of it through the redactor again as it prints,
+// the collect:linux subject aside: the ssh alias as LINUX_HOSTS names it.
 //
 // Measured 24 Oct 2026: test/loop.test.ts drives each step with fakes and the pass, act, tickets and document steps
 // over sql.js with test/fixtures/policy-bundle.json; the live cycle is measured in scripts/cycle.ts.
@@ -43,7 +47,7 @@ import type { Store } from "../data/store.ts";
 import { renderDocument } from "../document/render.ts";
 import type { TechnicianMemory } from "../engine/memory.ts";
 import { PgLedger } from "../ledger.ts";
-import { probePopulation, runProbes, type ProbeDeps, type ProbeSink } from "../probe/run.ts";
+import { probePopulation, runProbes, vaultServedNames, type ProbeDeps, type ProbeSink } from "../probe/run.ts";
 import type { PopulationRecord } from "../probe/rules.ts";
 import { GithubIssues } from "../psa/github.ts";
 import type { TicketAdapter } from "../psa/index.ts";
@@ -57,6 +61,7 @@ import { vaultCloudflareRun, vaultLinuxRun, type HookResult } from "../vault/hoo
 import type { Vault } from "../vault/vault.ts";
 import type { CollectReport, CycleSteps, NewCommit, PassReport, StepReport } from "./cycle.ts";
 import { passStep, type PassStep } from "./pass.ts";
+import { actView, cloudflareView, documentView, linuxView, passView, probeView, ticketsView, validateView } from "./present.ts";
 import { LabelTracer } from "./trace.ts";
 
 const runLine = (r: Pick<CollectionRun, "run_id" | "observed_count" | "expected_count" | "status">): string => `${r.run_id} ${r.observed_count ?? 0}/${r.expected_count ?? "?"} ${r.status}`;
@@ -102,7 +107,8 @@ export async function collectCloudflareStep(o: { tenant: string; cf: Cloudflare;
   const reason = !complete
     ? o.redactor.text(`a Cloudflare run finished other than complete (dns ${c.dnsRun.status}, audit ${c.auditRun.status})${c.errors.length ? `: ${c.errors.join("; ")}` : ""}`)
     : hook.status === "failed" ? o.redactor.text(v.text) : undefined;
-  return { ok: reason === undefined, summary, reason, commits: v.commits, detail: c.errors };
+  const view = cloudflareView({ records: c.records.length, zones: c.zones.length, audit: c.auditRun.observed_count ?? c.events.length, hook });
+  return { ok: reason === undefined, summary, reason, commits: v.commits, detail: c.errors, view };
 }
 
 export type Collect = (alias: string, opts: { tenantId: string; redactor: Redactor; tracer?: Tracer }) => Promise<CollectResult>;
@@ -119,7 +125,8 @@ export async function collectLinuxStep(alias: string, o: { tenant: string; redac
   const reason = run.status !== "complete"
     ? o.redactor.text(`run ${run.run_id} of ${alias} is ${run.status}${res.summary.not_readable.length ? ` (not readable: ${res.summary.not_readable.join(", ")})` : ""}`)
     : hook.status === "failed" ? o.redactor.text(v.text) : undefined;
-  return { ok: reason === undefined, summary, reason, commits: v.commits };
+  const view = linuxView(alias, { files: run.observed_count ?? 0, blocks: res.summary.servers.length, settings: written.observation ?? 0, hook });
+  return { ok: reason === undefined, summary, reason, commits: v.commits, view };
 }
 
 /** probe: http, dns and tls on every served name of the account, one probe run into the Store. */
@@ -132,12 +139,12 @@ export async function probeStep(o: { tenant: string; redactor: Redactor; sink: P
   }).join("; ");
   const summary = o.redactor.text(`probe: run ${runLine(r.run)}, ${r.names} name(s); ${tally}; ${r.written} probe row(s) written`);
   const ok = r.run.status === "complete";
-  return { ok, summary, reason: ok ? undefined : o.redactor.text(`probe run ${r.run.run_id} is ${r.run.status}${r.errors.length ? `: ${r.errors.slice(0, 5).join("; ")}` : ""}`), detail: r.errors };
+  return { ok, summary, reason: ok ? undefined : o.redactor.text(`probe run ${r.run.run_id} is ${r.run.status}${r.errors.length ? `: ${r.errors.slice(0, 5).join("; ")}` : ""}`), detail: r.errors, view: probeView({ names: r.names, rows: r.rows }) };
 }
 
 /** validate: nginx-t and cf-schema over every repository's head, when this cycle committed. */
 export async function validateStep(commits: readonly NewCommit[], o: { tenant: string; vaultDir: string; store: CopyStore | null; redactor: Redactor; runner?: NginxRunner; validatedAt?: string }): Promise<StepReport> {
-  if (!commits.length || !o.vaultDir) return { ok: true, summary: "validate:copies: no new vault commit this cycle; nothing validated" };
+  if (!commits.length || !o.vaultDir) return { ok: true, summary: "validate:copies: no new vault commit this cycle; nothing validated", view: validateView(null) };
   const res = await validateCopies({ vaultDir: o.vaultDir, tenant: o.tenant, dryRun: false, store: o.store, redactor: o.redactor, runner: o.runner, validatedAt: o.validatedAt });
   const repos = vaultRepositories(o.vaultDir, o.tenant);
   const heads = [...repos.hosts, ...(repos.cloudflare ? [CLOUDFLARE_REPO] : [])].map((n) => latestCommit(repositoryDir(o.vaultDir, o.tenant, n)));
@@ -145,16 +152,21 @@ export async function validateStep(commits: readonly NewCommit[], o: { tenant: s
   const results = [...res.rows.reduce((m, r) => m.set(`${r.validator} ${r.result}`, (m.get(`${r.validator} ${r.result}`) ?? 0) + 1), new Map<string, number>())]
     .sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, n]) => `${k} ${n}`).join(", ") || "no rows";
   const summary = o.redactor.text(`validate:copies: ${heads.length} repositories at their heads, ${heads.filter((h) => h !== null && fresh.has(h)).length} of them this cycle's commits; copy_validation ${res.written ?? 0} row(s) written of ${res.rows.length} (${results}); ${res.errors} repositories not validated`);
-  return { ok: res.errors === 0, summary, reason: res.errors ? o.redactor.text(res.lines.filter((l) => /validation stopped|no vault repository/.test(l)).join("; ")) : undefined, detail: res.lines };
+  // nginx-t validates a host repository's tree as one: its result once per repository, from the repository's line
+  const nginx = res.lines.map((l) => l.match(/: nginx-t (ok_with_gaps|ok|fail),/)?.[1]).filter((r): r is string => r !== undefined);
+  const view = validateView({ heads: heads.length, nginx, rows: res.rows, errors: res.errors });
+  return { ok: res.errors === 0, summary, reason: res.errors ? o.redactor.text(res.lines.filter((l) => /validation stopped|no vault repository/.test(l)).join("; ")) : undefined, detail: res.lines, view };
 }
 
 /** act: the Actor over the dispositions of the pass's runs. */
 export async function actStep(pass: PassStep, o: { apply: boolean; deps: ActorDeps; redactor: Redactor }): Promise<StepReport> {
   const runIds = [...new Set(pass.findings.map((f) => f.finding.run_id))].sort();
-  if (!runIds.length) return { ok: true, summary: `act: ${o.apply ? "applied" : "dry run"}: the pass raised no finding for tenant ${pass.tenant}; 0 actions planned` };
+  if (!runIds.length) {
+    return { ok: true, summary: `act: ${o.apply ? "applied" : "dry run"}: the pass raised no finding for tenant ${pass.tenant}; 0 actions planned`, view: actView({ apply: o.apply, plan: [], outcomes: [], acted: [] }) };
+  }
   const res = await act({ tenantId: pass.tenant, apply: o.apply, runIds }, o.deps);
   const verbs = Object.entries(res.scope.verbs).map(([v, n]) => `${v} ${n}`).join(", ") || "none";
-  return { ok: true, summary: o.redactor.text(`${actSummary(res)}; scope ${res.scope.dispositions} disposition(s) of ${res.scope.runs.length} run(s) (${verbs}), ledger ${res.ledger} of the tenant`) };
+  return { ok: true, summary: o.redactor.text(`${actSummary(res)}; scope ${res.scope.dispositions} disposition(s) of ${res.scope.runs.length} run(s) (${verbs}), ledger ${res.ledger} of the tenant`), view: actView(res) };
 }
 
 /**
@@ -178,7 +190,7 @@ export async function ticketsStep(layer: DataLayer, pass: PassStep, o: { adapter
   // each operation's line goes to the trace (one line per operation); stdout carries the step's summary
   const r = await ticketStep(layer, pass.pass, adapter, rows, { tenant: pass.tenant, dryRun: o.dryRun, redactor: o.redactor, deny: o.deny, tracer, now: o.now, print: () => undefined });
   const bad = r.outcomes.filter((x) => x.status === "failed" || x.status === "refused");
-  return { ok: bad.length === 0, summary: o.labels.text(r.summary), reason: bad.length ? o.labels.text(bad.map((x) => x.line).join("; ")) : undefined };
+  return { ok: bad.length === 0, summary: o.labels.text(r.summary), reason: bad.length ? o.labels.text(bad.map((x) => x.line).join("; ")) : undefined, view: ticketsView(r, o.dryRun) };
 }
 
 /** document: the owner's page from SQL, through the deny-list probe, to `out`. */
@@ -191,6 +203,7 @@ export async function documentStep(layer: DataLayer, pass: PassStep, o: { out: s
   const queries = doc.queries.reduce((n, c) => n + c.runs, 0);
   return {
     ok: true,
+    view: documentView({ file: rel, lines: doc.markdown.split("\n").length - 1 }),
     summary: `document: ${rel} written for ${pass.tenant}, ${doc.markdown.split("\n").length - 1} lines, ${doc.open} finding(s) open, ${queries} queries; deny-list probe 0 of ${o.deny.length} label(s); ${doc.decidedAt ? `decided at ${doc.decidedAt}` : "no decision on the latest passing runs"}`,
   };
 }
@@ -225,12 +238,14 @@ export function liveSteps(ctx: LiveContext): CycleSteps {
     collectLinux: (alias) => collectLinuxStep(alias, { tenant, redactor, store, vault, tracer }),
     probe: () => {
       const cf = new Cloudflare();
-      return probeStep({ tenant, redactor, sink: store, population: probePopulation({ source: () => cf, tracer, agent: "probe" }) });
+      // the names the hosts serve (the vault's host heads) bring in the names a wildcard record covers
+      const served = vault ? () => vaultServedNames(vault, tenant) : undefined;
+      return probeStep({ tenant, redactor, sink: store, population: probePopulation({ source: () => cf, served, tracer, agent: "probe" }) });
     },
     validate: (commits) => validateStep(commits, { tenant, vaultDir: ctx.vaultDir, store: storeCopies(store), redactor }),
     pass: async (): Promise<PassReport> => {
       const r = await passStep(layer, { tenant, ledger: new PgLedger(store), memory: ctx.memory, tracer });
-      return { ok: true, summary: redactor.text(r.summary), pass: r };
+      return { ok: true, summary: redactor.text(r.summary), pass: r, view: passView(r) };
     },
     act: (pass) => {
       const deps = liveActorDeps({ tenantId: tenant, apply: ctx.apply, layer, store, vault, redactor, tracer });

@@ -31,8 +31,13 @@ import { ACTION_RECORD_MAX, actionId, type Action, type ActionKind, type ActionS
 
 export type Row = Record<string, string>;
 
-/** Probes of these redacted names, of these kinds, as stored rows (src/probe through a probe run); the tests hand in a fake. */
-export type ProbeFn = (names: readonly string[], kinds: readonly ProbeKind[]) => Promise<Probe[]>;
+/**
+ * Probes of these redacted names, of these kinds, as stored rows (src/probe through a probe run); the tests hand in a
+ * fake. `served`, when given, holds the real names the restored object serves (a rollback reads them from its vault
+ * copy): the live function (src/actions/live.ts verifyProbe) adds to its population each one a wildcard covers
+ * (src/probe/rules.ts matchName), so such a name is probed under that wildcard. They go to the wire only.
+ */
+export type ProbeFn = (names: readonly string[], kinds: readonly ProbeKind[], served?: readonly string[]) => Promise<Probe[]>;
 
 /** Where the Actor's trace lines go: a Tracer, or a test's memory tracer. */
 export interface Emitter { emit(e: Omit<TraceEvent, "ts" | "trace_id">): unknown }

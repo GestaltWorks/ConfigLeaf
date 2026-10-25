@@ -191,6 +191,11 @@ standing alone, and `test/leak.test.ts` runs the same probe over the committed t
 - dns: a direct record's content is in the answers of two public resolvers, and a proxied record's content is in neither.
 - tls: the certificate is valid for the name with more than 7 days left.
 
+A served name whose only match is a wildcard of its zone is probed under that wildcard, whose proxied flag sets the
+`cf-ray` and dns expectations (`matchName` in `src/probe/rules.ts`, the rule the Actor's verification shares); on 25
+Oct 2026 that added 2 of the 22 names the vault's host heads serve to the 37, the file of ticket #5 among them, all 6
+probes ok.
+
 Production is affected when a probe of the pass's probe run fails on a name the finding's object serves, answering
 when all of them pass, and unknown with none; after a write the Actor probes again (surface `probe.verify`). On 24 Oct
 2026 the three `orphan_record` names failed (two answer status 526, one presents a certificate for other names), so

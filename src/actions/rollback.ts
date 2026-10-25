@@ -10,7 +10,10 @@
 //                    copy's bytes with their sha256 equal to the copy row's blob_sha256, a real path the write
 //                    script accepts, the previous bytes, which for a `file` setting must hash to the disposition's
 //                    live value, and the names the copy's run records for the object. Any gap is a refusal with
-//                    one sentence, and nothing is written. A failed rollback of the same target to the same commit
+//                    one sentence, and nothing is written. The real names the copy serves come from its bytes
+//                    (src/collectors/nginx.ts serverNames) and go to the probe function beside the redacted ones,
+//                    so a name a wildcard of its zone covers is probed under that wildcard (src/probe/rules.ts
+//                    matchName, the rule the probe run's population uses). A failed rollback of the same target to the same commit
 //                    over the same live bytes is refused too: that write is left to a technician. An unverified one
 //                    completed its write, so the rollback goes ahead and its reason names that action.
 //   planRollback     the dry-run lines (plan.ts): what would be written where, from which commit, what follows.
@@ -20,7 +23,7 @@
 //                    PROBE_TARGETS_OVERRIDE target) did not run, counts neither way, and the reason names it;
 //                    verification holds the ids of the probes that ran. unverified: completed, and no probe verified
 //                    it: the copy's run records no name the object serves, the probe population is unreadable, the
-//                    account holds no record of the names, every probe was skipped, or a probe reached no address
+//                    account holds no record of the names and no wildcard covers them, every probe was skipped, or a probe reached no address
 //                    because its name resolves nowhere (no probe answering fail). refused: the live file is a symlink, is unreadable, changed since the run, or sudo
 //                    refused before the write ("sudo: a password is required"). failed: the write path did not
 //                    complete, with nginx's or systemd's output redacted and the write-back named, or a probe that
@@ -39,6 +42,7 @@
 // http lab.example 200 over plain http 2 s after the reload, tls skipped, verification probe-36eb2c1bba298a2a.
 
 import { redactText } from "../collectors/linux.ts";
+import { serverNames } from "../collectors/nginx.ts";
 import type { Action, Disposition, Probe } from "../data/rows.ts";
 import type { Redactor } from "../redactor.ts";
 import { treePath, sha256, type Vault } from "../vault/vault.ts";
@@ -81,6 +85,8 @@ export interface PreparedRollback {
   runCommit: string;
   /** The redacted names the copy's run records for the object. */
   names: string[];
+  /** The real names the copy's server blocks carry (src/collectors/nginx.ts serverNames over its bytes): for the probe function only, never printed. */
+  served: string[];
   /** The latest unverified rollback of the same target to the same commit over the same live bytes; null when none. */
   prior: Action | null;
 }
@@ -128,7 +134,8 @@ export async function prepareRollback(d: Disposition, deps: RollbackDeps): Promi
     return { refused: `action ${prior.failed.action_id} rolled this file back to commit ${c8(copy.git_commit)} over the same live bytes and failed at ${prior.failed.finished_at ?? prior.failed.started_at}; the same write is left to a technician` };
   }
   const names = servedNames(await deps.reads.observationsOf(copy.run_id), d.object_id);
-  return { alias, path, choice, copy: bytes, previous, runCommit, names, prior: prior.unverified };
+  const served = serverNames(Buffer.from(bytes).toString("utf8"), path);
+  return { alias, path, choice, copy: bytes, previous, runCommit, names, served, prior: prior.unverified };
 }
 
 /** A probe that reached no address: its name resolves nowhere, so it verifies nothing either way. */
@@ -237,7 +244,7 @@ export async function rollbackFile(d: Disposition, p: PreparedRollback, deps: Ro
   }
   let rows: Probe[];
   try {
-    rows = await deps.probe(p.names, ["http", "tls"]);
+    rows = await deps.probe(p.names, ["http", "tls"], p.served);
   } catch (e) {
     return end("unverified", `written and reloaded; the probes of ${p.names.join(", ")} did not run: ${safe(r, e)}`, after);
   }

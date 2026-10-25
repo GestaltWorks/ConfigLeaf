@@ -1,7 +1,9 @@
 // npm run probe -- --tenant <id> [--only http|dns|tls] [--schema <name>] [--dry-run] [--help]
 //
 // One probe run for one tenant (src/probe/run.ts): the account's A, AAAA and CNAME names read live from
-// the Cloudflare API (CLOUDFLARE_API_TOKEN, read only), wildcards left out, then an http, a dns and a tls
+// the Cloudflare API (CLOUDFLARE_API_TOKEN, read only), wildcards left out, plus each
+// name the hosts serve that a wildcard of its zone covers (the enabled server_names at the head of each host
+// repository in the vault, DRIFT_VAULT_DIR; none with the vault off), then an http, a dns and a tls
 // probe per name from this machine, four in flight. Without --dry-run the run goes into the app Postgres
 // through the Store (DATABASE_URL; --schema for another search_path): beginRun with expected_count = kinds
 // x names before the first probe, the probe rows, finishRun with the rows written. --only asks one kind,
@@ -22,9 +24,10 @@ import { Cloudflare } from "../src/collectors/cloudflare.ts";
 import type { Probe, ProbeKind } from "../src/data/rows.ts";
 import { Store } from "../src/data/store.ts";
 import { PROBE_KINDS } from "../src/probe/rules.ts";
-import { probePopulation, runProbes } from "../src/probe/run.ts";
+import { probePopulation, runProbes, vaultServedNames } from "../src/probe/run.ts";
 import { Redactor } from "../src/redactor.ts";
 import { Tracer } from "../src/trace.ts";
+import { Vault } from "../src/vault/vault.ts";
 
 const TENANT = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const USAGE = "usage: npm run probe -- --tenant <id> [--only http|dns|tls] [--schema <name>] [--dry-run] [--help]";
@@ -45,8 +48,9 @@ try {
 
 if (args.help) {
   console.log(USAGE);
-  console.log("Probes every A, AAAA and CNAME name of the tenant's Cloudflare account (wildcards left out) over http, dns and tls,");
-  console.log("prints the rows (redacted) and writes one collection_run of surface probe and its probe rows unless --dry-run.");
+  console.log("Probes every A, AAAA and CNAME name of the tenant's Cloudflare account, and every name the vault's hosts serve that a");
+  console.log("wildcard of its zone covers, over http, dns and tls; prints the rows (redacted) and writes one collection_run of");
+  console.log("surface probe and its probe rows unless --dry-run.");
   process.exit(0);
 }
 const tenant = args.tenant ?? die("--tenant is required");
@@ -69,13 +73,21 @@ const line = (p: Probe): string =>
 let store: Store | undefined;
 try {
   store = dry ? undefined : Store.fromEnv({ schema: args.schema });
-  const population = probePopulation({ source: () => new Cloudflare(), tracer, agent: "probe" });
+  const vault = Vault.fromEnv({ redactor });
+  let served = 0;
+  const population = probePopulation({
+    source: () => new Cloudflare(), tracer, agent: "probe",
+    served: vault ? () => { const names = vaultServedNames(vault, tenant); served = names.length; return names; } : undefined,
+  });
   const result = await runProbes({ tenantId: tenant, population, redactor, kinds, sink: store ?? null });
   const { run, rows } = result;
   if (override.length) {
     console.log(redactor.text(`probe: PROBE_TARGETS_OVERRIDE names ${override.length} target(s) (${override.map((e) => `${e.name} at ${e.host}:${e.port}`).join(", ")}): plain http with the name as Host, dns through the override, tls skipped; the Cloudflare read is skipped`));
   }
-  console.log(`probe: tenant ${tenant}, ${result.names} name(s) (${override.length ? "PROBE_TARGETS_OVERRIDE" : "A, AAAA, CNAME; wildcards left out"}), kinds ${kinds.join(", ")}, expected_count ${run.expected_count ?? "?"}`);
+  const from = override.length
+    ? "PROBE_TARGETS_OVERRIDE"
+    : `A, AAAA, CNAME, and ${result.covered} of ${served} served name(s) under a wildcard of their zone${vault ? "" : " (the vault is off: DRIFT_VAULT_DIR is blank)"}`;
+  console.log(`probe: tenant ${tenant}, ${result.names} name(s) (${from}), kinds ${kinds.join(", ")}, expected_count ${run.expected_count ?? "?"}`);
   for (const p of rows) console.log(dry ? JSON.stringify(p) : line(p));
   const tally = kinds.map((k) => {
     const of = rows.filter((r) => r.kind === k);

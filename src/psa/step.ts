@@ -248,7 +248,8 @@ export async function applyTickets(ops: readonly TicketOp[], adapter: TicketAdap
 }
 
 export interface StepOptions extends ApplyOptions { tenant: string; psa?: Ticket["psa"] }
-export interface StepResult { ops: TicketOp[]; outcomes: TicketOutcome[]; summary: string }
+/** open: the tenant's ticket rows open before the step, the count a plan of skips leaves as it is. */
+export interface StepResult { ops: TicketOp[]; outcomes: TicketOutcome[]; open: number; summary: string }
 
 /** Read, plan, apply, and one summary line. */
 export async function ticketStep(layer: DataLayer, pass: Pick<PassResult, "findings" | "gatedOut">, adapter: TicketAdapter | null, rows: TicketRows | null, opts: StepOptions): Promise<StepResult> {
@@ -263,5 +264,5 @@ export async function ticketStep(layer: DataLayer, pass: Pick<PassResult, "findi
   const summary = `TICKETS: tenant ${opts.tenant}, ${input.findings.length} finding(s), ${input.dispositions.length} disposition(s) and ${input.actions.length} action(s) in the ledger, `
     + `${input.tickets.length} ticket row(s) before; plan: ${plan}; ${dry ? "dry run, nothing sent or written" : did}`;
   opts.tracer?.emit({ agent: "psa", action: "triage", status: count((o) => o.status === "failed" || o.status === "refused") ? "failed" : "ok", input_summary: `tickets ${opts.tenant}`, output_summary: summary, detail: "model: none" });
-  return { ops, outcomes, summary: opts.redactor.text(summary) };
+  return { ops, outcomes, open: input.tickets.filter((t) => t.status === "open").length, summary: opts.redactor.text(summary) };
 }

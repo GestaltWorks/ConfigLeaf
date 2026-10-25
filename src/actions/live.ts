@@ -8,23 +8,38 @@
 // prints its plan from the ledger, the policy, the approvals, the copies and the vault alone. An apply gets all of
 // them; the probe rows of a verification go into the Store as one probe run of surface probe.verify per action, and the
 // Store is the sink of the action rows and of the approvals a re-created record carries. The verification's population
-// is src/probe/run.ts probePopulation: PROBE_TARGETS_OVERRIDE's names when it is set (a lab aid), else the account's.
+// is src/probe/run.ts probePopulation: PROBE_TARGETS_OVERRIDE's names when it is set (a lab aid), else the account's,
+// with the real names the restored object serves as its served names (verifyProbe), so a name a wildcard covers is
+// probed under that wildcard.
 
 import { Nightshift } from "../adapters/nightshift.ts";
 import { Cloudflare } from "../collectors/cloudflare.ts";
 import { HOSTS } from "../collectors/linux.ts";
-import { config } from "../config.ts";
+import { config, type ProbeOverride } from "../config.ts";
 import type { DataLayer } from "../data/layer.ts";
 import type { Store } from "../data/store.ts";
 import { ReceiptStore } from "../gate.ts";
 import { runPass, type Finding } from "../pipeline.ts";
-import { probePopulation } from "../probe/run.ts";
+import { probePopulation, type PopulationSource, type ProbeSink } from "../probe/run.ts";
 import type { Redactor } from "../redactor.ts";
 import type { Tracer } from "../trace.ts";
 import type { Vault } from "../vault/vault.ts";
 import { aliasFromHosts, probeNames, type ActorDeps } from "./act.ts";
+import type { ProbeFn } from "./plan.ts";
 import { RELOAD_SETTLE_MS } from "./rollback.ts";
 import { runWriteSession } from "./ssh.ts";
+
+/**
+ * The live Actor's verification probes: probeNames (act.ts) over probePopulation, one population per call, the real
+ * names the restored object serves (ProbeFn's `served`) as its served names, so each one a wildcard of its zone covers
+ * joins the population under that wildcard (src/probe/rules.ts matchName).
+ */
+export function verifyProbe(o: { tenantId: string; redactor: Redactor; source: () => PopulationSource; sink: ProbeSink | null; override?: readonly ProbeOverride[]; tracer?: Tracer }): ProbeFn {
+  return (names, kinds, served = []) => probeNames({
+    tenantId: o.tenantId, redactor: o.redactor, sink: o.sink,
+    population: probePopulation({ source: o.source, override: o.override, served: () => served, tracer: o.tracer, agent: "actor" }),
+  })(names, kinds);
+}
 
 export interface LiveOptions {
   tenantId: string;
@@ -49,7 +64,7 @@ export function liveActorDeps(o: LiveOptions): ActorDeps {
     aliasOf: aliasFromHosts(Object.keys(HOSTS), o.redactor),
     ssh: runWriteSession,
     records: cf,
-    probe: cf ? probeNames({ tenantId: o.tenantId, redactor: o.redactor, population: probePopulation({ source: () => cf, tracer: o.tracer, agent: "actor" }), sink: o.store }) : async () => [],
+    probe: cf ? verifyProbe({ tenantId: o.tenantId, redactor: o.redactor, source: () => cf, sink: o.store, tracer: o.tracer }) : async () => [],
     model: nightshift,
     receipts: nightshift ? new ReceiptStore(nightshift) : { find: async () => null },
     findingOf: async (d) => {

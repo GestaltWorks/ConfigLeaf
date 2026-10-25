@@ -1,12 +1,15 @@
-// npm run cycle -- --tenant <id> [--apply] [--skip collect|probe|validate|act|tickets|document]... [--tickets-dry-run] [--help]
+// npm run cycle -- --tenant <id> [--apply] [--skip collect|probe|validate|act|tickets|document]... [--tickets-dry-run] [--verbose|--quiet] [--help]
 //
 // One cycle of the loop for one tenant (src/loop/cycle.ts over src/loop/steps.ts liveSteps), in order:
 // collect:cloudflare, collect:linux for every LINUX_HOSTS alias, probe, validate:copies for the new vault commits,
 // the pass (with the PgLedger), act (dry run unless --apply), tickets, document (document.md at the repository root,
-// gitignored). Each step runs the module its own command runs, in this process; each prints one summary line; the
-// first failing step stops the cycle with its reason. The cycle's trace, every step's lines included, goes to
-// logs/cycle_<base36 ms>.jsonl. --skip takes a comma list or repeats. --tickets-dry-run plans the tickets and sends
-// nothing. --apply carries out the Actor's plan on the hosts and the zones.
+// gitignored). Each step runs the module its own command runs, in this process; the first failing step stops the
+// cycle with its reason. The screen is one table (src/loop/present.ts): a header, a row per step as it ends with its
+// time, a line under the pass for each ROLLBACK, FIX and ESCALATE and under act for each action, and a done line
+// naming the trace. --verbose adds each step's full line after its row; --quiet prints the header and the done line.
+// The cycle's trace, every step's lines included, goes to logs/cycle_<base36 ms>.jsonl. --skip takes a comma list or
+// repeats. --tickets-dry-run plans the tickets and sends nothing. --apply carries out the Actor's plan on the hosts
+// and the zones.
 // Exit 0 when the cycle ran to its end; 1 when a step failed; 2 on a usage error or a missing setting
 // (src/loop/live.ts liveRefusal).
 //
@@ -16,39 +19,52 @@
 // same runs), act 0.4 s (27 dispositions of 3 runs in scope, 0 actions planned), tickets 1.2 s (1 ticket row before;
 // plan create 0, comment 0, close 0, skip 27), document 5.7 s (document.md, 150 lines, 27 findings open, 32 queries,
 // deny-list probe 0 of 27 labels); the cycle 41.6 s, 526 trace lines.
+// Measured 25 Oct 2026 at 16:32 UTC for client-1 with --tickets-dry-run, off a TTY: the table in 13 lines, every
+// row's time at column 90, each collect:linux row under its LINUX_HOSTS alias; collect 5.9, 3.4 and 3.5 s, probe 39
+// names in 8.0 s, validate 3 copies, pass 27 findings (ADOPT 23, HOLD 3, ESCALATE 1, one ESCALATE line, the
+// proxy_split hold expired 25 Oct 03:21 UTC) in 60.6 s, act nothing to do, tickets would close #5 (resolved),
+// document 189 lines; done in 103.4 s, the trace logs/cycle_mvo1qgai.jsonl.
 
 import { parseArgs } from "node:util";
 import { redact } from "../src/config.ts";
 import { SKIPPABLE, parseSkip, type Skippable } from "../src/loop/cycle.ts";
 import { liveCycle, liveRefusal, liveShared, type LiveShared } from "../src/loop/live.ts";
+import { presentOptions } from "../src/loop/present.ts";
 import { TENANT } from "../src/policy/schema.ts";
 
-const USAGE = `usage: npm run cycle -- --tenant <id> [--apply] [--skip ${SKIPPABLE.join("|")}]... [--tickets-dry-run] [--help]`;
+const USAGE = `usage: npm run cycle -- --tenant <id> [--apply] [--skip ${SKIPPABLE.join("|")}]... [--tickets-dry-run] [--verbose|--quiet] [--help]`;
 
 function usage(msg: string): never {
   console.error(`cycle: ${msg}\n${USAGE}`);
   process.exit(2);
 }
 
-let args: { tenant?: string; apply?: boolean; skip?: string[]; "tickets-dry-run"?: boolean; help?: boolean };
+let args: { tenant?: string; apply?: boolean; skip?: string[]; "tickets-dry-run"?: boolean; verbose?: boolean; quiet?: boolean; help?: boolean };
 try {
-  args = parseArgs({ options: { tenant: { type: "string" }, apply: { type: "boolean" }, skip: { type: "string", multiple: true }, "tickets-dry-run": { type: "boolean" }, help: { type: "boolean" } } }).values;
+  args = parseArgs({
+    options: {
+      tenant: { type: "string" }, apply: { type: "boolean" }, skip: { type: "string", multiple: true }, "tickets-dry-run": { type: "boolean" },
+      verbose: { type: "boolean" }, quiet: { type: "boolean" }, help: { type: "boolean" },
+    },
+  }).values;
 } catch (e) {
   usage((e as Error).message);
 }
 if (args.help) {
   console.log(USAGE);
-  console.log("Runs one cycle: collect, probe, validate, pass, act (dry run unless --apply), tickets, document; one summary line per step.");
+  console.log("Runs one cycle: collect, probe, validate, pass, act (dry run unless --apply), tickets, document; one row per step, --verbose adds each step's full line, --quiet prints the header and the done line.");
   process.exit(0);
 }
 if (!args.tenant || !TENANT.test(args.tenant) || args.tenant === "*") usage("--tenant is required: a tenant id ([A-Za-z0-9._-], up to 64)");
+if (args.verbose && args.quiet) usage("--verbose and --quiet exclude each other");
 let skip: Set<Skippable>;
 try {
   skip = parseSkip(args.skip);
 } catch (e) {
   usage((e as Error).message);
 }
-const opts = { tenant: args.tenant, apply: args.apply === true, skip, ticketsDryRun: args["tickets-dry-run"] === true };
+const present = presentOptions(args);
+const opts = { tenant: args.tenant, apply: args.apply === true, skip, ticketsDryRun: args["tickets-dry-run"] === true, present };
 const refusal = liveRefusal(opts);
 if (refusal) usage(refusal);
 
@@ -60,7 +76,7 @@ try {
 }
 try {
   const { result, traceFile, traceLines } = await liveCycle(opts, shared);
-  console.log(`cycle: trace ${traceFile} (${traceLines} lines)`);
+  if (present.verbose) console.log(`cycle: trace ${traceFile} (${traceLines} lines)`);
   process.exitCode = result.stopped ? 1 : 0;
 } catch (e) {
   console.error(`cycle: ${shared.redactor.text(redact((e as Error)?.message ?? String(e)))}`);

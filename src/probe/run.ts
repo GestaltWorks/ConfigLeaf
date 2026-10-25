@@ -8,7 +8,12 @@
 //     The Actor's verification after a write (src/actions/act.ts probeNames) runs as surface probe.verify,
 //     one run per action over the names it restored.
 //   - Population first: the account's A, AAAA and CNAME records read live through the Cloudflare
-//     client (src/collectors/cloudflare.ts, read only), wildcard names left out (src/probe/rules.ts).
+//     client (src/collectors/cloudflare.ts, read only), wildcard names left out of the targets
+//     (src/probe/rules.ts). With served names (probePopulation's `served`: vaultServedNames for a probe run,
+//     the restored file's own names for the Actor's verification), each one a wildcard covers joins the
+//     population under that wildcard (rules.ts matchName and coveredRecords). The served names are real, so
+//     they come from where real names live: the vault's host repositories, whose heads hold the bytes of
+//     the latest complete run of each host; the observation rows carry pseudonyms only.
 //     expected_count = kinds x names (3 x names for a full run) is asserted through the sink's beginRun
 //     before any probe is sent; a population read that fails gives a failed run with no count.
 //   - http: GET https://<name>/ with redirect manual and a 10 s timeout. dns: A and AAAA through each
@@ -34,21 +39,27 @@
 // gave 37 names; one http probe through defaultDeps against the first of them by pseudonym answered ok
 // in 359 ms. The full run over the account is the Verify step's. Measured 25 Oct 2026 on the lab under
 // PROBE_TARGETS_OVERRIDE (lab/README.md): run-396c20fb165306ed, 2 names, 6 of 6 complete, http 1 ok and 1 fail
-// (503), dns 2 ok, tls 2 skipped, the Cloudflare read skipped.
+// (503), dns 2 ok, tls 2 skipped, the Cloudflare read skipped. Measured 25 Oct 2026 at 16:12 UTC with the served
+// names from the vault (npm run probe, run-e1e626eaa8ec20aa): 39 names, 37 of records and 2 under a proxied
+// wildcard, 117 of 117 complete; http 29 ok and 10 fail, dns 36 ok and 3 fail, tls 32 ok and 7 fail.
 
 import dns from "node:dns";
 import http from "node:http";
+import path from "node:path/posix";
 import tls from "node:tls";
 import type { CfRecord, CfZone, FetchLike } from "../collectors/cloudflare.ts";
 import { proxiedFlag } from "../collectors/cloudflare.ts";
+import { analyse, isDnsName } from "../collectors/nginx.ts";
 import { probeId, runId, type CollectionRun, type Probe, type ProbeKind } from "../data/rows.ts";
 import type { RunStart } from "../data/store.ts";
 import { config, redact, type ProbeOverride } from "../config.ts";
 import type { Redactor } from "../redactor.ts";
 import type { TraceEvent } from "../trace.ts";
+import { vaultRepositories } from "../validate/vault.ts";
+import type { Vault } from "../vault/vault.ts";
 import {
   PROBED_TYPES, PROBE_CONCURRENCY, PROBE_KINDS, PROBE_TIMEOUT_MS, RESOLVERS, TLS_EXPECTED, TLS_SKIPPED,
-  buildTargets, dnsExpected, dnsObserved, dnsOk, dnsOverrideExpected, dnsOverrideObserved, errorCode, httpExpected, httpObserved, httpOk,
+  buildTargets, coveredRecords, dnsExpected, dnsObserved, dnsOk, dnsOverrideExpected, dnsOverrideObserved, errorCode, httpExpected, httpObserved, httpOk,
   normAddress, overridePopulation, tlsObserved, tlsOk,
   type HttpObservation, type PopulationRecord, type ProbeTarget, type ResolverAnswer, type TlsObservation, type Via,
 } from "./rules.ts";
@@ -134,17 +145,23 @@ export const defaultDeps = (): ProbeDeps => ({ fetch: (u, i) => fetch(u, i), res
 
 /**
  * The population a probe run reads: PROBE_TARGETS_OVERRIDE's entries when it is set (a lab aid: the Cloudflare read
- * is skipped, and one trace line says so), else the account's A, AAAA and CNAME records through `source`.
+ * is skipped, and one trace line says so), else the account's A, AAAA and CNAME records through `source`, plus, with
+ * `served` (real names: vaultServedNames, or the names a restored file serves), the records of each served name a
+ * wildcard covers (rules.ts coveredRecords).
  */
 export function probePopulation(o: {
   source: () => PopulationSource;
   override?: readonly ProbeOverride[];
+  served?: () => Promise<readonly string[]> | readonly string[];
   tracer?: { emit(e: Omit<TraceEvent, "ts" | "trace_id">): unknown };
   agent: string;
 }): () => Promise<PopulationRecord[]> {
   const override = o.override ?? config.probeOverride;
   return async () => {
-    if (!override.length) return readPopulation(o.source());
+    if (!override.length) {
+      const records = await readPopulation(o.source());
+      return o.served ? [...records, ...coveredRecords(records, await o.served())] : records;
+    }
     o.tracer?.emit({
       agent: o.agent, action: "observe", status: "skipped", input_summary: "probe population",
       output_summary: `PROBE_TARGETS_OVERRIDE names ${override.length} target(s); the Cloudflare read is skipped`,
@@ -164,6 +181,23 @@ export async function readPopulation(cf: PopulationSource): Promise<PopulationRe
     }
   }
   return out;
+}
+
+/**
+ * The names the tenant's hosts serve, real: the head of each host repository in the vault (the latest complete run it
+ * committed), analysed as the collector analyses a run (src/collectors/nginx.ts analyse over the files at their real
+ * paths and links.json), the server_name values of its enabled server blocks that are DNS names, sorted.
+ */
+export function vaultServedNames(vault: Vault, tenantId: string): string[] {
+  const out = new Set<string>();
+  const abs = (p: string): string => `/${p.replace(/^\/+/, "")}`;
+  for (const repo of vaultRepositories(vault.root, tenantId).hosts) {
+    const tree = vault.readTree(tenantId, repo);
+    const files = new Map([...tree.files].map(([p, b]) => [abs(p), b.toString("utf8")]));
+    const links = new Map(Object.entries(tree.links).map(([l, t]) => [abs(l), t.startsWith("/") ? t : path.join(path.dirname(abs(l)), t)]));
+    for (const s of analyse(files, { links }).servers) if (s.enabled === "yes") for (const n of s.server_names) if (isDnsName(n)) out.add(n);
+  }
+  return [...out].sort();
 }
 
 /** Settles with `p`, or rejects with code ETIMEDOUT after `ms`; the timer is unref'd, so it holds no process open. */
@@ -242,7 +276,7 @@ export async function probeOne(ctx: ProbeContext, t: ProbeTarget, kind: ProbeKin
   let skipped = false;
   if (kind === "http") {
     const o = via ? await observePlainHttp(ctx.deps.plainHttp, t.name, via, timeout) : await observeHttp(ctx.deps.fetch, t.name, timeout);
-    expected = httpExpected(t.edge, via, red);
+    expected = httpExpected(t.edge, via, red, t.wildcard);
     observed = httpObserved(o, red, via);
     ok = httpOk(t.edge, o);
   } else if (kind === "dns" && via) {
@@ -251,7 +285,7 @@ export async function probeOne(ctx: ProbeContext, t: ProbeTarget, kind: ProbeKin
     ok = true;
   } else if (kind === "dns") {
     const answers = await Promise.all(ctx.resolvers.map((r) => observeResolver(r, t.name, timeout)));
-    expected = dnsExpected(t.dns, red);
+    expected = dnsExpected(t.dns, red, t.wildcard);
     observed = dnsObserved(answers, red);
     ok = dnsOk(t.dns, answers);
   } else if (via) {
@@ -314,6 +348,8 @@ export interface ProbeRunResult {
   written: number;
   /** Distinct names probed (the population after wildcards). */
   names: number;
+  /** Of those, the served names a wildcard covers (rules.ts coveredRecords). */
+  covered: number;
   /** Redacted, one per failure of the population read, a probe or the write. */
   errors: string[];
 }
@@ -349,10 +385,11 @@ export async function runProbes(opts: ProbeRunOptions): Promise<ProbeRunResult> 
       await sink.beginRun(runStart(run));
       await sink.finishRun(run.run_id, 0, "failed", run.finished_at);
     }
-    return { run, rows: [], written: 0, names: 0, errors };
+    return { run, rows: [], written: 0, names: 0, covered: 0, errors };
   }
 
   run.expected_count = kinds.length * targets.length;
+  const covered = targets.filter((t) => t.wildcard).length;
   await sink?.beginRun(runStart(run));
 
   const ctx: ProbeContext = {
@@ -380,15 +417,15 @@ export async function runProbes(opts: ProbeRunOptions): Promise<ProbeRunResult> 
       run.status = "failed";
       run.finished_at = deps.now().toISOString();
       await sink.finishRun(run.run_id, 0, "failed", run.finished_at).catch(() => undefined);
-      return { run, rows, written: 0, names: targets.length, errors };
+      return { run, rows, written: 0, names: targets.length, covered, errors };
     }
   }
   const counted = sink ? written : rows.length;
-  const covered = new Set(rows.map((r) => `${r.kind}\u001f${r.target}`));
-  const everyRow = targets.every((t) => kinds.every((k) => covered.has(`${k}\u001f${opts.redactor.text(t.name)}`)));
+  const asked = new Set(rows.map((r) => `${r.kind}\u001f${r.target}`));
+  const everyRow = targets.every((t) => kinds.every((k) => asked.has(`${k}\u001f${opts.redactor.text(t.name)}`)));
   run.observed_count = counted;
   run.status = everyRow && errors.length === 0 && counted === rows.length ? "complete" : "partial";
   run.finished_at = deps.now().toISOString();
   await sink?.finishRun(run.run_id, counted, run.status, run.finished_at);
-  return { run, rows, written, names: targets.length, errors };
+  return { run, rows, written, names: targets.length, covered, errors };
 }

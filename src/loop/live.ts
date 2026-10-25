@@ -10,7 +10,8 @@
 //     over ZetarisEngine, the technician's lessons read from the store DRIFT_MEMORY_DIR names (read only, so a cycle
 //     leaves a committed store as committed), and runs src/loop/cycle.ts over
 //     liveSteps with the hosts of LINUX_HOSTS in their configured order. The document goes to document.md at the
-//     repository root (gitignored). Printed text passes the tenant's redactor.
+//     repository root (gitignored). Printed text passes the tenant's redactor; the screen is the table of
+//     src/loop/present.ts, its done line naming the trace file.
 
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,6 +24,7 @@ import { TechnicianMemory } from "../engine/memory.ts";
 import { Redactor } from "../redactor.ts";
 import { Vault } from "../vault/vault.ts";
 import { runCycle, type CycleResult, type Skippable } from "./cycle.ts";
+import type { PresentOptions } from "./present.ts";
 import { liveSteps } from "./steps.ts";
 import { FileTracer } from "./trace.ts";
 
@@ -34,6 +36,9 @@ export interface LiveCycleOptions {
   skip: ReadonlySet<Skippable>;
   ticketsDryRun: boolean;
   print?: (line: string) => void;
+  /** The screen's options and header (src/loop/present.ts); the plain table under "cycle" when absent. */
+  present?: PresentOptions;
+  header?: { command?: string; mode?: string };
 }
 
 /** The first thing the requested cycle lacks, as one sentence; null when it can run. */
@@ -71,8 +76,9 @@ export async function liveCycle(o: LiveCycleOptions, shared: LiveShared): Promis
     layer: new DataLayer(new ZetarisEngine()), tracer, memory: new TechnicianMemory({ storage: "read" }),
     out: path.join(ROOT, "document.md"), root: ROOT, source: `Zetaris over the ${config.zetaris.datasource} datasource`,
   });
+  const traceFile = tracer.logFile.replace(/\\/g, "/");
   const result = await runCycle({ tenant: o.tenant, apply: o.apply, aliases: Object.keys(HOSTS), skip: o.skip }, steps, {
-    tracer, print: o.print, scrub: (s) => redactor.text(redact(s)),
+    tracer, print: o.print, scrub: (s) => redactor.text(redact(s)), present: o.present, header: o.header, trace: traceFile,
   });
-  return { result, traceFile: tracer.logFile.replace(/\\/g, "/"), traceLines: tracer.lines };
+  return { result, traceFile, traceLines: tracer.lines };
 }

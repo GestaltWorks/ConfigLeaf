@@ -19,10 +19,11 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import "../src/config.ts"; // loads .env into process.env
 import { aliasFromHosts, act, actLines, kindsFor, latestRuns, probeNames, type ActResult } from "../src/actions/act.ts";
 import { FIX_REFUSED } from "../src/actions/investigate.ts";
+import { verifyProbe } from "../src/actions/live.ts";
 import { formatPlan, namedCommit, targetOf, type ActionOutcome, type ProbeFn } from "../src/actions/plan.ts";
 import { RELOAD_SETTLE_MS } from "../src/actions/rollback.ts";
 import { NGINX_PATH, WriteSessionError, parseSession, shQuote, writeScript } from "../src/actions/ssh.ts";
-import { dnsObservationRows, dnsRecordRow, type FetchLike } from "../src/collectors/cloudflare.ts";
+import { dnsObservationRows, dnsRecordRow, type CfRecord, type CfZone, type FetchLike } from "../src/collectors/cloudflare.ts";
 import { pseudonymHost, readScript } from "../src/collectors/linux.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { DataLayer } from "../src/data/layer.ts";
@@ -31,7 +32,7 @@ import { actionId, dispositionId, obsId, probeId, type Action, type ActionKind, 
 import { DriftWorld } from "../src/engine/world.ts";
 import { MemoryLedger } from "../src/ledger.ts";
 import { runPass, type PassResult } from "../src/pipeline.ts";
-import { probePopulation } from "../src/probe/run.ts";
+import { probePopulation, runProbes, type ProbeDeps } from "../src/probe/run.ts";
 import { Store } from "../src/data/store.ts";
 import { tenantAppId } from "../src/gate.ts";
 import { GithubIssues } from "../src/psa/github.ts";
@@ -380,6 +381,36 @@ describe("the Actor over the policy fixture", () => {
       expect(hosts).toEqual(["app.example.invalid"]);
     } finally {
       await new Promise((ok) => server.close(ok));
+    }
+  });
+
+  it("verification of a served name a wildcard covers: the copy's real server_names reach the probe function, the population gains the name under the wildcard, done; with no wildcard the reason stays", async () => {
+    const zone: CfZone = { id: "zone-wild", name: "example.invalid" };
+    const wildcard: CfRecord = { id: "rec-wild", name: "*.example.invalid", type: "A", content: "203.0.113.50", proxied: true };
+    const source = (records: CfRecord[]) => ({ listZones: async () => [zone], listRecords: async () => records });
+    const net: Partial<ProbeDeps> = {
+      fetch: async () => new Response(null, { status: 200, headers: { "cf-ray": "8d2f0c1a2b3c4d5e-AMS", server: "cloudflare" } }),
+      tls: async () => ({ authorized: true, issuer: "Example CA", valid_to: "Jan  1 00:00:00 2099 GMT" }),
+    };
+    const seen: (readonly string[] | undefined)[] = [];
+    // probeNames' own rule (act.ts: the population's records whose redacted name is asked for) over the live population, the network faked
+    const wired = (records: CfRecord[]): ProbeFn => async (names, kinds, served) => {
+      seen.push(served);
+      const all = await probePopulation({ source: () => source(records), override: [], served: () => served ?? [], agent: "actor" })();
+      const asked = all.filter((x) => names.includes(w.redactor.text(x.name)));
+      return asked.length ? (await runProbes({ tenantId: TENANT, population: async () => asked, redactor: w.redactor, kinds, deps: net, sink: null, surface: "probe.verify" })).rows : [];
+    };
+    const o = pick(await run(w, { only: ["rollback_file"] }, { probe: wired([wildcard]) }), of(w, "ROLLBACK", APP), "rollback_file");
+    expect(seen).toContainEqual(["app.example.invalid"]);
+    expect([o.action.status, o.reason]).toEqual(["done", `restored to the approved copy at vault commit ${w.commits["run-nginx-7f1c-1020"].slice(0, 8)}; nginx -t passed, nginx reloaded, 2 probes of app.example.invalid ok`]);
+    expect(o.record).toContainEqual(expect.stringMatching(/: http app\.example\.invalid ok \(status 200 server=cloudflare cf-ray present\)$/));
+
+    const bare = await buildWorld(base);
+    try {
+      const u = pick(await run(bare, { only: ["rollback_file"] }, { probe: verifyProbe({ tenantId: TENANT, redactor: bare.redactor, source: () => source([]), override: [], sink: null }) }), of(bare, "ROLLBACK", APP), "rollback_file");
+      expect([u.action.status, u.reason]).toEqual(["unverified", "written and reloaded; no probe of app.example.invalid ran (the account holds no record of these names)"]);
+    } finally {
+      bare.cleanup();
     }
   });
 

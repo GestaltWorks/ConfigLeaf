@@ -28,6 +28,8 @@
 //                    real_ip_header in effect (nginx's default X-Real-IP when none is set).
 //   classifyTarget   a proxy_pass host is loopback, an address, a DNS name, an upstream block
 //                    name, a unix socket or a variable; only a DNS name is a cross-source referent.
+//   serverNames      the server_name DNS names of one file's server blocks, from its bytes alone:
+//                    the real names a restored vault copy serves (src/actions/rollback.ts).
 //
 // Measured shapes this was written for (24 Oct 2026 survey, both production hosts nginx only):
 // RHEL-style conf.d/*.conf with dated .bak files beside them, Debian-style sites-enabled symlinks
@@ -314,6 +316,27 @@ export function analyse(files: FileSet, opts: AnalyseOptions = {}): Analysis {
     }
   }
   return { servers, loaded: [...ctx.loaded].sort(), standalone, unresolved: ctx.unresolved, unmatched: ctx.unmatched, upstreams, entry_found: entryFound, http_real_ip: httpRealIp, malformed: ctx.malformed };
+}
+
+/**
+ * The DNS names the server blocks of one file carry, in the form the collector's server_name rows take them
+ * (lower-cased, no trailing dot, isDnsName): what a file restored on its own serves, read from its bytes. An include
+ * inside the file is left unexpanded, since its target is not in hand.
+ */
+export function serverNames(src: string, file: string): string[] {
+  const out = new Set<string>();
+  const visit = (dirs: readonly Directive[]): void => {
+    for (const d of dirs) {
+      if (d.name === "server" && d.block) {
+        for (const n of named(d.block, "server_name").flatMap((x) => x.args)) {
+          const v = n.toLowerCase().replace(/\.$/, "");
+          if (isDnsName(v)) out.add(v);
+        }
+      } else if (d.block) visit(d.block);
+    }
+  };
+  visit(parse(src, file));
+  return [...out].sort();
 }
 
 /** The port a listen directive binds: `443 ssl http2` -> 443, `[::]:443` -> 443, `*:80` -> 80, a bare address -> 80, `unix:/run/x.sock` -> unix. */
