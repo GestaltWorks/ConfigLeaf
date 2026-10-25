@@ -13,24 +13,50 @@ allowed, documented and ticketed; everything else is adopted or held with a reas
 setting class means automatic rollback at the next cycle. The hackathon slice takes nginx vhost files and the
 Cloudflare records they depend on through the whole loop, on the operator's two production hosts and six zones.
 
+An MSP's knowledge of one setting is fragmented across eight places: the live host (read over SSH), the nightly
+export (the backup tarball), the documentation of record (`approved_setting`; IT Glue and Hudu map here), the DNS
+provider (Cloudflare records), the provider's audit log, the asset inventory, what the site answers from outside (the
+probes) and the PSA (the tickets). Whether a setting is right, backed up, restorable and still means what it meant
+takes several of them at once. The agent reads them as one: every question it answers is a join across two or more of
+those sources through one Zetaris layer (the `DRIFT` datasource, with the USL and its DQ rules over it), and
+FOUND-BUT-DIFFERENT exists only in that join: unchanged bytes on the host, a changed answer from the DNS provider, an
+address the inventory lacks. Within the sources it is given, the agent discovers the population of each source before
+it reads a row (so a short read fails the DQ gate), every file a configuration pulls in, every regular member of the
+newest backup tarball, every dependency a restore needs that the vault holds no copy of (named by the validator),
+every name a zone serves, and what is absent: an approved setting with no observation (`approved_missing`). Discovery
+of sources themselves (new hosts, new accounts, new tools) belongs to a discovery agent in the larger product; this
+agent discovers within the sources it is configured with (`LINUX_HOSTS`, one Cloudflare account).
+
 ## 2. The questions it answers for a setting
 
 - **Does a configuration exist for everything that should?** `orphan_record`: a record landing where no enabled
   block names it; `orphan_vhost`: a `server_name` with no record; `approved_missing`: an approved vhost file or record
-  absent from the latest passing run; `run_complete`: each run collected what it asserted.
+  absent from the latest passing run; `run_complete`: each run collected what it asserted (live host, export,
+  documentation of record, DNS, audit log, inventory).
 - **Is it fully configured?** `proxied_without_real_ip`: a proxied name served by a block that trusts no `real_ip`
-  range. `proxy_split`: a proxied CNAME aliasing a direct address record, which publishes the origin the proxy hides.
-- **Is it backed up?** `vault_copy`: each object's bytes per complete run, in git; `backup_item`: the nightly export.
+  range. `proxy_split`: a proxied CNAME aliasing a direct address record, which publishes the origin the proxy hides
+  (live host, DNS, audit log, inventory).
+- **Is it backed up?** `vault_copy`: each object's bytes per complete run, in git; `backup_item`: the nightly export
+  (live host, export, DNS).
 - **What exactly is in the copy, against what should be?** The vault commit holds the bytes (`blob_sha256`);
-  `approved_setting` holds the value of record; the policy rule that governs the setting names its class.
+  `approved_setting` holds the value of record; the policy rule that governs the setting names its class (live host,
+  documentation of record, DNS).
 - **Has it changed since the copy?** `changed_since_backup`: a live file the newest backup lacks or holds with other
-  bytes. `drift_vs_approved`: a live value that differs from its latest approval.
+  bytes. `drift_vs_approved`: a live value that differs from its latest approval (live host, export, documentation of
+  record, DNS, audit log).
 - **Can the copy be restored?** `copy_validation`: `nginx -t` over the tree a restore would lay down, a shape and
-  dependency check over each record; every missing dependency named.
+  dependency check over each record; every missing dependency named (live host, DNS, inventory).
 - **Would a restore regress, and of what kind?** `restore_would_regress`: approvals newer than the backup whose value
-  the backup lacks or holds otherwise; the validation's gaps name what a restore leaves missing.
+  the backup lacks or holds otherwise; the validation's gaps name what a restore leaves missing (live host, export,
+  documentation of record).
 - **Is it FOUND-BUT-DIFFERENT?** One SQL comparison over `observation` and `referent_fingerprint` for a run and its
-  previous passing run: equal `value_hash`, different fingerprint; the World Model holds the same answer.
+  previous passing run: equal `value_hash`, different fingerprint; the World Model holds the same answer. In the pass
+  the hero query's rows (a setting pointing at a name that resolves outside the inventory) are `found_but_different`
+  where the bytes are unchanged and the fingerprint changed, and `dns_change` for every other row (live host, DNS,
+  audit log, inventory).
+
+The README's "Where each answer comes from" lists, per finding class, the tables its detector query and its default
+checks name and the source of each, read off the SQL by `npm run sources`.
 
 ## 3. The data model
 
@@ -115,7 +141,8 @@ row's natural parts, so a re-run inserts nothing twice; every collected-text col
    setting raises nothing on it; a closed row stays closed. Every string passes the tenant's redactor and the
    deny-list probe before it leaves; one label and nothing is sent.
 8. **Document and repeat.** The owner's document (`src/document/render.ts`) is one markdown page per tenant from 13
-   named queries: estate, copies, approvals, open findings, work, probes and the queries it ran. `npm run cycle`
+   named queries: estate, copies, approvals, open findings, where each answer comes from (read off the SQL text),
+   work, probes and the queries it ran. `npm run cycle`
    runs collect, probe, validate, pass, act, tickets and document once, the first failing step stopping it; `npm run
    watch` runs the cycle every N minutes until SIGINT.
 
@@ -364,6 +391,8 @@ Absent, with the one line each maps:
   `DISPOSITION` lines print those rows. The examples and the replay page decide at their slice's instant the same way;
   their slices hold no disposition, so their HOLDs expire from that instant.
 - Probes run from one machine through two public resolvers.
+- Source discovery (new hosts, new accounts, new tools) is the discovery agent's, in the larger product. This agent's
+  sources are configured: the hosts `LINUX_HOSTS` lists and one Cloudflare account, and it discovers within them.
 - One tenant, two hosts, six zones, one policy file, one machine: `npm run watch` schedules cycles while its process
   lives. The hero and FOUND-BUT-DIFFERENT classes find nothing on the recorded estate, where every name a vhost
   serves lands on an inventory host in each of the four collections; pre-flight (d) raises `found_but_different` in

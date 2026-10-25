@@ -103,6 +103,32 @@ Each open finding, by verb and class, with the reason its disposition records:
 - fnd-f3bcb9860c5a0b3d HOLD proxied_without_real_ip: server[host-e49c58.cloud:80].real_ip in /etc/nginx/conf.d/host-e49c58.cloud.conf on host-aa516a (linux.nginx, run run-400375137e2bae7b), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:16:49.394Z under rule rule-66810b66396a3b15.
 - fnd-b4a40091cdb4f906 HOLD proxy_split: proxied in bce1ca2bb7caa2de9b6823d5f6ecd3f2 (cloudflare.dns, run run-59ffd380cfc7cda5), until 2026-10-25T03:21:06.870Z. rule rule-8e75e1d767980665 restores a setting to its approved value; this proxy_split finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-25T03:21:06.870Z; held since 2026-10-25T01:16:49.394Z under rule rule-8e75e1d767980665.
 
+## Where each answer comes from
+
+Each finding class answers its question by joining the tables its detector query and its default checks name, and each table holds the rows of one source. The rows are read off the SQL in `src/data/queries.ts` and `src/catalogue/templates.ts` and the default checks in `src/catalogue/select.ts`.
+
+| class | question | tables | sources |
+|---|---|---|---|
+| `proxy_split` | Is it fully configured? | `collection_run`, `observation`, `dns_record`, `audit_event` | live state, DNS, audit log, populations |
+| `proxied_without_real_ip` | Is it fully configured? | `collection_run`, `observation`, `dns_record`, `audit_event`, `inventory_asset` | live state, DNS, audit log, inventory, populations |
+| `orphan_record` | Does a configuration exist for everything that should? | `collection_run`, `observation`, `dns_record`, `audit_event`, `inventory_asset` | live state, DNS, audit log, inventory, populations |
+| `orphan_vhost` | Does a configuration exist for everything that should? | `collection_run`, `observation`, `backup_snapshot`, `dns_record` | live state, export, DNS, populations |
+| `changed_since_backup` | Has it changed since the copy? | `collection_run`, `observation`, `approved_setting`, `backup_snapshot`, `backup_item` | live state, export, documentation of record, populations |
+| `drift_vs_approved` | Has it changed since the copy? | `collection_run`, `observation`, `approved_setting`, `backup_snapshot`, `backup_item`, `audit_event` | live state, export, documentation of record, audit log, populations |
+| `approved_missing` | Does a configuration exist for everything that should? | `collection_run`, `observation`, `approved_setting`, `backup_snapshot`, `backup_item`, `dns_record`, `audit_event` | live state, export, documentation of record, DNS, audit log, populations |
+| `found_but_different` | Is it FOUND-BUT-DIFFERENT? | `collection_run`, `observation`, `dns_record`, `audit_event`, `inventory_asset` | live state, DNS, audit log, inventory, populations |
+| `dns_change` | Is it FOUND-BUT-DIFFERENT? | `collection_run`, `observation`, `dns_record`, `audit_event`, `inventory_asset` | live state, DNS, audit log, inventory, populations |
+
+The sources:
+
+- live state (`observation`): each setting as the live host answers it over SSH, and each record field as the DNS provider returns it.
+- export (`backup_snapshot`, `backup_item`): the nightly export tarball of each host and every regular member of the newest.
+- documentation of record (`approved_setting`): the values a technician approved; IT Glue and Hudu map here.
+- DNS (`dns_record`): the DNS provider's records, Cloudflare's in this slice.
+- audit log (`audit_event`): the provider's audit log, who changed which resource and when.
+- inventory (`inventory_asset`): the hosts' addresses.
+- populations (`collection_run`): each source's own population, asserted before a row is read, and each run's status.
+
 ## Work
 
 No action is recorded for client-1.

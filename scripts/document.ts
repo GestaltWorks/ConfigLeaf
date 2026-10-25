@@ -11,9 +11,10 @@
 // The page passes the deny-list probe (redactor.ts countLabels over REDACT_WORDS and EXPORT_DENY_WORDS) before it is
 // written; one match and nothing is written. Prints the trace (one JSON line per step, also in logs/) and one
 // summary line. Exit 0 when the page is written; 1 when a query fails or the probe refuses; 2 on a usage error.
-// Measured 25 Oct 2026: over sample/bundle.json, examples/document.md, 152 lines, 27 findings open, 37 queries for the
-// page after the pass's, decided at 2026-10-25T01:16:49.394Z (the bundle's instant), 2.1 s, byte-identical on a second
-// render; as the document step of the 01:16 UTC cycle, live through Zetaris, 152 lines, 27 findings open, 37 queries.
+// Measured 25 Oct 2026: over sample/bundle.json at 02:07 UTC, examples/document.md, 178 lines with "Where each answer
+// comes from", 27 findings open, 37 queries for the page after the pass's, decided at 2026-10-25T01:45:33.962Z (the
+// bundle's instant), 2.4 s, byte-identical on a second render; as the document step of the 01:16 UTC cycle, live
+// through Zetaris, 152 lines (before that section), 27 findings open, 37 queries.
 // Measured 24 Oct 2026 as the document step of the 23:36 UTC cycle, live through Zetaris for client-1: document.md at
 // the repository root, 150 lines, 27 findings open, 37 queries, 6.5 s.
 

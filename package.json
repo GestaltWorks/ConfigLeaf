@@ -35,6 +35,7 @@
     "eval": "tsx scripts/eval.ts",
     "tickets": "tsx scripts/tickets.ts",
     "document": "tsx scripts/document.ts",
+    "sources": "tsx scripts/sources-table.ts",
     "pass": "tsx scripts/pass.ts",
     "cycle": "tsx scripts/cycle.ts",
     "watch": "tsx scripts/watch.ts",

@@ -1,16 +1,22 @@
 // The owner's document (src/document/render.ts): every read it runs, through sql.js with asserted rows; the page over
 // sample/bundle.json, whose numbers are recomputed here from the bundle's own rows and whose committed copy
 // (examples/document.md) is held to the render; and the page over test/fixtures/policy-bundle.json with actions and
-// tickets added, so every section has rows. Offline; nothing is written.
+// tickets added, so every section has rows; and "Where each answer comes from", read off the SQL, which the README
+// carries as npm run sources prints it. Offline; nothing is written.
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { FINDING_CLASSES } from "../src/catalogue/templates.ts";
 import { DataLayer } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { decisionInstant } from "../src/data/instant.ts";
 import {
-  DOC_ACTIONS_SQL, DOC_COPIES_SQL, DOC_DISPOSITIONS_OF_RUN_SQL, DOC_PROBES_SQL, DOC_PROBE_FAILURES_SQL, DOC_RUN_SHAPE_SQL, DOC_TICKETS_SQL, DOC_UNAPPROVED_SQL, DOC_ZONES_SQL, objects,
+  DOC_ACTIONS_SQL, DOC_COPIES_SQL, DOC_DISPOSITIONS_OF_RUN_SQL, DOC_PROBES_SQL, DOC_PROBE_FAILURES_SQL, DOC_RUN_SHAPE_SQL, DOC_TICKETS_SQL, DOC_UNAPPROVED_SQL, DOC_ZONES_SQL,
+  HERO_SQL, PROXIED_WITHOUT_REAL_IP_SQL, objects,
 } from "../src/data/queries.ts";
-import { renderDocument } from "../src/document/render.ts";
+import { TABLE_NAMES } from "../src/data/schema.ts";
+import { renderDocument, sourceOf, sourceRows, sourcesMarkdown, tablesOf } from "../src/document/render.ts";
 import { DriftWorld } from "../src/engine/world.ts";
 import { MemoryLedger } from "../src/ledger.ts";
 import { dispositionIdOf } from "../src/loop/pass.ts";
@@ -252,5 +258,63 @@ describe("the page over test/fixtures/policy-bundle.json with work recorded", ()
     expect(md).toContain("No action is recorded for client-z.");
     expect(md).toContain("No probe run of client-z passes the DQ gate.");
     expect(md.trimEnd().split("\n").at(-1)).toBe("No decision of client-z is on the latest passing runs.");
+  });
+});
+
+describe("where each answer comes from", () => {
+  const ROOT = fileURLToPath(new URL("..", import.meta.url));
+  const read = (name: string): string => readFileSync(new URL(`../${name}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
+  /** The block between a heading and the next heading of the same level, trimmed. */
+  const block = (md: string, heading: string): string => {
+    const start = md.indexOf(`\n${heading}\n`);
+    expect(start, `${heading} is missing`).toBeGreaterThanOrEqual(0);
+    const body = md.slice(start + heading.length + 2);
+    const end = body.indexOf("\n## ");
+    return (end < 0 ? body : body.slice(0, end)).trim();
+  };
+
+  it("one row per class the pass raises; each joins two or more sources; every table it names is in sql/schema.sql and has a source", () => {
+    const rows = sourceRows();
+    expect(rows.map((r) => r.cls).sort()).toEqual([...FINDING_CLASSES].sort());
+    for (const r of rows) {
+      expect(r.sources.length, r.cls).toBeGreaterThanOrEqual(2);
+      expect(r.checks[0], r.cls).toBe("run_complete");
+      for (const t of r.tables) {
+        expect(TABLE_NAMES, `${r.cls} names ${t}`).toContain(t);
+        expect(sourceOf(t), `${r.cls} names ${t}, which no source holds`).toBeDefined();
+      }
+    }
+  });
+
+  it("the tables are read off the SQL text: the hero query, the survey's two real_ip queries, the record lists' audit checks", () => {
+    expect(tablesOf(HERO_SQL)).toEqual(["observation", "dns_record", "inventory_asset"]);
+    expect(tablesOf(PROXIED_WITHOUT_REAL_IP_SQL)).toEqual(["dns_record", "inventory_asset", "observation"]);
+    const row = (cls: string) => sourceRows().find((r) => r.cls === cls)!;
+    expect(row("found_but_different").sources).toEqual(["live state", "DNS", "audit log", "inventory", "populations"]);
+    expect(row("changed_since_backup").tables).toEqual(["collection_run", "observation", "approved_setting", "backup_snapshot", "backup_item"]);
+    // drift_vs_approved and approved_missing on a record take the record's audit checks (src/catalogue/select.ts)
+    expect(row("drift_vs_approved").checks).toContain("actor_attributed");
+    expect(row("approved_missing").sources).toContain("audit log");
+  });
+
+  it("each question is one DESIGN.md section 2 asks", () => {
+    const design = read("DESIGN.md");
+    const s2 = design.slice(design.indexOf("## 2. "), design.indexOf("## 3. "));
+    for (const r of sourceRows()) expect(s2, r.cls).toContain(`**${r.question}**`);
+  });
+
+  it("the README carries the section exactly as npm run sources prints it", { timeout: 60_000 }, () => {
+    const r = spawnSync(process.execPath, ["--import", "tsx", "scripts/sources-table.ts"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout.replace(/\r\n/g, "\n")).toBe(sourcesMarkdown());
+    expect(block(read("README.md"), "## Where each answer comes from"), "README.md is stale: paste the output of npm run sources").toBe(sourcesMarkdown().trim());
+  });
+
+  it("the owner's document carries the same section, for a tenant with rows and for one with none", async () => {
+    const { layer } = await engineOf(policyBundle);
+    for (const tenant of [A, "client-z"]) {
+      const doc = await renderDocument(layer, { tenant });
+      expect(block(doc.markdown, "## Where each answer comes from"), tenant).toBe(sourcesMarkdown().trim());
+    }
   });
 });

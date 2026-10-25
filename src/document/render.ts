@@ -19,7 +19,11 @@
 //                  The ledger row carries the finding id; its class is the class the pass raises it under at render
 //                  time (`classes`, from src/pipeline.ts runPass over the same layer), and a disposition whose
 //                  finding that pass leaves unraised is counted apart.
-//   Work           the actions by kind and status (DOC_ACTIONS_SQL), the tickets by type and status with their
+//   Where each answer comes from
+//                  one row per finding class: its question, the tables its detector SQL and its default checks name
+//                  as {{t:...}}, and the source each table comes from (sourceRows, below). Read off the SQL text,
+//                  so it runs no query and prints no number.
+//   Work          the actions by kind and status (DOC_ACTIONS_SQL), the tickets by type and status with their
 //                  urls (DOC_TICKETS_SQL).
 //   Probes         the passing probe runs counted by surface, probe (the pass's, every served name) and probe.verify
 //                  (the Actor's, after a write); the latest passing run of surface probe, its probes by kind and
@@ -28,20 +32,25 @@
 //   last line      the decision instant: the latest decided_at of the open dispositions.
 // Every collected text in the tables is redacted before it is stored, so the page carries pseudonyms only.
 //
-// Measured 25 Oct 2026 over sample/bundle.json, its 81 ledger rows of three live passes in the ledger and the sample
+// Measured 25 Oct 2026 over sample/bundle.json, its 108 ledger rows of four live passes in the ledger and the sample
 // pass writing 0 (test/document.test.ts, examples/document.md): 19 runs, all passing; 2 hosts and 6 zones; 112 copies at
 // the heads; 333 approvals; 0 locked settings without an approved value; 27 findings open, HOLD 27, the latest
-// disposition of each on the 23:35 UTC runs, the 01:16 UTC pass's; 0 actions and 1 ticket; probe runs 3 of surface probe
-// and 0 of probe.verify, the latest, run-30f5647b8b9c5dff, with 20 failing probes; decided at 2026-10-25T01:16:49.394Z,
-// the bundle's instant; 37 queries, 152 lines. On 24 Oct 2026 through Zetaris over the DRIFT datasource: the same Estate,
+// disposition of each on the 23:35 UTC runs; 0 actions and 1 ticket; probe runs 3 of surface probe and 0 of
+// probe.verify, the latest, run-30f5647b8b9c5dff, with 20 failing probes; decided at 2026-10-25T01:45:33.962Z, the
+// bundle's instant; 37 queries; 178 lines with "Where each answer comes from" (02:07 UTC). On 24 Oct 2026 through Zetaris over the DRIFT datasource: the same Estate,
 // Copies, Approvals and Probes sections, line for line, as the render over the bundle of that day.
 
+import { defaultSelection, defaultSelectionFor } from "../catalogue/select.ts";
+import { templateById, type FindingClass } from "../catalogue/templates.ts";
 import type { DataLayer, Params } from "../data/layer.ts";
 import {
+  APPROVED_MISSING_SQL, CHANGED_SINCE_BACKUP_SQL, DRIFT_VS_APPROVED_SQL, HERO_SQL, ORPHAN_RECORD_SQL, ORPHAN_VHOST_SQL, PROXIED_WITHOUT_REAL_IP_SQL, PROXY_SPLIT_SQL,
+  RESOLUTIONS_SQL, WILDCARD_WITHOUT_REAL_IP_SQL,
   DOC_ACTIONS_SQL, DOC_COPIES_SQL, DOC_DISPOSITIONS_OF_RUN_SQL, DOC_PROBES_SQL, DOC_PROBE_FAILURES_SQL, DOC_RUN_SHAPE_SQL, DOC_TICKETS_SQL, DOC_UNAPPROVED_SQL, DOC_ZONES_SQL,
   LATEST_APPROVALS_SQL, POLICY_RULES_SQL, RUNS_SQL, RUN_COMPLETE_SQL, objects,
 } from "../data/queries.ts";
 import type { PolicyRule } from "../data/rows.ts";
+import { TABLE_NAMES } from "../data/schema.ts";
 import { ruleOf, VERBS } from "../pipeline.ts";
 import { resolvePolicy } from "../policy/resolve.ts";
 import type { Tracer } from "../trace.ts";
@@ -89,6 +98,103 @@ function groupBy<T>(rows: readonly T[], key: (r: T) => string): [string, T[]][] 
   const m = new Map<string, T[]>();
   for (const r of rows) m.set(key(r), [...(m.get(key(r)) ?? []), r]);
   return [...m.entries()].sort(([a], [b]) => cmp(a, b));
+}
+
+// ---- Where each answer comes from -------------------------------------------------------------------------------
+//
+// For each finding class the pass raises: the tables its detector SQL names as {{t:...}} (src/data/queries.ts) and
+// the tables its default checks name (DEFAULT_CHECKS and the record lists in src/catalogue/select.ts, each template's
+// sql in src/catalogue/templates.ts), and the source each table's rows come from. Read off the SQL text when the
+// section renders, so a changed query changes the row. The README carries the same section (npm run sources), and
+// test/document.test.ts holds the two equal.
+
+/** Where each table's rows come from, in the order the section lists the sources. */
+const SOURCES: readonly { name: string; tables: readonly string[]; holds: string }[] = [
+  { name: "live state", tables: ["observation"], holds: "each setting as the live host answers it over SSH, and each record field as the DNS provider returns it" },
+  { name: "export", tables: ["backup_snapshot", "backup_item"], holds: "the nightly export tarball of each host and every regular member of the newest" },
+  { name: "documentation of record", tables: ["approved_setting"], holds: "the values a technician approved; IT Glue and Hudu map here" },
+  { name: "DNS", tables: ["dns_record"], holds: "the DNS provider's records, Cloudflare's in this slice" },
+  { name: "audit log", tables: ["audit_event"], holds: "the provider's audit log, who changed which resource and when" },
+  { name: "inventory", tables: ["inventory_asset"], holds: "the hosts' addresses" },
+  { name: "probes", tables: ["probe"], holds: "what the sites answer from outside" },
+  { name: "vault", tables: ["vault_copy", "copy_validation"], holds: "the agent's copy of each object and its validations" },
+  { name: "policy", tables: ["policy_rule"], holds: "the MSP's policy" },
+  { name: "ledger", tables: ["disposition"], holds: "the agent's decision on each finding" },
+  { name: "populations", tables: ["collection_run"], holds: "each source's own population, asserted before a row is read, and each run's status" },
+];
+
+/**
+ * Each class the pass raises (src/pipeline.ts), its question as DESIGN.md section 2 words it, and the SQL that raises
+ * it. The hero classes are the hero query's rows, found_but_different where the setting's bytes are unchanged and the
+ * fingerprint RESOLUTIONS_SQL gives the World Model is not, dns_change for every other row.
+ */
+const RAISED: readonly { cls: FindingClass; question: string; sql: readonly string[] }[] = [
+  { cls: "proxy_split", question: "Is it fully configured?", sql: [PROXY_SPLIT_SQL] },
+  { cls: "proxied_without_real_ip", question: "Is it fully configured?", sql: [PROXIED_WITHOUT_REAL_IP_SQL, WILDCARD_WITHOUT_REAL_IP_SQL] },
+  { cls: "orphan_record", question: "Does a configuration exist for everything that should?", sql: [ORPHAN_RECORD_SQL] },
+  { cls: "orphan_vhost", question: "Does a configuration exist for everything that should?", sql: [ORPHAN_VHOST_SQL] },
+  { cls: "changed_since_backup", question: "Has it changed since the copy?", sql: [CHANGED_SINCE_BACKUP_SQL] },
+  { cls: "drift_vs_approved", question: "Has it changed since the copy?", sql: [DRIFT_VS_APPROVED_SQL] },
+  { cls: "approved_missing", question: "Does a configuration exist for everything that should?", sql: [APPROVED_MISSING_SQL] },
+  { cls: "found_but_different", question: "Is it FOUND-BUT-DIFFERENT?", sql: [HERO_SQL, RESOLUTIONS_SQL] },
+  { cls: "dns_change", question: "Is it FOUND-BUT-DIFFERENT?", sql: [HERO_SQL, RESOLUTIONS_SQL] },
+];
+
+export interface SourceRow {
+  cls: FindingClass;
+  question: string;
+  /** The default checks of the class, its record list's included, in list order. */
+  checks: string[];
+  /** Every table the detector SQL and the checks name, in sql/schema.sql order; a name outside the schema last. */
+  tables: string[];
+  /** The source of each of those tables, in SOURCES order. */
+  sources: string[];
+}
+
+/** The tables one SQL text names as {{t:name}}, each once, in first-appearance order. */
+export function tablesOf(sql: string): string[] {
+  return [...new Set([...sql.matchAll(/\{\{t:(\w+)\}\}/g)].map((m) => m[1]))];
+}
+
+/** The source a table's rows come from; undefined for a table the section maps to none. */
+export function sourceOf(table: string): string | undefined {
+  return SOURCES.find((s) => s.tables.includes(table))?.name;
+}
+
+/** One row per class the pass raises, read off the SQL and the default checks. */
+export function sourceRows(): SourceRow[] {
+  const rank = (t: string): number => (TABLE_NAMES.includes(t) ? TABLE_NAMES.indexOf(t) : TABLE_NAMES.length);
+  return RAISED.map(({ cls, question, sql }) => {
+    const checks = [...new Set([...defaultSelection(cls), ...defaultSelectionFor({ class: cls, host: null })])];
+    const texts = [...sql, ...checks.map((id) => {
+      const t = templateById(id);
+      if (!t) throw new Error(`sources: ${cls} names the unknown template ${id}`);
+      return t.sql;
+    })];
+    const tables = [...new Set(texts.flatMap(tablesOf))].sort((a, b) => rank(a) - rank(b) || cmp(a, b));
+    const sources = SOURCES.filter((s) => s.tables.some((t) => tables.includes(t))).map((s) => s.name);
+    return { cls, question, checks, tables, sources };
+  });
+}
+
+/** The section's body: one sentence, the table, and the sources it names. */
+function sourceLines(): string[] {
+  const rows = sourceRows();
+  const code = (s: string): string => `\`${s}\``;
+  return [
+    "Each finding class answers its question by joining the tables its detector query and its default checks name, and each table holds the rows of one source. The rows are read off the SQL in `src/data/queries.ts` and `src/catalogue/templates.ts` and the default checks in `src/catalogue/select.ts`.",
+    "",
+    ...table(["class", "question", "tables", "sources"], rows.map((r) => [code(r.cls), r.question, r.tables.map(code).join(", "), r.sources.join(", ")])),
+    "",
+    "The sources:",
+    "",
+    ...SOURCES.filter((s) => rows.some((r) => r.sources.includes(s.name))).map((s) => `- ${s.name} (${s.tables.map(code).join(", ")}): ${s.holds}.`),
+  ];
+}
+
+/** The section's body as markdown: what npm run sources prints and the README carries under its heading. */
+export function sourcesMarkdown(): string {
+  return `${sourceLines().join("\n")}\n`;
 }
 
 export async function renderDocument(layer: DataLayer, opts: DocumentOptions): Promise<DocumentResult> {
@@ -210,6 +316,9 @@ export async function renderDocument(layer: DataLayer, opts: DocumentOptions): P
     line("");
   }
   if (unraised) line(`${plural(unraised, "disposition", "dispositions")} on these runs concern a finding the pass leaves unraised at render time.`, "");
+
+  // ---- Where each answer comes from: read off the SQL text, no query run ----
+  line("## Where each answer comes from", "", ...sourceLines(), "");
 
   // ---- Work ----
   const actions = await q("DOC_ACTIONS_SQL", DOC_ACTIONS_SQL, { tenant_id: tenant });
