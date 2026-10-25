@@ -438,8 +438,8 @@ describe("the Actor over the policy fixture", () => {
       expect.stringMatching(/^check run_complete \(query [0-9a-f-]{36}\): holds, /),
       expect.stringMatching(/^check setting_matches_approved \(query [0-9a-f-]{36}\): fails, /),
     ]);
-    expect(inv.record).toContainEqual(expect.stringMatching(/^Lightning selection \(receipt rcpt_test_1, nvidia\/nemotron-3\.5-lightning-30b-a3b, cache miss\): 2 valid checks, 1 rejected: run_complete, setting_matches_approved$/));
-    expect(inv.record).toContainEqual(expect.stringMatching(/^judge stands \(receipt rcpt_test_2, .*ultra.*, cache miss\): the refuting SELECT returned no rows, 0 rows$/));
+    expect(inv.record).toContainEqual(expect.stringMatching(/^Lightning selection \(receipt rcpt_test_1, nvidia\/nemotron-3\.5-lightning-30b-a3b, cache miss, route \S+\): 2 valid checks, 1 rejected: run_complete, setting_matches_approved$/));
+    expect(inv.record).toContainEqual(expect.stringMatching(/^judge stands \(receipt rcpt_test_2, .*ultra.*, cache miss, route \S+\): the refuting SELECT returned no rows, 0 rows$/));
     expect(inv.record).toContainEqual(expect.stringMatching(/^probe probe-[0-9a-f]{16}: http shop\.example\.invalid fail \(status 502 server=nginx cf-ray absent\)$/));
     expect(inv.action.verification.split(",")).toHaveLength(3);
     expect([fix.action.status, fix.reason, fix.action.receipts]).toEqual(["refused", FIX_REFUSED, ""]);

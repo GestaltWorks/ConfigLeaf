@@ -3,6 +3,7 @@
 // src/eval/measures.ts counts them, src/eval/report.ts renders them.
 
 import type { JudgeStatus } from "../agents/judge.ts";
+import type { DecidedBy } from "../data/rows.ts";
 import type { Verb } from "../pipeline.ts";
 import type { LabelValue } from "./items.ts";
 import type { CallRecord } from "./models.ts";
@@ -18,6 +19,9 @@ export interface SubjectOutcome {
   /** The verb this configuration gives the finding; null when it is filed not judged. */
   verb: Verb | null;
   reason: string;
+  /** Who decided the verb (the exception, a policy rule, or the default over the configuration's checks) and under which rule; null when not judged or for C4. */
+  decided_by: DecidedBy | null;
+  rule_id: string | null;
   not_judged: string | null;
   checks: { template: string; holds: boolean; rows: number }[];
   rejected: string[];
@@ -29,7 +33,11 @@ export interface SubjectOutcome {
   /** The judge: its verdict, or why its call was withheld; null for a configuration with no judge. */
   judge:
     | { withheld: string }
-    | { status: JudgeStatus; reason: string; sql: string | null; rows: number | null; receipt_id: string | null; served_model: string | null; attempts: number | null; cache_status: string | null }
+    | {
+      status: JudgeStatus; reason: string; sql: string | null; rows: number | null; receipt_id: string | null; served_model: string | null; attempts: number | null; cache_status: string | null;
+      /** The ladder's route that answered and its attempts on it; null when no route answered. */
+      route: string | null; route_attempts: number | null;
+    }
     | null;
 }
 
@@ -115,6 +123,8 @@ export interface PlantedOutcome {
   rows: number | null;
   receipt_id: string | null;
   served_model: string | null;
+  /** The ladder's route that answered; null when no route answered. */
+  route: string | null;
   cache_status: string | null;
   calls: CallRecord[];
 }

@@ -3,7 +3,8 @@
 // picks up to four catalogue checks for the finding (catalogue/select.ts selectionPrompt and validateSelection), which
 // run through the DataLayer; Ultra answers the detector's claim with one refuting SELECT (agents/judge.ts
 // judgeClaim); the probes of the names the object serves and the exposure line come from the pass. The record is
-// what ran: one plain sentence per check tied to its query id, the verdict tied to its receipt, each probe tied to its
+// what ran: one plain sentence per check tied to its query id, the selection and the verdict each tied to its receipt
+// and to the ladder's route that answered, each probe tied to its
 // probe id. The model's prose stays out of the record.
 //
 // Contract:
@@ -141,7 +142,7 @@ export async function investigate(d: Disposition, deps: InvestigateDeps): Promis
       if (out.gate.ok) {
         const sel = validateSelection(out.chat.content);
         picked = sel.valid.slice(0, ASK_CHECKS);
-        record.push(`Lightning selection (receipt ${out.gate.receiptId}, ${out.gate.servedModel}, cache ${out.gate.custody?.cacheStatus ?? "unknown"}): ${plural(picked.length, "valid check")}${sel.rejected.length ? `, ${sel.rejected.length} rejected` : ""}${picked.length ? `: ${picked.map((c) => c.template).join(", ")}` : ""}`);
+        record.push(`Lightning selection (receipt ${out.gate.receiptId}, ${out.gate.servedModel}, cache ${out.gate.custody?.cacheStatus ?? "unknown"}, route ${out.chat.modelRequested}): ${plural(picked.length, "valid check")}${sel.rejected.length ? `, ${sel.rejected.length} rejected` : ""}${picked.length ? `: ${picked.map((c) => c.template).join(", ")}` : ""}`);
         why = picked.length ? "" : "Lightning's gated selection holds no valid check";
       } else {
         why = `the receipt gate refused Lightning's selection: ${out.gate.reason}`;
@@ -174,7 +175,7 @@ export async function investigate(d: Disposition, deps: InvestigateDeps): Promis
     : null;
   if (verdict?.receiptId) receipts.push(verdict.receiptId);
   record.push(verdict
-    ? `judge ${verdict.status} (receipt ${verdict.receiptId ?? "none"}, ${verdict.servedModel ?? "no model"}${verdict.custody ? `, cache ${verdict.custody.cacheStatus ?? "unknown"}` : ""}): ${verdict.reason}${verdict.rowCount !== null ? `, ${plural(verdict.rowCount, "row")}` : ""}`
+    ? `judge ${verdict.status} (receipt ${verdict.receiptId ?? "none"}, ${verdict.servedModel ?? "no model"}${verdict.custody ? `, cache ${verdict.custody.cacheStatus ?? "unknown"}` : ""}${verdict.route ? `, route ${verdict.route}` : ""}): ${verdict.reason}${verdict.rowCount !== null ? `, ${plural(verdict.rowCount, "row")}` : ""}`
     : "judge not called: no model is configured");
 
   // The pass's evidence: the probes of the object's names and the exposure line.

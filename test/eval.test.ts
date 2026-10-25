@@ -4,12 +4,15 @@
 // (test/fixtures/recorded-bundle.json); history items read from its audit log; the eval queries' rows; the
 // planted claims false on sql.js; the check path reproducing the pass; and every configuration end to end
 // with stubbed Nemotron replies under receipts signed with a throwaway key (test/fixtures/signed-receipt.ts),
-// a substitution invalidating its run. EVAL_LIVE=true runs C1 and C3 on three development items once through
-// the live Nightshift and prints each call's receipt; skipped otherwise.
-import { readFileSync } from "node:fs";
+// a substitution invalidating its run, the recording decided under policy/hackathon.json as SAMPLE_MODE
+// decides, and a deny-list word a model echoes kept out of every result. EVAL_LIVE=true runs C1 and C3 on three
+// development items once through the live Nightshift and prints each call's receipt; skipped otherwise.
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { SignedReceipt } from "../src/adapters/nightshift.ts";
-import { SYSTEM_PROMPT, type JudgeModel } from "../src/agents/judge.ts";
+import { SYSTEM_PROMPT, redactEvidence, type JudgeModel } from "../src/agents/judge.ts";
 import { defaultChecks, type FindingSummary } from "../src/catalogue/select.ts";
 import { config } from "../src/config.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
@@ -21,8 +24,8 @@ import { assessChecks } from "../src/eval/assess.ts";
 import { historyFinding } from "../src/eval/history.ts";
 import { itemKind, loadEvalSet, matchItem } from "../src/eval/items.ts";
 import { wilson } from "../src/eval/measures.ts";
-import { DIRECT_SYSTEM_PROMPT, parseDirect } from "../src/eval/models.ts";
-import { falseRows, loadPlanted, plantedEvidence } from "../src/eval/planted.ts";
+import { DIRECT_SYSTEM_PROMPT, evalRedactor, parseDirect } from "../src/eval/models.ts";
+import { falseRows, loadPlanted, plantedEvidence, type PlantedClaim } from "../src/eval/planted.ts";
 import { ProtocolError, readProtocol } from "../src/eval/protocol.ts";
 import { AUDIT_OF_RESOURCE_SQL, DELETES_IN_WINDOW_SQL, EVAL_PARITY_CASES, EVIDENCE_SQL, evidenceParams } from "../src/eval/queries.ts";
 import { renderSummary } from "../src/eval/report.ts";
@@ -30,6 +33,8 @@ import { runEval, type EvalResult } from "../src/eval/run.ts";
 import { labelsSeed, seededShuffle, splitItems } from "../src/eval/split.ts";
 import { LogTracer, logLine } from "../src/eval/tracer.ts";
 import { runPass, type Finding } from "../src/pipeline.ts";
+import { loadPolicyFile } from "../src/policy/load.ts";
+import { Redactor, countLabels } from "../src/redactor.ts";
 import recorded from "./fixtures/recorded-bundle.json" with { type: "json" };
 import sampleBundle from "../sample/bundle.json" with { type: "json" };
 import { signed } from "./fixtures/signed-receipt.ts";
@@ -184,6 +189,21 @@ describe("eval queries and planted claims", () => {
     expect(fev.map((r) => r.source)).toEqual(["observation"]);
   });
 
+  it("what a model is handed passes the eval's redactor and comes out unchanged over the recording: every finding, its evidence rows, each planted claim and its rows", async () => {
+    const red = evalRedactor();
+    for (const f of findings) {
+      const r = await layer.run(EVIDENCE_SQL, evidenceParams(f.finding), { limit: 200 });
+      const e = { columns: r.columns, rows: r.rows };
+      expect(redactEvidence(e, red), f.id).toEqual(e);
+      expect(red.json(f.finding), f.id).toEqual(f.finding);
+    }
+    for (const c of loadPlanted().claims) {
+      const e = await plantedEvidence(layer, c);
+      expect(redactEvidence(e, red), c.id).toEqual(e);
+      expect(red.text(c.claim), c.id).toBe(c.claim);
+    }
+  });
+
   it("each parity case runs on sql.js over sample/bundle.json, with rows", async () => {
     const engine = await SqlJsEngine.create();
     engine.loadBundle(sampleBundle);
@@ -239,21 +259,60 @@ function stubModels(o: { serve?: (requested: string) => string; cache?: string; 
   return { models: { nightshift, receipts: () => ({ find: async (id: string) => receipts.get(id) ?? null }) }, sent };
 }
 
-const evalWith = (over: Partial<Parameters<typeof runEval>[0]>) => runEval({ protocolText: PROTOCOL, evalSet, bundle: recorded, items: ITEMS, runs: 1, ...over });
+const POLICY = "policy/hackathon.json";
+const evalWith = (over: Partial<Parameters<typeof runEval>[0]>) => runEval({ protocolText: PROTOCOL, evalSet, bundle: recorded, items: ITEMS, runs: 1, policyFile: POLICY, ...over });
 const verdicts = (r: EvalResult, config: string) => r.runs.filter((x) => x.config.id === config)[0].items.map((i) => [i.id, i.verdict]);
+/** "<surface> <object_glob> <setting_glob>" of each rule of the policy file, by rule_id. */
+const RULES = new Map(loadPolicyFile(POLICY, { tenant: "client-1", redactor: new Redactor("eval-test") }).rows.map((x) => [x.rule_id, `${x.surface} ${x.object_glob} ${x.setting_glob}`]));
 
 describe("runEval", () => {
-  it("C0: two passes over the same rows give the same findings, verbs and reasons; the items' verdicts are the pass's", async () => {
+  it("C0 under policy/hackathon.json version 2, as SAMPLE_MODE decides: every finding of the recording HOLD by the rule that governs it; two passes give the same findings, verbs and reasons", async () => {
     const r = await evalWith({ configs: ["C0"], runs: 2, items: undefined });
+    expect(r.policy).toEqual({ file: POLICY, version: 2, rows: 15, inserted: 15, rules: 15 });
     expect(r.determinism.C0).toEqual({ compared: "the passes of runs 1 and 2", differences: [] });
     const c = r.runs[0].counts;
-    expect([c.items, c.scored, c.not_raised, c.with_verdict, c.not_judged, c.agree, c.disagree, c.unsure, c.false_positives, c.labelled_no]).toEqual([38, 31, 7, 31, 0, 7, 22, 2, 22, 29]);
+    expect([c.items, c.scored, c.not_raised, c.with_verdict, c.not_judged, c.agree, c.disagree, c.unsure, c.false_positives, c.labelled_no]).toEqual([38, 31, 7, 31, 0, 29, 0, 2, 0, 29]);
     expect([c.findings_assessed, c.findings_with_disposition, c.calls]).toEqual([40, 40, 0]);
     expect(r.baseline.findings).toHaveLength(38);
+    expect(r.baseline.findings.every((f) => f.verb === "HOLD")).toBe(true);
     expect(r.baseline.unmatched.map((f) => f.class)).toEqual(Array(12).fill("proxied_without_real_ip"));
+    // the verbs per item class, each finding under the rule that governs its setting; history items (dns_change) through the same Decider
+    const tally: Record<string, Record<string, number>> = {};
+    for (const i of r.runs[0].items) for (const s of i.subjects) {
+      const k = `${s.verb} by ${s.decided_by} under ${RULES.get(s.rule_id ?? "") ?? "no rule"}`;
+      (tally[i.class] ??= {})[k] = (tally[i.class][k] ?? 0) + 1;
+    }
+    expect(tally).toEqual({
+      proxy_split: { "HOLD by policy under cloudflare.dns * proxied": 1 },
+      proxied_without_real_ip: { "HOLD by policy under linux.nginx ** server[*].real_ip": 7, "HOLD by policy under * ** **": 1 },
+      orphan_record: { "HOLD by policy under * ** **": 3 },
+      orphan_vhost: { "HOLD by policy under * ** **": 3 },
+      dns_change_history: { "HOLD by policy under cloudflare.dns * content": 10, "HOLD by policy under cloudflare.dns * proxied": 1 },
+      dns_bulk_delete: { "HOLD by policy under * ** **": 3 },
+      changed_since_backup: { "HOLD by policy under * ** **": 11 },
+    });
     const e01 = r.runs[0].items.find((i) => i.id === "E01")!;
-    expect([e01.verdict, e01.reading, e01.agree, e01.matched?.via]).toEqual(["ESCALATE", "yes", false, "facts"]);
-    expect(renderSummary(r, { recording: "test/fixtures/recorded-bundle.json", out: "test" })).toContain("| C0 | the passes of runs 1 and 2 | 0 |");
+    expect([e01.verdict, e01.reading, e01.agree, e01.matched?.via]).toEqual(["HOLD", "no", true, "facts"]);
+    expect(e01.subjects[0].reason).toMatch(/^rule rule-[0-9a-f]{16} restores a setting to its approved value; this proxy_split finding .* held until 2026-10-24T11:59:23\.745Z$/);
+    const md = renderSummary(r, { recording: "test/fixtures/recorded-bundle.json", out: "test" });
+    expect(md).toContain("| C0 | the passes of runs 1 and 2 | 0 |");
+    expect(md).toContain(`Policy ${POLICY} version 2: 15 rule(s) loaded into the recording before its passes (15 inserted), 15 read for client-1;`);
+  });
+
+  it("then the default: a finding no rule governs keeps the configuration's own verb, a struck claim ADOPT; a governed one keeps the rule's", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "eval-policy-"));
+    try {
+      const file = path.join(dir, "proxied-only.json");
+      const whole = JSON.parse(readFileSync(POLICY, "utf8")) as { rules: { surface: string; setting_glob: string }[] };
+      writeFileSync(file, JSON.stringify({ ...whole, rules: whole.rules.filter((x) => x.surface === "cloudflare.dns" && x.setting_glob === "proxied") }));
+      const r = await evalWith({ configs: ["C3"], items: ["E01", "E02"], policyFile: file, models: stubModels({ judge: REFUTES }).models });
+      expect(r.policy).toMatchObject({ version: 2, rows: 1, inserted: 1, rules: 1 });
+      expect(r.runs[0].items.map((i) => [i.id, i.verdict, i.strikes, i.subjects[0].decided_by])).toEqual([["E01", "HOLD", 1, "policy"], ["E02", "ADOPT", 1, "default"]]);
+      expect(r.runs[0].items[1].subjects[0].reason).toMatch(/^the judge struck the claim: /);
+      expect(r.runs[0].items[0].subjects[0].reason).toMatch(/; this configuration alone says ADOPT: the judge struck the claim: /);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("C1: Lightning's selection, gated on its receipt, through the same checks; a selection of the defaults gives C0's verdicts", async () => {
@@ -267,12 +326,14 @@ describe("runEval", () => {
     expect(run.calls.every((c) => c.kind === "select" && c.gate === "ok" && c.served_tier === "lightning" && c.signature_ok === true && c.cache_status === "miss")).toBe(true);
   });
 
-  it("C3: Ultra judges each claim whose verb can move; a strike makes the finding ADOPT and counts as agreed on a no label; the planted claims are struck", async () => {
+  it("C3: Ultra judges each claim whose verb can move; a strike makes the configuration's own verb ADOPT and counts as agreed on a no label, and the rule's HOLD stands; the planted claims are struck", async () => {
     const { models } = stubModels({ judge: REFUTES });
     const r = await evalWith({ configs: ["C3"], models, planted: loadPlanted().claims });
     const run = r.runs[0];
     expect(run.valid).toBe(true);
-    expect(run.items.map((i) => [i.id, i.verdict, i.strikes])).toEqual([["E01", "ADOPT", 1], ["E02", "ADOPT", 1], ["E13", "ADOPT", 1], ["E16", "ADOPT", 1], ["E30", null, 0], ["E37", "ADOPT", 6]]);
+    expect(run.items.map((i) => [i.id, i.verdict, i.strikes])).toEqual([["E01", "HOLD", 1], ["E02", "HOLD", 1], ["E13", "HOLD", 1], ["E16", "HOLD", 1], ["E30", null, 0], ["E37", "HOLD", 6]]);
+    expect(run.items.flatMap((i) => i.subjects).every((s) => s.decided_by === "policy" && /; this configuration alone says ADOPT: the judge struck the claim: /.test(s.reason))).toBe(true);
+    expect(run.items.flatMap((i) => i.subjects).every((s) => s.judge !== null && "route" in s.judge && s.judge.route === config.nightshift.modelJudge && s.judge.route_attempts === 1)).toBe(true);
     expect([run.counts.falsifier_ran, run.counts.falsifier_struck, run.counts.agreed_strikes, run.counts.wrong_strikes, run.counts.judge_withheld]).toEqual([10, 10, 4, 0, 0]);
     expect(run.calls.filter((c) => c.kind === "judge" && c.served_tier === "ultra")).toHaveLength(20);
     expect(r.planted.map((p) => [p.id, p.status])).toEqual(loadPlanted().claims.map((c) => [c.id, "refuted"]));
@@ -280,12 +341,15 @@ describe("runEval", () => {
     expect(md).toContain("| C3 | 1 | ultra | 10 / 10 | 0 |");
     expect(md).toContain(`| C3 | judge | ultra | ${config.nightshift.modelJudge} | ${config.nightshift.modelJudge} | ultra | 20 | 0 | 0 | 0 |`);
     const stands = await evalWith({ configs: ["C3"], models: stubModels({ judge: STANDS }).models });
-    expect(verdicts(stands, "C3")).toEqual([["E01", "ESCALATE"], ["E02", "ADOPT"], ["E13", "ADOPT"], ["E16", "ESCALATE"], ["E30", null], ["E37", "ESCALATE"]]);
+    expect(verdicts(stands, "C3")).toEqual([["E01", "HOLD"], ["E02", "HOLD"], ["E13", "HOLD"], ["E16", "HOLD"], ["E30", null], ["E37", "HOLD"]]);
+    // what each configuration alone says, under the rule's HOLD: the checks' verb where the claim stands
+    expect(stands.runs[0].items.filter((i) => i.subjects.length).map((i) => [i.id, i.subjects[0].reason.match(/this configuration alone says (\w+)/)?.[1]])).toEqual([["E01", "ESCALATE"], ["E02", "ADOPT"], ["E13", "ADOPT"], ["E16", "ESCALATE"], ["E37", "ESCALATE"]]);
     expect(stands.runs[0].counts.falsifier_struck).toBe(0);
     // an invented template is counted invalid, recorded as a rejection, escalates the finding and withholds the judge
     const invented = await evalWith({ configs: ["C3"], items: ["E02"], models: stubModels({ judge: REFUTES, extra: { template: "no_such_check", params: {}, why: "invented" } }).models });
     const e02 = invented.runs[0].items[0];
-    expect([e02.verdict, e02.subjects[0].selection?.invalid, e02.subjects[0].judge]).toEqual(["ESCALATE", ["unknown template: no_such_check"], { withheld: "verdict cannot move: 1 check(s) not checked; a judge cannot supply missing evidence, so the finding escalates whatever it answers" }]);
+    expect([e02.verdict, e02.subjects[0].selection?.invalid, e02.subjects[0].judge]).toEqual(["HOLD", ["unknown template: no_such_check"], { withheld: "verdict cannot move: 1 check(s) not checked; a judge cannot supply missing evidence, so the finding escalates whatever it answers" }]);
+    expect(e02.subjects[0].reason).toMatch(/; this configuration alone says ESCALATE: 1 check\(s\) could not be bound from the finding or were refused by the guard$/);
     expect([invented.runs[0].counts.checks_selected, invented.runs[0].counts.checks_valid, invented.runs[0].counts.checks_invalid, invented.runs[0].counts.judge_withheld]).toEqual([5, 4, 1, 1]);
   });
 
@@ -325,6 +389,46 @@ describe("runEval", () => {
     expect(judged.every((c) => c.requested_tier === "lightning" && c.served_tier === "lightning" && c.gate === "ok")).toBe(true);
     expect(sent.filter((o) => o.messages[0].content === SYSTEM_PROMPT).every((o) => o.models[0] === config.nightshift.modelFast && o.maxTokens === 8192)).toBe(true);
     expect(r.runs[0].counts.falsifier_struck).toBe(10);
+  });
+
+  // The 25 Oct 03:09 UTC run withheld C2-run1.json and planted.json: calls[].reason kept a failed route's error text raw.
+  it("a deny-list word a model reply echoes, or a failed route's error carries, reaches no result as itself: each result holds its pseudonym, and no prompt carries the word", async () => {
+    const WORD = "zebrafoxtrot";
+    const redactor = new Redactor("eval-leak-test", [WORD]);
+    const pseudonym = redactor.text(WORD);
+    expect(pseudonym).toMatch(/^word-[0-9a-f]{6}$/);
+    const echo = JSON.stringify({ refute_with_sql: `SELECT run_id FROM {{t:collection_run}} WHERE tenant_id = 'client-1' AND '${WORD}' = '${WORD}'`, rationale: `the ${WORD} rows say so` });
+    const { models } = stubModels({ judge: echo });
+    const prompts: string[] = [];
+    const nightshift: JudgeModel = {
+      async chatWithFallback(opts) {
+        prompts.push(...opts.messages.map((m) => m.content));
+        if (opts.messages[opts.messages.length - 1].content.includes("(P98)")) {
+          throw new Error(`chat local-runtime/nemotron-3.5-lightning-30b-a3b -> 503: ${WORD} lane not ready; binary=C:\\Users\\${WORD}\\AppData\\Local\\runtime.exe`);
+        }
+        return models.nightshift.chatWithFallback(opts);
+      },
+    };
+    const claim = (id: string): PlantedClaim => ({
+      id, kind: "echo", claim: `the ${WORD} run of client-1 is partial (${id})`,
+      evidence_sql: "SELECT run_id, status FROM {{t:collection_run}} WHERE tenant_id = 'client-1' ORDER BY run_id",
+      false_sql: "SELECT run_id FROM {{t:collection_run}} WHERE tenant_id = 'client-1' AND status = 'complete'",
+    });
+    const r = await evalWith({ configs: ["C2"], items: ["E02"], models: { ...models, nightshift }, planted: [claim("P98"), claim("P99")], redactor });
+    const kept = JSON.stringify({ runs: r.runs, planted: r.planted, baseline: r.baseline });
+    expect(countLabels(kept, [WORD])).toEqual({});
+    expect(kept).toContain(pseudonym);
+    // the echo in the struck claim's SQL, kept as its pseudonym
+    expect(r.planted.find((p) => p.id === "P99")).toMatchObject({ status: "refuted", sql: `SELECT run_id FROM {{t:collection_run}} WHERE tenant_id = 'client-1' AND '${pseudonym}' = '${pseudonym}' LIMIT 50` });
+    expect(r.runs[0].items[0].subjects[0].judge).toMatchObject({ status: "refuted", sql: expect.stringContaining(`'${pseudonym}' = '${pseudonym}'`) });
+    // the failed route's error in the call record and the claim's reason, its login path and its word both pseudonymised
+    const failed = r.planted.find((p) => p.id === "P98")!;
+    expect(failed.status).toBe("not_judged");
+    expect(failed.calls.map((c) => c.reason)).toEqual([expect.stringMatching(new RegExp(`^every route of the ladder failed: .*: ${pseudonym} lane not ready; binary=C:\\\\Users\\\\user-[0-9a-f]{6}\\\\AppData`))]);
+    expect(failed.reason).toContain(`${pseudonym} lane not ready`);
+    // the model was handed the pseudonym, never the word
+    expect(prompts.filter((t) => Object.keys(countLabels(t, [WORD])).length)).toEqual([]);
+    expect(prompts.some((t) => t.includes(`Claim: the ${pseudonym} run of client-1 is partial (P99)`))).toBe(true);
   });
 });
 

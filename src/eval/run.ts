@@ -8,47 +8,61 @@
 //     raises the findings; a pass item stands for the findings src/eval/items.ts matchItem gives it, a history
 //     item for the one finding src/eval/history.ts reads from the audit log. Every configuration sees the same
 //     findings and the same evidence rows (src/eval/queries.ts EVIDENCE_SQL).
+//   Policy (src/eval/policy.ts): before the first pass the rules of the policy file (DRIFT_POLICY_FILE, default
+//     policy/hackathon.json) for the recording's tenant go into the recording, so every pass decides as SAMPLE_MODE
+//     does, and every finding of C0 to C3 ends in the Decider's precedence: the technician's exception (the eval's
+//     technician memory is empty), then the rule that governs the setting, then the default, which is the
+//     configuration's own verb below. C4 is Ultra alone, the protocol's baseline: its verb is the model's.
 //   C0-shaped (the class's default checks): each run is a fresh pass; a pass item's verdict is its finding's
-//     verb as the pass decided it; a history finding's comes from the same checks through src/eval/assess.ts.
+//     verb as the pass decided it; a history finding's comes from the same checks through src/eval/assess.ts,
+//     then the Decider with the rule that governs its record.
 //   Model selection: the selecting tier's reply (src/eval/models.ts selectChecks) through validateSelection;
 //     a gate refusal, a failed call or a selection with no valid check files the finding not judged; else the
-//     checks run (assess.ts) and give ADOPT or ESCALATE as the pass's default does.
+//     checks run (assess.ts) and give ADOPT or ESCALATE as the pass's default does; that verb stands where the
+//     default decides, and the exception's or the rule's decision where the pass took one.
 //   Judge: when the checks leave the verb movable (stoprule.ts shouldWithdraw), judgeClaim at the judging tier
-//     over the finding's summary and evidence rows. Refuted: the claim is struck and the verb is ADOPT, the
-//     live value standing. Stands: the checks' verb. not_judged or invalid_output: the finding is filed not
-//     judged with the judge's reason. A withheld call keeps the checks' verb and is counted as an early stop.
+//     over the finding's summary and evidence rows. Refuted: the claim is struck and the configuration's own
+//     verb is ADOPT, the live value standing. Stands: the checks' verb. not_judged or invalid_output: the finding
+//     is filed not judged with the judge's reason. A withheld call keeps the checks' verb and is counted as an
+//     early stop. The rule's decision, where one governs, stands over the configuration's own verb either way.
 //   Direct (C4): one call per item with its facts and its findings' evidence rows; the verb it answers is
 //     every finding's verb, a refusal files them all not judged.
+//   Redaction: every string handed to a model and every string a result keeps passes the eval's redactor
+//     (src/eval/models.ts evalRedactor, or EvalOptions.redactor); scripts/eval.ts's deny-list probe stays the
+//     last line before a file is written.
 //   An item's verdict is its findings' most severe verb (FIX, ESCALATE, ROLLBACK, HOLD, ADOPT), read yes or no
 //     by the protocol's verb reading; any finding not judged files the item not judged. Planted claims go to
 //     the judge of every judging configuration, once per run. A call whose verified receipt names another tier
 //     than the one requested invalidates its run. Nothing is retried into a better number: the only repeat is
 //     the gate's custody retry, which discards an answer filed under another request.
 //
-// Measured 24 Oct 2026 over test/fixtures/recorded-bundle.json, C0 in two runs (test/eval.test.ts): 38 items, 31
-// scored (the 7 drift_vs_approved items not raised), 31 with a verdict, agreement 7 of the 29 labelled yes or no
-// (Wilson 95% 0.122 to 0.421), 22 of 29 labelled no read yes, 0 differences between the two passes; about 0.5 s.
+// Measured 25 Oct 2026 over test/fixtures/recorded-bundle.json under policy/hackathon.json version 2 (15 rules), C0
+// in two runs (test/eval.test.ts): 38 items, 31 scored (the 7 drift_vs_approved items not raised), 31 with a verdict,
+// all 40 of their findings HOLD by policy, agreement 29 of the 29 labelled yes or no (Wilson 95% 0.883 to 1.000), 0
+// of 29 labelled no read yes, 0 differences between the two passes. The same C0 without the policy (24 Oct 2026):
+// agreement 7 of 29, 22 of 29 labelled no read yes.
 
 import { Nightshift } from "../adapters/nightshift.ts";
 import type { Evidence, JudgeModel } from "../agents/judge.ts";
 import { defaultChecks, type FindingSummary } from "../catalogue/select.ts";
-import { config, redact } from "../config.ts";
+import { config } from "../config.ts";
 import { SqlJsEngine, type Bundle } from "../data/engines/sqljs.ts";
 import { decisionInstant } from "../data/instant.ts";
 import { DataLayer } from "../data/layer.ts";
 import { listRuns, objects, runComplete } from "../data/queries.ts";
 import { DriftWorld } from "../engine/world.ts";
 import { ReceiptStore, type ReceiptFinder } from "../gate.ts";
-import { runPass, shortFindingId, type Finding, type Verb } from "../pipeline.ts";
-import { Redactor } from "../redactor.ts";
+import { runPass, shortFindingId, type DispositionNote, type Finding, type Verb } from "../pipeline.ts";
+import type { Redactor } from "../redactor.ts";
 import type { Tracer } from "../trace.ts";
 import { assessChecks } from "./assess.ts";
 import { historyFinding } from "./history.ts";
 import { itemKind, matchItem, type EvalSet, type Item, type LabelValue } from "./items.ts";
 import { countRun, passDifferences, runDifferences } from "./measures.ts";
-import { directVerdict, isSubstitution, judge, Recorder, selectChecks, type CallRecord, type ModelCallContext } from "./models.ts";
+import { directVerdict, evalRedactor, isSubstitution, judge, Recorder, scrubber, selectChecks, type CallRecord, type ModelCallContext } from "./models.ts";
 import type { PlantedClaim } from "./planted.ts";
 import { plantedEvidence } from "./planted.ts";
+import { decideHistory, historyPolicy, loadEvalPolicy, underPolicy, type Decided, type HistoryPolicy } from "./policy.ts";
 import { readProtocol, type ConfigSpec, type Protocol } from "./protocol.ts";
 import { EVIDENCE_SQL, evidenceParams } from "./queries.ts";
 import { labelsSeed, splitItems, type Split } from "./split.ts";
@@ -78,6 +92,10 @@ export interface EvalOptions {
   tracer?: Tracer;
   /** Called after each configuration run, for a progress line. */
   onRun?: (r: RunResult) => void;
+  /** The policy file loaded into the recording before its passes; default DRIFT_POLICY_FILE. */
+  policyFile?: string;
+  /** What every string handed to a model and every string kept in a result passes; default evalRedactor(). */
+  redactor?: Redactor;
 }
 
 export interface BaselineFinding { id: string; class: string; verb: Verb; summary: string }
@@ -92,6 +110,8 @@ export interface EvalResult {
   planted: PlantedOutcome[];
   tenant: string;
   decided_at: string;
+  /** The policy loaded into the recording: the file, its version, the rows it gave and inserted, the rules the pass read for the tenant. */
+  policy: { file: string; version: number; rows: number; inserted: number; rules: number };
   /** Every finding the pass raises over the recording, and those no item of items.json matches. */
   baseline: { findings: BaselineFinding[]; unmatched: BaselineFinding[] };
   /** Per configuration: what two passes or two runs were compared, and their differences; null with one run of a model configuration. */
@@ -115,11 +135,7 @@ interface Prepared {
 const SEVERITY: readonly Verb[] = ["FIX", "ESCALATE", "ROLLBACK", "HOLD", "ADOPT"];
 const mostSevere = (verbs: readonly Verb[]): Verb => SEVERITY.find((v) => verbs.includes(v)) ?? "ADOPT";
 
-const textRedactor = new Redactor(config.redactSalt || "eval-runner", config.redactWords);
-/** Model-written or model-shaped text through the secret scrub and the tenant's redactor before it is kept. */
-const clean = (s: string | null | undefined): string => (s ? textRedactor.text(redact(s)) : "");
-
-const baseFinding = (f: Finding): BaselineFinding => ({ id: f.id, class: f.finding.class, verb: f.verb, summary: f.finding.summary });
+type Clean = (s: string | null | undefined) => string;
 
 async function evidenceOf(layer: DataLayer, f: FindingSummary): Promise<Evidence> {
   const r = await layer.run(EVIDENCE_SQL, evidenceParams(f), { agent: "eval", limit: 200 });
@@ -172,6 +188,8 @@ export async function runEval(opts: EvalOptions): Promise<EvalResult> {
   const set = opts.set ?? "all";
   const itemIds = chooseItems(evalSet, split, set, opts.items);
 
+  const redactor = opts.redactor ?? evalRedactor();
+  const clean = scrubber(redactor);
   const engine = await SqlJsEngine.create();
   engine.loadBundle(opts.bundle);
   const layer = new DataLayer(engine);
@@ -179,10 +197,14 @@ export async function runEval(opts: EvalOptions): Promise<EvalResult> {
   const tenants = [...new Set(((opts.bundle as { collection_run?: { tenant_id: string }[] }).collection_run ?? []).map((r) => r.tenant_id))];
   const tenant = opts.tenant ?? (tenants.length === 1 ? tenants[0] : "");
   if (!tenant) throw new Error(`the recording holds ${tenants.length} tenants; name one with --tenant`);
+  // The shipped policy into the recording before any pass, so every pass decides as SAMPLE_MODE does.
+  const policy = await loadEvalPolicy(engine, layer, opts.policyFile ?? config.policyFile, tenant);
 
   // The findings, once, model-free; every configuration sees these.
   const base = await runPass(layer, { tracer, world: new DriftWorld("eval_baseline"), decidedAt: decided_at });
   const raised = base.findings.map((f) => ({ id: f.id, finding: f.finding }));
+  const decidedByPass = new Map(base.findings.map((f) => [f.id, f.disposition]));
+  const hp = await historyPolicy(layer, policy, decided_at);
   const ctx = await recordingContext(layer, tenant);
   const world = new DriftWorld("eval_history");
   const labelOf = new Map(evalSet.labels.map((l) => [l.id, l.needs_human]));
@@ -224,13 +246,13 @@ export async function runEval(opts: EvalOptions): Promise<EvalResult> {
 
   for (const spec of ordered) {
     for (let run = 1; run <= runs; run++) {
-      const r = await runConfiguration(spec, run, { layer, prepared, protocol, tenant, decided_at, auditWithheld: ctx.auditWithheld, tracer, models, planted: opts.planted ?? [], plantedOut: planted });
+      const r = await runConfiguration(spec, run, { layer, prepared, protocol, tenant, decided_at, auditWithheld: ctx.auditWithheld, tracer, models, planted: opts.planted ?? [], plantedOut: planted, redactor, clean, hp, decidedByPass });
       results.push(r);
       opts.onRun?.(r);
     }
     if (spec.select.kind === "default" && runs < 2) {
       const again = await runPass(layer, { tracer, world: new DriftWorld(`eval_${spec.id}_determinism`), decidedAt: decided_at });
-      extraPass[spec.id] = again.findings.map((f) => ({ id: f.id, class: f.finding.class, verb: f.verb, reason: f.disposition.reason }));
+      extraPass[spec.id] = again.findings.map((f) => ({ id: f.id, class: f.finding.class, verb: f.verb, reason: clean(f.disposition.reason) }));
     }
   }
 
@@ -245,8 +267,10 @@ export async function runEval(opts: EvalOptions): Promise<EvalResult> {
     }
   }
 
+  const baseFinding = (f: Finding): BaselineFinding => ({ id: f.id, class: f.finding.class, verb: f.verb, summary: clean(f.finding.summary) });
   return {
     protocol, split, set, itemIds, configs: ordered, runs: results, planted, tenant, decided_at,
+    policy: { file: policy.file, version: policy.version, rows: policy.rows, inserted: policy.inserted, rules: policy.rules.length },
     baseline: { findings: base.findings.map(baseFinding), unmatched: base.findings.filter((f) => !matchedAnywhere.has(f.id)).map(baseFinding) },
     determinism, started_at, finished_at: new Date().toISOString(),
   };
@@ -263,39 +287,55 @@ interface RunContext {
   models: ModelPorts;
   planted: readonly PlantedClaim[];
   plantedOut: PlantedOutcome[];
+  redactor: Redactor;
+  clean: Clean;
+  /** The Decider's reads for history findings, once per recording. */
+  hp: HistoryPolicy;
+  /** The baseline pass's decision per finding id, under the policy. */
+  decidedByPass: Map<string, DispositionNote>;
 }
 
-const emptySubject = (s: Subject): Omit<SubjectOutcome, "verb" | "reason" | "not_judged"> => ({
-  finding_id: s.id, class: s.finding.class, summary: s.finding.summary, checks: [], rejected: [], selection: null, ran_unmodified: 0, early_stops: 0, judge: null,
+const emptySubject = (s: Subject, clean: Clean): Omit<SubjectOutcome, "verb" | "reason" | "not_judged"> => ({
+  finding_id: s.id, class: s.finding.class, summary: clean(s.finding.summary), decided_by: null, rule_id: null, checks: [], rejected: [], selection: null, ran_unmodified: 0, early_stops: 0, judge: null,
 });
 
 async function runConfiguration(spec: ConfigSpec, run: number, rc: RunContext): Promise<RunResult> {
   const started_at = new Date().toISOString();
+  const { clean } = rc;
   const usesModel = spec.select.kind === "model" || spec.judge !== null || spec.direct !== null;
-  const recorder = usesModel ? new Recorder(rc.models.nightshift, rc.models.receipts()) : null;
-  const mctx = (item: string): ModelCallContext => ({ recorder: recorder!, tenantId: rc.tenant, item, tracer: rc.tracer });
+  const recorder = usesModel ? new Recorder(rc.models.nightshift, rc.models.receipts(), rc.redactor) : null;
+  const mctx = (item: string): ModelCallContext => ({ recorder: recorder!, tenantId: rc.tenant, item, tracer: rc.tracer, redactor: rc.redactor });
 
   let pass: RunResult["pass"] = null;
   let byId = new Map<string, Finding>();
   if (spec.select.kind === "default") {
     const p = await runPass(rc.layer, { tracer: rc.tracer, world: new DriftWorld(`eval_${spec.id}_${run}`), decidedAt: rc.decided_at });
-    pass = p.findings.map((f) => ({ id: f.id, class: f.finding.class, verb: f.verb, reason: f.disposition.reason }));
+    pass = p.findings.map((f) => ({ id: f.id, class: f.finding.class, verb: f.verb, reason: clean(f.disposition.reason) }));
     byId = new Map(p.findings.map((f) => [f.id, f]));
   }
 
+  /** The configuration's own verb through the Decider's precedence: the pass's exception or rule for a pass finding, the rule of its record for a history finding. */
+  const decided = async (prep: Prepared, s: Subject, own: { verb: "ADOPT" | "ESCALATE"; reason: string }): Promise<Pick<SubjectOutcome, "verb" | "reason" | "decided_by" | "rule_id" | "not_judged">> => {
+    const d: Decided = prep.kind === "pass" ? underPolicy(rc.decidedByPass.get(s.id), own) : await decideHistory(rc.layer, rc.hp, s.finding, { verb: own.verb, why: own.reason });
+    return { verb: d.verb, reason: clean(d.reason), decided_by: d.decided_by, rule_id: d.rule_id, not_judged: null };
+  };
+
   const subjectOutcome = async (prep: Prepared, s: Subject): Promise<SubjectOutcome> => {
-    const shell = emptySubject(s);
+    const shell = emptySubject(s, clean);
     if (spec.select.kind === "default") {
       if (prep.kind === "pass") {
         const f = byId.get(s.id);
         if (!f) return { ...shell, verb: null, reason: "", not_judged: `finding ${s.id} is absent from this run's pass` };
         return {
-          ...shell, verb: f.verb, reason: f.disposition.reason, not_judged: null,
-          checks: f.checks.map((c) => ({ template: c.template, holds: c.holds, rows: c.rowCount })), rejected: f.rejected.map((r) => r.reason), early_stops: f.earlyStop ? 1 : 0,
+          ...shell, verb: f.verb, reason: clean(f.disposition.reason), decided_by: f.disposition.decided_by, rule_id: f.disposition.rule_id, not_judged: null,
+          checks: f.checks.map((c) => ({ template: c.template, holds: c.holds, rows: c.rowCount })), rejected: f.rejected.map((r) => clean(r.reason)), early_stops: f.earlyStop ? 1 : 0,
         };
       }
       const a = await assessChecks(rc.layer, s.finding, defaultChecks(s.finding), { auditWithheld: rc.auditWithheld, tracer: rc.tracer });
-      return { ...shell, verb: a.verb, reason: a.why, not_judged: null, checks: a.checks.map((c) => ({ template: c.template, holds: c.holds, rows: c.rowCount })), rejected: a.rejected.map((r) => r.reason), early_stops: a.earlyStops };
+      return {
+        ...shell, ...(await decided(prep, s, { verb: a.verb, reason: a.why })),
+        checks: a.checks.map((c) => ({ template: c.template, holds: c.holds, rows: c.rowCount })), rejected: a.rejected.map((r) => clean(r.reason)), early_stops: a.earlyStops,
+      };
     }
     if (spec.select.kind !== "model") return { ...shell, verb: null, reason: "", not_judged: "the configuration chooses no checks" };
     const sel = await selectChecks(mctx(prep.item.id), s.finding, s.id, spec.select.tier);
@@ -305,22 +345,23 @@ async function runConfiguration(spec: ConfigSpec, run: number, rc: RunContext): 
     if (!v.valid.length) return { ...shell, selection, verb: null, reason: "", not_judged: `invalid output: the selection holds no valid check (${selection.invalid.join("; ") || "no check chosen"})` };
     const a = await assessChecks(rc.layer, s.finding, v, { auditWithheld: rc.auditWithheld, tracer: rc.tracer });
     const checked = { ...shell, selection, checks: a.checks.map((c) => ({ template: c.template, holds: c.holds, rows: c.rowCount })), rejected: a.rejected.map((r) => clean(r.reason)), ran_unmodified: a.checks.length, early_stops: a.earlyStops };
-    if (spec.judge === null) return { ...checked, verb: a.verb, reason: a.why, not_judged: null };
-    if (a.withdraw.withdraw) return { ...checked, verb: a.verb, reason: a.why, not_judged: null, judge: { withheld: a.withdraw.reason } };
+    if (spec.judge === null) return { ...checked, ...(await decided(prep, s, { verb: a.verb, reason: a.why })) };
+    if (a.withdraw.withdraw) return { ...checked, ...(await decided(prep, s, { verb: a.verb, reason: a.why })), judge: { withheld: clean(a.withdraw.reason) } };
     const { verdict } = await judge(mctx(prep.item.id), rc.layer, s.finding.summary, s.evidence, s.id, spec.judge);
     const judged = {
       status: verdict.status, reason: clean(verdict.reason), sql: verdict.sql ? clean(verdict.sql) : null, rows: verdict.rowCount, receipt_id: verdict.receiptId,
-      served_model: verdict.servedModel, attempts: verdict.attempts ?? null, cache_status: verdict.custody?.cacheStatus ?? null,
+      served_model: verdict.servedModel ? clean(verdict.servedModel) : null, attempts: verdict.attempts ?? null, cache_status: verdict.custody?.cacheStatus ?? null,
+      route: verdict.route ? clean(verdict.route) : null, route_attempts: verdict.routeAttempts ?? null,
     };
-    if (verdict.status === "refuted") return { ...checked, judge: judged, verb: "ADOPT", reason: `the judge struck the claim: ${judged.reason}`, not_judged: null };
-    if (verdict.status === "stands") return { ...checked, judge: judged, verb: a.verb, reason: `${a.why}; the claim stands: ${judged.reason}`, not_judged: null };
+    if (verdict.status === "refuted") return { ...checked, judge: judged, ...(await decided(prep, s, { verb: "ADOPT", reason: `the judge struck the claim: ${judged.reason}` })) };
+    if (verdict.status === "stands") return { ...checked, judge: judged, ...(await decided(prep, s, { verb: a.verb, reason: `${a.why}; the claim stands: ${judged.reason}` })) };
     return { ...checked, judge: judged, verb: null, reason: "", not_judged: `judge ${verdict.status}: ${judged.reason}` };
   };
 
   const items: ItemOutcome[] = [];
   for (const prep of rc.prepared) {
     const shell = {
-      id: prep.item.id, class: prep.item.class, set: prep.set, label: prep.label, kind: prep.kind, matched: prep.matched, not_raised: prep.not_raised,
+      id: prep.item.id, class: prep.item.class, set: prep.set, label: prep.label, kind: prep.kind, matched: prep.matched, not_raised: prep.not_raised === null ? null : clean(prep.not_raised),
     };
     if (prep.not_raised !== null) {
       items.push({ ...shell, verdict: null, reading: null, agree: null, not_judged: null, subjects: [], direct: null, strikes: 0 });
@@ -331,7 +372,7 @@ async function runConfiguration(spec: ConfigSpec, run: number, rc: RunContext): 
     if (spec.direct !== null) {
       const r = await directVerdict(mctx(prep.item.id), prep.item.class, prep.item.facts, mergeEvidence(prep.subjects.map((s) => s.evidence)), spec.direct);
       direct = r.ok ? { verb: r.value.verb, reason: clean(r.value.reason) } : null;
-      subjects = prep.subjects.map((s) => ({ ...emptySubject(s), verb: direct?.verb ?? null, reason: direct?.reason ?? "", not_judged: r.ok ? null : `direct: ${clean(r.reason)}` }));
+      subjects = prep.subjects.map((s) => ({ ...emptySubject(s, clean), verb: direct?.verb ?? null, reason: direct?.reason ?? "", not_judged: r.ok ? null : `direct: ${clean(r.reason)}` }));
     } else {
       subjects = [];
       for (const s of prep.subjects) subjects.push(await subjectOutcome(prep, s));
@@ -352,8 +393,8 @@ async function runConfiguration(spec: ConfigSpec, run: number, rc: RunContext): 
       const { verdict, calls } = await judge(mctx(c.id), rc.layer, c.claim, evidence, null, spec.judge);
       rc.plantedOut.push({
         config: spec.id, run, judge_tier: spec.judge, id: c.id, kind: c.kind, status: verdict.status, struck: verdict.status === "refuted", reason: clean(verdict.reason),
-        sql: verdict.sql ? clean(verdict.sql) : null, rows: verdict.rowCount, receipt_id: verdict.receiptId, served_model: verdict.servedModel,
-        cache_status: verdict.custody?.cacheStatus ?? null, calls,
+        sql: verdict.sql ? clean(verdict.sql) : null, rows: verdict.rowCount, receipt_id: verdict.receiptId, served_model: verdict.servedModel ? clean(verdict.servedModel) : null,
+        route: verdict.route ? clean(verdict.route) : null, cache_status: verdict.custody?.cacheStatus ?? null, calls,
       });
     }
   }

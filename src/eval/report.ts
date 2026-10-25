@@ -1,4 +1,5 @@
-// summary.md of one eval run: the protocol's counts per configuration and run, its measures (accuracy with
+// summary.md of one eval run: the policy file and version the recording was decided under, the protocol's
+// counts per configuration and run, its measures (accuracy with
 // Wilson 95% intervals, determinism, coverage, false-positive rate, stability over uncached answers, the
 // planted-claim strikes), the requested-versus-served table, the items not judged, the items not raised, the
 // findings no item names and the unsure items' verdicts. Plain markdown, every number read from EvalResult.
@@ -30,6 +31,7 @@ export function renderSummary(r: EvalResult, meta: { recording: string; out: str
     `# Eval results ${meta.out}`,
     "",
     `Recording ${meta.recording}, tenant ${r.tenant}, every disposition decided at ${r.decided_at}. Contract eval/PROTOCOL.md; configurations as its table states them.`,
+    `Policy ${r.policy.file} version ${r.policy.version}: ${r.policy.rows} rule(s) loaded into the recording before its passes (${r.policy.inserted} inserted), ${r.policy.rules} read for ${r.tenant}; C0 to C3 decide by the exception, then the rule, then the default.`,
     `Split seed ${r.split.seed} (sha256 of eval/labels.json). Set ${r.set}: ${r.itemIds.length} item(s), ${dev} development and ${r.itemIds.length - dev} held out.`,
     `Runs per configuration: ${Math.max(0, ...r.configs.map((c) => byConfig(c.id).length))}. Started ${r.started_at}, finished ${r.finished_at}.`,
     `Verb reading: ${r.protocol.reads.yes.join(", ")} read yes; ${r.protocol.reads.no.join(", ")} read no.`,

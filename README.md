@@ -93,7 +93,7 @@ detail.
 
 | Command | Proves | Measured |
 |---|---|---|
-| `npm test` | Every module against fixtures, fakes and a throwaway Postgres schema; the live halves run behind their flags. | 898 tests in 35 files: 785 pass and 113 wait on a live flag, 25 Oct 2026. |
+| `npm test` | Every module against fixtures, fakes and a throwaway Postgres schema; the live halves run behind their flags. | 905 tests in 35 files: 792 pass and 113 wait on a live flag, 25 Oct 2026. |
 | `PARITY_LIVE=true npx vitest run test/parity.test.ts` | Every query the agent runs returns the same columns, rows and totals on sql.js and on Zetaris over the same rows. | 107 of 107 cases equal, 25 Oct 2026. |
 | `SAMPLE_MODE=true npm run sample` | The whole pass over `sample/bundle.json`, with no credentials and no model. | 26 runs, 6,372 observations, 27 findings (HOLD 26 and ESCALATE 1, all by policy), two runs byte-identical, 25 Oct 2026. |
 | `npm run collect:cloudflare`, `npm run collect:linux` | The collectors read the live estate in full, each population asserted before the first row. | 58 of 58 records in 6 zones, 860 of 860 audit rows, 24 of 24 and 14 of 14 vhost files, 25 Oct 2026. |
@@ -106,7 +106,7 @@ detail.
 | `npm run cycle` | One cycle of the loop, every step once, the first failing step stopping it. | 9 of 9 steps ok in 95.1 s, a dry run, 25 Oct 2026. |
 | `npm run tickets` | One GitHub issue per ticket row, opened, commented on and closed by the ticket rules. | the smoke opened, commented on and closed issue #1 and a cycle opened issue #2 for the `proxy_split` HOLD, 24 Oct 2026; the first cycle after that HOLD expired commented on #2, 25 Oct 2026. |
 | `npm run document` | The owner's document: one page per tenant from 14 named queries, through the deny-list probe before it is written. | 27 findings open; `examples/document.md` byte-identical on a second render, 25 Oct 2026. |
-| `npm run eval -- --set dev --configs C0 --runs 2` | The pre-registered eval of [eval/PROTOCOL.md](eval/PROTOCOL.md). | C0 on the 15 development items: agreement 3 of 9 (Wilson 95% 0.121 to 0.646), 0 differences between runs, 24 Oct 2026. |
+| `npm run eval -- --set dev --configs C0 --runs 2` | The pre-registered eval of [eval/PROTOCOL.md](eval/PROTOCOL.md). | C0 on the 15 development items under `policy/hackathon.json` version 2: 11 scored, 11 with a verdict, agreement 9 of 9 (Wilson 95% 0.701 to 1.000), 0 of 9 labelled no read yes, 0 differences between runs, 25 Oct 2026. |
 | `npm run site` | The replay page, built from [examples/](examples/) alone, every check re-run to its recorded count before anything is published. | 9 findings (HOLD 7, ESCALATE 2), 33 checks re-run equal, a rebuild byte-identical, 25 Oct 2026. |
 | `npm run conformance`, `npm run conformance:hmem` | The vendored Meterless suites pass through the agent's own engine modules. | World Model 8 of 8, 23 Oct 2026; H-MEM 13 of 13, 24 Oct 2026. |
 | `npm run zetaris:setup` | The idempotent setup of the `DRIFT` datasource, the ten-entity USL and its three DQ rules. | 42 statements, 0 failed; `run_complete` 19 of 19 runs valid, 25 Oct 2026. |
@@ -226,7 +226,9 @@ gives 15 development items and 23 held out; tuning uses the development set only
 after the feature freeze, its results published whatever they say. Yes expects ESCALATE or FIX; no expects ADOPT, HOLD
 or ROLLBACK. Every model call passes the receipt gate with a fresh nonce, a substitution invalidates its run, and the
 ten planted false claims of `eval/planted.json` go to every judge. Results, with Wilson 95% intervals, land in
-`eval/results/<UTC stamp>/`. Every C0 disagreement on the development set is an item labelled no that C0 reads as yes.
+`eval/results/<UTC stamp>/`. C0 runs the pass as SAMPLE_MODE does, under `policy/hackathon.json` version 2 loaded for
+the recording's tenant (the protocol's changelog, 25 Oct 2026): on the development set every finding is HOLD by
+policy and C0 agrees with 9 of the 9 items labelled yes or no.
 
 ## Zetaris
 
@@ -256,7 +258,7 @@ Nemotron runs through Nightshift, requested by explicit model id with OpenRouter
 
 | role | model | runs in |
 |---|---|---|
-| Triage: pick and parameterise catalogue checks for a finding | Nemotron 3.5 Lightning: `METERLESS_MODEL_FAST` `openrouter/nvidia/nemotron-3.5-lightning`, then `METERLESS_FALLBACK_FAST` `nvidia/nemotron-3.5-lightning-30b-a3b`, `local-runtime/nemotron-3.5-lightning-30b-a3b` | the eval's C1 to C3 |
+| Triage: pick and parameterise catalogue checks for a finding | Nemotron 3.5 Lightning: `METERLESS_MODEL_FAST` `openrouter/nvidia/nemotron-3.5-lightning`, then `METERLESS_FALLBACK_FAST` `nvidia/nemotron-3.5-lightning-30b-a3b`; a local lane joins when its weights are installed | the eval's C1 to C3 |
 | Investigation: pick the checks for a FIX, or an ESCALATE under an investigate rule | Nemotron 3.5 Lightning, the same ids | the Actor's `investigate` |
 | Refuting judge: one SELECT that returns rows when the claim is false | Nemotron 3 Ultra: `METERLESS_MODEL_JUDGE` `openrouter/nvidia/nemotron-3-ultra-550b-a55b:free`, then `METERLESS_FALLBACK_JUDGE` `nvidia/nemotron-3-ultra-550b-a55b`; Lightning in C2 | the Actor's `investigate`, the eval's C2 and C3 |
 | Eval C1 | C0 plus Nemotron 3.5 Lightning selecting and parameterising checks from the catalogue | `npm run eval` |

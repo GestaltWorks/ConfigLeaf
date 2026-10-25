@@ -210,7 +210,7 @@ function toObservation(o: Row, fingerprint: string | null): Observation {
 const sameSetting = (a: Row) => (b: Row): boolean => a.object_id === b.object_id && a.setting_path === b.setting_path;
 
 /** The run of `surface` among `candidates` nearest in time to `r`, same tenant, within PASS_WINDOW_MS; else undefined. */
-function nearestRun(candidates: Row[], r: Row, surface: string): Row | undefined {
+export function nearestRun(candidates: Row[], r: Row, surface: string): Row | undefined {
   const t = Date.parse(r.started_at);
   const gap = (d: Row): number => Math.abs(Date.parse(d.started_at) - t);
   const best = candidates.filter((d) => d.tenant_id === r.tenant_id && d.surface === surface).sort((a, b) => gap(a) - gap(b))[0];

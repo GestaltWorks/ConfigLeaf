@@ -17,12 +17,14 @@ const Schema = z.object({
   METERLESS_BASE_URL: z.string().default("http://127.0.0.1:8088/v1"),
   METERLESS_RUNTIME_TOKEN: z.string().default(""),
   METERLESS_APP_ID: z.string().default("drift-agent"),
-  // Nemotron through Nightshift, three providers, one endpoint. Measured 23 Oct: OpenRouter
-  // Nemotron answered 12/12 at 1 to 2 s median; NVIDIA's free endpoint 4/6 at 7.5 s with empty
-  // responses. The agent requests the primary; on failure the adapter walks the fallback list.
+  // Nemotron through Nightshift, one endpoint. Measured 23 Oct: OpenRouter Nemotron answered 12/12
+  // at 1 to 2 s median; NVIDIA's free endpoint 4/6 at 7.5 s with empty responses. The agent requests
+  // the primary; on failure the adapter walks the fallback list. A local lane
+  // (local-runtime/nemotron-3.5-lightning-30b-a3b) joins the list when its weights are installed: on
+  // 25 Oct it answered 503 local_runtime_not_ready on this machine, which holds none.
   METERLESS_MODEL_FAST: z.string().default("openrouter/nvidia/nemotron-3.5-lightning"),
   METERLESS_MODEL_JUDGE: z.string().default("openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"),
-  METERLESS_FALLBACK_FAST: z.string().default("nvidia/nemotron-3.5-lightning-30b-a3b,local-runtime/nemotron-3.5-lightning-30b-a3b"),
+  METERLESS_FALLBACK_FAST: z.string().default("nvidia/nemotron-3.5-lightning-30b-a3b"),
   METERLESS_FALLBACK_JUDGE: z.string().default("nvidia/nemotron-3-ultra-550b-a55b"),
   ZETARIS_REST_URL: z.string().default("http://localhost:8888/api/v1.0"),
   ZETARIS_ORG_ID: z.string().default("1"),

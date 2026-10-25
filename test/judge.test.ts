@@ -1,9 +1,10 @@
 // The refuting judge with a stub Nightshift (canned replies in the shapes Ultra and Lightning really
 // return) and a stub receipt store holding the two real receipt fixtures. The refuting SQL runs for
 // real against sql.js on the authored fixture (test/fixtures/authored-bundle.json, the hero story), so
-// stands/refuted come from rows, not from a canned verdict.
-import { beforeAll, describe, expect, it } from "vitest";
-import type { ChatResult, SignedReceipt } from "../src/adapters/nightshift.ts";
+// stands/refuted come from rows, not from a canned verdict. The failover ladder runs through the real
+// adapter over a fake fetch: one retry per route after a 5xx or an empty body, then the next route.
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { Nightshift, type ChatResult, type SignedReceipt } from "../src/adapters/nightshift.ts";
 import { config } from "../src/config.ts";
 import { DataLayer, type Params, type RunOptions } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
@@ -348,5 +349,81 @@ describe("judgeClaim under a tenant: the call goes out under the tenant's app id
     expect(v.status).toBe("not_judged");
     expect(v.reason).toMatch(/header-safe/);
     expect(ns.opts).toHaveLength(0);
+  });
+});
+
+describe("the failover ladder through a fake fetch: one retry per route after a 5xx or an empty body, then the next route", () => {
+  const CLIENT = "client-a";
+  const CLIENT_APP = tenantAppId(CLIENT);
+  const STANDS_REPLY = reply("SELECT run_id FROM {{t:collection_run}} WHERE run_id = 'run-none'");
+  let layer: CountingLayer;
+
+  beforeAll(async () => {
+    const engine = await SqlJsEngine.create();
+    engine.loadBundle(bundle);
+    layer = new CountingLayer(engine);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  type Answer = { status: number; body: string };
+  const ok = (id: string, content: string): Answer => ({
+    status: 200,
+    body: JSON.stringify({ id: `chatcmpl-${id}`, choices: [{ message: { content } }], usage: { prompt_tokens: 900, completion_tokens: 120 }, meterless: { receipt_id: `rcpt_${id}`, routed_model: ULTRA_MODEL } }),
+  });
+  const down = (status: number, detail: string): Answer => ({ status, body: JSON.stringify({ error: { meterless_detail: detail } }) });
+  /** A fetch that answers each model id from its own script, in order; returns the model of every request made. */
+  function fakeFetch(script: Record<string, Answer[]>): string[] {
+    const seen: string[] = [];
+    vi.stubGlobal("fetch", async (_url: string, init: { body: string }) => {
+      const model = (JSON.parse(init.body) as { model: string }).model;
+      seen.push(model);
+      const next = script[model]?.shift();
+      if (!next) throw new Error(`no scripted answer for ${model}`);
+      return new Response(next.body, { status: next.status });
+    });
+    return seen;
+  }
+  const nightshift = (): Nightshift => new Nightshift({ token: "test-token", retryDelayMs: 1 });
+  const find = (...rs: SignedReceipt[]) => ({ find: async (id: string) => rs.find((r) => r.body.receipt.receipt_id === id) ?? null });
+
+  it("a 502 then a 200 on the same route: the route answers on its second attempt, each model_call line names its attempt, the verdict names the route", async () => {
+    const seen = fakeFetch({ "route-a": [down(502, "provider_error"), ok("a", STANDS_REPLY)] });
+    const tracer = new MemTracer("test_failover");
+    const v = await judgeClaim({ claim: HERO_CLAIM, evidenceRows: EVIDENCE, layer, nightshift: nightshift(), receipts: find(ultraReceipt("rcpt_a", "chatcmpl-a", CLIENT_APP)), tracer, requestedModels: ["route-a", "route-b"], tenantId: CLIENT });
+    expect(seen).toEqual(["route-a", "route-a"]);
+    expect(v).toMatchObject({ status: "stands", receiptId: "rcpt_a", signatureOk: true, route: "route-a", routeAttempts: 2 });
+    expect(tracer.events.filter((e) => e.action === "model_call").map((e) => [e.model_requested, e.status, e.retry_count, e.output_summary])).toEqual([
+      ["route-a", "failed", 0, "attempt 1 of 2"], ["route-a", "ok", 1, "attempt 2 of 2"],
+    ]);
+    expect(tracer.events.some((e) => e.action === "fallback")).toBe(false);
+  });
+
+  it("both attempts failing, a 503 and then an empty body, move the ladder to the next route, which answers; the verdict names that route", async () => {
+    const seen = fakeFetch({ "route-a": [down(503, "busy"), { status: 200, body: "" }], "route-b": [ok("b", STANDS_REPLY)] });
+    const tracer = new MemTracer("test_failover");
+    const v = await judgeClaim({ claim: HERO_CLAIM, evidenceRows: EVIDENCE, layer, nightshift: nightshift(), receipts: find(ultraReceipt("rcpt_b", "chatcmpl-b", CLIENT_APP)), tracer, requestedModels: ["route-a", "route-b"], tenantId: CLIENT });
+    expect(seen).toEqual(["route-a", "route-a", "route-b"]);
+    expect(v).toMatchObject({ status: "stands", receiptId: "rcpt_b", route: "route-b", routeAttempts: 1 });
+    expect(tracer.events.filter((e) => e.action === "model_call").map((e) => [e.model_requested, e.status, e.output_summary, e.detail ?? ""])).toEqual([
+      ["route-a", "failed", "attempt 1 of 2", "busy"], ["route-a", "failed", "attempt 2 of 2", "empty body"], ["route-b", "ok", "attempt 1 of 2", ""],
+    ]);
+    expect(tracer.events.filter((e) => e.action === "fallback").map((e) => e.detail)).toEqual(["route-a failed, trying route-b"]);
+  });
+
+  it("a 503 from the last route, after its one retry, files the claim not_judged with the plain reason; no query runs", async () => {
+    const seen = fakeFetch({ "route-a": [down(502, "provider_error"), down(502, "provider_error")], "route-b": [down(503, "local_runtime_not_ready"), down(503, "local_runtime_not_ready")] });
+    const before = layer.runs;
+    const v = await judgeClaim({ claim: HERO_CLAIM, evidenceRows: EVIDENCE, layer, nightshift: nightshift(), receipts: find(), requestedModels: ["route-a", "route-b"], tenantId: CLIENT });
+    expect(seen).toEqual(["route-a", "route-a", "route-b", "route-b"]);
+    expect(v).toMatchObject({ status: "not_judged", reason: "judge model unavailable: chat route-b -> 503: local_runtime_not_ready", sql: null, receiptId: null, servedModel: null });
+    expect(v.route).toBeUndefined();
+    expect(layer.runs).toBe(before);
+  });
+
+  it("a status other than a 5xx or 429 is not retried: the ladder moves on after one attempt", async () => {
+    const seen = fakeFetch({ "route-a": [down(400, "bad request")], "route-b": [ok("b", STANDS_REPLY)] });
+    const v = await judgeClaim({ claim: HERO_CLAIM, evidenceRows: EVIDENCE, layer, nightshift: nightshift(), receipts: find(ultraReceipt("rcpt_b", "chatcmpl-b", CLIENT_APP)), requestedModels: ["route-a", "route-b"], tenantId: CLIENT });
+    expect(seen).toEqual(["route-a", "route-b"]);
+    expect(v).toMatchObject({ status: "stands", route: "route-b" });
   });
 });

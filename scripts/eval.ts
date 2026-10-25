@@ -1,7 +1,8 @@
 // npm run eval -- [--set dev|heldout|all] [--configs C0,C1] [--runs <n>] [--items E01,E02] [--planted | --no-planted]
 //                 [--bundle test/fixtures/recorded-bundle.json] [--tenant <id>] [--out <dir>]
 //
-// The eval runner of eval/PROTOCOL.md (src/eval/run.ts) over the recording the items came from, through sql.js.
+// The eval runner of eval/PROTOCOL.md (src/eval/run.ts) over the recording the items came from, through sql.js,
+// with the rules of DRIFT_POLICY_FILE (default policy/hackathon.json) for the recording's tenant loaded before its passes.
 // The configurations, the run count and the verb reading come from the protocol; items from eval/items.json,
 // labels from eval/labels.json, the split from the sha256 of labels.json; model calls go to Nightshift under
 // the tenant's app id, every answer counted on a verified receipt. The planted claims of eval/planted.json go to
@@ -65,7 +66,7 @@ const words = [...new Set([...config.redactWords, ...config.exportDenyWords])];
 const files: [string, string][] = [
   ...result.runs.map((r): [string, string] => [`${r.config.id}-run${r.run}.json`, JSON.stringify({
     config: r.config, run: r.run, valid: r.valid, invalid_reason: r.invalid_reason, started_at: r.started_at, finished_at: r.finished_at,
-    recording: bundlePath, tenant: result.tenant, decided_at: result.decided_at, split_seed: result.split.seed, set: result.set,
+    recording: bundlePath, tenant: result.tenant, decided_at: result.decided_at, policy: result.policy, split_seed: result.split.seed, set: result.set,
     counts: r.counts, items: r.items, calls: r.calls, pass: r.pass,
   }, null, 1) + "\n"]),
   ["planted.json", JSON.stringify({ recording: bundlePath, claims: result.planted }, null, 1) + "\n"],
@@ -83,5 +84,5 @@ for (const [name, text] of files) {
   writeFileSync(path.join(out, name), text);
 }
 const kept = files.length - withheld;
-console.log(`EVAL: ${result.runs.length} configuration run(s) over ${result.itemIds.length} item(s) of the ${result.set} set; ${result.planted.length} planted judgement(s); ${kept} file(s) written to ${out}${withheld ? `, ${withheld} withheld` : ""}; trace logs/${tracer.traceId}.jsonl`);
+console.log(`EVAL: ${result.runs.length} configuration run(s) over ${result.itemIds.length} item(s) of the ${result.set} set under ${result.policy.file} version ${result.policy.version}; ${result.planted.length} planted judgement(s); ${kept} file(s) written to ${out}${withheld ? `, ${withheld} withheld` : ""}; deny-list probe ${withheld ? `matched in ${withheld} file(s)` : `0 matches over ${files.length} file(s)`}; trace logs/${tracer.traceId}.jsonl`);
 if (withheld) process.exit(1);

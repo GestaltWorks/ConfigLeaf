@@ -15,10 +15,31 @@
 //     (no reasoning field, no </think>) while tokens_out runs 70 to 101 for a 12-token answer, so the
 //     reasoning is billed but not returned. The judge sets it true anyway: harmless here, honoured
 //     wherever the flag is forwarded.
+//
+// Failover, measured 25 Oct 2026 in the eval run of 03:09 UTC: five C2 judge calls walked openrouter > nvidia >
+// local-runtime and ended on "503 local_runtime_not_ready" (the machine holds no local weights); 2 judge calls
+// answered on the nvidia route. A route that answers 5xx (or 429) or an empty body is tried once more after
+// RETRY_DELAY_MS before the ladder moves on; every model_call trace line names its attempt ("attempt 2 of 2"); the
+// result names the route that answered (modelRequested, hop) and its attempts there (retries + 1).
 
 import { createPublicKey, verify as cryptoVerify } from "node:crypto";
 import { config, redact } from "../config.ts";
 import type { Tracer } from "../trace.ts";
+
+/** The wait before a route's one retry, in ms. */
+export const RETRY_DELAY_MS = 2_000;
+/** Attempts per route of the ladder: the first and one retry. */
+export const ROUTE_ATTEMPTS = 2;
+
+/** A status worth one more attempt on the same route: any 5xx, and 429. */
+const retryable = (status: number): boolean => status >= 500 || status === 429;
+
+export interface NightshiftOptions {
+  /** The runtime token; default the configured one (METERLESS_RUNTIME_TOKEN, else the runtime's token file). */
+  token?: string;
+  /** The wait before a route's retry; default RETRY_DELAY_MS. */
+  retryDelayMs?: number;
+}
 
 export interface ChatMessage { role: "system" | "user" | "assistant"; content: string }
 
@@ -44,12 +65,19 @@ export class NightshiftError extends Error {
 export class Nightshift {
   private readonly base = config.nightshift.baseUrl;
   private readonly root = config.nightshift.baseUrl.replace(/\/v1$/, "");
+  private readonly token: string;
+  private readonly retryDelayMs: number;
+
+  constructor(opts: NightshiftOptions = {}) {
+    this.token = opts.token ?? config.nightshift.token;
+    this.retryDelayMs = opts.retryDelayMs ?? RETRY_DELAY_MS;
+  }
 
   /** `appId` overrides the meterless-app header for one call (per client, "drift-agent-<tenant>", see gate.ts tenantAppId), so the receipt is filed under it and the gate can verify it. */
   private headers(extra: Record<string, string> = {}, appId: string = config.nightshift.appId): Record<string, string> {
-    if (!config.nightshift.token) throw new NightshiftError("no Nightshift runtime token", 0);
+    if (!this.token) throw new NightshiftError("no Nightshift runtime token", 0);
     return {
-      Authorization: `Bearer ${config.nightshift.token}`,
+      Authorization: `Bearer ${this.token}`,
       "meterless-app": appId,
       ...extra,
     };
@@ -63,8 +91,11 @@ export class Nightshift {
   }
 
   /**
-   * One chat call with one retry on 502 / timeout. The caller names the model explicitly;
-   * `meterless/*` modes are allowed but the receipt's routed_model is what we trust.
+   * One chat call on one route, in at most ROUTE_ATTEMPTS attempts: a 5xx or 429, an empty body (or a reply with
+   * no content), a timeout or a network error is tried once more after retryDelayMs; any other status throws at
+   * once. The caller names the model explicitly; `meterless/*` modes are allowed but the receipt's routed_model is
+   * what we trust. Each attempt is one model_call trace line whose output_summary names it ("attempt 1 of 2");
+   * the result's retries is the attempts made less one.
    */
   async chat(
     opts: { model: string; messages: ChatMessage[]; maxTokens?: number; temperature?: number; enableThinking?: boolean; appId?: string; agent: string; tracer?: Tracer },
@@ -78,54 +109,68 @@ export class Nightshift {
       ...(opts.enableThinking === undefined ? {} : { chat_template_kwargs: { enable_thinking: opts.enableThinking } }),
     });
     let lastErr: NightshiftError | null = null;
-    for (let attempt = 0; attempt <= 1; attempt++) {
+    for (let attempt = 1; attempt <= ROUTE_ATTEMPTS; attempt++) {
+      if (attempt > 1 && this.retryDelayMs > 0) await new Promise((r) => setTimeout(r, this.retryDelayMs));
       const t0 = Date.now();
+      const nth = `attempt ${attempt} of ${ROUTE_ATTEMPTS}`;
+      const failed = (err: NightshiftError, routed?: string): NightshiftError => {
+        opts.tracer?.emit({ agent: opts.agent, action: "model_call", model_requested: opts.model, ...(routed ? { model_routed: routed } : {}), status: "failed", retry_count: attempt - 1, latency_ms: Date.now() - t0, output_summary: nth, detail: err.detail ?? err.message });
+        return err;
+      };
+      let r: Response;
+      let text: string;
       try {
-        const r = await fetch(`${this.base}/chat/completions`, {
+        r = await fetch(`${this.base}/chat/completions`, {
           method: "POST",
           headers: this.headers({ "Content-Type": "application/json", "meterless-scope": "user" }, opts.appId),
           body,
           signal: AbortSignal.timeout(180_000),
         });
-        const text = await r.text();
-        let j: any = {};
-        try { j = JSON.parse(text); } catch { /* non-JSON error body */ }
-        const meter = j.meterless ?? {};
-        if (!r.ok) {
-          const detail = j.error?.meterless_detail ?? j.error?.message ?? text.slice(0, 200);
-          lastErr = new NightshiftError(`chat ${opts.model} -> ${r.status}: ${detail}`, r.status, detail);
-          opts.tracer?.emit({ agent: opts.agent, action: "model_call", model_requested: opts.model, model_routed: meter.provider_model ?? null, status: "failed", retry_count: attempt, latency_ms: Date.now() - t0, detail });
-          if (r.status === 502 || r.status === 503 || r.status === 429) continue;
-          throw lastErr;
-        }
-        const result: ChatResult = {
-          content: j.choices?.[0]?.message?.content ?? "",
-          modelRequested: opts.model,
-          modelRouted: meter.routed_model ?? meter.winning_route?.model ?? j.model ?? null,
-          receiptId: meter.receipt_id ?? null,
-          requestId: j.id ?? null,
-          tokensIn: j.usage?.prompt_tokens ?? meter.usage?.input_tokens ?? 0,
-          tokensOut: j.usage?.completion_tokens ?? meter.usage?.output_tokens ?? 0,
-          latencyMs: Date.now() - t0,
-          retries: attempt,
-          raw: j,
-        };
-        opts.tracer?.emit({ agent: opts.agent, action: "model_call", model_requested: opts.model, model_routed: result.modelRouted ?? undefined, receipt_id: result.receiptId ?? undefined, tokens_in: result.tokensIn, tokens_out: result.tokensOut, latency_ms: result.latencyMs, retry_count: attempt, status: "ok" });
-        return result;
+        text = await r.text();
       } catch (err) {
-        if (err instanceof NightshiftError) { lastErr = err; if (err.status === 502 || err.status === 503 || err.status === 429) continue; throw err; }
+        if (err instanceof NightshiftError) throw err; // no token: no attempt can succeed
         const msg = (err as Error).name === "TimeoutError" ? "timeout after 180 s" : (err as Error).message;
-        lastErr = new NightshiftError(`chat ${opts.model}: ${msg}`, 0, msg);
-        opts.tracer?.emit({ agent: opts.agent, action: "model_call", model_requested: opts.model, status: "failed", retry_count: attempt, latency_ms: Date.now() - t0, detail: msg });
+        lastErr = failed(new NightshiftError(`chat ${opts.model}: ${msg}`, 0, msg));
+        continue;
       }
+      let j: any = {};
+      try { j = JSON.parse(text); } catch { /* non-JSON error body */ }
+      const meter = j.meterless ?? {};
+      if (!r.ok) {
+        const detail = j.error?.meterless_detail ?? j.error?.message ?? text.slice(0, 200);
+        lastErr = failed(new NightshiftError(`chat ${opts.model} -> ${r.status}: ${detail}`, r.status, detail), meter.provider_model ?? undefined);
+        if (retryable(r.status)) continue;
+        throw lastErr;
+      }
+      const content: unknown = j.choices?.[0]?.message?.content;
+      if (!text.trim() || typeof content !== "string" || !content.trim()) {
+        const detail = !text.trim() ? "empty body" : "empty content";
+        lastErr = failed(new NightshiftError(`chat ${opts.model} -> ${r.status}: ${detail}`, r.status, detail), meter.routed_model ?? undefined);
+        continue;
+      }
+      const result: ChatResult = {
+        content,
+        modelRequested: opts.model,
+        modelRouted: meter.routed_model ?? meter.winning_route?.model ?? j.model ?? null,
+        receiptId: meter.receipt_id ?? null,
+        requestId: j.id ?? null,
+        tokensIn: j.usage?.prompt_tokens ?? meter.usage?.input_tokens ?? 0,
+        tokensOut: j.usage?.completion_tokens ?? meter.usage?.output_tokens ?? 0,
+        latencyMs: Date.now() - t0,
+        retries: attempt - 1,
+        raw: j,
+      };
+      opts.tracer?.emit({ agent: opts.agent, action: "model_call", model_requested: opts.model, model_routed: result.modelRouted ?? undefined, receipt_id: result.receiptId ?? undefined, tokens_in: result.tokensIn, tokens_out: result.tokensOut, latency_ms: result.latencyMs, retry_count: attempt - 1, status: "ok", output_summary: nth });
+      return result;
     }
     throw lastErr ?? new NightshiftError("chat failed", 0);
   }
 
   /**
-   * Chat with a failover ladder: the primary model, then each fallback in order. Every hop is a
-   * Nemotron route through Nightshift (cloud paid, cloud free, local), so the award evidence holds
-   * whichever answered; the receipt's routed_model says which. A `fallback` trace event records each hop.
+   * Chat with a failover ladder: the primary model, then each fallback in order, each in chat()'s attempts.
+   * Every hop is a Nemotron route through Nightshift, so the award evidence holds whichever answered; the
+   * result names the route (modelRequested, hop) and the receipt's routed_model the model that served. A
+   * `fallback` trace event records each hop that failed. Every hop failing throws the last hop's error.
    */
   async chatWithFallback(
     opts: { models: string[]; messages: ChatMessage[]; maxTokens?: number; temperature?: number; enableThinking?: boolean; appId?: string; agent: string; tracer?: Tracer },

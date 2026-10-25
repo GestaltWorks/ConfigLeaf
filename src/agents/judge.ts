@@ -13,6 +13,12 @@
 // not_judged, which escalates. A reply that is not one guarded SELECT is invalid_output, which the eval
 // counts. Neither is retried silently. A reply the gate refused is still parsed for the record (its SQL
 // is reported) and never run.
+//
+// What the model is handed passes the redactor first: the claim and every evidence cell, one cell at a time
+// (JudgeInput.redactor, default the tenant's salt with every deny-list label, REDACT_WORDS and
+// EXPORT_DENY_WORDS). Over rows the collectors already redacted this changes nothing (test/eval.test.ts holds it
+// to that over every finding of test/fixtures/recorded-bundle.json); a label that reached a claim or a row any
+// other way goes out as its pseudonym. The verdict names the ladder's route that answered and its attempts.
 
 import { z } from "zod";
 import { Nightshift, type ChatMessage, type ChatResult } from "../adapters/nightshift.ts";
@@ -20,6 +26,7 @@ import { config } from "../config.ts";
 import { DataLayerError, assertSelectOnly, stripLiterals, type DataLayer } from "../data/layer.ts";
 import { SCHEMA_SQL, TABLE_NAMES } from "../data/schema.ts";
 import { ReceiptStore, gateChatResult, gateWithCustody, tenantAppId, type CustodyCheck, type GateResult, type ReceiptFinder } from "../gate.ts";
+import { Redactor } from "../redactor.ts";
 import type { Tracer } from "../trace.ts";
 
 export const MAX_EVIDENCE_ROWS = 20;
@@ -28,6 +35,17 @@ export const MAX_LIMIT = 50;
 export const JUDGE_MAX_TOKENS = 8192;
 
 export interface Evidence { columns: string[]; rows: string[][] }
+
+let inputRedactor: Redactor | undefined;
+/** The redactor a model's input passes when the caller names none: REDACT_SALT with every deny-list label (REDACT_WORDS and EXPORT_DENY_WORDS). */
+export function modelInputRedactor(): Redactor {
+  return (inputRedactor ??= new Redactor(config.redactSalt || "drift-agent", [...config.redactWords, ...config.exportDenyWords]));
+}
+
+/** Every evidence cell through the redactor, one cell at a time, so a key-like word in one cell never reaches into the next. */
+export function redactEvidence(e: Evidence, r: Redactor): Evidence {
+  return { columns: e.columns, rows: e.rows.map((row) => row.map((v) => (typeof v === "string" ? r.text(v) : v))) };
+}
 
 /** The one method the judge needs from Nightshift, so a test can hand it canned replies. */
 export type JudgeModel = Pick<Nightshift, "chatWithFallback">;
@@ -50,6 +68,9 @@ export interface JudgeVerdict {
   custody?: CustodyCheck;
   /** Model calls made under custody: 2 when a receipt not ours was discarded and the call repeated. */
   attempts?: number;
+  /** The ladder's route (model id) that answered, and its attempts on that route (2 after one retry); absent when no route answered. */
+  route?: string;
+  routeAttempts?: number;
 }
 
 export interface JudgeInput {
@@ -72,6 +93,8 @@ export interface JudgeInput {
    * signature and the served tier only, as before.
    */
   tenantId?: string;
+  /** What the claim and every evidence cell pass before the model sees them; default modelInputRedactor(). */
+  redactor?: Redactor;
 }
 
 const Reply = z.object({ refute_with_sql: z.string(), rationale: z.string().default("") });
@@ -161,7 +184,10 @@ class ModelUnavailable extends Error {}
  * "judge"; the model call, the gate and the query add their own.
  */
 export async function judgeClaim(input: JudgeInput): Promise<JudgeVerdict> {
-  const { claim, evidenceRows, layer, nightshift, tracer } = input;
+  const { layer, nightshift, tracer } = input;
+  const redactor = input.redactor ?? modelInputRedactor();
+  const claim = redactor.text(input.claim);
+  const evidenceRows = redactEvidence(input.evidenceRows, redactor);
   const tier = input.requestedTier ?? "ultra";
   const requestedModels = input.requestedModels ?? (input.model ? [input.model] : [config.nightshift.modelJudge, ...config.nightshift.fallbackJudge]);
   const receipts = input.receipts ?? new ReceiptStore();
@@ -220,9 +246,12 @@ export async function judgeClaim(input: JudgeInput): Promise<JudgeVerdict> {
     const reason = `receipt lookup failed: ${(err as Error).message}`;
     tracer?.emit({ agent: "judge", action: "check", status: "not_judged", receipt_id: lastChat.receiptId ?? undefined, model_routed: lastChat.modelRouted ?? undefined, input_summary: summary, detail: reason });
     const p = parseReply(lastChat, layer);
-    return done({ status: "not_judged", reason, sql: p.sql, rowCount: null, rationale: p.rationale, receiptId: lastChat.receiptId, servedModel: lastChat.modelRouted });
+    return done({ status: "not_judged", reason, sql: p.sql, rowCount: null, rationale: p.rationale, receiptId: lastChat.receiptId, servedModel: lastChat.modelRouted, route: lastChat.modelRequested, routeAttempts: lastChat.retries + 1 });
   }
-  const served = { receiptId: gate.receiptId, servedModel: gate.servedModel, signatureOk: gate.signatureOk, ...(gate.custody ? { custody: gate.custody } : {}), ...(appId ? { attempts } : {}) };
+  const served = {
+    receiptId: gate.receiptId, servedModel: gate.servedModel, signatureOk: gate.signatureOk, ...(gate.custody ? { custody: gate.custody } : {}), ...(appId ? { attempts } : {}),
+    route: chat.modelRequested, routeAttempts: chat.retries + 1,
+  };
 
   // 2. The reply, parsed and guarded. A reply the gate refused is recorded (its SQL shown) and never run.
   const p = parseReply(chat, layer);

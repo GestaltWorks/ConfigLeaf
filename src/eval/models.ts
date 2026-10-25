@@ -24,15 +24,31 @@
 // Measured 25 Oct 2026 offline (test/eval.test.ts, a stub model with receipts signed in the test, six items): C2 with
 // Lightning as the falsifier judge, every judge call requested and served lightning at max_tokens 8,192 and counted by
 // the gate, the stub's refuting SELECT striking all 10 claims it judged.
+//
+// Redaction. Every string a model is handed and every string a CallRecord keeps passes the eval's redactor first
+// (evalRedactor: REDACT_SALT with every deny-list label, REDACT_WORDS and EXPORT_DENY_WORDS): the finding of a
+// selection prompt, the claim and evidence cells of a judge call (src/agents/judge.ts), the class, facts and evidence
+// cells of a C4 call, and each record's reason and model ids. Measured 25 Oct 2026: the eval run of 03:09 UTC withheld
+// C2-run1.json (x10) and planted.json (x4) on one deny-list label, 2 matches for each call that ended on the local lane
+// (5 in the run's calls, 2 of them planted claims'), in calls[].reason, "every route of the ladder failed: <the
+// runtime's 503 text>", kept raw; that text names two local paths under the operator's login. One call to the local
+// lane after the run, the same day, gave the same text: 2 matches raw, 0 through evalRedactor.
 
 import { Nightshift, verifyReceipt, type ChatMessage, type ChatResult, type SignedReceipt } from "../adapters/nightshift.ts";
-import { judgeClaim, MAX_EVIDENCE_ROWS, type Evidence, type JudgeInput, type JudgeModel, type JudgeVerdict } from "../agents/judge.ts";
+import { judgeClaim, MAX_EVIDENCE_ROWS, modelInputRedactor, redactEvidence, type Evidence, type JudgeInput, type JudgeModel, type JudgeVerdict } from "../agents/judge.ts";
 import { selectionPrompt, validateSelection, type FindingSummary, type ValidatedSelection } from "../catalogue/select.ts";
-import { config } from "../config.ts";
+import { config, redact } from "../config.ts";
 import type { DataLayer } from "../data/layer.ts";
 import { gateWithCustody, servedModelOf, tenantAppId, tierOf, type GateResult, type ReceiptFinder, type Tier } from "../gate.ts";
+import type { Redactor } from "../redactor.ts";
 import type { Tracer } from "../trace.ts";
 import type { ModelTier } from "./protocol.ts";
+
+/** The eval's redactor, the one a judge's input passes by default (src/agents/judge.ts modelInputRedactor): REDACT_SALT with every deny-list label, so a label the probe counts becomes its pseudonym. */
+export const evalRedactor = (): Redactor => modelInputRedactor();
+
+/** Text through the secret scrub, then the redactor: what a model is handed and what a result keeps. */
+export const scrubber = (r: Redactor) => (s: string | null | undefined): string => (s ? r.text(redact(s)) : "");
 
 /** The model ladder a tier is requested through: the configured primary, then its fallbacks, every one of that tier. */
 export function ladder(tier: ModelTier): string[] {
@@ -50,8 +66,11 @@ export interface CallRecord {
   finding: string | null;
   attempt: number;
   requested_tier: ModelTier;
-  /** The model of the ladder's hop that answered. */
+  /** The model of the ladder's hop that answered (the route); every route joined with " > " when none did. */
   model_requested: string;
+  /** The answering route's place in the ladder (0 the primary) and its attempts on that route (2 after one retry); null when no route answered. */
+  hop: number | null;
+  route_attempts: number | null;
   served_model: string | null;
   served_tier: Tier;
   receipt_id: string | null;
@@ -70,17 +89,19 @@ export const isSubstitution = (c: Pick<CallRecord, "signature_ok" | "served_tier
   c.signature_ok === true && c.served_tier !== "unknown" && c.served_tier !== c.requested_tier;
 
 /** A chat attempt that answered, or one whose every hop of the ladder failed. */
-type Attempt = ChatResult | { failed: string; modelRequested: string; latencyMs: number };
+type Attempt = (ChatResult & { hop?: number }) | { failed: string; modelRequested: string; latencyMs: number };
 
-/** Records every chat attempt and every receipt the gate looked up, for one configuration run. */
+/** Records every chat attempt and every receipt the gate looked up, for one configuration run; every string a record keeps passes the redactor. */
 export class Recorder {
   private readonly chats: Attempt[] = [];
   private readonly found = new Map<string, SignedReceipt>();
+  private readonly clean: (s: string | null | undefined) => string;
   readonly calls: CallRecord[] = [];
   readonly nightshift: JudgeModel;
   readonly receipts: ReceiptFinder;
 
-  constructor(inner: JudgeModel, finder: ReceiptFinder) {
+  constructor(inner: JudgeModel, finder: ReceiptFinder, redactor: Redactor = evalRedactor()) {
+    this.clean = scrubber(redactor);
     this.nightshift = {
       chatWithFallback: async (opts) => {
         const t0 = Date.now();
@@ -115,9 +136,9 @@ export class Recorder {
       const last = i === attempts.length - 1;
       if ("failed" in chat) {
         return {
-          kind: meta.kind, item: meta.item, finding: meta.finding, attempt: i + 1, requested_tier: meta.tier, model_requested: chat.modelRequested,
+          kind: meta.kind, item: meta.item, finding: meta.finding, attempt: i + 1, requested_tier: meta.tier, model_requested: this.clean(chat.modelRequested), hop: null, route_attempts: null,
           served_model: null, served_tier: "unknown", receipt_id: null, signature_ok: null, cache_status: null, latency_ms: chat.latencyMs, tokens_in: 0, tokens_out: 0,
-          gate: "refused", reason: `every route of the ladder failed: ${chat.failed}`,
+          gate: "refused", reason: this.clean(`every route of the ladder failed: ${chat.failed}`),
         };
       }
       const receipt = chat.receiptId ? this.found.get(chat.receiptId) ?? null : null;
@@ -125,10 +146,10 @@ export class Recorder {
       const cache = receipt?.body.receipt?.cache?.status;
       return {
         kind: meta.kind, item: meta.item, finding: meta.finding, attempt: i + 1, requested_tier: meta.tier,
-        model_requested: chat.modelRequested, served_model: served, served_tier: tierOf(served),
+        model_requested: this.clean(chat.modelRequested), hop: chat.hop ?? null, route_attempts: chat.retries + 1, served_model: served === null ? null : this.clean(served), served_tier: tierOf(served),
         receipt_id: chat.receiptId, signature_ok: receipt ? verifyReceipt(receipt) : null, cache_status: typeof cache === "string" ? cache : null,
         latency_ms: chat.latencyMs, tokens_in: chat.tokensIn, tokens_out: chat.tokensOut,
-        gate: last ? (final.ok ? "ok" : "refused") : "discarded", reason: last ? final.reason : "custody failed; answer discarded and the call made once more",
+        gate: last ? (final.ok ? "ok" : "refused") : "discarded", reason: this.clean(last ? final.reason : "custody failed; answer discarded and the call made once more"),
       };
     });
     this.calls.push(...out);
@@ -145,6 +166,8 @@ export interface ModelCallContext {
   tenantId: string;
   item: string;
   tracer?: Tracer;
+  /** What every string handed to the model passes first. */
+  redactor: Redactor;
 }
 
 export type GatedOutcome<T> = { ok: true; value: T; calls: CallRecord[] } | { ok: false; reason: string; calls: CallRecord[] };
@@ -187,7 +210,7 @@ export const DIRECT_MAX_TOKENS = 8_192;
 
 /** The selecting tier chooses and parameterises checks for one finding; the reply goes through validateSelection. */
 export async function selectChecks(ctx: ModelCallContext, finding: FindingSummary, findingId: string, tier: ModelTier): Promise<GatedOutcome<ValidatedSelection>> {
-  const r = await gatedCall(ctx, "select", findingId, tier, selectionPrompt(finding), SELECT_MAX_TOKENS, undefined);
+  const r = await gatedCall(ctx, "select", findingId, tier, selectionPrompt(ctx.redactor.json(finding)), SELECT_MAX_TOKENS, undefined);
   if (!r.gate?.ok || !r.chat) return { ok: false, reason: r.reason, calls: r.calls };
   return { ok: true, value: validateSelection(r.chat.content), calls: r.calls };
 }
@@ -201,7 +224,7 @@ export async function judge(
   const models = ladder(tier);
   const input: JudgeInput = {
     claim, evidenceRows: evidence, layer, nightshift: ctx.recorder.nightshift, receipts: ctx.recorder.receipts, tracer: ctx.tracer,
-    requestedModels: models, requestedTier: tier, model: models[0], tenantId: ctx.tenantId,
+    requestedModels: models, requestedTier: tier, model: models[0], tenantId: ctx.tenantId, redactor: ctx.redactor,
   };
   const verdict = await judgeClaim(input);
   const counted = verdict.status === "stands" || verdict.status === "refuted" || verdict.status === "invalid_output";
@@ -241,7 +264,8 @@ export function parseDirect(content: string): { verb: DirectVerb; reason: string
 
 /** The C4 baseline: one prompt, one verb, gated as every other call. */
 export async function directVerdict(ctx: ModelCallContext, cls: string, facts: string, evidence: Evidence, tier: ModelTier): Promise<GatedOutcome<{ verb: DirectVerb; reason: string }>> {
-  const r = await gatedCall(ctx, "direct", null, tier, directMessages(cls, facts, evidence), DIRECT_MAX_TOKENS, true);
+  const clean = scrubber(ctx.redactor);
+  const r = await gatedCall(ctx, "direct", null, tier, directMessages(clean(cls), clean(facts), redactEvidence(evidence, ctx.redactor)), DIRECT_MAX_TOKENS, true);
   if (!r.gate?.ok || !r.chat) return { ok: false, reason: r.reason, calls: r.calls };
   const parsed = parseDirect(r.chat.content);
   if (!parsed) return { ok: false, reason: "invalid output: the reply holds no {verb, reason} object with ADOPT, HOLD or ESCALATE", calls: r.calls };

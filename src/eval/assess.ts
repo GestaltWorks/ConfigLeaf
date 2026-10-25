@@ -7,11 +7,12 @@
 // as a rejection, "audit log incomplete"; a check the guard or the engine refuses is a recorded rejection;
 // every rejection of the selection itself (an unknown template, a parameter left unbound) is one too.
 // The verb is ADOPT when at least one check ran, every check holds and nothing was rejected, else ESCALATE,
-// with the pass's sentence. shouldWithdraw says whether a judge's answer can still move it. No policy rule
-// is weighed: the recording holds none, so the pass's Decider takes the default on every finding of it.
+// with the pass's sentence: the default's verb, which src/eval/policy.ts then puts through the Decider's
+// precedence (the exception, then the rule, then this verb). shouldWithdraw says whether a judge's answer can
+// still move it.
 //
-// Measured 24 Oct 2026 on test/fixtures/recorded-bundle.json (test/eval.test.ts): with the default selection
-// this gives the pass's verb and reason on all 38 findings.
+// Measured 24 Oct 2026 on test/fixtures/recorded-bundle.json with no policy rule loaded (test/eval.test.ts): with
+// the default selection this gives the pass's verb and reason on all 38 findings.
 
 import type { RejectedCheck, ValidatedSelection, FindingSummary } from "../catalogue/select.ts";
 import { runCheck, type CheckResult } from "../catalogue/templates.ts";
