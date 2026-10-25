@@ -1,19 +1,22 @@
 // Idempotent Zetaris setup: the DRIFT datasource over the app Postgres, the drift_usl Unified Semantic
-// Layer over it (ten tables) and three DQ rules on it. plan() lists the statements in the order they run,
+// Layer over it (eleven tables) and four DQ rules on it. plan() lists the statements in the order they run,
 // apply() runs them one at a time. uslRows() and uslMarkdown() read the layer's table off USL_DDL, activation() and
 // DQ_RULES: each entity, the DRIFT tables its activation SELECT reads, its keys and its DQ rule with the rule's
 // expression. npm run sources -- --usl prints it, and the README and the replay page's Sources tab carry it.
 //
-// The ten tables: collection (collection_run), setting (observation; source_kind for source), referent (each
+// The eleven tables: collection (collection_run), setting (observation; source_kind for source), referent (each
 // dns_name observation joined to the records of its name), backup_copy (backup_item joined to its snapshot),
 // policy (policy_rule), copy (vault_copy with its latest copy_validation and a validated flag), probe,
-// disposition, action (the Actor's rows, the reason and the record among them) and ticket. The three rules:
+// disposition, action (the Actor's rows, the reason and the record among them), ticket and cause (finding_cause,
+// the explainer's rows; cause_class for class). The four rules:
 //   run_complete     on collection: observed_count IS NOT NULL AND expected_count IS NOT NULL AND
 //                    observed_count >= expected_count AND status = 'complete'
 //   copy_validated   on copy: validated = 1
 //   action_verified  on action, scoped to the write paths: kind NOT IN ('rollback_file','revert_record') OR
 //                    status IN ('failed','refused','not_judged') OR verification <> ''; a done or unverified write
 //                    that names no verifying probe fails the rule, its status carrying what is missing
+//   cause_evidenced  on cause: cause_class = 'unknown' OR evidence_ids <> '[]'; a cause of any class but unknown
+//                    names at least one evidence id
 //
 // Contract:
 //   - Re-runnable. CREATE DATASOURCE has no IF NOT EXISTS, so SHOW DATASOURCES decides it. REGISTER
@@ -23,14 +26,14 @@
 //   - The USL: SHOW NAMESPACES OR TABLES IN lightning.metastore.drift says whether drift_usl exists; LOAD
 //     USL reads its model. A model whose tables or columns differ from COMPILE_USL's is stale: REMOVE USL,
 //     then COMPILE afresh. COMPILE runs only when the USL is absent or was removed this run, so an instance
-//     already holding the ten tables keeps its USL and its DQ rules. The USL is derived from the
+//     already holding the eleven tables keeps its USL and its DQ rules. The USL is derived from the
 //     datasource, so a removal loses nothing.
-//   - Every run re-ACTIVATEs the ten tables (each a SELECT over DRIFT.* returning exactly the declared
+//   - Every run re-ACTIVATEs the eleven tables (each a SELECT over DRIFT.* returning exactly the declared
 //     columns, NOT NULL varchars in COALESCE, ints CAST), then LIST DQ USL decides each rule of DQ_RULES:
 //     REGISTER when the listing lacks it, UPDATE DQ ... SET NAME, EXPRESSION when it is listed with another
-//     expression (whitespace aside), nothing when it is listed as stated. RUN DQ on collection, copy and
-//     action, the USL's table listing, a count per table.
-//   - One statement per call, except COMPILE USL ... DDL: ten CREATE TABLE blocks separated by ';' in
+//     expression (whitespace aside), nothing when it is listed as stated. RUN DQ on collection, copy,
+//     action and cause, the USL's table listing, a count per table.
+//   - One statement per call, except COMPILE USL ... DDL: eleven CREATE TABLE blocks separated by ';' in
 //     one request, sent with the adapter's allowMultiStatement (honoured for COMPILE USL only).
 //   - The CREATE DATASOURCE statement carries the Postgres password and is built in memory when it is
 //     sent, nowhere else: plan() holds password "<redacted>", its trace line says only "CREATE DATASOURCE
@@ -43,7 +46,8 @@
 //     UPDATE DQ) need an admin-role key; the agent's own key only SELECTs.
 //
 // Measured on 2.4.3.1: the USL DDL validator rejects a column named source and a table named reference with
-// a generic "Invalid DDL statement", hence source_kind and referent; it accepts lock, version, type, result
+// a generic "Invalid DDL statement", hence source_kind and referent; class is unmeasured and the cause entity
+// names it cause_class; the validator accepts lock, version, type, result
 // and the table names policy, copy, probe, disposition, action and ticket (24 Oct 2026, a scratch USL in
 // lightning.metastore.driftprobe, removed after). On that scratch USL, 24 Oct 2026: a custom rule survives
 // REFRESH DATASOURCE TABLES and a re-ACTIVATE and is dropped by COMPILE USL IF NOT EXISTS over the existing
@@ -67,6 +71,12 @@
 // (action_verified with its scoped expression) and every UPDATE DQ step is skipped as registered this run: 42
 // statements, 37 ok, 5 skipped, 0 failed, 10.0 s. UPDATE DQ remains the path when a rule is listed with another
 // expression and the USL is current.
+//
+// Measured live 25 Oct 2026, 20:44 UTC: the ten-table USL is stale ("lacks cause"), REMOVE USL, then COMPILE of the
+// eleven, cause_class accepted; the eleven activate, LIST DQ lists none of the four, REGISTER runs for all four: 47
+// statements, 41 ok, 6 skipped, 0 failed, 13.0 s. RUN DQ: run_complete 135 / 135 / 0, copy_validated 2268 / 1967 /
+// 301, action_verified 18 / 16 / 2, cause_evidenced on cause 4 / 4 / 0 (the four lab-1 causes, each operator_edit
+// with its evidence ids), the cause entity's disposition_id foreign key 4 / 4 / 0.
 
 import { Zetaris, type QueryResult } from "../adapters/zetaris.ts";
 import { config, redact } from "../config.ts";
@@ -82,9 +92,9 @@ const IDENT = /^[A-Za-z][A-Za-z0-9_]*$/;
 const PG_IDENT = /^[A-Za-z0-9_-]+$/;
 
 /**
- * The USL's ten tables, column lines in DDL order. The first four are the collected estate; policy is
+ * The USL's eleven tables, column lines in DDL order. The first four are the collected estate; policy is
  * policy_rule; copy is vault_copy with its latest copy_validation; probe, disposition, action (reason and
- * record included) and ticket are their datasource tables.
+ * record included) and ticket are their datasource tables; cause is finding_cause, class named cause_class.
  */
 const USL_DDL = {
   collection: [
@@ -227,6 +237,23 @@ const USL_DDL = {
     "created_at varchar(40) NOT NULL",
     "updated_at varchar(40) NOT NULL",
   ],
+  cause: [
+    "cause_id varchar(128) NOT NULL PRIMARY KEY",
+    "tenant_id varchar(64) NOT NULL",
+    "finding_id varchar(255) NOT NULL",
+    "disposition_id varchar(128) NOT NULL FOREIGN KEY REFERENCES disposition(disposition_id)",
+    "cause_class varchar(32) NOT NULL",
+    "actor varchar(255)",
+    "mechanism varchar(64)",
+    "occurred_at varchar(40)",
+    "source_host varchar(128)",
+    "evidence_ids varchar(2048) NOT NULL",
+    "diff varchar(8192)",
+    "summary varchar(1024) NOT NULL",
+    "window_from varchar(40) NOT NULL",
+    "window_to varchar(40) NOT NULL",
+    "decided_at varchar(40) NOT NULL",
+  ],
 } as const;
 
 export type UslTable = keyof typeof USL_DDL;
@@ -250,15 +277,18 @@ export interface DqRule { name: string; table: UslTable; expression: string }
  * names the probes that verified it; an investigation and a fix pass it whatever they carry. A write that
  * completed with no verification probe run or read carries status unverified, never done, so the rule's
  * status <> 'done' arm passes its row: the status itself records the missing verification, and a done row
- * with no probe id stays the one row the rule fails.
+ * with no probe id stays the one row the rule fails. cause_evidenced: a cause of any class but unknown names at
+ * least one audit_event or action id; evidence_ids is a JSON array as text, '[]' when it names none, so the rule
+ * compares plain columns.
  */
 export const DQ_RULES: readonly DqRule[] = [
   { name: "run_complete", table: "collection", expression: "observed_count IS NOT NULL AND expected_count IS NOT NULL AND observed_count >= expected_count AND status = 'complete'" },
   { name: "copy_validated", table: "copy", expression: "validated = 1" },
   { name: "action_verified", table: "action", expression: "kind NOT IN ('rollback_file','revert_record') OR status IN ('failed','refused','not_judged') OR verification <> ''" },
+  { name: "cause_evidenced", table: "cause", expression: "cause_class = 'unknown' OR evidence_ids <> '[]'" },
 ];
 /** The tables RUN DQ runs on, one statement each. */
-export const DQ_TABLES: readonly UslTable[] = ["collection", "copy", "action"];
+export const DQ_TABLES: readonly UslTable[] = ["collection", "copy", "action", "cause"];
 export const DQ_RULE = "run_complete";
 
 /** How an entity's rows are formed from its tables, for each entity whose rows are other than one table's rows under its own column names. */
@@ -267,6 +297,7 @@ const USL_FORMED: Partial<Record<UslTable, string>> = {
   referent: "each `observation` whose `refers_to_type` is `dns_name`, joined to the `dns_record` rows of its tenant whose `name` is its `refers_to_id`, the join the hero query makes for FOUND-BUT-DIFFERENT",
   backup_copy: "each `backup_item` joined to its `backup_snapshot`",
   copy: "each `vault_copy` with its latest `copy_validation` (by `validated_at`, then `validation_id`); `validated` is 1 when that result is ok or ok_with_gaps",
+  cause: "`class` as `cause_class`",
 };
 
 export interface UslRow {
@@ -428,6 +459,8 @@ export function activation(table: UslTable, ds: string): string {
       return `SELECT ${keep("action_id tenant_id kind target ?before_hash ?after_hash ?vault_commit verification receipts status reason record started_at ?finished_at disposition_id")} FROM ${ds}.action`;
     case "ticket":
       return `SELECT ${keep("ticket_id tenant_id psa ?external_id ?url type priority status ?action_id finding_id created_at updated_at")} FROM ${ds}.ticket`;
+    case "cause":
+      return `SELECT ${keep("cause_id tenant_id finding_id disposition_id")}, COALESCE(class, '') AS cause_class, ${keep("?actor ?mechanism ?occurred_at ?source_host evidence_ids ?diff summary window_from window_to decided_at")} FROM ${ds}.finding_cause`;
   }
 }
 

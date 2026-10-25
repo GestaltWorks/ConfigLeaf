@@ -1,5 +1,5 @@
-// The Zetaris setup with no live call: plan() order and texts (ten USL tables, each activation returning
-// exactly its declared columns, three DQ rules), the semantic layer's table uslRows() and uslMarkdown() read off the
+// The Zetaris setup with no live call: plan() order and texts (eleven USL tables, each activation returning
+// exactly its declared columns, four DQ rules), the semantic layer's table uslRows() and uslMarkdown() read off the
 // DDL, the activation SELECTs and DQ_RULES, staleness() of a USL model, the password kept out of every
 // string that is printed, traced or redact()ed, apply() over a scripted client (an instance already set up,
 // the four-table USL of 24 Oct, a rule listed with another expression, a fresh instance, one that fails),
@@ -29,11 +29,31 @@ const USL = "lightning.metastore.drift.drift_usl";
 const CREATE_PRINTED = `CREATE DATASOURCE DRIFT DESCRIBE BY "drift-agent app Postgres on the zetaris network" OPTIONS (jdbcdriver "org.postgresql.Driver", jdbcurl "jdbc:postgresql://drift-pg:5432/drift", username "drift", password "<redacted>", schema "public", fetchsize "1000")`;
 const step = (name: string, steps = setup.plan(ENV)) => steps.find((s) => s.name === name)!;
 
-const TEN = ["collection", "setting", "referent", "backup_copy", "policy", "copy", "probe", "disposition", "action", "ticket"];
-const RULES = ["run_complete", "copy_validated", "action_verified"];
+const ELEVEN = ["collection", "setting", "referent", "backup_copy", "policy", "copy", "probe", "disposition", "action", "ticket", "cause"];
+const RULES = ["run_complete", "copy_validated", "action_verified", "cause_evidenced"];
 const RUN_COMPLETE_EXPR = "observed_count IS NOT NULL AND expected_count IS NOT NULL AND observed_count >= expected_count AND status = 'complete'";
 /** action_verified, scoped to the write paths. */
 const ACTION_VERIFIED_EXPR = "kind NOT IN ('rollback_file','revert_record') OR status IN ('failed','refused','not_judged') OR verification <> ''";
+/** cause_evidenced: a cause of any class but unknown names at least one evidence id. */
+const CAUSE_EVIDENCED_EXPR = "cause_class = 'unknown' OR evidence_ids <> '[]'";
+/** The cause entity's DDL block as COMPILE_USL carries it. */
+const CAUSE_DDL = `CREATE TABLE cause (
+  cause_id varchar(128) NOT NULL PRIMARY KEY,
+  tenant_id varchar(64) NOT NULL,
+  finding_id varchar(255) NOT NULL,
+  disposition_id varchar(128) NOT NULL FOREIGN KEY REFERENCES disposition(disposition_id),
+  cause_class varchar(32) NOT NULL,
+  actor varchar(255),
+  mechanism varchar(64),
+  occurred_at varchar(40),
+  source_host varchar(128),
+  evidence_ids varchar(2048) NOT NULL,
+  diff varchar(8192),
+  summary varchar(1024) NOT NULL,
+  window_from varchar(40) NOT NULL,
+  window_to varchar(40) NOT NULL,
+  decided_at varchar(40) NOT NULL
+)`;
 
 /** The SELECT list's output names of an ACTIVATE statement: parenthesised groups removed, then the last word of each item. */
 function activatedColumns(sql: string): string[] {
@@ -58,17 +78,18 @@ describe("plan()", () => {
       ["load usl drift_usl", "usl_present"],
       ["remove usl drift_usl", "usl_stale"],
       ["compile usl drift_usl", "usl_absent"],
-      ...TEN.map((t) => [`activate ${t}`, ""]),
+      ...ELEVEN.map((t) => [`activate ${t}`, ""]),
       ["list dq rules", ""],
       ...RULES.flatMap((r) => [[`register dq ${r}`, "dq_rule_absent"], [`update dq ${r}`, "dq_rule_differs"]]),
       ["run dq collection", ""],
       ["run dq copy", ""],
       ["run dq action", ""],
+      ["run dq cause", ""],
       ["show lightning.metastore.drift.drift_usl", ""],
-      ...TEN.map((t) => [`count ${t}`, ""]),
+      ...ELEVEN.map((t) => [`count ${t}`, ""]),
     ]);
-    expect(steps).toHaveLength(42);
-    expect(setup.USL_TABLES).toEqual(TEN);
+    expect(steps).toHaveLength(47);
+    expect(setup.USL_TABLES).toEqual(ELEVEN);
   });
 
   it("datasource: CREATE from DATABASE_URL with the host replaced, built in memory; list its tables; register; refresh", () => {
@@ -83,7 +104,7 @@ describe("plan()", () => {
     expect(steps.filter((s) => s.secret).map((s) => s.name)).toEqual(["create datasource DRIFT"]);
   });
 
-  it("namespaces, the USL probes and REMOVE, then the ten-table USL DDL in one request with the renamed reserved words", () => {
+  it("namespaces, the USL probes and REMOVE, then the eleven-table USL DDL in one request with the renamed reserved words", () => {
     expect(step("namespace lightning.metastore", steps).sql).toBe("CREATE NAMESPACE IF NOT EXISTS lightning.metastore");
     expect(step("namespace lightning.metastore.drift", steps).sql).toBe("CREATE NAMESPACE IF NOT EXISTS lightning.metastore.drift");
     expect(step("list lightning.metastore.drift", steps).sql).toBe("SHOW NAMESPACES OR TABLES IN lightning.metastore.drift");
@@ -93,8 +114,8 @@ describe("plan()", () => {
     expect(ddl.multi).toBe(true);
     expect(ddl.sql).toBe(setup.COMPILE_USL);
     expect(ddl.sql.startsWith("COMPILE USL IF NOT EXISTS drift_usl DEPLOY NAMESPACE lightning.metastore.drift DDL\nCREATE TABLE collection (\n")).toBe(true);
-    expect([...ddl.sql.matchAll(/^CREATE TABLE (\w+) \($/gm)].map((m) => m[1])).toEqual(TEN);
-    expect(ddl.sql.match(/\);\nCREATE TABLE /g)).toHaveLength(9);
+    expect([...ddl.sql.matchAll(/^CREATE TABLE (\w+) \($/gm)].map((m) => m[1])).toEqual(ELEVEN);
+    expect(ddl.sql.match(/\);\nCREATE TABLE /g)).toHaveLength(10);
     expect(ddl.sql).toContain("  run_id varchar(128) NOT NULL FOREIGN KEY REFERENCES collection(run_id),");
     expect(ddl.sql).toContain("  setting_id varchar(128) NOT NULL FOREIGN KEY REFERENCES setting(setting_id),");
     expect(ddl.sql).toContain("  disposition_id varchar(128) NOT NULL FOREIGN KEY REFERENCES disposition(disposition_id)\n);");
@@ -103,16 +124,19 @@ describe("plan()", () => {
     expect(ddl.sql).toContain("  validated int NOT NULL\n)");
     expect(ddl.sql).not.toMatch(/^\s+source varchar/m);
     expect(ddl.sql).not.toMatch(/CREATE TABLE reference\b/);
-    expect(ddl.sql.endsWith("  updated_at varchar(40) NOT NULL\n)")).toBe(true);
+    // cause, the eleventh, after ticket: finding_cause with class as cause_class, its disposition a foreign key as action's is
+    expect(ddl.sql).toContain(`  updated_at varchar(40) NOT NULL\n);\n${CAUSE_DDL}`);
+    expect(ddl.sql.endsWith(`\n${CAUSE_DDL}`)).toBe(true);
+    expect(ddl.sql).not.toMatch(/^\s+class varchar/m);
     // USL_COLUMNS is read off the same DDL lines
-    for (const t of TEN) {
+    for (const t of ELEVEN) {
       const block = ddl.sql.slice(ddl.sql.indexOf(`CREATE TABLE ${t} (\n`)).split("\n)")[0].split("\n").slice(1);
       expect(block.map((l) => l.trim().split(" ")[0]), t).toEqual([...setup.USL_COLUMNS[t as keyof typeof setup.USL_COLUMNS]]);
     }
   });
 
-  it("activates each of the ten tables over the datasource, returning exactly the declared columns", () => {
-    for (const t of TEN) {
+  it("activates each of the eleven tables over the datasource, returning exactly the declared columns", () => {
+    for (const t of ELEVEN) {
       const s = step(`activate ${t}`, steps).sql;
       expect(s.startsWith(`ACTIVATE USL TABLE ${USL}.${t} AS SELECT `)).toBe(true);
       expect(activatedColumns(s), t).toEqual([...setup.USL_COLUMNS[t as keyof typeof setup.USL_COLUMNS]]);
@@ -130,23 +154,38 @@ describe("plan()", () => {
     expect(step("activate disposition", steps).sql).toMatch(/COALESCE\(reason, ''\) AS reason, expires_at, COALESCE\(decided_by, ''\) AS decided_by, rule_id, .* FROM DRIFT\.disposition$/);
     expect(step("activate action", steps).sql).toMatch(/COALESCE\(verification, ''\) AS verification, COALESCE\(receipts, ''\) AS receipts, COALESCE\(status, ''\) AS status, COALESCE\(reason, ''\) AS reason, COALESCE\(record, ''\) AS record, .* FROM DRIFT\.action$/);
     expect(step("activate ticket", steps).sql).toMatch(/external_id, url, COALESCE\(type, ''\) AS type, .* FROM DRIFT\.ticket$/);
+    // cause: each NOT NULL column in COALESCE, class read as cause_class, the nullable ones bare
+    expect(step("activate cause", steps).sql).toBe(`ACTIVATE USL TABLE ${USL}.cause AS SELECT COALESCE(cause_id, '') AS cause_id, COALESCE(tenant_id, '') AS tenant_id, COALESCE(finding_id, '') AS finding_id, COALESCE(disposition_id, '') AS disposition_id, COALESCE(class, '') AS cause_class, actor, mechanism, occurred_at, source_host, COALESCE(evidence_ids, '') AS evidence_ids, diff, COALESCE(summary, '') AS summary, COALESCE(window_from, '') AS window_from, COALESCE(window_to, '') AS window_to, COALESCE(decided_at, '') AS decided_at FROM DRIFT.finding_cause`);
+    // the CAST list: each entity's int columns of the DDL, each out of a CAST AS INT, and no other column; cause has none
+    const casts: Record<string, string[]> = {};
+    const ints: Record<string, string[]> = {};
+    for (const t of ELEVEN) {
+      casts[t] = [...step(`activate ${t}`, steps).sql.matchAll(/ AS INT\) AS (\w+)/g)].map((m) => m[1]);
+      const block = setup.COMPILE_USL.slice(setup.COMPILE_USL.indexOf(`CREATE TABLE ${t} (\n`)).split("\n)")[0];
+      ints[t] = [...block.matchAll(/^ {2}(\w+) int\b/gm)].map((m) => m[1]);
+    }
+    expect(casts).toEqual(ints);
+    expect(casts).toMatchObject({ collection: ["expected_count", "observed_count"], policy: ["lock", "hold_max_hours", "version"], copy: ["validated"], cause: [] });
   });
 
-  it("then the DQ rules (register or update), RUN DQ on collection, copy and action, the USL's table listing and a count per table", () => {
+  it("then the DQ rules (register or update), RUN DQ on collection, copy, action and cause, the USL's table listing and a count per table", () => {
     expect(step("list dq rules", steps).sql).toBe(`LIST DQ USL ${USL}`);
     expect(setup.DQ_RULES.map((r) => [r.name, r.table, r.expression])).toEqual([
       ["run_complete", "collection", RUN_COMPLETE_EXPR],
       ["copy_validated", "copy", "validated = 1"],
       ["action_verified", "action", ACTION_VERIFIED_EXPR],
+      ["cause_evidenced", "cause", CAUSE_EVIDENCED_EXPR],
     ]);
     expect(step("register dq run_complete", steps).sql).toBe(`REGISTER DQ run_complete TABLE ${USL}.collection AS ${RUN_COMPLETE_EXPR}`);
     expect(step("update dq run_complete", steps).sql).toBe(`UPDATE DQ run_complete TABLE ${USL}.collection SET NAME = run_complete, EXPRESSION = ${RUN_COMPLETE_EXPR}`);
     expect(step("register dq copy_validated", steps).sql).toBe(`REGISTER DQ copy_validated TABLE ${USL}.copy AS validated = 1`);
     expect(step("register dq action_verified", steps).sql).toBe(`REGISTER DQ action_verified TABLE ${USL}.action AS ${ACTION_VERIFIED_EXPR}`);
     expect(step("update dq action_verified", steps).sql).toBe(`UPDATE DQ action_verified TABLE ${USL}.action SET NAME = action_verified, EXPRESSION = ${ACTION_VERIFIED_EXPR}`);
-    for (const t of ["collection", "copy", "action"]) expect(step(`run dq ${t}`, steps)).toMatchObject({ sql: `RUN DQ TABLE ${USL}.${t}`, dqTable: t, show: true });
+    expect(step("register dq cause_evidenced", steps).sql).toBe(`REGISTER DQ cause_evidenced TABLE ${USL}.cause AS cause_class = 'unknown' OR evidence_ids <> '[]'`);
+    expect(step("update dq cause_evidenced", steps).sql).toBe(`UPDATE DQ cause_evidenced TABLE ${USL}.cause SET NAME = cause_evidenced, EXPRESSION = ${CAUSE_EVIDENCED_EXPR}`);
+    for (const t of ["collection", "copy", "action", "cause"]) expect(step(`run dq ${t}`, steps)).toMatchObject({ sql: `RUN DQ TABLE ${USL}.${t}`, dqTable: t, show: true });
     expect(step("show lightning.metastore.drift.drift_usl", steps).sql).toBe(`SHOW NAMESPACES OR TABLES IN ${USL}`);
-    for (const t of TEN) expect(step(`count ${t}`, steps).sql).toBe(`SELECT COUNT(*) AS n FROM ${USL}.${t}`);
+    for (const t of ELEVEN) expect(step(`count ${t}`, steps).sql).toBe(`SELECT COUNT(*) AS n FROM ${USL}.${t}`);
   });
 
   it("one statement per call except the COMPILE, no trailing semicolon, no double-quoted identifier in SQL text", () => {
@@ -158,14 +197,17 @@ describe("plan()", () => {
     for (const s of steps.filter((x) => /^(?:activate|count|register dq|update dq)/.test(x.name))) expect(stripLiterals(s.sql)).not.toContain('"');
   });
 
-  it("staleness(): LOAD USL's model against the ten tables and their columns", () => {
+  it("staleness(): LOAD USL's model against the eleven tables and their columns", () => {
     const model = (tables: Record<string, readonly string[]>) => ({ queryId: "q", columns: ["json"], rows: [[JSON.stringify({ tables: Object.entries(tables).map(([name, cols]) => ({ name, columnSpecs: cols.map((c) => ({ name: c })) })) })]], rowCount: 1, total: 1, latencyMs: 1, raw: {} });
     const current = { ...setup.USL_COLUMNS };
     expect(setup.staleness(model(current))).toBeNull();
-    const { policy: _p, copy: _c, probe: _r, disposition: _d, action: _a, ticket: _t, ...four } = current;
-    expect(setup.staleness(model(four))).toBe("4 table(s); lacks policy, copy, probe, disposition, action, ticket");
-    expect(setup.staleness(model({ ...current, extra: ["x"] }))).toBe("11 table(s); holds extra beyond the 10");
-    expect(setup.staleness(model({ ...current, policy: current.policy.filter((c) => c !== "note") }))).toBe("10 table(s); columns differ in policy");
+    const { policy: _p, copy: _c, probe: _r, disposition: _d, action: _a, ticket: _t, cause: _k, ...four } = current;
+    expect(setup.staleness(model(four))).toBe("4 table(s); lacks policy, copy, probe, disposition, action, ticket, cause");
+    const { cause: _k2, ...ten } = current;
+    expect(setup.staleness(model(ten))).toBe("10 table(s); lacks cause");
+    expect(setup.staleness(model({ ...current, extra: ["x"] }))).toBe("12 table(s); holds extra beyond the 11");
+    expect(setup.staleness(model({ ...current, policy: current.policy.filter((c) => c !== "note") }))).toBe("11 table(s); columns differ in policy");
+    expect(setup.staleness(model({ ...current, cause: current.cause.map((c) => (c === "cause_class" ? "class" : c)) }))).toBe("11 table(s); columns differ in cause");
     expect(setup.staleness({ ...model(current), rows: [["not json"]] })).toBe("LOAD USL returned no model that parses");
     expect(setup.staleness({ ...model(current), rows: [] })).toBe("LOAD USL returned no model that parses");
   });
@@ -201,15 +243,15 @@ describe("uslRows() and uslMarkdown(): the semantic layer's table", () => {
   const rows = setup.uslRows();
 
   it("one row per entity in USL_TABLES order, each built from the DRIFT tables its activation SELECT reads, every one in sql/schema.sql", () => {
-    expect(rows.map((r) => r.entity)).toEqual(TEN);
+    expect(rows.map((r) => r.entity)).toEqual(ELEVEN);
     expect(Object.fromEntries(rows.map((r) => [r.entity, r.builtFrom]))).toEqual({
       collection: ["collection_run"], setting: ["observation"], referent: ["observation", "dns_record"],
       backup_copy: ["backup_item", "backup_snapshot"], policy: ["policy_rule"], copy: ["vault_copy", "copy_validation"],
-      probe: ["probe"], disposition: ["disposition"], action: ["action"], ticket: ["ticket"],
+      probe: ["probe"], disposition: ["disposition"], action: ["action"], ticket: ["ticket"], cause: ["finding_cause"],
     });
     for (const r of rows) for (const t of r.builtFrom) expect(TABLE_NAMES, `${r.entity} reads ${t}`).toContain(t);
     // the exported activation() is the one plan() sends
-    for (const t of TEN) expect(step(`activate ${t}`).sql).toBe(`ACTIVATE USL TABLE ${USL}.${t} AS ${setup.activation(t as never, "DRIFT")}`);
+    for (const t of ELEVEN) expect(step(`activate ${t}`).sql).toBe(`ACTIVATE USL TABLE ${USL}.${t} AS ${setup.activation(t as never, "DRIFT")}`);
   });
 
   it("an entity over more than one table says how its rows are formed, naming each table; referent is the setting-to-record join of the hero query", () => {
@@ -226,22 +268,23 @@ describe("uslRows() and uslMarkdown(): the semantic layer's table", () => {
       expect(setup.COMPILE_USL).toContain(`  ${r.primaryKey} varchar(`);
       for (const f of r.foreignKeys) {
         const [, entity, column] = /^(\w+)\((\w+)\)$/.exec(f.references)!;
-        expect(TEN, `${r.entity}.${f.column}`).toContain(entity);
+        expect(ELEVEN, `${r.entity}.${f.column}`).toContain(entity);
         expect(setup.USL_COLUMNS[entity as never], `${r.entity}.${f.column}`).toContain(column);
         expect(setup.USL_COLUMNS[r.entity]).toContain(f.column);
       }
     }
     expect(rows.find((r) => r.entity === "action")!.foreignKeys).toEqual([{ column: "disposition_id", references: "disposition(disposition_id)" }]);
+    expect(rows.find((r) => r.entity === "cause")).toMatchObject({ primaryKey: "cause_id", foreignKeys: [{ column: "disposition_id", references: "disposition(disposition_id)" }], formed: "`class` as `cause_class`" });
   });
 
-  it("three entities carry a DQ rule, each the rule of DQ_RULES byte for byte; the markdown prints each expression in inline code, one table row per entity, no number measured and no date", () => {
+  it("four entities carry a DQ rule, each the rule of DQ_RULES byte for byte; the markdown prints each expression in inline code, one table row per entity, no number measured and no date", () => {
     const ruled = rows.filter((r) => r.rule);
-    expect(ruled.map((r) => [r.entity, r.rule!.name])).toEqual([["collection", "run_complete"], ["copy", "copy_validated"], ["action", "action_verified"]]);
+    expect(ruled.map((r) => [r.entity, r.rule!.name])).toEqual([["collection", "run_complete"], ["copy", "copy_validated"], ["action", "action_verified"], ["cause", "cause_evidenced"]]);
     for (const r of ruled) expect(r.rule!.expression).toBe(setup.DQ_RULES.find((d) => d.name === r.rule!.name)!.expression);
-    expect(ruled.map((r) => r.rule!.expression)).toEqual([RUN_COMPLETE_EXPR, "validated = 1", ACTION_VERIFIED_EXPR]);
+    expect(ruled.map((r) => r.rule!.expression)).toEqual([RUN_COMPLETE_EXPR, "validated = 1", ACTION_VERIFIED_EXPR, CAUSE_EVIDENCED_EXPR]);
     const md = setup.uslMarkdown();
     const table = md.split("\n").filter((l) => l.startsWith("|"));
-    expect(table).toHaveLength(2 + TEN.length);
+    expect(table).toHaveLength(2 + ELEVEN.length);
     expect(table[0]).toBe("| entity | built from | key | DQ rule | expression |");
     for (const [i, r] of rows.entries()) {
       expect(table[i + 2].startsWith(`| \`${r.entity}\` |`), r.entity).toBe(true);
@@ -249,8 +292,24 @@ describe("uslRows() and uslMarkdown(): the semantic layer's table", () => {
       else expect(table[i + 2].endsWith("|  |  |"), r.entity).toBe(true);
     }
     expect(md).toContain("`drift_usl` in `lightning.metastore.drift`");
+    expect(md).toContain(": 11 entities, ");
+    expect(md).toContain(", and 4 DQ rules, ");
     expect(md).not.toMatch(/\b20\d\d\b|\bOct\b|\d+ of \d+/);
     expect(md.endsWith("|\n")).toBe(true);
+  });
+});
+
+describe("cause_evidenced", () => {
+  it("compares plain columns only (no function call, which pushdown can drop) and passes unknown and every cause that names an evidence id", async () => {
+    expect(CAUSE_EVIDENCED_EXPR).not.toMatch(/\w\s*\(/);
+    for (const c of setup.USL_COLUMNS.cause) if (CAUSE_EVIDENCED_EXPR.includes(c)) expect(["cause_class", "evidence_ids"]).toContain(c);
+    const { SqlJsEngine } = await import("../src/data/engines/sqljs.ts");
+    const lite = await SqlJsEngine.create();
+    const rows = [["unknown", "[]", "1"], ["unknown", '["evt-1"]', "1"], ["operator_edit", '["evt-1","act-2"]', "1"], ["operator_edit", "[]", "0"], ["agent", "[]", "0"], ["account_change", '["evt-3"]', "1"]];
+    const values = rows.map(([k, e]) => `SELECT '${k}' AS cause_class, '${e}' AS evidence_ids`).join(" UNION ALL ");
+    const r = await lite.run(`SELECT cause_class, evidence_ids, CASE WHEN ${CAUSE_EVIDENCED_EXPR} THEN '1' ELSE '0' END AS valid FROM (${values}) c`);
+    expect(r.rows).toEqual(rows);
+    lite.close();
   });
 });
 
@@ -314,12 +373,12 @@ const model = (tables: Record<string, readonly string[]>) => result(["json"], [[
 const CURRENT_MODEL = { ...setup.USL_COLUMNS };
 const FOUR_TABLE_MODEL = { collection: setup.USL_COLUMNS.collection, setting: setup.USL_COLUMNS.setting, referent: setup.USL_COLUMNS.referent, backup_copy: setup.USL_COLUMNS.backup_copy };
 
-/** The instance as it stands after the live runs of 24 Oct: DRIFT with all 16 tables, the ten-table USL, the three rules as stated. */
+/** The instance as it stands after the live run of 25 Oct, 20:44 UTC: DRIFT with every schema table, the eleven-table USL, the four rules as stated. */
 function configured(sql: string): QueryResult | Error {
   if (sql === "SHOW DATASOURCES") return result(["name", "description"], [["DRIFT", "drift-agent app Postgres on the zetaris network"]]);
   if (sql === "SHOW DATASOURCE TABLES DRIFT") return result(["name", "relation", "source_table", "partition clause", "description", "materialized table", "datasource_id", "relation_id"], SCHEMA_TABLES_LISTED);
-  if (sql === "SHOW NAMESPACES OR TABLES IN lightning.metastore.drift") return result(["name", "type", "usl_id", "count", "activated"], [["drift_usl", "usl", "1105", "10", ""]]);
-  if (sql === `SHOW NAMESPACES OR TABLES IN ${USL}`) return result(["name", "type", "usl_id", "count", "activated"], TEN.map((t) => [t, "table", "", "0", "true"]));
+  if (sql === "SHOW NAMESPACES OR TABLES IN lightning.metastore.drift") return result(["name", "type", "usl_id", "count", "activated"], [["drift_usl", "usl", "1105", "11", ""]]);
+  if (sql === `SHOW NAMESPACES OR TABLES IN ${USL}`) return result(["name", "type", "usl_id", "count", "activated"], ELEVEN.map((t) => [t, "table", "", "0", "true"]));
   if (sql.startsWith("LOAD USL")) return model(CURRENT_MODEL);
   if (sql.startsWith("REMOVE USL")) return result(["removed"], [["true"]]);
   if (sql.startsWith("COMPILE USL")) return result(["json"], [['{"name":"drift_usl"}']]);
@@ -343,10 +402,10 @@ const skippedOf = (status: Record<string, string>) => Object.entries(status).fil
 const sent = (client: Scripted, re: RegExp) => client.calls.map((c) => c.sql).filter((s) => re.test(s));
 
 describe("apply()", () => {
-  it("against an instance already set up: a no-op success, the USL and its rules kept, RUN DQ printed for three tables", async () => {
+  it("against an instance already set up: a no-op success, the USL and its rules kept, RUN DQ printed for four tables", async () => {
     const { r, client, tracer, out, status } = await run(configured);
     expect(r.ok).toBe(true);
-    expect(r.results).toHaveLength(42);
+    expect(r.results).toHaveLength(47);
     expect(skippedOf(status)).toEqual([
       "create datasource DRIFT", "register datasource tables", "remove usl drift_usl", "compile usl drift_usl",
       ...RULES.flatMap((n) => [`register dq ${n}`, `update dq ${n}`]),
@@ -354,26 +413,27 @@ describe("apply()", () => {
     expect(r.results.every((x) => x.status === "ok" || x.status === "skipped")).toBe(true);
     expect(sent(client, /^(?:CREATE DATASOURCE|REGISTER DATASOURCE|REMOVE USL|COMPILE USL|REGISTER DQ|UPDATE DQ)/)).toEqual([]);
     expect(client.calls.filter((c) => c.opts.allowMultiStatement)).toEqual([]);
-    expect(sent(client, /^ACTIVATE/)).toHaveLength(10);
+    expect(sent(client, /^ACTIVATE/)).toHaveLength(11);
     expect(r.dq?.rows).toEqual(DQ_ROWS);
-    expect(Object.keys(r.dqRuns)).toEqual(["collection", "copy", "action"]);
+    expect(Object.keys(r.dqRuns)).toEqual(["collection", "copy", "action", "cause"]);
     expect(out).toContain("     name | table | type | total_record | valid_record | invalid_record");
     expect(out).toContain("     run_complete | collection | Custom Data Quality | 4 | 4 | 0");
     expect(out.find((l) => l.includes("01 show datasources"))).toMatch(/^ok\s+01 show datasources\s+1 row, DRIFT listed {2}\(\d+ ms\)$/);
     expect(out.find((l) => l.includes("02 create datasource DRIFT"))).toMatch(/^skipped 02 create datasource DRIFT\s+DRIFT exists$/);
     expect(out.find((l) => l.includes("03 list datasource tables"))).toMatch(new RegExp(`^ok\\s+03 list datasource tables\\s+${TABLE_NAMES.length} rows, all ${TABLE_NAMES.length} schema tables registered {2}\\(\\d+ ms\\)$`));
-    expect(out.find((l) => l.includes("09 load usl drift_usl"))).toMatch(/^ok\s+09 load usl drift_usl\s+10 tables as compiled {2}\(\d+ ms\)$/);
-    expect(out.find((l) => l.includes("10 remove usl"))).toMatch(/^skipped 10 remove usl drift_usl\s+drift_usl holds the 10 tables as compiled$/);
-    expect(out.find((l) => l.includes("22 list dq rules"))).toMatch(/^ok\s+22 list dq rules\s+6 rows, run_complete listed, copy_validated listed, action_verified listed {2}\(\d+ ms\)$/);
-    expect(out.find((l) => l.includes("24 update dq run_complete"))).toMatch(/^skipped 24 update dq run_complete\s+run_complete listed as stated$/);
-    expect(out.find((l) => l.includes("33 count collection"))).toMatch(/^ok\s+33 count collection\s+= 12 {2}\(\d+ ms\)$/);
-    expect(out.at(-1)).toMatch(/^ZETARIS SETUP: 42 statements, 32 ok, 10 skipped, 0 failed, \d+\.\d s$/);
-    expect(tracer.events).toHaveLength(42);
+    expect(out.find((l) => l.includes("09 load usl drift_usl"))).toMatch(/^ok\s+09 load usl drift_usl\s+11 tables as compiled {2}\(\d+ ms\)$/);
+    expect(out.find((l) => l.includes("10 remove usl"))).toMatch(/^skipped 10 remove usl drift_usl\s+drift_usl holds the 11 tables as compiled$/);
+    expect(out.find((l) => l.includes("23 list dq rules"))).toMatch(/^ok\s+23 list dq rules\s+7 rows, run_complete listed, copy_validated listed, action_verified listed, cause_evidenced listed {2}\(\d+ ms\)$/);
+    expect(out.find((l) => l.includes("25 update dq run_complete"))).toMatch(/^skipped 25 update dq run_complete\s+run_complete listed as stated$/);
+    expect(out.find((l) => l.includes("31 update dq cause_evidenced"))).toMatch(/^skipped 31 update dq cause_evidenced\s+cause_evidenced listed as stated$/);
+    expect(out.find((l) => l.includes("37 count collection"))).toMatch(/^ok\s+37 count collection\s+= 12 {2}\(\d+ ms\)$/);
+    expect(out.at(-1)).toMatch(/^ZETARIS SETUP: 47 statements, 35 ok, 12 skipped, 0 failed, \d+\.\d s$/);
+    expect(tracer.events).toHaveLength(47);
     expect(tracer.events.every((e) => e.agent === "zetaris-setup" && e.action === "query" && e.engine === "zetaris" && e.model_requested === "none")).toBe(true);
     expect(tracer.events[1]).toMatchObject({ status: "skipped", input_summary: "CREATE DATASOURCE DRIFT (credentials redacted)", output_summary: "DRIFT exists" });
   });
 
-  it("against the four-table USL and the eight-table datasource of 24 Oct: REGISTER the new tables, REMOVE USL, COMPILE the ten, register the three rules", async () => {
+  it("against the four-table USL and the eight-table datasource of 24 Oct: REGISTER the new tables, REMOVE USL, COMPILE the eleven, register the four rules", async () => {
     const { r, client, status, out } = await run((sql) => {
       if (sql === "SHOW DATASOURCE TABLES DRIFT") return result(["name"], SCHEMA_TABLES_LISTED.slice(0, 8).map((row) => [row[0]]));
       if (sql.startsWith("LOAD USL")) return model(FOUR_TABLE_MODEL);
@@ -385,15 +445,32 @@ describe("apply()", () => {
       "list datasource tables": "ok", "register datasource tables": "ok", "refresh datasource tables": "skipped",
       "load usl drift_usl": "ok", "remove usl drift_usl": "ok", "compile usl drift_usl": "ok",
       "register dq run_complete": "ok", "update dq run_complete": "skipped", "register dq copy_validated": "ok", "register dq action_verified": "ok",
+      "register dq cause_evidenced": "ok", "update dq cause_evidenced": "skipped",
     });
     expect(out.find((l) => l.includes("03 list datasource tables"))).toContain(`${TABLE_NAMES.length - 8} of ${TABLE_NAMES.length} schema tables unregistered: ${TABLE_NAMES.slice(8).join(", ")}`);
-    expect(out.find((l) => l.includes("09 load usl drift_usl"))).toContain("stale: 4 table(s); lacks policy, copy, probe, disposition, action, ticket");
+    expect(out.find((l) => l.includes("09 load usl drift_usl"))).toContain("stale: 4 table(s); lacks policy, copy, probe, disposition, action, ticket, cause");
     const order = client.calls.map((c) => c.sql.split(/\s+/).slice(0, 2).join(" "));
     expect(order.indexOf("REMOVE USL")).toBeLessThan(order.indexOf("COMPILE USL"));
     expect(order.indexOf("COMPILE USL")).toBeLessThan(order.indexOf("ACTIVATE USL"));
     expect(client.calls.filter((c) => c.opts.allowMultiStatement).map((c) => c.sql)).toEqual([setup.COMPILE_USL]);
     expect(sent(client, /^REGISTER DQ/)).toEqual(setup.DQ_RULES.map((d) => `REGISTER DQ ${d.name} TABLE ${USL}.${d.table} AS ${d.expression}`));
-    expect(out.at(-1)).toMatch(/^ZETARIS SETUP: 42 statements, 37 ok, 5 skipped, 0 failed/);
+    expect(out.at(-1)).toMatch(/^ZETARIS SETUP: 47 statements, 41 ok, 6 skipped, 0 failed/);
+  });
+
+  it("against the ten-table USL with its three rules: REMOVE USL, COMPILE the eleven, register all four, as the live run of 25 Oct, 20:44 UTC did", async () => {
+    const { cause: _k, ...ten } = CURRENT_MODEL;
+    const { r, client, status, out } = await run((sql) => {
+      if (sql.startsWith("LOAD USL")) return model(ten);
+      // COMPILE leaves no custom rule registered (measured 25 Oct, 01:16 and 20:44 UTC)
+      if (sql.startsWith("LIST DQ USL")) return result(LIST_COLS, CONSTRAINTS);
+      return configured(sql);
+    });
+    expect(r.ok).toBe(true);
+    expect(out.find((l) => l.includes("09 load usl drift_usl"))).toContain("stale: 10 table(s); lacks cause");
+    expect(status).toMatchObject({ "remove usl drift_usl": "ok", "compile usl drift_usl": "ok", "activate cause": "ok", "register dq cause_evidenced": "ok", "update dq cause_evidenced": "skipped", "run dq cause": "ok" });
+    expect(sent(client, /^REGISTER DQ/)).toEqual(setup.DQ_RULES.map((d) => `REGISTER DQ ${d.name} TABLE ${USL}.${d.table} AS ${d.expression}`));
+    expect(sent(client, /^REGISTER DQ cause_evidenced/)).toEqual([`REGISTER DQ cause_evidenced TABLE ${USL}.cause AS ${CAUSE_EVIDENCED_EXPR}`]);
+    expect(out.at(-1)).toMatch(/^ZETARIS SETUP: 47 statements, 41 ok, 6 skipped, 0 failed/);
   });
 
   it("a rule listed with another expression is updated in place with the stated one; the others stay", async () => {
@@ -402,22 +479,22 @@ describe("apply()", () => {
       return configured(sql);
     });
     expect(r.ok).toBe(true);
-    expect(status).toMatchObject({ "register dq run_complete": "skipped", "update dq run_complete": "ok", "update dq copy_validated": "skipped", "update dq action_verified": "skipped" });
+    expect(status).toMatchObject({ "register dq run_complete": "skipped", "update dq run_complete": "ok", "update dq copy_validated": "skipped", "update dq action_verified": "skipped", "update dq cause_evidenced": "skipped" });
     expect(sent(client, /^(?:REGISTER|UPDATE) DQ/)).toEqual([`UPDATE DQ run_complete TABLE ${USL}.collection SET NAME = run_complete, EXPRESSION = ${RUN_COMPLETE_EXPR}`]);
     // whitespace alone is no difference
     const spaced = await run((sql) => (sql.startsWith("LIST DQ USL") ? result(LIST_COLS, STATED.map((row) => [row[0], row[1], row[2], `  ${row[3].replaceAll(" ", "   ")} `])) : configured(sql)));
     expect(sent(spaced.client, /^(?:REGISTER|UPDATE) DQ/)).toEqual([]);
   });
 
-  it("against the USL whose action entity lacks reason and record, and action_verified as first registered: REMOVE USL, COMPILE the ten, UPDATE action_verified to the write paths' scope", async () => {
+  it("against the USL whose action entity lacks reason and record, and action_verified as first registered: REMOVE USL, COMPILE the eleven, UPDATE action_verified to the write paths' scope", async () => {
     const before = { ...CURRENT_MODEL, action: setup.USL_COLUMNS.action.filter((c) => c !== "reason" && c !== "record") };
     const { r, client, status, out } = await run((sql) => {
       if (sql.startsWith("LOAD USL")) return model(before);
-      if (sql.startsWith("LIST DQ USL")) return result(LIST_COLS, [...CONSTRAINTS, ...STATED.slice(0, 2), ["action_verified", "action", "Custom Data Quality", "status <> 'done' OR verification <> ''"]]);
+      if (sql.startsWith("LIST DQ USL")) return result(LIST_COLS, [...CONSTRAINTS, ...STATED.slice(0, 2), ["action_verified", "action", "Custom Data Quality", "status <> 'done' OR verification <> ''"], ...STATED.slice(3)]);
       return configured(sql);
     });
     expect(r.ok).toBe(true);
-    expect(out.find((l) => l.includes("09 load usl drift_usl"))).toContain("stale: 10 table(s); columns differ in action");
+    expect(out.find((l) => l.includes("09 load usl drift_usl"))).toContain("stale: 11 table(s); columns differ in action");
     expect(status).toMatchObject({ "remove usl drift_usl": "ok", "compile usl drift_usl": "ok", "update dq run_complete": "skipped", "update dq action_verified": "ok" });
     expect(sent(client, /^(?:REGISTER|UPDATE) DQ/)).toEqual([`UPDATE DQ action_verified TABLE ${USL}.action SET NAME = action_verified, EXPRESSION = ${ACTION_VERIFIED_EXPR}`]);
   });

@@ -117,7 +117,7 @@ Live mode starts with `cp .env.example .env` and its keys filled in, each descri
 Nightshift and GitHub tokens are read at run time. In cycle order, after the one-time setup:
 
 ```bash
-npm run zetaris:setup                                   # once: the DRIFT datasource, the ten-entity USL, three DQ rules
+npm run zetaris:setup                                   # once: the DRIFT datasource, the eleven-entity USL, four DQ rules
 npm run policy:load -- --tenant <id>                    # once per policy version: the policy file -> policy_rule rows
 npm run collect:cloudflare -- --tenant <id>             # DNS records and the audit log -> Postgres and the vault
 npm run collect:linux -- --host <alias> --tenant <id>   # one SSH session of fixed reads, per LINUX_HOSTS alias
@@ -161,7 +161,7 @@ Measured on the operator's estate, tenant `client-1`, and the writes on the lab 
 | `npm run site` | The replay page, built from [examples/](examples/), the committed lessons in `examples/memory`, the repository's SQL and the newest [eval/results/](eval/results/) (`--results` names another): every finding with every check re-run to its recorded count before anything is published, the owner's document as its Document tab, "Where each answer comes from" as its Sources tab, both rendered to HTML at build time, and the [Nemotron tab](docs/index.html#nemotron): the eval's calls, requested and served, and every judge SELECT recorded with a row count re-guarded and re-run over the recording, the build refused on any count that differs. | 9 findings (ADOPT 4, HOLD 3, ESCALATE 2), 33 checks re-run equal, the 181-line document decided at 2026-10-25T14:17:53.416Z, the 9 class rows; the Nemotron tab over `eval/results/2026-10-25T09-25-44Z` (dev): 389 calls, 383 receipts verified, 0 substitutions, 162 judge SELECTs, 161 re-run equal and the recorded text of 1 (C2 run 2, P10) refused by the engine; 276,297 bytes of the 300,000-byte budget, a rebuild byte-identical, 25 Oct 2026. |
 | `npm run conformance`, `npm run conformance:hmem` | The vendored Meterless suites pass: the World Model suite runs through `src/engine/world.ts`, and the H-MEM suite runs through the reference class that `src/engine/memory.ts` re-exports. | World Model 8 of 8; H-MEM 13 of 13 and the `TechnicianMemory` wrapper check, 25 Oct 2026; and in CI on every push to main and every pull request ([ci.yml](.github/workflows/ci.yml)). |
 | `npm run spike:nightshift` | Nightshift serves Lightning and Ultra by explicit id, signs a receipt for each call that verifies offline, and tracks the app as a job whose event stream replays its turns. | 9 of 9 PASS: 142 model ids listed, Lightning in 3,107 ms and Ultra in 1,625 ms on their OpenRouter routes, 100 of 100 listed receipts verified, this run's 2 receipts in the list, 65 turn events replayed, 25 Oct 2026. |
-| `npm run zetaris:setup` | The idempotent setup of the `DRIFT` datasource, the ten-entity USL and its three DQ rules. | 42 statements, 0 failed; `run_complete` 121 of 121 runs valid, 25 Oct 2026 19:02 UTC. |
+| `npm run zetaris:setup` | The idempotent setup of the `DRIFT` datasource, the eleven-entity USL and its four DQ rules. | 47 statements, 0 failed; `run_complete` 135 of 135 runs valid, 25 Oct 2026 20:44 UTC. |
 | `npm run zetaris:queries` | The hero query, the survey and the detectors run through Zetaris itself. | 0 hero rows, the 27 survey findings, 0 invalid runs, 24 Oct 2026. |
 
 ## Where each answer comes from
@@ -365,19 +365,22 @@ agent's own query path is SELECT-only ([.env.example](.env.example)).
 
 The app Postgres is registered in Zetaris as the `DRIFT` datasource; the collectors and the ledger write to Postgres,
 and every query of a live pass runs through Zetaris Lightning SQL over REST. `npm run zetaris:setup` builds the
-`drift_usl` semantic layer of ten entities (`collection`, `setting`, `referent`, `backup_copy`, `policy`, `copy`,
-`probe`, `disposition`, `action`, `ticket`) and three DQ rules: `run_complete` on `collection`, `copy_validated` on
-`copy` (the copy's latest validation is ok or ok_with_gaps) and `action_verified` on `action` (a done rollback or
-revert names the probes that verified it). `test/parity.test.ts` holds sql.js and Zetaris to the same columns, rows
-and totals over 107 cases. Measured on Zetaris 2.4.3.1: a function inside a top-level WHERE on a `DRIFT` table is
-dropped, every row coming back, and a correlated reference in a subquery's JOIN ON is refused, so the catalogue's
-top-level predicates compare plain columns and every correlation sits in a WHERE. At 19:02 UTC on 25 Oct 2026 RUN DQ measured `run_complete` valid on 121 of 121 runs,
-`copy_validated` valid on 1,967 of 2,238 copies (every vault copy, the superseded ones included) and `action_verified`
-valid on 12 of 14 actions, the 2 invalid each an `unverified` `rollback_file` that names no verifying probe.
+`drift_usl` semantic layer of eleven entities (`collection`, `setting`, `referent`, `backup_copy`, `policy`, `copy`,
+`probe`, `disposition`, `action`, `ticket`, `cause`) and four DQ rules: `run_complete` on `collection`,
+`copy_validated` on `copy` (the copy's latest validation is ok or ok_with_gaps), `action_verified` on `action` (a done
+rollback or revert names the probes that verified it) and `cause_evidenced` on `cause` (a cause of any class but
+unknown names at least one evidence id). The `cause` entity names `finding_cause.class` as `cause_class`.
+`test/parity.test.ts` holds sql.js and Zetaris to the same columns, rows and totals over 107 cases. Measured on
+Zetaris 2.4.3.1: a function inside a top-level WHERE on a `DRIFT` table is dropped, every row coming back, and a
+correlated reference in a subquery's JOIN ON is refused, so the catalogue's top-level predicates compare plain columns
+and every correlation sits in a WHERE. At 20:44 UTC on 25 Oct 2026 RUN DQ measured `run_complete` valid on 135 of 135
+runs, `copy_validated` valid on 1,967 of 2,268 copies (every vault copy, the superseded ones included),
+`action_verified` valid on 16 of 18 actions, the 2 invalid each an `unverified` `rollback_file` that names no verifying
+probe, and `cause_evidenced` valid on 4 of 4 causes, all of tenant `lab-1`.
 
 ### The semantic layer
 
-`drift_usl` in `lightning.metastore.drift` is the semantic layer over the `DRIFT` datasource: 10 entities, each activated as one SELECT over the tables it is built from (`activation()` in `src/zetaris/setup.ts`), and 3 DQ rules, each an expression RUN DQ tests on every row of its entity.
+`drift_usl` in `lightning.metastore.drift` is the semantic layer over the `DRIFT` datasource: 11 entities, each activated as one SELECT over the tables it is built from (`activation()` in `src/zetaris/setup.ts`), and 4 DQ rules, each an expression RUN DQ tests on every row of its entity.
 
 | entity | built from | key | DQ rule | expression |
 |---|---|---|---|---|
@@ -391,6 +394,7 @@ valid on 12 of 14 actions, the 2 invalid each an `unverified` `rollback_file` th
 | `disposition` | `disposition` | `disposition_id`; `run_id` references `collection(run_id)` |  |  |
 | `action` | `action` | `action_id`; `disposition_id` references `disposition(disposition_id)` | `action_verified` | `kind NOT IN ('rollback_file','revert_record') OR status IN ('failed','refused','not_judged') OR verification <> ''` |
 | `ticket` | `ticket` | `ticket_id` |  |  |
+| `cause` | `finding_cause`: `class` as `cause_class` | `cause_id`; `disposition_id` references `disposition(disposition_id)` | `cause_evidenced` | `cause_class = 'unknown' OR evidence_ids <> '[]'` |
 
 ## Meterless
 

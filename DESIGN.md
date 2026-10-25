@@ -349,8 +349,8 @@ Present:
 - **Cloudflare**: a read token over zones, records and the account audit log; one observation per record field;
   behind `--apply`, `PATCH` and `POST` of a record for `revert_record`, with a token that holds DNS Edit.
 - **Zetaris**: Lightning SQL over the app Postgres as the `DRIFT` datasource, and the `drift_usl` semantic layer of
-  ten tables (`collection`, `setting`, `referent`, `backup_copy`, `policy`, `copy`, `probe`, `disposition`,
-  `action`, `ticket`) with its three DQ rules.
+  eleven tables (`collection`, `setting`, `referent`, `backup_copy`, `policy`, `copy`, `probe`, `disposition`,
+  `action`, `ticket`, `cause`) with its four DQ rules.
 - **Nightshift with Nemotron**: Lightning to choose checks, Ultra to judge under the tenant's app id, each verdict
   counted on a verified, custody-checked receipt.
 - **GitHub Issues**: the ticket step's PSA backend (`src/psa/github.ts`) on the private repository

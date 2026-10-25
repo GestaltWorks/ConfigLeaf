@@ -135,11 +135,11 @@ describe("the replay page", () => {
   it("names Zetaris where the page opens, in the Sources tab and in the footer: the datasource, the semantic layer and its DQ rules, the parity test", () => {
     const html = built.files.get("index.html")!;
     const lede = /<p class="lede">([\s\S]*?)<\/p>/.exec(html)![1];
-    for (const s of ["Zetaris Lightning SQL", `<code>${DS}</code> datasource`, `<code>${USL_NAME}</code> semantic layer`, "three DQ rules", "<code>test/parity.test.ts</code>"]) expect(lede).toContain(s);
+    for (const s of ["Zetaris Lightning SQL", `<code>${DS}</code> datasource`, `<code>${USL_NAME}</code> semantic layer`, "four DQ rules", "<code>test/parity.test.ts</code>"]) expect(lede).toContain(s);
     const src = panel("sources");
     expect(src).toContain(`Zetaris Lightning SQL over the <code>${DS}</code> datasource`);
-    expect(src).toContain(`holds ten entities (${USL_TABLES.map((t) => `<code>${t}</code>`).join(", ")})`);
-    expect(src).toContain(`three DQ rules (${DQ_RULES.map((r) => `<code>${r.name}</code> on <code>${r.table}</code>`).join(", ")})`);
+    expect(src).toContain(`holds eleven entities (${USL_TABLES.map((t) => `<code>${t}</code>`).join(", ")})`);
+    expect(src).toContain(`four DQ rules (${DQ_RULES.map((r) => `<code>${r.name}</code> on <code>${r.table}</code>`).join(", ")})`);
     expect(/<footer>[\s\S]*?<\/footer>/.exec(html)![0]).toContain(`<code>${DS}.&lt;table&gt;</code>`);
     expect(html).toContain('"as the live pass sends it to Zetaris"');
   });

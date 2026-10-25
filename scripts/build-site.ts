@@ -97,7 +97,7 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const DATASOURCE = config.zetaris.datasource;
 /** The data layer with Zetaris's table names: the SQL text a live pass sends for a template and its parameters. render() reads qualify() alone. */
 const AS_ZETARIS = new DataLayer(new ZetarisEngine());
-const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven"];
 const word = (n: number): string => NUMBER_WORDS[n] ?? String(n);
 
 /** The page and every data file together. */
