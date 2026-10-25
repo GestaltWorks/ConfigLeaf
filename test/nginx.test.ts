@@ -10,7 +10,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { CREDENTIAL_SHAPED, EMPTY_SHA256, LIVE_PREFIXES, MARK, SSH_ARGS, backupMemberId, exportCopyToObjectId, fullIsoToIso, parseLs, parseStream, pseudonymHost, pseudonymUser, readScript, redactText, tarMemberToObjectId, tarRoot, tarballStem, toRows, type Fetched } from "../src/collectors/linux.ts";
+import { CREDENTIAL_SHAPED, EMPTY_SHA256, LIVE_PREFIXES, MARK, SSH_ARGS, backupMemberId, exportCopyToObjectId, fullIsoToIso, ipv6Line, parseLs, parseStream, pseudonymHost, pseudonymUser, readScript, redactText, tarMemberToObjectId, tarRoot, tarballStem, toRows, type Fetched } from "../src/collectors/linux.ts";
 import { analyse, classifyTarget, isDnsName, listenPort, parse, type Malformed } from "../src/collectors/nginx.ts";
 import type { ObservationRow } from "../src/collectors/types.ts";
 import { parseLinuxHosts } from "../src/config.ts";
@@ -232,6 +232,7 @@ describe("stream protocol", () => {
     expect(f.ip6).toEqual(["2001:db8:10::23"]);
     // link-local is never an inventory address, whatever scope flag the host printed; junk is not an address
     expect(parseStream(`${MARK} BEGIN ip6 \n2: eth0 inet6 fe80::1/64 scope link\n3: eth0 inet6 2001:DB8::5/64 scope global\n4: x inet6 zz::/64 scope global\n${MARK} END 0\n`).ip6).toEqual(["2001:db8::5"]);
+    expect(f.ip6_left_out).toEqual([]);
     expect(f.listings["/etc/nginx/conf.d"].rc).toBe(0);
     expect(f.listings["/etc/nginx/conf.d"].entries.map((e) => [e.type, e.name, e.mtime])).toEqual([
       ["-", "app.invalid.conf", "2026-04-16T21:30:12.000Z"], ["-", "app.invalid.conf.2026-04-01.bak", "2026-04-01T09:12:44.000Z"], ["-", "astro.invalid.conf", "2026-03-02T17:05:01.000Z"],
@@ -341,6 +342,31 @@ describe("rows: conf.d layout (conf.d layout)", () => {
     expect(summary.malformed).toEqual([]);
     expect(summary.standalone).toEqual(["/etc/nginx/conf.d/app.invalid.conf.2026-04-01.bak"]);
     expect(summary.counts).toEqual({ collection_run: 1, observation: obs.length, inventory_asset: 3, backup_snapshot: 0, backup_item: 0 });
+    expect(summary.ip6_left_out).toEqual([]);
+  });
+
+  it("an IPv6 address whose line carries the temporary or deprecated flag is left out of the inventory and listed with its flags; mngtmpaddr and stable addresses stay", () => {
+    const lines = {
+      stable: "2: eth0    inet6 2001:db8:10::23/64 scope global \\       valid_lft forever preferred_lft forever",
+      mngtmpaddr: "2: eth0    inet6 2001:db8:10:0:5054:ff:fe12:3456/64 scope global dynamic mngtmpaddr noprefixroute \\       valid_lft 86395sec preferred_lft 14395sec",
+      temporary: "2: eth0    inet6 2001:db8:10:0:9c1d:4a2b:77e0:1f3c/64 scope global temporary dynamic \\       valid_lft 86395sec preferred_lft 14395sec",
+      temporaryDeprecated: "2: eth0    inet6 2001:db8:10:0:41a7:c3e9:2d58:b06f/64 scope global temporary deprecated dynamic \\       valid_lft 501234sec preferred_lft 0sec",
+      deprecated: "2: eth0    inet6 2001:db8:11::40/64 scope global deprecated dynamic \\       valid_lft 3600sec preferred_lft 0sec",
+    };
+    expect(ipv6Line(lines.stable)).toEqual({ address: "2001:db8:10::23", flags: [] });
+    expect(ipv6Line(lines.mngtmpaddr)).toEqual({ address: "2001:db8:10:0:5054:ff:fe12:3456", flags: ["dynamic", "mngtmpaddr", "noprefixroute"] });
+    expect(ipv6Line(lines.temporary)).toEqual({ address: "2001:db8:10:0:9c1d:4a2b:77e0:1f3c", flags: ["temporary", "dynamic"] });
+    expect(ipv6Line(lines.temporaryDeprecated)?.flags).toEqual(["temporary", "deprecated", "dynamic"]);
+    expect(ipv6Line(lines.deprecated)?.flags).toEqual(["deprecated", "dynamic"]);
+    expect(ipv6Line("2: eth0    inet6 fe80::5054:ff:fe12:3456/64 scope link \\       valid_lft forever preferred_lft forever")).toBeNull();
+
+    const text = stream("confd").replace(/( BEGIN ip6 \r?\n)[^\r\n]*\r?\n/, `$1${Object.values(lines).join("\n")}\n`);
+    const f = parseStream(text);
+    expect(f.ip6).toEqual(["2001:db8:10::23", "2001:db8:10:0:5054:ff:fe12:3456"]);
+    expect(f.ip6_left_out.map((l) => l.address)).toEqual(["2001:db8:10:0:9c1d:4a2b:77e0:1f3c", "2001:db8:10:0:41a7:c3e9:2d58:b06f", "2001:db8:11::40"]);
+    const { rows, summary } = rowsOf(text);
+    expect(rows.inventory_asset.map((a) => a.address)).toEqual(["198.51.100.23", "192.0.2.3", "2001:db8:10::23", "2001:db8:10:0:5054:ff:fe12:3456"]);
+    expect(summary.ip6_left_out).toEqual(["2001:db8:10:0:9c1d:4a2b:77e0:1f3c temporary dynamic", "2001:db8:10:0:41a7:c3e9:2d58:b06f temporary deprecated dynamic", "2001:db8:11::40 deprecated dynamic"]);
   });
 
   it("an unreadable nginx.conf makes the run partial: nothing can say what is served, http.real_ip is 'unknown', the entry is not readable, the gate holds it", async () => {
@@ -692,7 +718,7 @@ describe("the read script and the SSH contract", () => {
   });
 
   it("a Fetched with nothing in it is a failed run that the gate refuses", async () => {
-    const empty: Fetched = { complete: false, login_user: null, hostname: null, server_time: null, ip4: [], ip6: [], listings: {}, files: {}, timers: null, export_dir: null, renewals: null, sections: [] };
+    const empty: Fetched = { complete: false, login_user: null, hostname: null, server_time: null, ip4: [], ip6: [], ip6_left_out: [], listings: {}, files: {}, timers: null, export_dir: null, renewals: null, sections: [] };
     const { rows } = toRows(empty, { tenantId: "client-a", redactor: r, alias: "vps-a", now: NOW });
     expect(rows.collection_run[0]).toMatchObject({ expected_count: null, observed_count: null, status: "failed" });
     expect(rows.observation).toEqual([]);

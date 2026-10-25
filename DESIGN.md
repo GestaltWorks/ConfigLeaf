@@ -73,7 +73,7 @@ row's natural parts, so a re-run inserts nothing twice; every collected-text col
 | `backup_item` | one file hash a snapshot holds | the Linux collector |
 | `dns_record` | one Cloudflare record as seen in one DNS run | the Cloudflare collector |
 | `audit_event` | one event of the Cloudflare account audit log | the Cloudflare collector |
-| `inventory_asset` | one global address of a client host | the Linux collector |
+| `inventory_asset` | one global address of a client host; membership is every address ever observed, temporary and deprecated IPv6 addresses excluded, `observed_at` the last time a run saw it | the Linux collector |
 | `policy_rule` | one version of one rule of the MSP's policy | `npm run policy:load` |
 | `vault_copy` | one object of one complete run, committed to the vault | the collectors' vault hook |
 | `copy_validation` | one validation of one vault copy: validator, result, missing dependencies, output | `npm run validate:copies` |
@@ -214,15 +214,17 @@ live vhost files of the conf.d host's 18 `conf.d` files and rule 4 the 8 dated a
 2 the 11 live sites, rule 7 the 8 `.bak` copies and rule 8 the one `.pre-symlink` copy under `sites-available`;
 rule 3 both `nginx.conf` files; rule 15 the other 16 (the certbot renewal configs, `mime.types`, two `.ready`
 markers, `sites-enabled/default`). Measured 25 Oct 2026 by the sample pass over the bundle that carries the ledger
-rows of four live passes (24 Oct 23:21 and 23:36 UTC, 25 Oct 01:16 and 01:45 UTC): 27 findings, every one HOLD by policy,
-decided at 2026-10-25T01:45:33.962Z (the bundle's instant: the latest `decided_at` of its ledger rows, the 01:45 UTC
-live pass, later than the 23:36 UTC probe run's finish): 19 `proxied_without_real_ip` under rule 11 (72 h), the
-`proxy_split` under rule 13 (4 h), 7 under rule 15 (72 h: the wildcard's `http.real_ip`, 3 `orphan_record`, 3
-`orphan_vhost`). The prior-HOLD read returns the HOLDs the 01:16 UTC live pass decided
-(2026-10-24T23:36:17.331Z), the latest before that instant; each HOLD keeps the expiry carried from the 23:21 UTC
-pass, 2026-10-27T23:21:06.870Z for 26 of them and 2026-10-25T03:21:06.870Z for the `proxy_split`, and the Decider's
-reason is the rule's own sentence built with that expiry, then "held since 2026-10-24T23:36:17.331Z under rule <id>".
-The pass writes 0 dispositions: the bundle holds the 01:16 UTC pass's 27 rows under the same ids.
+rows of five live passes (24 Oct 23:21 and 23:36 UTC, 25 Oct 01:16, 01:45 and 03:25 UTC): 27 findings by policy,
+HOLD 26 and ESCALATE 1, decided at 2026-10-25T03:25:35.412Z (the bundle's instant: the latest `decided_at` of its
+ledger rows, the 03:25 UTC live pass, later than the 03:25 UTC probe run's finish): 19 `proxied_without_real_ip` HOLD
+under rule 11 (72 h), the `proxy_split` ESCALATE under rule 13 (4 h), 7 HOLD under rule 15 (72 h: the wildcard's
+`http.real_ip`, 3 `orphan_record`, 3 `orphan_vhost`). The prior-HOLD read returns 23 rows, the 01:45 UTC live pass's
+HOLD (2026-10-25T01:45:33.962Z) of each live value the 27 findings rest on, the latest before that instant. The 26
+HOLDs keep the expiry carried from the 23:21 UTC pass, 2026-10-27T23:21:06.870Z, and the Decider's reason is the
+rule's own sentence built with that expiry, then "held since 2026-10-25T01:45:33.962Z under rule <id>". The
+`proxy_split`'s prior HOLD expires 2026-10-25T03:21:06.870Z, before the instant, so its verb is ESCALATE with the
+reason "hold under rule <id> expired 2026-10-25T03:21:06.870Z; the finding stands". The pass writes 0 dispositions:
+the bundle holds the 03:25 UTC pass's 27 rows under the same ids.
 
 ## 6. The vault and validation
 
@@ -336,9 +338,10 @@ Absent, with the one line each maps:
   fake probe and a fake fetch (`test/actions.test.ts`). The `action` table holds 0 rows. The first write to a host
   or a zone is the operator's rehearsal; `revert_record` needs a token that holds DNS Edit.
 - One PSA backend: GitHub Issues. HaloPSA, ConnectWise and Autotask are the field map in `src/psa/mapping.json`. The
-  `ticket` table holds 1 row on 24 Oct 2026: issue #2, the incident P1 for the `proxy_split` HOLD under rule 13,
-  open. The HOLD expires 2026-10-25T03:21:06.870Z; the first pass after it, with or without a fresh collection,
-  decides and records ESCALATE, and the ticket step comments on issue #2.
+  `ticket` table holds 1 row on 25 Oct 2026: issue #2, the incident P1 for the `proxy_split` under rule 13, open.
+  The HOLD expires 2026-10-25T03:21:06.870Z; the 03:25 UTC cycle of 25 Oct 2026, the first pass after it, records
+  ESCALATE with the expired-hold reason, and its ticket step comments on issue #2 (the row's `updated_at`
+  2026-10-25T03:26:31.652Z).
 - The eval runner has run C0 on the development set (two runs, 0 calls) and the `EVAL_LIVE` smoke: C1 and C3 on
   three development items, 9 calls, custody holding on all 9 under `drift-agent-client-1`. The held-out set runs
   once, on 26 October, after the feature freeze. C2 runs with Lightning as the judge and the gate expecting
@@ -353,7 +356,7 @@ Absent, with the one line each maps:
   is then refused as changed since the decision). A kept HOLD's reason is the rule's own sentence built with the
   expiry in force, then "held since <decided_at> under rule <id>", naming the latest prior HOLD's `decided_at`. The
   27 rows of the 01:16 UTC live pass of 25 Oct 2026 carry the earlier form, which named the expiry twice; the 01:45 UTC
-  pass's rows carry the one form, and the bundle holds both as recorded.
+  pass's rows and the 03:25 UTC pass's 26 HOLD rows carry the one form, and the bundle holds both as recorded.
 - `copy_validated` on the USL counts every vault copy, the superseded ones included: 336 total, 282 valid, 54
   invalid on 24 Oct 2026. The 54 are the first commits' nginx copies, validated at 19:59 UTC at a 6-round cap with
   no pre-seeding; every copy of the 21:21 and 23:35 UTC commits (54 nginx, 58 record each) validates ok or
@@ -374,26 +377,32 @@ Absent, with the one line each maps:
   bundle, its name stays on the host, and the two live trees are the ones `changed_since_backup` joins.
 - The resolver weighs tenant, surface, globs, version and `rule_id`; `since` is provenance only. Both versions carry
   since 2026-10-25T00:00:00.000Z, and version 2 decided all 27 dispositions of the sample pass decided at
-  2026-10-25T01:45:33.962Z (measured 25 Oct 2026).
+  2026-10-25T03:25:35.412Z (measured 25 Oct 2026).
 - A finding of a class other than `drift_vs_approved` and `approved_missing` under a rollback rule is held: the rule
   restores a setting to its approved value, and the finding concerns the setting's relation to another setting while
   its own value stands, the `proxy_split` included, whose record's `proxied` field has an approval equal to its live
   value.
 - In sample mode every disposition is decided at the bundle's own instant (the later of the latest finish of its runs
-  and the latest `decided_at` of its ledger rows, `src/data/instant.ts`; 2026-10-25T01:45:33.962Z for
-  `sample/bundle.json`, the 01:45 UTC live pass), and a HOLD with no earlier HOLD on its live value expires from it.
-  The bundle holds 108 ledger rows from four live passes (24 Oct 23:21 and 23:36 UTC, 25 Oct 01:16 and 01:45 UTC), 420
-  referent fingerprints and 1 ticket, so the sample pass's HOLDs meet the 01:16 UTC HOLDs and keep the expiries carried from the 23:21 UTC pass, and the sample pass, the examples and
-  `examples/document.md` decide at one instant with the ledger rows the bundle carries. Measured 25 Oct 2026: two runs
-  print byte-identical finding, disposition and summary lines (the 55 lines outside the trace hash the same); the 458
-  trace lines carry their own `ts`, `latency_ms` and `trace_id`, so the whole stdout differs run to run; the bundle
-  holds the 01:16 UTC rows under the ids the sample pass computes, so the pass writes 0 dispositions and its
-  `DISPOSITION` lines print those rows. The examples and the replay page decide at their slice's instant the same way;
-  their slices hold no disposition, so their HOLDs expire from that instant.
+  and the latest `decided_at` of its ledger rows, `src/data/instant.ts`; 2026-10-25T03:25:35.412Z for
+  `sample/bundle.json`, the 03:25 UTC live pass), and a HOLD with no earlier HOLD on its live value expires from it.
+  The bundle holds 26 runs, 135 ledger rows from five live passes (24 Oct 23:21 and 23:36 UTC, 25 Oct 01:16, 01:45
+  and 03:25 UTC), 630 referent fingerprints and 1 ticket, so the sample pass's findings meet the 01:45 UTC HOLDs: the
+  26 HOLDs keep the expiry carried from the 23:21 UTC pass, and the `proxy_split`, whose HOLD expired at
+  2026-10-25T03:21:06.870Z, is ESCALATE. The sample pass, the examples and `examples/document.md` decide at one instant
+  with the ledger rows the bundle carries. Measured 25 Oct 2026: two runs print byte-identical finding, disposition and
+  summary lines (the 55 lines outside the trace hash the same); the 484 trace lines carry their own `ts`, `latency_ms`
+  and `trace_id`, so the whole stdout differs run to run; the bundle holds the 03:25 UTC rows under the ids the sample
+  pass computes, so the pass writes 0 dispositions and its `DISPOSITION` lines print those rows. The examples and the
+  replay page decide at their slice's instant the same way; each slice holds the disposition rows of its own objects
+  and records (5, 55 and 130 of the 135), so its instant is the bundle's and its verbs are the full pass's: HOLD 7 and
+  ESCALATE 2 over the 9 example findings, the `proxy_split` ESCALATE in both slices that show it.
 - Probes run from one machine through two public resolvers.
 - Source discovery (new hosts, new accounts, new tools) is the discovery agent's, in the larger product. This agent's
   sources are configured: the hosts `LINUX_HOSTS` lists and one Cloudflare account, and it discovers within them.
 - One tenant, two hosts, six zones, one policy file, one machine: `npm run watch` schedules cycles while its process
   lives. The hero and FOUND-BUT-DIFFERENT classes find nothing on the recorded estate, where every name a vhost
-  serves lands on an inventory host in each of the four collections; pre-flight (d) raises `found_but_different` in
-  simulation over the 21:21 and 23:35 UTC runs, and the authored fixture carries the full story.
+  serves lands on an inventory host in each of the five collections. Pre-flight (d) raises two hero findings in
+  simulation, their class set by how the previous passing host run pairs with a DNS run: `found_but_different` over
+  the 21:21 and 23:35 UTC runs of 24 Oct, fingerprinted against two DNS runs, and `dns_change` over the 03:24 and
+  03:25 UTC host runs of 25 Oct, both fingerprinted against the 03:25 UTC DNS run (measured 25 Oct 2026). The
+  authored fixture carries the full story.

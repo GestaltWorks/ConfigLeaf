@@ -536,6 +536,15 @@ export const DOC_RUN_SHAPE_SQL = `SELECT COUNT(DISTINCT object_id) AS objects, C
 FROM {{t:observation}}
 WHERE run_id = {{p:run_id}}`;
 
+/**
+ * One host's inventory rows against the start of its latest passing run: `latest` the addresses that run (or a later
+ * one) observed, `older` the rows last seen before it, which the Store keeps (an address stays in the inventory once
+ * observed; observed_at is the last time a run saw it). One row; both columns NULL ("") when the host has no row.
+ */
+export const DOC_INVENTORY_SQL = `SELECT SUM(CASE WHEN observed_at < {{p:started_at}} THEN 0 ELSE 1 END) AS latest, SUM(CASE WHEN observed_at < {{p:started_at}} THEN 1 ELSE 0 END) AS older
+FROM {{t:inventory_asset}}
+WHERE tenant_id = {{p:tenant_id}} AND host = {{p:host}}`;
+
 /** The zones of one DNS run of the tenant, each with its records, how many are proxied and how many direct, in zone order. */
 export const DOC_ZONES_SQL = `SELECT zone, COUNT(*) AS records, SUM(CASE WHEN proxied = 1 THEN 1 ELSE 0 END) AS proxied, SUM(CASE WHEN proxied = 1 THEN 0 ELSE 1 END) AS direct
 FROM {{t:dns_record}}

@@ -180,8 +180,11 @@ describe("the page over sample/bundle.json", () => {
     const heads = sample.vault_copy.filter((c) => !sample.vault_copy.some((x) => repoKey(x) === repoKey(c) && x.taken_at > c.taken_at));
     expect(md).toContain(`${heads.length} vault copies at the latest commit of each repository`);
     expect(md).toContain(`${sample.approved_setting.length} settings have an approval of record`);
-    expect(md).toContain(`${pass.findings.length} findings are open on the latest passing runs: HOLD ${pass.verbs.HOLD}.`);
-    expect(md).toContain(`| proxied_without_real_ip | ${pass.findings.filter((f) => f.finding.class === "proxied_without_real_ip").length} | ${pass.findings.filter((f) => f.finding.class === "proxied_without_real_ip").length} |`);
+    // the verbs the pass decided, in the page's order, and one column per verb in the by-class table
+    const seen = Object.entries(pass.verbs).filter(([, n]) => n > 0).map(([v]) => v);
+    expect(md).toContain(`${pass.findings.length} findings are open on the latest passing runs: ${seen.map((v) => `${v} ${pass.verbs[v as keyof typeof pass.verbs]}`).join(", ")}.`);
+    const pwri = pass.findings.filter((f) => f.finding.class === "proxied_without_real_ip");
+    expect(md).toContain(`| proxied_without_real_ip | ${seen.map((v) => pwri.filter((f) => f.verb === v).length).join(" | ")} | ${pwri.length} |`);
     for (const f of pass.findings) expect(md).toContain(`- ${f.id} ${f.verb} ${f.finding.class}: `);
     const probeRun = runs.filter((r) => r.surface === "probe").sort((a, b) => (a.started_at < b.started_at ? -1 : 1)).at(-1)!;
     const probes = sample.probe.filter((p) => p.run_id === probeRun.run_id);
@@ -194,9 +197,16 @@ describe("the page over sample/bundle.json", () => {
     expect(pass.findings.every((f) => dispositionIdOf(f, at).startsWith("disp-"))).toBe(true);
     expect(md.trimEnd().split("\n").at(-1)).toBe(`Decided at ${at}.`);
     expect([doc.decidedAt, doc.open]).toEqual([at, pass.findings.length]);
+    // one inventory line per host: the rows its latest passing run saw, and the older rows the Store keeps
+    for (const host of ["host-4b4dc1", "host-aa516a"]) {
+      const started = runs.filter((r) => r.surface === "linux.nginx" && r.host === host).map((r) => r.started_at).sort().at(-1)!;
+      const assets = sample.inventory_asset.filter((a) => a.tenant_id === T && a.host === host);
+      const older = assets.filter((a) => a.observed_at < started).length;
+      expect(md).toContain(`- inventory addresses on ${host}: ${assets.length - older} in the latest run, ${older} older row${older === 1 ? "" : "s"} kept`);
+    }
     // the Queries section is the queries it ran, and every one of them is in the portable subset the parity test covers
     expect(doc.queries.map((c) => c.name)).toEqual([
-      "RUNS_SQL", "RUN_COMPLETE_SQL", "DOC_ZONES_SQL", "DOC_RUN_SHAPE_SQL", "DOC_COPIES_SQL", "LATEST_APPROVALS_SQL", "POLICY_RULES_SQL", "DOC_UNAPPROVED_SQL",
+      "RUNS_SQL", "RUN_COMPLETE_SQL", "DOC_ZONES_SQL", "DOC_RUN_SHAPE_SQL", "DOC_INVENTORY_SQL", "DOC_COPIES_SQL", "LATEST_APPROVALS_SQL", "POLICY_RULES_SQL", "DOC_UNAPPROVED_SQL",
       "DOC_DISPOSITIONS_OF_RUN_SQL", "DOC_ACTIONS_SQL", "DOC_TICKETS_SQL", "DOC_PROBES_SQL", "DOC_PROBE_FAILURES_SQL",
     ]);
     for (const c of doc.queries) expect(md).toContain(`- ${c.name}: ${c.runs} run${c.runs === 1 ? "" : "s"}, ${c.rows} row${c.rows === 1 ? "" : "s"}`);

@@ -6,7 +6,9 @@
 // of the rows those queries return at render time, or a value of one of those rows; nothing is typed in. Sections:
 //   Estate         the tenant's collection runs and how many pass the DQ gate (RUNS_SQL, RUN_COMPLETE_SQL per run);
 //                  the latest passing run of each surface and host with the objects and settings it observed
-//                  (DOC_RUN_SHAPE_SQL); the zones of the latest passing DNS run with their records (DOC_ZONES_SQL).
+//                  (DOC_RUN_SHAPE_SQL); one line per host with its inventory addresses, those its latest passing run
+//                  observed and the older rows the Store keeps (DOC_INVENTORY_SQL, against that run's started_at);
+//                  the zones of the latest passing DNS run with their records (DOC_ZONES_SQL).
 //   Copies         the vault copies at the latest commit of each repository, one per host and one for the
 //                  account's records, shown per zone, with their latest validation: ok, ok_with_gaps, fail or none,
 //                  and every gap named (DOC_COPIES_SQL).
@@ -37,7 +39,11 @@
 // the heads; 333 approvals; 0 locked settings without an approved value; 27 findings open, HOLD 27, the latest
 // disposition of each on the 23:35 UTC runs; 0 actions and 1 ticket; probe runs 3 of surface probe and 0 of
 // probe.verify, the latest, run-30f5647b8b9c5dff, with 20 failing probes; decided at 2026-10-25T01:45:33.962Z, the
-// bundle's instant; 37 queries; 178 lines with "Where each answer comes from" (02:07 UTC). On 24 Oct 2026 through Zetaris over the DRIFT datasource: the same Estate,
+// bundle's instant; 37 queries; 178 lines with "Where each answer comes from" (02:07 UTC). Measured 25 Oct 2026 at 03:39
+// UTC over the bundle that carries the 03:25 UTC cycle's rows (135 ledger rows of five passes): 26 runs, all passing;
+// inventory addresses 2 in the latest run and 0 older rows on host-4b4dc1, 5 and 3 on host-aa516a; 112 copies at the
+// heads; 27 findings open, HOLD 26 and ESCALATE 1; probe runs 4 of surface probe, the latest, run-e839e796556a54c3, with
+// 20 failing probes; decided at 2026-10-25T03:25:35.412Z; 46 queries; 181 lines. On 24 Oct 2026 through Zetaris over the DRIFT datasource: the same Estate,
 // Copies, Approvals and Probes sections, line for line, as the render over the bundle of that day.
 
 import { defaultSelection, defaultSelectionFor } from "../catalogue/select.ts";
@@ -46,7 +52,7 @@ import type { DataLayer, Params } from "../data/layer.ts";
 import {
   APPROVED_MISSING_SQL, CHANGED_SINCE_BACKUP_SQL, DRIFT_VS_APPROVED_SQL, HERO_SQL, ORPHAN_RECORD_SQL, ORPHAN_VHOST_SQL, PROXIED_WITHOUT_REAL_IP_SQL, PROXY_SPLIT_SQL,
   RESOLUTIONS_SQL, WILDCARD_WITHOUT_REAL_IP_SQL,
-  DOC_ACTIONS_SQL, DOC_COPIES_SQL, DOC_DISPOSITIONS_OF_RUN_SQL, DOC_PROBES_SQL, DOC_PROBE_FAILURES_SQL, DOC_RUN_SHAPE_SQL, DOC_TICKETS_SQL, DOC_UNAPPROVED_SQL, DOC_ZONES_SQL,
+  DOC_ACTIONS_SQL, DOC_COPIES_SQL, DOC_DISPOSITIONS_OF_RUN_SQL, DOC_INVENTORY_SQL, DOC_PROBES_SQL, DOC_PROBE_FAILURES_SQL, DOC_RUN_SHAPE_SQL, DOC_TICKETS_SQL, DOC_UNAPPROVED_SQL, DOC_ZONES_SQL,
   LATEST_APPROVALS_SQL, POLICY_RULES_SQL, RUNS_SQL, RUN_COMPLETE_SQL, objects,
 } from "../data/queries.ts";
 import type { PolicyRule } from "../data/rows.ts";
@@ -237,6 +243,17 @@ export async function renderDocument(layer: DataLayer, opts: DocumentOptions): P
       shapes.push([r.surface, dash(r.host), r.run_id, dash(r.finished_at), s.objects ?? "0", s.settings ?? "0"]);
     }
     line(...table(["surface", "host", "latest passing run", "finished", "objects", "settings"], shapes), "");
+  }
+  if (hosts.length) {
+    const inventory: string[] = [];
+    for (const host of hosts) {
+      // the host's latest passing run: observed is one row per surface and host, so the greatest started_at of the host's
+      const started = observed.filter((r) => r.host === host).map((r) => r.started_at).sort(cmp).at(-1)!;
+      const n = (await q("DOC_INVENTORY_SQL", DOC_INVENTORY_SQL, { tenant_id: tenant, host, started_at: started }))[0] ?? {};
+      const older = Number(n.older || 0);
+      inventory.push(`- inventory addresses on ${host}: ${Number(n.latest || 0)} in the latest run, ${plural(older, "older row", "older rows")} kept`);
+    }
+    line(...inventory, "");
   }
   if (zones.length) line(...table(["zone", "records", "proxied", "direct"], zones.map((z) => [z.zone, z.records, z.proxied, z.direct])), "");
 

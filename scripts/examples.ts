@@ -10,11 +10,13 @@
 //   examples/orphans/                orphan_record, orphan_vhost  both host runs' server_name, zone and enabled rows, every A record, the inventory, the export snapshots
 //
 // Every slice also keeps what the Decider reads for its own rows when the recorded bundle holds it
-// (sliceDeciderRows): the policy rules of the tenant and of "*", whole; the approvals and vault copies whose
-// object_id is an object of the slice's observations or a record of its dns_record rows, and the
-// validations of those copies; the probes whose target is a name of the slice (its dns_record names and the
-// referents of its server_name rows), and the tenant's probe runs. So the verbs over a slice are the ones
-// the full pass gives, and every approval, copy and probe a slice holds belongs to a row it shows.
+// (sliceDeciderRows): the policy rules of the tenant and of "*", whole; the approvals, vault copies and
+// disposition rows whose object_id is an object of the slice's observations or a record of its dns_record
+// rows, and the validations of those copies; the probes whose target is a name of the slice (its dns_record
+// names and the referents of its server_name rows), and the tenant's probe runs. The disposition rows carry
+// the prior HOLDs with their expiries, and their decided_at counts toward the slice's instant as it does
+// toward the full pass's. So the verbs over a slice are the ones the full pass gives, and every approval,
+// copy, disposition and probe a slice holds belongs to a row it shows.
 //
 // Each directory gets bundle.json (the slice, in the house format) and findings.json (the pass's findings).
 // Directory names say what the case is, never which zone it is: the bundle pseudonymises the zone, and a
@@ -52,10 +54,10 @@ export interface Example { dir: string; note: string; tables: Partial<Tables>; c
 
 /**
  * What the Decider reads for the rows of one slice, taken from `source` (see the header): policy rules of the
- * tenant and of "*", whole; approvals and vault copies of the tenant whose object_id is an object of the slice's
- * observations or a record of its dns_record rows; the validations of those copies; the tenant's probes whose
- * target is a dns_record name of the slice or the referent of one of its server_name rows; the tenant's probe
- * runs. A table the source does not hold gives nothing.
+ * tenant and of "*", whole; approvals, vault copies and disposition rows of the tenant whose object_id is an
+ * object of the slice's observations or a record of its dns_record rows; the validations of those copies; the
+ * tenant's probes whose target is a dns_record name of the slice or the referent of one of its server_name rows;
+ * the tenant's probe runs. A table the source does not hold gives nothing.
  */
 export function sliceDeciderRows(source: Partial<Tables>, tenant: string, slice: Partial<Tables>): Partial<Tables> {
   const objects = new Set([...(slice.observation ?? []).map((o) => o.object_id), ...(slice.dns_record ?? []).map((d) => d.record_id)]);
@@ -72,6 +74,7 @@ export function sliceDeciderRows(source: Partial<Tables>, tenant: string, slice:
     copy_validation: (source.copy_validation ?? []).filter((v) => v.tenant_id === tenant && copyIds.has(v.copy_id)),
     probe: (source.probe ?? []).filter((p) => p.tenant_id === tenant && names.has(p.target)),
     collection_run: (source.collection_run ?? []).filter((r) => r.tenant_id === tenant && r.surface === "probe"),
+    disposition: (source.disposition ?? []).filter((d) => d.tenant_id === tenant && objects.has(d.object_id)),
   };
 }
 

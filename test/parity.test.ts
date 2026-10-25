@@ -10,6 +10,8 @@
 // of the 21:21 UTC collection (14 runs, 3,766 observations, 154 backup items, 224 vault copies and validations, 222
 // probes), 68 cases: 136 of 136 equal. Measured live 25 Oct 2026 over the export that carries the 01:16 UTC cycle's
 // rows, 104 cases (25 over overlays, the eval's evidence cases masked): 209 of 209 tests, 104 of 104 cases equal.
+// Measured live 25 Oct 2026 over the export that carries the 03:25 UTC cycle's rows (26 runs, 7,532 observations), 107
+// cases with the document's inventory read: 216 of 216 tests, 107 of 107 cases equal.
 import { beforeAll, describe, expect, it } from "vitest";
 import { config } from "../src/config.ts";
 import { DataLayer, type Overlays, type Params } from "../src/data/layer.ts";
@@ -22,7 +24,7 @@ import {
 } from "../src/data/queries.ts";
 // build B, the pipeline and the owner's document: approved_missing, the prior HOLD read, the document's reads
 import {
-  APPROVED_MISSING_SQL, DOC_ACTIONS_SQL, DOC_COPIES_SQL, DOC_DISPOSITIONS_OF_RUN_SQL, DOC_PROBES_SQL, DOC_PROBE_FAILURES_SQL, DOC_RUN_SHAPE_SQL, DOC_TICKETS_SQL,
+  APPROVED_MISSING_SQL, DOC_ACTIONS_SQL, DOC_COPIES_SQL, DOC_DISPOSITIONS_OF_RUN_SQL, DOC_INVENTORY_SQL, DOC_PROBES_SQL, DOC_PROBE_FAILURES_SQL, DOC_RUN_SHAPE_SQL, DOC_TICKETS_SQL,
   DOC_UNAPPROVED_SQL, DOC_ZONES_SQL, PRIOR_HOLDS_SQL,
 } from "../src/data/queries.ts";
 // the ticket step's reads (src/psa/step.ts) and the eval's (src/eval/queries.ts)
@@ -262,6 +264,15 @@ const headCopies = tbl("vault_copy").filter((c) => c.tenant_id === T && !tbl("va
 const unapprovedOf = (run: string): number => bundle.observation.filter((o) => o.tenant_id === T && o.run_id === run
   && !tbl("approved_setting").some((a) => a.tenant_id === T && keyOfApproval(a) === keyOfApproval(o as unknown as BRow))).length;
 const probesOf = tbl("probe").filter((p) => p.tenant_id === T && p.run_id === PROBE_RUN);
+/** The start of a host's latest complete run in the bundle: the instant the document's inventory line counts against. */
+const latestStart = (host: string): string => tbl("collection_run").filter((r) => r.tenant_id === T && r.host === host && r.status === "complete").map((r) => String(r.started_at)).sort().at(-1) ?? "";
+/** One more inventory row per address of the sites host, last seen on 1 Oct 2026: older rows the document counts apart. */
+const OLDER_INVENTORY: Overlays = {
+  inventory_asset: `SELECT asset_id, tenant_id, host, address, kind, source, observed_at FROM {{t:inventory_asset}}
+UNION ALL
+SELECT asset_id, tenant_id, host, address, kind, source, '2026-10-01T00:00:00.000Z' AS observed_at
+FROM {{t:inventory_asset}} WHERE tenant_id = '${T}' AND host = '${SITES_HOST}'`,
+};
 const groupsOf = (rows: BRow[], cols: string[]): number => new Set(rows.map((r) => cols.map((c) => r[c]).join("\u001f"))).size;
 const BUILD_B_CASES: Case[] = [
   { name: "approved_missing (sites host)", sql: APPROVED_MISSING_SQL, params: { tenant_id: T, surface: "linux.nginx", host: SITES_HOST, run_id: SITES_RUN }, rows: missingOf("linux.nginx", SITES_HOST, SITES_RUN) },
@@ -276,6 +287,9 @@ const BUILD_B_CASES: Case[] = [
   { name: "prior holds (an instant before every HOLD)", sql: PRIOR_HOLDS_SQL, params: { tenant_id: T, decided_at: "2026-10-24T07:00:00.000Z" }, overlays: HELD_TWICE, rows: noDispositions ? 0 : undefined },
   { name: "approved_missing (dns, the absent record's absence approved after it)", sql: APPROVED_MISSING_SQL, params: { tenant_id: T, surface: "cloudflare.dns", host: "", run_id: DNS_RUN }, overlays: APPROVED_ABSENT_RETIRED, rows: missingOf("cloudflare.dns", "", DNS_RUN) },
   { name: "document: run shape", sql: DOC_RUN_SHAPE_SQL, params: { run_id: SITES_RUN }, rows: 1 },
+  { name: "document: inventory of the confd host against its latest run", sql: DOC_INVENTORY_SQL, params: { tenant_id: T, host: CONFD_HOST, started_at: latestStart(CONFD_HOST) }, rows: 1 },
+  { name: "document: inventory of the sites host, every address also seen on 1 Oct", sql: DOC_INVENTORY_SQL, params: { tenant_id: T, host: SITES_HOST, started_at: latestStart(SITES_HOST) }, overlays: OLDER_INVENTORY, rows: 1 },
+  { name: "document: inventory of a host with no row", sql: DOC_INVENTORY_SQL, params: { tenant_id: T, host: "host-000000", started_at: latestStart(SITES_HOST) }, rows: 1 },
   { name: "document: zones", sql: DOC_ZONES_SQL, params: { tenant_id: T, dns_run_id: DNS_RUN }, rows: new Set(bundle.dns_record.filter((d) => d.run_id === DNS_RUN).map((d) => d.zone)).size },
   { name: "document: head copies", sql: DOC_COPIES_SQL, params: { tenant_id: T }, rows: headCopies },
   { name: "document: unapproved settings (sites host)", sql: DOC_UNAPPROVED_SQL, params: { tenant_id: T, run_id: SITES_RUN }, rows: unapprovedOf(SITES_RUN) },
@@ -429,6 +443,24 @@ describe("the ticket step's reads over sample/bundle.json, on sql.js: the rows i
     const z = objects(await sqljs.run(TICKET_ZONES_SQL, { tenant_id: T, dns_run_id: DNS_RUN }, { limit: 10_000 }));
     expect(z.map((r) => r.record_id)).toEqual(bundle.dns_record.filter((r) => r.run_id === DNS_RUN).map((r) => r.record_id).sort());
     expect(z.every((r) => /^host-[0-9a-f]{6}\.[a-z]+$/.test(r.zone))).toBe(true);
+    engine.close();
+  });
+});
+
+describe("the document's inventory read over sample/bundle.json, on sql.js: the counts the Estate line prints", () => {
+  it("DOC_INVENTORY_SQL: the rows a host's latest run saw, the older rows kept, and zero for a host with none", async () => {
+    const engine = await SqlJsEngine.create();
+    engine.loadBundle(bundle);
+    const sqljs = new DataLayer(engine);
+    const read = async (host: string, overlays?: Overlays) => objects(await (overlays ? sqljs.withOverlays(overlays) : sqljs).run(DOC_INVENTORY_SQL, { tenant_id: T, host, started_at: latestStart(host) }, { limit: 10 }))[0];
+    const assets = (host: string) => tbl("inventory_asset").filter((a) => a.tenant_id === T && a.host === host);
+    for (const host of [CONFD_HOST, SITES_HOST]) {
+      const older = assets(host).filter((a) => String(a.observed_at) < latestStart(host)).length;
+      expect(await read(host)).toEqual({ latest: String(assets(host).length - older), older: String(older) });
+    }
+    const sitesOlder = assets(SITES_HOST).filter((a) => String(a.observed_at) < latestStart(SITES_HOST)).length;
+    expect(await read(SITES_HOST, OLDER_INVENTORY)).toEqual({ latest: String(assets(SITES_HOST).length - sitesOlder), older: String(sitesOlder + assets(SITES_HOST).length) });
+    expect(await read("host-000000")).toEqual({ latest: "", older: "" });
     engine.close();
   });
 });

@@ -40,7 +40,7 @@ describe("the replay page", () => {
     expect([...built.files.keys()].sort()).toEqual([".nojekyll", "data/index.json", "data/orphans.json", "data/proxy-split.json", "data/wildcard-no-real-ip.json", "index.html"]);
     for (const name of built.files.keys()) expect(existsSync(path.join(tmp, "out", name))).toBe(true);
     expect(built.index.examples.map((e) => [e.dir, e.findings])).toEqual([["proxy-split", 1], ["wildcard-no-real-ip", 1], ["orphans", 7]]);
-    expect(built.index.totals).toMatchObject({ examples: 3, findings: 9, verbs: { HOLD: 9 } });
+    expect(built.index.totals).toMatchObject({ examples: 3, findings: 9, verbs: { HOLD: 7, ESCALATE: 2 } });
     expect(built.index.examples.every((e) => e.reproduced)).toBe(true);
   });
 
@@ -69,9 +69,9 @@ describe("the replay page", () => {
     expect(built.index.totals.checksRerun).toBe(checks);
   });
 
-  it("shows the real 16 April record: proxy_split, HOLD under the policy, referent_unchanged fails on its three pieces of evidence, exposed since the 21:12:47 proxied=true body, 191 days", () => {
+  it("shows the real 16 April record: proxy_split, ESCALATE once its HOLD under the policy expired, referent_unchanged fails on its three pieces of evidence, exposed since the 21:12:47 proxied=true body, 191 days", () => {
     const [f] = example("proxy-split").findings;
-    expect([f.class, f.verb]).toEqual(["proxy_split", "HOLD"]);
+    expect([f.class, f.verb]).toEqual(["proxy_split", "ESCALATE"]);
     const ru = f.checks.find((c) => c.template === "referent_unchanged")!;
     expect([ru.holds, ru.rowCount, ru.rows?.rows.length]).toEqual([false, 3, 3]);
     expect(ru.sql).toContain("FROM dns_record a");

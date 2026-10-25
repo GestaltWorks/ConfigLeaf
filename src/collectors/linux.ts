@@ -37,7 +37,10 @@
 //                 activates). Every non-file value_hash is Redactor.fingerprint (HMAC-SHA256 under the
 //                 tenant's salt): measured 24 Oct, plain sha256 let 138 guesses from the public zone
 //                 names confirm 19 plaintexts behind the exported pseudonyms. inventory_asset per global
-//                 IPv4 and IPv6 address (kind vps). backup_snapshot (kind export) per config tarball in
+//                 IPv4 and IPv6 address (kind vps), except an IPv6 address whose line carries the
+//                 temporary or deprecated flag (privacy extensions: such an address rotates out within a
+//                 day); the summary lists those as ip6_left_out. mngtmpaddr and stable addresses stay.
+//                 backup_snapshot (kind export) per config tarball in
 //                 the export folder and per folder of plain copies, taken_at = its mtime; backup_item
 //                 (`file`, sha256) for every regular-file member of the newest tarball (object id: the
 //                 member's path below the tarball's root, the prefix its etc/nginx members sit under,
@@ -218,8 +221,10 @@ export interface Fetched {
   hostname: string | null;
   server_time: string | null;
   ip4: string[];
-  /** Global IPv6 addresses, link-local (fe80::/10) left out whatever the scope flag says. */
+  /** Global IPv6 addresses, link-local (fe80::/10) left out whatever the scope flag says, temporary and deprecated ones left out too (ip6_left_out). */
   ip6: string[];
+  /** The global IPv6 addresses whose line carries the temporary or deprecated flag, each with the flags of its line. */
+  ip6_left_out: Ipv6Line[];
   listings: Record<string, Listing>;
   files: Record<string, FetchedFile>;
   timers: { rc: number; entries: TimerEntry[]; error: string | null } | null;
@@ -276,6 +281,26 @@ const parseHashes = (body: string): HashEntry[] => [...body.matchAll(/^([0-9a-f]
 const trimNl = (s: string): string => s.replace(/\n+$/, "");
 const listingOf = (s: Section): Listing => ({ rc: s.rc, entries: s.rc === 0 ? parseLs(s.body) : [], error: s.rc === 0 ? null : trimNl(s.body) });
 
+export interface Ipv6Line { address: string; flags: string[] }
+
+/**
+ * One line of `ip -6 -o addr show scope global`: the address, lower-cased, and the words between the scope and
+ * the lifetimes ("2: eth0    inet6 2001:db8::5/64 scope global temporary dynamic \       valid_lft 86123sec
+ * preferred_lft 14123sec" -> ["temporary", "dynamic"]). Null for a line with no global address on it: no inet6,
+ * link-local (fe80::/10) whatever scope the host printed, or text that is not an IPv6 address.
+ */
+export function ipv6Line(line: string): Ipv6Line | null {
+  const m = line.match(/\binet6 ([0-9A-Fa-f:]+)\/\d+(.*)$/);
+  if (!m) return null;
+  const address = m[1].toLowerCase();
+  if (!isIPv6(address) || /^fe[89ab][0-9a-f]:/i.test(address)) return null;
+  const words = m[2].split(/\\|\bvalid_lft\b/)[0].trim().split(/\s+/).filter(Boolean);
+  return { address, flags: words.filter((w, i) => w !== "scope" && words[i - 1] !== "scope") };
+}
+
+/** Privacy-extension addresses: the host rotates a temporary address out within a day and stops preferring a deprecated one. */
+const TRANSIENT_IPV6 = new Set(["temporary", "deprecated"]);
+
 export function parseStream(text: string): Fetched {
   const sections: Section[] = [];
   let cur: { kind: string; arg: string; body: string[] } | null = null;
@@ -301,13 +326,18 @@ export function parseStream(text: string): Fetched {
   }
   const one = (kind: string, arg?: string): Section | undefined => sections.find((s) => s.kind === kind && (arg === undefined || s.arg === arg));
   const firstLine = (s: Section | undefined): string | null => (s && s.rc === 0 && s.body.trim() ? s.body.trim().split("\n")[0].trim() : null);
-  const f: Fetched = { complete, login_user: firstLine(one("whoami")), hostname: firstLine(one("hostname")), server_time: null, ip4: [], ip6: [], listings: {}, files: {}, timers: null, export_dir: null, renewals: null, sections };
+  const f: Fetched = { complete, login_user: firstLine(one("whoami")), hostname: firstLine(one("hostname")), server_time: null, ip4: [], ip6: [], ip6_left_out: [], listings: {}, files: {}, timers: null, export_dir: null, renewals: null, sections };
   const date = one("date");
   if (date && date.rc === 0) f.server_time = fullIsoToIso(date.body.trim().replace(/Z$/, "+0000"));
   const ip = one("ip4");
   if (ip && ip.rc === 0) f.ip4 = [...new Set([...ip.body.matchAll(/\binet (\d{1,3}(?:\.\d{1,3}){3})\/\d+/g)].map((m) => m[1]))];
   const ip6 = one("ip6");
-  if (ip6 && ip6.rc === 0) f.ip6 = [...new Set([...ip6.body.matchAll(/\binet6 ([0-9A-Fa-f:]+)\/\d+/g)].map((m) => m[1].toLowerCase()).filter((a) => isIPv6(a) && !/^fe[89ab][0-9a-f]:/i.test(a)))];
+  if (ip6 && ip6.rc === 0) {
+    const lines = ip6.body.split("\n").map(ipv6Line).filter((l): l is Ipv6Line => l !== null);
+    const transient = (l: Ipv6Line): boolean => l.flags.some((w) => TRANSIENT_IPV6.has(w));
+    f.ip6 = [...new Set(lines.filter((l) => !transient(l)).map((l) => l.address))];
+    f.ip6_left_out = lines.filter(transient);
+  }
   const lsd = one("lsd");
   const expDir = lsd?.arg ?? null;
   for (const s of sections.filter((x) => x.kind === "ls" && x.arg !== expDir)) f.listings[s.arg] = listingOf(s);
@@ -431,6 +461,8 @@ export interface Summary {
   /** Grammar faults the parser read past: `<file>:<line>: <why>`. */
   malformed: string[];
   timers: string[];
+  /** The IPv6 addresses the inventory leaves out, redacted, each with the flags of its line: "ip-1a2b3c temporary dynamic". */
+  ip6_left_out: string[];
   export: { dir: string; readable: boolean; mtime: string | null; top_level: string[]; tarballs: number; newest_tarball: string | null; /** backup_item rows: every regular-file member of the newest tarball and every plain nginx copy. */ backup_items: number; snapshots: number; /** tarball members hashed as the empty input (symlinks, 0-byte files), dropped from backup_item. */ empty_members: string[] } | null;
   renewals: { readable: boolean; count: number } | null;
 }
@@ -677,6 +709,7 @@ export function toRows(f: Fetched, opts: ToRowsOptions): { rows: CollectedRows; 
     standalone: analysis.standalone.map(rtext),
     malformed: analysis.malformed.map((m) => rtext(`${m.file}:${m.line}: ${m.why}`)),
     timers: (f.timers?.entries ?? []).map((t) => rtext(`${t.unit} -> ${t.activates}`)),
+    ip6_left_out: f.ip6_left_out.map((l) => `${rtext(l.address)} ${l.flags.join(" ")}`),
     export: exp ? {
       dir: rtext(exp.dir), readable: exp.rc === 0, mtime: exp.mtime,
       top_level: (exp.listing?.entries ?? []).map((e) => rtext(`${e.mode} ${e.size} ${e.mtime ?? "?"} ${e.name}${e.target ? ` -> ${e.target}` : ""}`)),
@@ -745,6 +778,7 @@ export async function collectHost(alias: string, opts: { tenantId: string; redac
     summary.not_readable.length ? `not readable: ${summary.not_readable.join(", ")}` : "",
     summary.malformed.length ? `malformed: ${summary.malformed.join("; ")}` : "",
     summary.export?.empty_members.length ? `empty tarball members dropped: ${summary.export.empty_members.join(", ")}` : "",
+    summary.ip6_left_out.length ? `IPv6 left out of the inventory: ${summary.ip6_left_out.join(", ")}` : "",
   ].filter(Boolean);
   t?.emit({
     agent: "collector.linux", action: "observe", status: summary.run.status === "complete" ? "ok" : "failed",

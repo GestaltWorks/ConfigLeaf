@@ -1,9 +1,11 @@
 // The example slices (scripts/examples.ts): what each slice keeps of the Decider's tables. Over synthetic rows,
-// sliceDeciderRows keeps exactly the approvals and vault copies of the slice's objects and records, the
-// validations of those copies, the probes of the slice's names and the tenant's probe runs, and every policy rule
-// of the tenant and of "*". Over sample/bundle.json, each of the three slices holds exactly the approvals, copies,
-// validations and probes of its own rows, recomputed here from the slice. Offline; nothing is written.
+// sliceDeciderRows keeps exactly the approvals, vault copies and disposition rows of the slice's objects and
+// records, the validations of those copies, the probes of the slice's names and the tenant's probe runs, and every
+// policy rule of the tenant and of "*". Over sample/bundle.json, each of the three slices holds exactly the
+// approvals, copies, validations, probes and disposition rows of its own rows, recomputed here from the slice, and
+// decides at the full bundle's instant. Offline; nothing is written.
 import { describe, expect, it } from "vitest";
+import { decisionInstant } from "../src/data/instant.ts";
 import type { Tables } from "../src/data/store.ts";
 import bundle from "../sample/bundle.json" with { type: "json" };
 import { buildExamples, sliceDeciderRows } from "../scripts/examples.ts";
@@ -52,9 +54,16 @@ describe("sliceDeciderRows over synthetic rows", () => {
       { run_id: "run-probe-other", tenant_id: "client-other", surface: "probe" },
       { run_id: "run-dns", tenant_id: T, surface: "cloudflare.dns" },
     ]),
+    disposition: rows<"disposition">([
+      { disposition_id: "disp-file", tenant_id: T, object_id: "/etc/nginx/conf.d/a.conf", verb: "HOLD" },
+      { disposition_id: "disp-record", tenant_id: T, object_id: "rec-1", verb: "HOLD" },
+      { disposition_id: "disp-record-escalate", tenant_id: T, object_id: "rec-1", verb: "ESCALATE" },
+      { disposition_id: "disp-outside", tenant_id: T, object_id: "rec-2", verb: "HOLD" },
+      { disposition_id: "disp-other-tenant", tenant_id: "client-other", object_id: "rec-1", verb: "HOLD" },
+    ]),
   };
 
-  it("keeps exactly the slice's rows: its objects' and records' approvals and copies, those copies' validations, its names' probes, the tenant's probe runs, every rule of the tenant and of *", () => {
+  it("keeps exactly the slice's rows: its objects' and records' approvals, copies and dispositions, those copies' validations, its names' probes, the tenant's probe runs, every rule of the tenant and of *", () => {
     const kept = sliceDeciderRows(source, T, slice);
     const ids = (xs: readonly object[] | undefined, k: string) => (xs ?? []).map((x) => (x as Record<string, string>)[k]);
     expect(ids(kept.policy_rule, "rule_id")).toEqual(["rule-1", "rule-2"]);
@@ -64,11 +73,13 @@ describe("sliceDeciderRows over synthetic rows", () => {
     // a proxy_pass referent is no name the slice serves: only dns_record names and server_name referents count
     expect(ids(kept.probe, "probe_id")).toEqual(["probe-record", "probe-served"]);
     expect(ids(kept.collection_run, "run_id")).toEqual(["run-probe"]);
+    // every disposition row of the slice's objects and records, whatever its verb
+    expect(ids(kept.disposition, "disposition_id")).toEqual(["disp-file", "disp-record", "disp-record-escalate"]);
   });
 
   it("a slice with no rows keeps the rules and the probe runs and nothing else; a source without the tables gives empty lists", () => {
     const kept = sliceDeciderRows(source, T, {});
-    expect([kept.approved_setting, kept.vault_copy, kept.copy_validation, kept.probe].map((x) => x?.length)).toEqual([0, 0, 0, 0]);
+    expect([kept.approved_setting, kept.vault_copy, kept.copy_validation, kept.probe, kept.disposition].map((x) => x?.length)).toEqual([0, 0, 0, 0, 0]);
     expect(kept.policy_rule).toHaveLength(2);
     expect(kept.collection_run).toHaveLength(1);
     expect(Object.values(sliceDeciderRows({}, T, slice)).every((x) => Array.isArray(x) && x.length === 0)).toBe(true);
@@ -78,7 +89,7 @@ describe("sliceDeciderRows over synthetic rows", () => {
 describe("the three slices of sample/bundle.json", () => {
   const B = bundle as unknown as Tables;
 
-  it("each holds exactly the approvals, copies, validations and probes of its own rows, recomputed from the slice", async () => {
+  it("each holds exactly the approvals, copies, validations, probes and disposition rows of its own rows, recomputed from the slice, and decides at the bundle's instant", async () => {
     const examples = await buildExamples();
     expect(examples.map((e) => e.dir)).toEqual(["proxy-split", "wildcard-no-real-ip", "orphans"]);
     // the proxy split shows two records: their ten approved fields, out of the account's and both hosts' 333 approvals
@@ -95,8 +106,11 @@ describe("the three slices of sample/bundle.json", () => {
       expect(t.vault_copy ?? [], ex.dir).toEqual(copies);
       expect(t.copy_validation ?? [], ex.dir).toEqual(B.copy_validation.filter((v) => copyIds.has(v.copy_id)));
       expect(t.probe ?? [], ex.dir).toEqual(B.probe.filter((p) => names.has(p.target)));
+      expect(t.disposition ?? [], ex.dir).toEqual(B.disposition.filter((d) => objects.has(d.object_id)));
       expect(t.policy_rule, ex.dir).toEqual(B.policy_rule);
-      console.log(`examples: ${ex.dir}: approved_setting ${(t.approved_setting ?? []).length}/${B.approved_setting.length}, vault_copy ${(t.vault_copy ?? []).length}/${B.vault_copy.length}, copy_validation ${(t.copy_validation ?? []).length}/${B.copy_validation.length}, probe ${(t.probe ?? []).length}/${B.probe.length}`);
+      // the slice's dispositions carry the latest pass's rows, so the slice decides at the full bundle's instant
+      expect(decisionInstant(t), ex.dir).toBe(decisionInstant(bundle));
+      console.log(`examples: ${ex.dir}: approved_setting ${(t.approved_setting ?? []).length}/${B.approved_setting.length}, vault_copy ${(t.vault_copy ?? []).length}/${B.vault_copy.length}, copy_validation ${(t.copy_validation ?? []).length}/${B.copy_validation.length}, probe ${(t.probe ?? []).length}/${B.probe.length}, disposition ${(t.disposition ?? []).length}/${B.disposition.length}`);
     }
   }, 60_000);
 });

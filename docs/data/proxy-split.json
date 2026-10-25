@@ -2,30 +2,31 @@
  "dir": "proxy-split",
  "note": "proxy_split: one zone's www is a proxied CNAME to its apex, whose A record is direct, so the origin address Cloudflare hides on www is published on the apex. Rows: the DNS and audit runs, the zone's two records, and every audit event on the www record (three updates on 2026-04-16: proxied off, proxied on, content re-pointed by an API token). Cut from sample/bundle.json by scripts/examples.ts; names, addresses and the actor are pseudonyms.",
  "tables": {
-  "collection_run": 5,
+  "collection_run": 6,
   "approved_setting": 10,
   "dns_record": 2,
   "audit_event": 3,
   "policy_rule": 26,
-  "vault_copy": 6,
-  "copy_validation": 6,
-  "probe": 18
+  "vault_copy": 8,
+  "copy_validation": 8,
+  "probe": 24,
+  "disposition": 5
  },
  "files": [
   {
    "path": "examples/proxy-split/bundle.json",
-   "bytes": 28526,
-   "sha256": "sha256:5858bc84b0b1062992fb638aac2659ed1cf12605a206bd2cb92fdda091b5da81"
+   "bytes": 35989,
+   "sha256": "sha256:4352d75b5d8a8e16affdd34dac3050279e40341b73bf446bf83e6b0bb956d1f1"
   },
   {
    "path": "examples/proxy-split/findings.json",
-   "bytes": 2589,
-   "sha256": "sha256:053581099d38b2be54ea9f3430243b10688bcd2c6f06ebf4d3e84fb74dc168c6"
+   "bytes": 2448,
+   "sha256": "sha256:e407e5f781ff54d7ebb6b87f4a479f31500edd969c2ca2d0b54854b73d95eeea"
   }
  ],
  "reproduced": true,
  "verbs": {
-  "HOLD": 1
+  "ESCALATE": 1
  },
  "classes": {
   "proxy_split": 1
@@ -34,9 +35,9 @@
   {
    "id": "proxy-split-1",
    "class": "proxy_split",
-   "verb": "HOLD",
+   "verb": "ESCALATE",
    "claim": "host-524b42.quest is proxied and aliases host-4c795e.quest, whose A record is direct to ip-6fb86d: the origin the proxy hides is published on the name it points at",
-   "decision": "1 of 4 preconditions fail: referent_unchanged; decided by policy under rule-8e75e1d767980665: rule rule-8e75e1d767980665 restores a setting to its approved value; this proxy_split finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-25T03:36:13.770Z",
+   "decision": "1 of 4 preconditions fail: referent_unchanged; decided by policy under rule-8e75e1d767980665: hold under rule rule-8e75e1d767980665 expired 2026-10-25T03:21:06.870Z; the finding stands",
    "fields": [
     [
      "finding id",
@@ -80,15 +81,15 @@
     ],
     [
      "collection run",
-     "run-59ffd380cfc7cda5"
+     "run-9e232bb5e1ebdb81"
     ],
     [
      "DNS run",
-     "run-59ffd380cfc7cda5"
+     "run-9e232bb5e1ebdb81"
     ],
     [
      "window",
-     "2026-04-16T21:11:15.232Z to 2026-10-24T23:35:53.169Z"
+     "2026-04-16T21:11:15.232Z to 2026-10-25T03:25:09.111Z"
     ],
     [
      "value_hash",
@@ -105,16 +106,16 @@
     "days": 191,
     "bound": "exact",
     "source": "audit:evt-05fa48325110cdcb",
-    "still_open_in": "run-59ffd380cfc7cda5"
+    "still_open_in": "run-9e232bb5e1ebdb81"
    },
    "detection": {
     "query": "proxy_split",
     "description": "A proxied CNAME whose target in the same DNS run is a direct A or AAAA record: the address the proxy hides on one name is published on the other.",
-    "sql": "SELECT c.zone, c.name AS proxied_name, c.record_id AS proxied_record_id, a.name AS target_name, a.type AS target_type,\n       a.content AS target_content, a.record_id AS target_record_id, c.observed_at\nFROM dns_record c\nJOIN dns_record a ON a.tenant_id = c.tenant_id AND a.run_id = c.run_id AND a.name = c.content AND a.type IN ('A', 'AAAA') AND a.proxied = 0\nWHERE c.tenant_id = 'client-1' AND c.run_id = 'run-59ffd380cfc7cda5' AND c.type = 'CNAME' AND c.proxied = 1\nORDER BY c.zone, c.name, c.record_id, a.record_id",
-    "sqlSha256": "sha256:81bb934c857e4d94d19b4b125fb8f1e30c464d5364357ef8553d9c7fd325a961",
+    "sql": "SELECT c.zone, c.name AS proxied_name, c.record_id AS proxied_record_id, a.name AS target_name, a.type AS target_type,\n       a.content AS target_content, a.record_id AS target_record_id, c.observed_at\nFROM dns_record c\nJOIN dns_record a ON a.tenant_id = c.tenant_id AND a.run_id = c.run_id AND a.name = c.content AND a.type IN ('A', 'AAAA') AND a.proxied = 0\nWHERE c.tenant_id = 'client-1' AND c.run_id = 'run-9e232bb5e1ebdb81' AND c.type = 'CNAME' AND c.proxied = 1\nORDER BY c.zone, c.name, c.record_id, a.record_id",
+    "sqlSha256": "sha256:52d0b448ff0063cbab81361eb71f74671ec0d7a44724b0021e14c9584ff26de1",
     "params": {
      "tenant_id": "client-1",
-     "dns_run_id": "run-59ffd380cfc7cda5"
+     "dns_run_id": "run-9e232bb5e1ebdb81"
     },
     "total": 1,
     "matched": {
@@ -137,13 +138,13 @@
        "A",
        "ip-6fb86d",
        "f32e72c0d010752462567852ca872d12",
-       "2026-10-24T23:35:53.169Z"
+       "2026-10-25T03:25:09.111Z"
       ]
      ],
      "total": 1,
      "shown": 1,
      "cutCells": 0,
-     "sha256": "sha256:13b582630a89fae112765fc2bfea33a5a82a80e92dc0fc7eb1ff5684f43515a2"
+     "sha256": "sha256:f004aaede5e340a4599b26791bb6b6389525a2ba6d6d19b008ab2bd8eaa4616e"
     }
    },
    "checks": [
@@ -154,7 +155,7 @@
      "status": "ran",
      "holds": true,
      "rowCount": 0,
-     "explanation": "Run run-59ffd380cfc7cda5 collected everything it set out to collect.",
+     "explanation": "Run run-9e232bb5e1ebdb81 collected everything it set out to collect.",
      "rerun": {
       "rowCount": 0,
       "holds": true
@@ -162,10 +163,10 @@
      "bound": "bound from the finding",
      "extra": {},
      "params": {
-      "run_id": "run-59ffd380cfc7cda5"
+      "run_id": "run-9e232bb5e1ebdb81"
      },
-     "sql": "SELECT c.run_id, c.tenant_id, c.surface, c.host, c.expected_count, c.observed_count, c.status\nFROM collection_run c\nWHERE c.run_id = 'run-59ffd380cfc7cda5'\n  AND (c.observed_count < c.expected_count OR c.status <> 'complete'\n    OR c.expected_count IS NULL OR c.observed_count IS NULL\n    OR (c.surface LIKE 'linux.%' AND c.expected_count > (SELECT COUNT(*) FROM observation x WHERE x.run_id = c.run_id)))",
-     "sqlSha256": "sha256:739e8d6154d969852c7b1ebc1ec2e737d348945899e729343d693f7111e5d309",
+     "sql": "SELECT c.run_id, c.tenant_id, c.surface, c.host, c.expected_count, c.observed_count, c.status\nFROM collection_run c\nWHERE c.run_id = 'run-9e232bb5e1ebdb81'\n  AND (c.observed_count < c.expected_count OR c.status <> 'complete'\n    OR c.expected_count IS NULL OR c.observed_count IS NULL\n    OR (c.surface LIKE 'linux.%' AND c.expected_count > (SELECT COUNT(*) FROM observation x WHERE x.run_id = c.run_id)))",
+     "sqlSha256": "sha256:044b45367ff8536167d845b659ad3c74242d78329a7f34dc97a997dc861e4786",
      "rows": {
       "columns": [
        "run_id",
@@ -190,7 +191,7 @@
      "status": "ran",
      "holds": true,
      "rowCount": 2,
-     "explanation": "2 audit events with a named actor touched bce1ca2bb7caa2de9b6823d5f6ecd3f2 between 2026-04-16T21:11:15.232Z and 2026-10-24T23:35:53.169Z.",
+     "explanation": "2 audit events with a named actor touched bce1ca2bb7caa2de9b6823d5f6ecd3f2 between 2026-04-16T21:11:15.232Z and 2026-10-25T03:25:09.111Z.",
      "rerun": {
       "rowCount": 2,
       "holds": true
@@ -201,10 +202,10 @@
       "tenant_id": "client-1",
       "resource_id": "bce1ca2bb7caa2de9b6823d5f6ecd3f2",
       "since": "2026-04-16T21:11:15.232Z",
-      "until": "2026-10-24T23:35:53.169Z"
+      "until": "2026-10-25T03:25:09.111Z"
      },
-     "sql": "SELECT event_id, source, actor, action, old_value, new_value, occurred_at\nFROM audit_event\nWHERE tenant_id = 'client-1' AND resource_id = 'bce1ca2bb7caa2de9b6823d5f6ecd3f2'\n  AND occurred_at >= '2026-04-16T21:11:15.232Z' AND occurred_at <= '2026-10-24T23:35:53.169Z'\n  AND actor IS NOT NULL AND actor <> ''\nORDER BY occurred_at, event_id",
-     "sqlSha256": "sha256:11b5782d224aaedf247fbffc23fb2f5af49c130432b2ca1b56b03df1b8d93be7",
+     "sql": "SELECT event_id, source, actor, action, old_value, new_value, occurred_at\nFROM audit_event\nWHERE tenant_id = 'client-1' AND resource_id = 'bce1ca2bb7caa2de9b6823d5f6ecd3f2'\n  AND occurred_at >= '2026-04-16T21:11:15.232Z' AND occurred_at <= '2026-10-25T03:25:09.111Z'\n  AND actor IS NOT NULL AND actor <> ''\nORDER BY occurred_at, event_id",
+     "sqlSha256": "sha256:4504ddd9fe2935a1028af86909c16beee1b754e046a4d9ba9aa8f5dc3bf34d81",
      "rows": {
       "columns": [
        "event_id",
@@ -293,7 +294,7 @@
      "status": "ran",
      "holds": false,
      "rowCount": 3,
-     "explanation": "host-524b42.quest changed between 2026-04-16T21:11:15.232Z and 2026-10-24T23:35:53.169Z (3 pieces of evidence).",
+     "explanation": "host-524b42.quest changed between 2026-04-16T21:11:15.232Z and 2026-10-25T03:25:09.111Z (3 pieces of evidence).",
      "rerun": {
       "rowCount": 3,
       "holds": false
@@ -304,10 +305,10 @@
       "tenant_id": "client-1",
       "name": "host-524b42.quest",
       "since": "2026-04-16T21:11:15.232Z",
-      "until": "2026-10-24T23:35:53.169Z"
+      "until": "2026-10-25T03:25:09.111Z"
      },
-     "sql": "SELECT 'dns_record' AS evidence, a.record_id AS resource_id, a.content AS old_value, b.content AS new_value, b.observed_at AS seen_at\nFROM dns_record a\nJOIN dns_record b ON b.tenant_id = a.tenant_id AND b.record_id = a.record_id AND b.observed_at > a.observed_at AND b.content <> a.content\nWHERE a.tenant_id = 'client-1' AND a.name = 'host-524b42.quest' AND b.name = 'host-524b42.quest'\n  AND a.observed_at >= '2026-04-16T21:11:15.232Z' AND b.observed_at <= '2026-10-24T23:35:53.169Z'\n  AND NOT EXISTS (SELECT 1 FROM dns_record m WHERE m.tenant_id = a.tenant_id AND m.record_id = a.record_id AND m.observed_at > a.observed_at AND m.observed_at < b.observed_at)\nUNION ALL\nSELECT 'audit_event' AS evidence, e.resource_id, e.old_value, e.new_value, e.occurred_at AS seen_at\nFROM audit_event e\nWHERE e.tenant_id = 'client-1' AND e.occurred_at >= '2026-04-16T21:11:15.232Z' AND e.occurred_at <= '2026-10-24T23:35:53.169Z'\n  AND e.resource_id IN (SELECT d.record_id FROM dns_record d WHERE d.tenant_id = 'client-1' AND d.name = 'host-524b42.quest')\nORDER BY seen_at, evidence, resource_id",
-     "sqlSha256": "sha256:ed6d9090a8c0383976d81b8c35e3e802a55f2a213aa21ff4d8d674eca3e64ca6",
+     "sql": "SELECT 'dns_record' AS evidence, a.record_id AS resource_id, a.content AS old_value, b.content AS new_value, b.observed_at AS seen_at\nFROM dns_record a\nJOIN dns_record b ON b.tenant_id = a.tenant_id AND b.record_id = a.record_id AND b.observed_at > a.observed_at AND b.content <> a.content\nWHERE a.tenant_id = 'client-1' AND a.name = 'host-524b42.quest' AND b.name = 'host-524b42.quest'\n  AND a.observed_at >= '2026-04-16T21:11:15.232Z' AND b.observed_at <= '2026-10-25T03:25:09.111Z'\n  AND NOT EXISTS (SELECT 1 FROM dns_record m WHERE m.tenant_id = a.tenant_id AND m.record_id = a.record_id AND m.observed_at > a.observed_at AND m.observed_at < b.observed_at)\nUNION ALL\nSELECT 'audit_event' AS evidence, e.resource_id, e.old_value, e.new_value, e.occurred_at AS seen_at\nFROM audit_event e\nWHERE e.tenant_id = 'client-1' AND e.occurred_at >= '2026-04-16T21:11:15.232Z' AND e.occurred_at <= '2026-10-25T03:25:09.111Z'\n  AND e.resource_id IN (SELECT d.record_id FROM dns_record d WHERE d.tenant_id = 'client-1' AND d.name = 'host-524b42.quest')\nORDER BY seen_at, evidence, resource_id",
+     "sqlSha256": "sha256:91ad34a0507523dd5d76a6a4a19cb028e6090c32f1f49196097ead794a4b113c",
      "rows": {
       "columns": [
        "evidence",
@@ -363,7 +364,7 @@
    },
    "sample": {
     "match": "same",
-    "detail": "The full sample pass raises the same finding with the same verb (HOLD) and the same check verdicts. Its window opens at 2026-03-20T01:29:03.000Z there and at 2026-04-16T21:11:15.232Z here: a survey finding's window starts where the bundle's audit log begins, or at its DNS run when the bundle holds no audit log."
+    "detail": "The full sample pass raises the same finding with the same verb (ESCALATE) and the same check verdicts. Its window opens at 2026-03-20T01:29:03.000Z there and at 2026-04-16T21:11:15.232Z here: a survey finding's window starts where the bundle's audit log begins, or at its DNS run when the bundle holds no audit log."
    }
   }
  ]

@@ -18,6 +18,7 @@ import { PREREQUISITES, type Prerequisite } from "../src/preflight/prerequisites
 import { ProposedChange, parseProposal } from "../src/preflight/proposal.ts";
 import { MAX_ITERATIONS, describeVerdict, findingKey, runPreflight, type PreflightResult } from "../src/preflight/run.ts";
 import recorded from "./fixtures/recorded-bundle.json" with { type: "json" };
+import sample from "../sample/bundle.json" with { type: "json" };
 import a from "../examples/proposals/a-unproxy-www.json" with { type: "json" };
 import b from "../examples/proposals/b-replay-16-april-proxied.json" with { type: "json" };
 import c from "../examples/proposals/c-vhost-real-ip.json" with { type: "json" };
@@ -478,8 +479,14 @@ describe("the recorded verdict files match the simulation", () => {
     const read = (name: string) => JSON.parse(readFileSync(new URL(`../examples/proposals/${name}.verdict.json`, import.meta.url), "utf8")) as PreflightResult;
     expect([read("a-unproxy-www").verdict, read("b-replay-16-april-proxied").verdict, read("c-vhost-real-ip").verdict, read("d-retarget-apex-outside-inventory").verdict]).toEqual(["GO", "GO", "GO", "NO-GO"]);
     expect(read("a-unproxy-www").removed).toHaveLength(3);
-    // The verdict files are written over sample/bundle.json, whose host runs of 19:56 and 21:21 UTC on 24 Oct 2026 carry the
-    // same bytes: the apex moved outside the inventory makes the two vhost name settings that point at it found_but_different there.
-    expect(read("d-retarget-apex-outside-inventory").added.map((f) => f.class)).toEqual(["found_but_different", "found_but_different"]);
-  });
+    // The verdict files are written over sample/bundle.json. Verdict (d) moves the apex outside the inventory, and the two vhost
+    // name settings that point at it become hero findings whose class follows how the previous passing host run pairs with a DNS
+    // run: found_but_different when it paired with an earlier DNS run and the apex's fingerprint moved, dns_change when both host
+    // runs pair with the same DNS run. Measured 25 Oct 2026 over the bundle of the 03:25 UTC cycle (26 runs): dns_change x2.
+    const recordedD = read("d-retarget-apex-outside-inventory").added.map((f) => f.class);
+    expect(recordedD).toHaveLength(2);
+    for (const cls of recordedD) expect(["found_but_different", "dns_change"]).toContain(cls);
+    const overSample = await runPreflight(d, await layerOf(sample), skip);
+    expect(recordedD, "the (d) verdict file is stale: rerun npm run preflight -- --proposal examples/proposals/d-retarget-apex-outside-inventory.json --out examples/proposals/d-retarget-apex-outside-inventory.verdict.json").toEqual(overSample.added.map((f) => f.class));
+  }, 60_000);
 });

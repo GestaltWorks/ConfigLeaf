@@ -4,13 +4,16 @@ What the agent holds for client-1, read through one data layer (sql.js over samp
 
 ## Estate
 
-19 collection runs on record, 19 passing the DQ gate. 2 hosts and 6 zones in the latest passing runs.
+26 collection runs on record, 26 passing the DQ gate. 2 hosts and 6 zones in the latest passing runs.
 
 | surface | host | latest passing run | finished | objects | settings |
 |---|---|---|---|---|---|
-| cloudflare.dns | - | run-59ffd380cfc7cda5 | 2026-10-24T23:35:56.275Z | 58 | 290 |
-| linux.nginx | host-4b4dc1 | run-647f878a4f5605f7 | 2026-10-24T23:36:04.357Z | 24 | 301 |
-| linux.nginx | host-aa516a | run-400375137e2bae7b | 2026-10-24T23:36:00.876Z | 34 | 761 |
+| cloudflare.dns | - | run-9e232bb5e1ebdb81 | 2026-10-25T03:25:13.145Z | 58 | 290 |
+| linux.nginx | host-4b4dc1 | run-ea10fdeb1eae1a46 | 2026-10-25T03:25:20.736Z | 24 | 301 |
+| linux.nginx | host-aa516a | run-49fc76bf3b823051 | 2026-10-25T03:25:17.527Z | 34 | 761 |
+
+- inventory addresses on host-4b4dc1: 2 in the latest run, 0 older rows kept
+- inventory addresses on host-aa516a: 5 in the latest run, 3 older rows kept
 
 | zone | records | proxied | direct |
 |---|---|---|---|
@@ -27,14 +30,14 @@ What the agent holds for client-1, read through one data layer (sql.js over samp
 
 | repository | commit | copies | ok | ok_with_gaps | fail | not validated |
 |---|---|---|---|---|---|---|
-| host-4b4dc1 (linux.nginx) | c1a414f8 | 22 | 0 | 22 | 0 | 0 |
-| host-aa516a (linux.nginx) | 2300af0a | 32 | 0 | 32 | 0 | 0 |
-| records, zone host-17a03d.info | ff0750c9 | 7 | 7 | 0 | 0 | 0 |
-| records, zone host-1bf78f.club | ff0750c9 | 4 | 4 | 0 | 0 | 0 |
-| records, zone host-4c795e.quest | ff0750c9 | 2 | 2 | 0 | 0 | 0 |
-| records, zone host-503b27.ai | ff0750c9 | 20 | 14 | 6 | 0 | 0 |
-| records, zone host-525a57.com | ff0750c9 | 23 | 13 | 10 | 0 | 0 |
-| records, zone host-e49c58.cloud | ff0750c9 | 2 | 2 | 0 | 0 | 0 |
+| host-4b4dc1 (linux.nginx) | 20a8f782 | 22 | 0 | 22 | 0 | 0 |
+| host-aa516a (linux.nginx) | c31d9501 | 32 | 0 | 32 | 0 | 0 |
+| records, zone host-17a03d.info | 36271afe | 7 | 7 | 0 | 0 | 0 |
+| records, zone host-1bf78f.club | 36271afe | 4 | 4 | 0 | 0 | 0 |
+| records, zone host-4c795e.quest | 36271afe | 2 | 2 | 0 | 0 | 0 |
+| records, zone host-503b27.ai | 36271afe | 20 | 14 | 6 | 0 | 0 |
+| records, zone host-525a57.com | 36271afe | 23 | 13 | 10 | 0 | 0 |
+| records, zone host-e49c58.cloud | 36271afe | 2 | 2 | 0 | 0 | 0 |
 
 The gaps the validations name, each a dependency a restore needs from outside the vault:
 
@@ -57,51 +60,50 @@ Locked settings without an approved value: 0.
 
 ## Findings open
 
-27 findings are open on the latest passing runs: HOLD 27.
+27 findings are open on the latest passing runs: HOLD 26, ESCALATE 1.
 
-| class | HOLD | total |
-|---|---|---|
-| orphan_record | 3 | 3 |
-| orphan_vhost | 3 | 3 |
-| proxied_without_real_ip | 20 | 20 |
-| proxy_split | 1 | 1 |
+| class | HOLD | ESCALATE | total |
+|---|---|---|---|
+| orphan_record | 3 | 0 | 3 |
+| orphan_vhost | 3 | 0 | 3 |
+| proxied_without_real_ip | 20 | 0 | 20 |
+| proxy_split | 0 | 1 | 1 |
 
 Drift from the approved values: 0 settings differ from their latest approval (drift_vs_approved), 0 approved settings are absent from their run (approved_missing).
 
 The HOLDs expire:
 
-- 2026-10-25T03:21:06.870Z: 1 (proxy_split 1)
 - 2026-10-27T23:21:06.870Z: 26 (orphan_record 3, orphan_vhost 3, proxied_without_real_ip 20)
 
 Each open finding, by verb and class, with the reason its disposition records:
 
-- fnd-58b251b5fce8fbff HOLD orphan_record: name in b0a17a719bd2118a535a763379ab7ba9 on host-4b4dc1 (cloudflare.dns, run run-59ffd380cfc7cda5), until 2026-10-27T23:21:06.870Z. rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:16:49.394Z under rule rule-b8d9962485c3ced4.
-- fnd-8fc67ccb1e4eebfa HOLD orphan_record: name in 25a23b5c40a3de0ea11b6054a7b54d07 on host-4b4dc1 (cloudflare.dns, run run-59ffd380cfc7cda5), until 2026-10-27T23:21:06.870Z. rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:16:49.394Z under rule rule-b8d9962485c3ced4.
-- fnd-d62857e241af66e2 HOLD orphan_record: name in c8b1963847dafe3548b1a4b93f520c0a on host-aa516a (cloudflare.dns, run run-59ffd380cfc7cda5), until 2026-10-27T23:21:06.870Z. rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:16:49.394Z under rule rule-b8d9962485c3ced4.
-- fnd-3661fcc541693ada HOLD orphan_vhost: server[host-9ac4f1.com:443].server_name[host-89f6e7.com] in /etc/nginx/sites-available/host-9ac4f1.com on host-4b4dc1 (linux.nginx, run run-647f878a4f5605f7), until 2026-10-27T23:21:06.870Z. rule rule-b8d9962485c3ced4 (normal) holds this orphan_vhost finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:16:49.394Z under rule rule-b8d9962485c3ced4.
-- fnd-51038b9539a0174a HOLD orphan_vhost: server[host-085e02.com:443].server_name[host-085e02.com] in /etc/nginx/sites-available/host-085e02.com on host-4b4dc1 (linux.nginx, run run-647f878a4f5605f7), until 2026-10-27T23:21:06.870Z. rule rule-b8d9962485c3ced4 (normal) holds this orphan_vhost finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:16:49.394Z under rule rule-b8d9962485c3ced4.
-- fnd-add52203af12de8a HOLD orphan_vhost: server[host-9ac4f1.com:443].server_name[host-9ac4f1.com] in /etc/nginx/sites-available/host-9ac4f1.com on host-4b4dc1 (linux.nginx, run run-647f878a4f5605f7), until 2026-10-27T23:21:06.870Z. rule rule-b8d9962485c3ced4 (normal) holds this orphan_vhost finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:16:49.394Z under rule rule-b8d9962485c3ced4.
-- fnd-028260c299ff1cb0 HOLD proxied_without_real_ip: server[host-f324df.com:80].real_ip in /etc/nginx/sites-available/host-f324df.com on host-4b4dc1 (linux.nginx, run run-647f878a4f5605f7), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:16:49.394Z under rule rule-66810b66396a3b15.
-- fnd-05b163bfda4c027f HOLD proxied_without_real_ip: server[host-e49c58.cloud:443].real_ip in /etc/nginx/conf.d/host-e49c58.cloud.conf on host-aa516a (linux.nginx, run run-400375137e2bae7b), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:16:49.394Z under rule rule-66810b66396a3b15.
-- fnd-2f1b5857f0426b68 HOLD proxied_without_real_ip: server[host-4c795e.quest:443].real_ip in /etc/nginx/sites-available/host-4c795e.quest on host-4b4dc1 (linux.nginx, run run-647f878a4f5605f7), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:16:49.394Z under rule rule-66810b66396a3b15.
-- fnd-385949946c990113 HOLD proxied_without_real_ip: server[host-e49c58.cloud:80].real_ip in /etc/nginx/conf.d/host-e49c58.cloud.conf on host-aa516a (linux.nginx, run run-400375137e2bae7b), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:16:49.394Z under rule rule-66810b66396a3b15.
-- fnd-4503aff67c556c58 HOLD proxied_without_real_ip: server[host-62f7a4.com:443].real_ip in /etc/nginx/sites-available/host-62f7a4.com on host-4b4dc1 (linux.nginx, run run-647f878a4f5605f7), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:16:49.394Z under rule rule-66810b66396a3b15.
-- fnd-45d5f3f4a2eb0b2e HOLD proxied_without_real_ip: server[host-18efce.ai:443].real_ip in /etc/nginx/conf.d/word-005ed8-prod.conf on host-aa516a (linux.nginx, run run-400375137e2bae7b), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:16:49.394Z under rule rule-66810b66396a3b15.
-- fnd-5bd1b4c03ee72c7a HOLD proxied_without_real_ip: server[host-503b27.ai:80].real_ip in /etc/nginx/conf.d/host-503b27.ai.conf on host-aa516a (linux.nginx, run run-400375137e2bae7b), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:16:49.394Z under rule rule-66810b66396a3b15.
-- fnd-7548fb2a2e3cdca4 HOLD proxied_without_real_ip: server[host-5c38db.com:80].real_ip in /etc/nginx/sites-available/host-525a57.com on host-4b4dc1 (linux.nginx, run run-647f878a4f5605f7), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:16:49.394Z under rule rule-66810b66396a3b15.
-- fnd-770d13f327d54d12 HOLD proxied_without_real_ip: server[host-525a57.com:80].real_ip in /etc/nginx/sites-available/host-525a57.com on host-4b4dc1 (linux.nginx, run run-647f878a4f5605f7), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:16:49.394Z under rule rule-66810b66396a3b15.
-- fnd-8a843610aeb1b709 HOLD proxied_without_real_ip: server[host-503b27.ai:80].real_ip in /etc/nginx/conf.d/host-503b27.ai.conf on host-aa516a (linux.nginx, run run-400375137e2bae7b), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:16:49.394Z under rule rule-66810b66396a3b15.
-- fnd-8fc350e6aa5840d1 HOLD proxied_without_real_ip: server[host-e49c58.cloud:443].real_ip in /etc/nginx/conf.d/host-e49c58.cloud.conf on host-aa516a (linux.nginx, run run-400375137e2bae7b), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:16:49.394Z under rule rule-66810b66396a3b15.
-- fnd-9bfe1da7d028260c HOLD proxied_without_real_ip: server[host-18efce.ai:80].real_ip in /etc/nginx/conf.d/word-005ed8-prod.conf on host-aa516a (linux.nginx, run run-400375137e2bae7b), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:16:49.394Z under rule rule-66810b66396a3b15.
-- fnd-a08488f45ff63140 HOLD proxied_without_real_ip: server[host-27618a.ai:443].real_ip in /etc/nginx/conf.d/host-503b27.ai.conf on host-aa516a (linux.nginx, run run-400375137e2bae7b), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:16:49.394Z under rule rule-66810b66396a3b15.
-- fnd-b0472de6319451c4 HOLD proxied_without_real_ip: server[host-525a57.com:80].real_ip in /etc/nginx/sites-available/host-525a57.com on host-4b4dc1 (linux.nginx, run run-647f878a4f5605f7), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:16:49.394Z under rule rule-66810b66396a3b15.
-- fnd-b3ea13c119d7b589 HOLD proxied_without_real_ip: server[host-4c795e.quest:80].real_ip in /etc/nginx/sites-available/host-4c795e.quest on host-4b4dc1 (linux.nginx, run run-647f878a4f5605f7), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:16:49.394Z under rule rule-66810b66396a3b15.
-- fnd-b91b1690878eaf0e HOLD proxied_without_real_ip: http.real_ip in /etc/nginx/nginx.conf on host-aa516a (linux.nginx, run run-400375137e2bae7b), until 2026-10-27T23:21:06.870Z. rule rule-b8d9962485c3ced4 (normal) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:16:49.394Z under rule rule-b8d9962485c3ced4.
-- fnd-d5622dbd2bf43e3e HOLD proxied_without_real_ip: server[host-22b64a.com:443].real_ip in /etc/nginx/sites-available/host-525a57.com on host-4b4dc1 (linux.nginx, run run-647f878a4f5605f7), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:16:49.394Z under rule rule-66810b66396a3b15.
-- fnd-de3c5e8ebdc2d209 HOLD proxied_without_real_ip: server[host-f324df.com:443].real_ip in /etc/nginx/sites-available/host-f324df.com on host-4b4dc1 (linux.nginx, run run-647f878a4f5605f7), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:16:49.394Z under rule rule-66810b66396a3b15.
-- fnd-dfe22fa267b51c91 HOLD proxied_without_real_ip: server[host-503b27.ai:443].real_ip in /etc/nginx/conf.d/host-503b27.ai.conf on host-aa516a (linux.nginx, run run-400375137e2bae7b), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:16:49.394Z under rule rule-66810b66396a3b15.
-- fnd-f3bcb9860c5a0b3d HOLD proxied_without_real_ip: server[host-e49c58.cloud:80].real_ip in /etc/nginx/conf.d/host-e49c58.cloud.conf on host-aa516a (linux.nginx, run run-400375137e2bae7b), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:16:49.394Z under rule rule-66810b66396a3b15.
-- fnd-b4a40091cdb4f906 HOLD proxy_split: proxied in bce1ca2bb7caa2de9b6823d5f6ecd3f2 (cloudflare.dns, run run-59ffd380cfc7cda5), until 2026-10-25T03:21:06.870Z. rule rule-8e75e1d767980665 restores a setting to its approved value; this proxy_split finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-25T03:21:06.870Z; held since 2026-10-25T01:16:49.394Z under rule rule-8e75e1d767980665.
+- fnd-58b251b5fce8fbff HOLD orphan_record: name in b0a17a719bd2118a535a763379ab7ba9 on host-4b4dc1 (cloudflare.dns, run run-9e232bb5e1ebdb81), until 2026-10-27T23:21:06.870Z. rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-b8d9962485c3ced4.
+- fnd-8fc67ccb1e4eebfa HOLD orphan_record: name in 25a23b5c40a3de0ea11b6054a7b54d07 on host-4b4dc1 (cloudflare.dns, run run-9e232bb5e1ebdb81), until 2026-10-27T23:21:06.870Z. rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-b8d9962485c3ced4.
+- fnd-d62857e241af66e2 HOLD orphan_record: name in c8b1963847dafe3548b1a4b93f520c0a on host-aa516a (cloudflare.dns, run run-9e232bb5e1ebdb81), until 2026-10-27T23:21:06.870Z. rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-b8d9962485c3ced4.
+- fnd-3661fcc541693ada HOLD orphan_vhost: server[host-9ac4f1.com:443].server_name[host-89f6e7.com] in /etc/nginx/sites-available/host-9ac4f1.com on host-4b4dc1 (linux.nginx, run run-ea10fdeb1eae1a46), until 2026-10-27T23:21:06.870Z. rule rule-b8d9962485c3ced4 (normal) holds this orphan_vhost finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-b8d9962485c3ced4.
+- fnd-51038b9539a0174a HOLD orphan_vhost: server[host-085e02.com:443].server_name[host-085e02.com] in /etc/nginx/sites-available/host-085e02.com on host-4b4dc1 (linux.nginx, run run-ea10fdeb1eae1a46), until 2026-10-27T23:21:06.870Z. rule rule-b8d9962485c3ced4 (normal) holds this orphan_vhost finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-b8d9962485c3ced4.
+- fnd-add52203af12de8a HOLD orphan_vhost: server[host-9ac4f1.com:443].server_name[host-9ac4f1.com] in /etc/nginx/sites-available/host-9ac4f1.com on host-4b4dc1 (linux.nginx, run run-ea10fdeb1eae1a46), until 2026-10-27T23:21:06.870Z. rule rule-b8d9962485c3ced4 (normal) holds this orphan_vhost finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-b8d9962485c3ced4.
+- fnd-028260c299ff1cb0 HOLD proxied_without_real_ip: server[host-f324df.com:80].real_ip in /etc/nginx/sites-available/host-f324df.com on host-4b4dc1 (linux.nginx, run run-ea10fdeb1eae1a46), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.
+- fnd-05b163bfda4c027f HOLD proxied_without_real_ip: server[host-e49c58.cloud:443].real_ip in /etc/nginx/conf.d/host-e49c58.cloud.conf on host-aa516a (linux.nginx, run run-49fc76bf3b823051), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.
+- fnd-2f1b5857f0426b68 HOLD proxied_without_real_ip: server[host-4c795e.quest:443].real_ip in /etc/nginx/sites-available/host-4c795e.quest on host-4b4dc1 (linux.nginx, run run-ea10fdeb1eae1a46), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.
+- fnd-385949946c990113 HOLD proxied_without_real_ip: server[host-e49c58.cloud:80].real_ip in /etc/nginx/conf.d/host-e49c58.cloud.conf on host-aa516a (linux.nginx, run run-49fc76bf3b823051), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.
+- fnd-4503aff67c556c58 HOLD proxied_without_real_ip: server[host-62f7a4.com:443].real_ip in /etc/nginx/sites-available/host-62f7a4.com on host-4b4dc1 (linux.nginx, run run-ea10fdeb1eae1a46), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.
+- fnd-45d5f3f4a2eb0b2e HOLD proxied_without_real_ip: server[host-18efce.ai:443].real_ip in /etc/nginx/conf.d/word-005ed8-prod.conf on host-aa516a (linux.nginx, run run-49fc76bf3b823051), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.
+- fnd-5bd1b4c03ee72c7a HOLD proxied_without_real_ip: server[host-503b27.ai:80].real_ip in /etc/nginx/conf.d/host-503b27.ai.conf on host-aa516a (linux.nginx, run run-49fc76bf3b823051), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.
+- fnd-7548fb2a2e3cdca4 HOLD proxied_without_real_ip: server[host-5c38db.com:80].real_ip in /etc/nginx/sites-available/host-525a57.com on host-4b4dc1 (linux.nginx, run run-ea10fdeb1eae1a46), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.
+- fnd-770d13f327d54d12 HOLD proxied_without_real_ip: server[host-525a57.com:80].real_ip in /etc/nginx/sites-available/host-525a57.com on host-4b4dc1 (linux.nginx, run run-ea10fdeb1eae1a46), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.
+- fnd-8a843610aeb1b709 HOLD proxied_without_real_ip: server[host-503b27.ai:80].real_ip in /etc/nginx/conf.d/host-503b27.ai.conf on host-aa516a (linux.nginx, run run-49fc76bf3b823051), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.
+- fnd-8fc350e6aa5840d1 HOLD proxied_without_real_ip: server[host-e49c58.cloud:443].real_ip in /etc/nginx/conf.d/host-e49c58.cloud.conf on host-aa516a (linux.nginx, run run-49fc76bf3b823051), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.
+- fnd-9bfe1da7d028260c HOLD proxied_without_real_ip: server[host-18efce.ai:80].real_ip in /etc/nginx/conf.d/word-005ed8-prod.conf on host-aa516a (linux.nginx, run run-49fc76bf3b823051), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.
+- fnd-a08488f45ff63140 HOLD proxied_without_real_ip: server[host-27618a.ai:443].real_ip in /etc/nginx/conf.d/host-503b27.ai.conf on host-aa516a (linux.nginx, run run-49fc76bf3b823051), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.
+- fnd-b0472de6319451c4 HOLD proxied_without_real_ip: server[host-525a57.com:80].real_ip in /etc/nginx/sites-available/host-525a57.com on host-4b4dc1 (linux.nginx, run run-ea10fdeb1eae1a46), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.
+- fnd-b3ea13c119d7b589 HOLD proxied_without_real_ip: server[host-4c795e.quest:80].real_ip in /etc/nginx/sites-available/host-4c795e.quest on host-4b4dc1 (linux.nginx, run run-ea10fdeb1eae1a46), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.
+- fnd-b91b1690878eaf0e HOLD proxied_without_real_ip: http.real_ip in /etc/nginx/nginx.conf on host-aa516a (linux.nginx, run run-49fc76bf3b823051), until 2026-10-27T23:21:06.870Z. rule rule-b8d9962485c3ced4 (normal) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-b8d9962485c3ced4.
+- fnd-d5622dbd2bf43e3e HOLD proxied_without_real_ip: server[host-22b64a.com:443].real_ip in /etc/nginx/sites-available/host-525a57.com on host-4b4dc1 (linux.nginx, run run-ea10fdeb1eae1a46), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.
+- fnd-de3c5e8ebdc2d209 HOLD proxied_without_real_ip: server[host-f324df.com:443].real_ip in /etc/nginx/sites-available/host-f324df.com on host-4b4dc1 (linux.nginx, run run-ea10fdeb1eae1a46), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.
+- fnd-dfe22fa267b51c91 HOLD proxied_without_real_ip: server[host-503b27.ai:443].real_ip in /etc/nginx/conf.d/host-503b27.ai.conf on host-aa516a (linux.nginx, run run-49fc76bf3b823051), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.
+- fnd-f3bcb9860c5a0b3d HOLD proxied_without_real_ip: server[host-e49c58.cloud:80].real_ip in /etc/nginx/conf.d/host-e49c58.cloud.conf on host-aa516a (linux.nginx, run run-49fc76bf3b823051), until 2026-10-27T23:21:06.870Z. rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-66810b66396a3b15.
+- fnd-b4a40091cdb4f906 ESCALATE proxy_split: proxied in bce1ca2bb7caa2de9b6823d5f6ecd3f2 (cloudflare.dns, run run-9e232bb5e1ebdb81). hold under rule rule-8e75e1d767980665 expired 2026-10-25T03:21:06.870Z; the finding stands.
 
 ## Where each answer comes from
 
@@ -143,9 +145,9 @@ Tickets by type and status:
 
 ## Probes
 
-Probe runs passing the DQ gate: 3 of surface probe, every served name probed for the pass, and 0 of surface probe.verify, the Actor's probes after a write.
+Probe runs passing the DQ gate: 4 of surface probe, every served name probed for the pass, and 0 of surface probe.verify, the Actor's probes after a write.
 
-Probe run run-30f5647b8b9c5dff (surface probe), finished 2026-10-24T23:36:13.770Z: 20 probes fail.
+Probe run run-e839e796556a54c3 (surface probe), finished 2026-10-25T03:25:30.464Z: 20 probes fail.
 
 | kind | ok | fail |
 |---|---|---|
@@ -161,10 +163,11 @@ The failing names:
 
 ## Queries
 
-- RUNS_SQL: 1 run, 19 rows
-- RUN_COMPLETE_SQL: 19 runs, 0 rows
+- RUNS_SQL: 1 run, 26 rows
+- RUN_COMPLETE_SQL: 26 runs, 0 rows
 - DOC_ZONES_SQL: 1 run, 6 rows
 - DOC_RUN_SHAPE_SQL: 3 runs, 3 rows
+- DOC_INVENTORY_SQL: 2 runs, 2 rows
 - DOC_COPIES_SQL: 1 run, 112 rows
 - LATEST_APPROVALS_SQL: 1 run, 333 rows
 - POLICY_RULES_SQL: 1 run, 26 rows
@@ -175,4 +178,4 @@ The failing names:
 - DOC_PROBES_SQL: 1 run, 6 rows
 - DOC_PROBE_FAILURES_SQL: 1 run, 20 rows
 
-Decided at 2026-10-25T01:45:33.962Z.
+Decided at 2026-10-25T03:25:35.412Z.

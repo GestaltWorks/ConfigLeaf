@@ -15,13 +15,13 @@
   "bound": {
     "kind": "dns_record",
     "tenant_id": "client-1",
-    "run_id": "run-59ffd380cfc7cda5",
-    "change": "proxied of dns_record bce1ca2bb7caa2de9b6823d5f6ecd3f2 (host-524b42.quest, CNAME, zone host-4c795e.quest) in run run-59ffd380cfc7cda5: 1 -> 1"
+    "run_id": "run-9e232bb5e1ebdb81",
+    "change": "proxied of dns_record bce1ca2bb7caa2de9b6823d5f6ecd3f2 (host-524b42.quest, CNAME, zone host-4c795e.quest) in run run-9e232bb5e1ebdb81: 1 -> 1"
   },
   "baseline": {
-    "runs": 19,
+    "runs": 26,
     "gated_out": [],
-    "observed": 4248,
+    "observed": 6372,
     "findings": 27
   },
   "simulations": [
@@ -38,7 +38,7 @@
   "removed": [],
   "added": [],
   "overlays": {
-    "dns_record": "SELECT record_id, run_id, tenant_id, zone, name, type, content, ttl, CASE WHEN record_id IN ('bce1ca2bb7caa2de9b6823d5f6ecd3f2') AND run_id = 'run-59ffd380cfc7cda5' THEN 1 ELSE proxied END AS proxied, observed_at FROM {{t:dns_record}}"
+    "dns_record": "SELECT record_id, run_id, tenant_id, zone, name, type, content, ttl, CASE WHEN record_id IN ('bce1ca2bb7caa2de9b6823d5f6ecd3f2') AND run_id = 'run-9e232bb5e1ebdb81' THEN 1 ELSE proxied END AS proxied, observed_at FROM {{t:dns_record}}"
   },
   "judge": {
     "status": "skipped",
@@ -51,6 +51,6 @@
     "receipt_id": null,
     "served_model": null
   },
-  "trace_id": "preflight_mvn57cxw",
-  "elapsed_ms": 999
+  "trace_id": "preflight_mvn9p325",
+  "elapsed_ms": 1907
 }
