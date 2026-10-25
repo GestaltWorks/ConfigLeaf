@@ -4,3 +4,4 @@ ops/ssh/* text eol=lf
 ops/sudoers/* text eol=lf
 # The lab's files go into a Linux container and run in WSL (lab/README.md): LF whatever the checkout.
 lab/** text eol=lf
+demo/** text eol=lf
