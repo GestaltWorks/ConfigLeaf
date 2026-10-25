@@ -1,6 +1,6 @@
 {
   "verdict": "NO-GO",
-  "reason": "the change adds 2 finding(s); found_but_different (server[host-4c795e.quest:443].server_name[host-4c795e.quest] in /etc/nginx/sites-available/host-4c795e.quest on host-4b4dc1 is byte-identical since 2026-10-24T19:57:20.277Z; host-4c795e.quest resolved to ip-6fb86d then and to 203.0.113.9 now, an address not in the inventory) stays: no catalogue prerequisite clears this class",
+  "reason": "the change adds 2 finding(s); found_but_different (server[host-4c795e.quest:443].server_name[host-4c795e.quest] in /etc/nginx/sites-available/host-4c795e.quest on host-4b4dc1 is byte-identical since 2026-10-24T21:21:12.262Z; host-4c795e.quest resolved to ip-6fb86d then and to 203.0.113.9 now, an address not in the inventory) stays: no catalogue prerequisite clears this class",
   "invalid": false,
   "proposal": {
     "kind": "dns_record",
@@ -15,13 +15,13 @@
   "bound": {
     "kind": "dns_record",
     "tenant_id": "client-1",
-    "run_id": "run-de1564466df1d59b",
-    "change": "content of dns_record f32e72c0d010752462567852ca872d12 (host-4c795e.quest, A, zone host-4c795e.quest) in run run-de1564466df1d59b: ip-6fb86d -> 203.0.113.9"
+    "run_id": "run-59ffd380cfc7cda5",
+    "change": "content of dns_record f32e72c0d010752462567852ca872d12 (host-4c795e.quest, A, zone host-4c795e.quest) in run run-59ffd380cfc7cda5: ip-6fb86d -> 203.0.113.9"
   },
   "baseline": {
-    "runs": 14,
+    "runs": 19,
     "gated_out": [],
-    "observed": 3186,
+    "observed": 4248,
     "findings": 27
   },
   "simulations": [
@@ -34,13 +34,13 @@
           "key": "found_but_different|client-1|host-4b4dc1|/etc/nginx/sites-available/host-4c795e.quest|server[host-4c795e.quest:443].server_name[host-4c795e.quest]|host-4c795e.quest|f32e72c0d010752462567852ca872d12",
           "class": "found_but_different",
           "verb": "HOLD",
-          "summary": "server[host-4c795e.quest:443].server_name[host-4c795e.quest] in /etc/nginx/sites-available/host-4c795e.quest on host-4b4dc1 is byte-identical since 2026-10-24T19:57:20.277Z; host-4c795e.quest resolved to ip-6fb86d then and to 203.0.113.9 now, an address not in the inventory"
+          "summary": "server[host-4c795e.quest:443].server_name[host-4c795e.quest] in /etc/nginx/sites-available/host-4c795e.quest on host-4b4dc1 is byte-identical since 2026-10-24T21:21:12.262Z; host-4c795e.quest resolved to ip-6fb86d then and to 203.0.113.9 now, an address not in the inventory"
         },
         {
           "key": "found_but_different|client-1|host-4b4dc1|/etc/nginx/sites-available/host-4c795e.quest|server[host-4c795e.quest:80].server_name[host-4c795e.quest]|host-4c795e.quest|f32e72c0d010752462567852ca872d12",
           "class": "found_but_different",
           "verb": "HOLD",
-          "summary": "server[host-4c795e.quest:80].server_name[host-4c795e.quest] in /etc/nginx/sites-available/host-4c795e.quest on host-4b4dc1 is byte-identical since 2026-10-24T19:57:20.277Z; host-4c795e.quest resolved to ip-6fb86d then and to 203.0.113.9 now, an address not in the inventory"
+          "summary": "server[host-4c795e.quest:80].server_name[host-4c795e.quest] in /etc/nginx/sites-available/host-4c795e.quest on host-4b4dc1 is byte-identical since 2026-10-24T21:21:12.262Z; host-4c795e.quest resolved to ip-6fb86d then and to 203.0.113.9 now, an address not in the inventory"
         }
       ],
       "removed": [
@@ -80,17 +80,17 @@
       "key": "found_but_different|client-1|host-4b4dc1|/etc/nginx/sites-available/host-4c795e.quest|server[host-4c795e.quest:443].server_name[host-4c795e.quest]|host-4c795e.quest|f32e72c0d010752462567852ca872d12",
       "class": "found_but_different",
       "verb": "HOLD",
-      "summary": "server[host-4c795e.quest:443].server_name[host-4c795e.quest] in /etc/nginx/sites-available/host-4c795e.quest on host-4b4dc1 is byte-identical since 2026-10-24T19:57:20.277Z; host-4c795e.quest resolved to ip-6fb86d then and to 203.0.113.9 now, an address not in the inventory"
+      "summary": "server[host-4c795e.quest:443].server_name[host-4c795e.quest] in /etc/nginx/sites-available/host-4c795e.quest on host-4b4dc1 is byte-identical since 2026-10-24T21:21:12.262Z; host-4c795e.quest resolved to ip-6fb86d then and to 203.0.113.9 now, an address not in the inventory"
     },
     {
       "key": "found_but_different|client-1|host-4b4dc1|/etc/nginx/sites-available/host-4c795e.quest|server[host-4c795e.quest:80].server_name[host-4c795e.quest]|host-4c795e.quest|f32e72c0d010752462567852ca872d12",
       "class": "found_but_different",
       "verb": "HOLD",
-      "summary": "server[host-4c795e.quest:80].server_name[host-4c795e.quest] in /etc/nginx/sites-available/host-4c795e.quest on host-4b4dc1 is byte-identical since 2026-10-24T19:57:20.277Z; host-4c795e.quest resolved to ip-6fb86d then and to 203.0.113.9 now, an address not in the inventory"
+      "summary": "server[host-4c795e.quest:80].server_name[host-4c795e.quest] in /etc/nginx/sites-available/host-4c795e.quest on host-4b4dc1 is byte-identical since 2026-10-24T21:21:12.262Z; host-4c795e.quest resolved to ip-6fb86d then and to 203.0.113.9 now, an address not in the inventory"
     }
   ],
   "overlays": {
-    "dns_record": "SELECT record_id, run_id, tenant_id, zone, name, type, CASE WHEN record_id IN ('f32e72c0d010752462567852ca872d12') AND run_id = 'run-de1564466df1d59b' THEN '203.0.113.9' ELSE content END AS content, ttl, proxied, observed_at FROM {{t:dns_record}}"
+    "dns_record": "SELECT record_id, run_id, tenant_id, zone, name, type, CASE WHEN record_id IN ('f32e72c0d010752462567852ca872d12') AND run_id = 'run-59ffd380cfc7cda5' THEN '203.0.113.9' ELSE content END AS content, ttl, proxied, observed_at FROM {{t:dns_record}}"
   },
   "judge": {
     "status": "skipped",
@@ -103,6 +103,6 @@
     "receipt_id": null,
     "served_model": null
   },
-  "trace_id": "preflight_mvmx0niu",
-  "elapsed_ms": 773
+  "trace_id": "preflight_mvn1oal9",
+  "elapsed_ms": 1002
 }

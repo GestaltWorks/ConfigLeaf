@@ -43,10 +43,10 @@
   },
   "sample": {
     "bundle": "sample/bundle.json",
-    "sha256": "sha256:58c743ee1b0431e269d05fa67e99242c5648b2b8492cf72f086682e50a0bf028",
-    "runs": 14,
+    "sha256": "sha256:6aff023cca0b460e8447789de5359abcd6cc0e1633c3b4e59928df82d160e2fa",
+    "runs": 19,
     "gatedOut": 0,
-    "observed": 3186,
+    "observed": 4248,
     "findings": 27,
     "classes": {
       "proxy_split": 1,
