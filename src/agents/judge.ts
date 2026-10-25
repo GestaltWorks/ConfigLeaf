@@ -5,7 +5,7 @@
 //
 // A verdict counts only when the receipt gate (src/gate.ts) says a signed receipt names an Ultra and,
 // when the claim belongs to a tenant, that the receipt is ours: filed under that tenant's app id
-// ("drift-agent:<tenant>") for the request we made. The gate runs before the reply is read, because a
+// ("drift-agent-<tenant>") for the request we made. The gate runs before the reply is read, because a
 // receipt that is not ours means the answer is discarded and the call made once more as a fresh request
 // (a new nonce in the prompt); a second custody failure fails closed. Gate failure, a receipt lookup
 // that fails (Nightshift unreachable after the model answered) or an unreachable model files the finding

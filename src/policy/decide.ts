@@ -1,12 +1,14 @@
 // The Decider: one finding, the policy rule that governs its setting, and what the pass knows about the
-// setting's approved value, its vault copies and production, in; one disposition out. Pure and
-// deterministic: the same input gives the same verb, reason and expiry, and nothing is read or written.
+// setting's approved value, its vault copies, production and its prior HOLD, in; one disposition out. Pure
+// and deterministic: the same input gives the same verb, reason and expiry, and nothing is read or written.
 //
 // Contract, in precedence order:
 //   1. Operator: an accepted exception in force (the technician's H-MEM lesson) gives ADOPT until the
-//      lesson's expiry; a lapsed one gives ESCALATE. decided_by "operator", whatever rule matches.
+//      lesson's expiry; a lapsed one gives ESCALATE. decided_by "operator", whatever rule matches, whatever
+//      HOLD the setting had.
 //   2. Policy, when a rule governs the setting (src/policy/resolve.ts); decided_by "policy", rule_id the rule.
-//      drift_vs_approved (the live value differs from the latest approval):
+//      drift_vs_approved (the live value differs from the latest approval) and approved_missing (the approved
+//      object is absent from the run: a drift from the approved value to the live value ""):
 //        lock 1 or on_drift rollback:
 //          a valid copy of the approved value (a vault copy whose blob_sha256, or whose run's observation of
 //          the setting, carries the approved hash, and whose latest validation is ok or ok_with_gaps) -> ROLLBACK;
@@ -18,6 +20,12 @@
 //      every other class: adopt ADOPT; hold HOLD with the expiry; investigate FIX when production is
 //      affected, else ESCALATE; rollback HOLD with the expiry: the rule restores a setting to its approved
 //      value, and the finding concerns the setting's relation to another setting while its own value stands.
+//      A HOLD the rule gives meets the setting's prior HOLD on the same live value, when the ledger holds one
+//      (the earliest HOLD of the same tenant, surface, host, object_id, setting_path and value_hash decided
+//      before this pass): one whose expires_at is after decided_at keeps HOLD with that expires_at, "held since
+//      <decided_at> until <expires_at> under rule <id>"; one whose expires_at is at or before decided_at gives
+//      ESCALATE, "hold under rule <id> expired <expires_at>; the finding stands". Every later pass on the same
+//      live value reads the same earliest HOLD, so an expired hold stays expired and a kept one keeps its expiry.
 //   3. Default, when no rule governs the setting: the verb the checks alone give (ADOPT when every check
 //      holds and none was rejected, else ESCALATE) and the checks' own sentence. decided_by "default".
 //   Production is affected when a probe of the pass with status fail targets a name the object serves
@@ -29,9 +37,12 @@
 //
 // Measured 24 Oct 2026 on test/fixtures/policy-bundle.json (test/pipeline.test.ts): the vhost file with a
 // copy validated ok is ROLLBACK, the one whose copy failed validation while a probe of its name fails is
-// FIX, the one with no copy and its probes answering is HOLD for 24 hours, the .bak copy is ADOPT, and the
-// record whose content drifted, with a cf-schema copy validated ok, is ROLLBACK; with the probe run taken
-// out, the two files with no valid copy are ESCALATE, "no probe run in this pass".
+// FIX, the one with no copy and its probes answering is HOLD for 24 hours, the .bak copy is ADOPT, the
+// record whose content drifted, with a cf-schema copy validated ok, is ROLLBACK, and the approved vhost file
+// absent from the latest run, with a copy validated ok, is ROLLBACK; the found_but_different finding whose
+// prior HOLD runs to 2026-10-24T03:00:00.000Z keeps it, and the proxy_split whose prior HOLD expired at
+// 2026-10-22T22:00:00.000Z is ESCALATE; with the probe run taken out, the two files with no valid copy are
+// ESCALATE, "no probe run in this pass".
 
 import type { FindingClass } from "../catalogue/templates.ts";
 import type { DecidedBy, DispositionVerb, PolicyRule } from "../data/rows.ts";
@@ -67,12 +78,15 @@ export interface CopyCandidate {
 /** The probe rows of the pass: run_id null when the pass holds no probe run. */
 export interface ProbeView { run_id: string | null; rows: readonly { kind: string; target: string; status: string }[] }
 
+/** The earliest HOLD the ledger holds on the setting's live value, decided before this pass (PRIOR_HOLDS_SQL). */
+export interface PriorHold { decided_at: string; expires_at: string; rule_id: string | null }
+
 export interface DecideInput {
   finding: { class: FindingClass };
   rule: PolicyRule | null;
   exception: ExceptionState;
   checks: { verb: ChecksVerb; why: string };
-  /** The setting's latest approval; set for a drift_vs_approved finding. */
+  /** The setting's latest approval; set for a drift_vs_approved and an approved_missing finding. */
   approved: ApprovedValue | null;
   copies: readonly CopyCandidate[];
   probes: ProbeView;
@@ -80,6 +94,8 @@ export interface DecideInput {
   serves: readonly string[];
   /** ISO 8601 UTC, the millisecond form. */
   decidedAt: string;
+  /** The setting's prior HOLD on the same live value; null or absent when the ledger holds none. */
+  priorHold?: PriorHold | null;
 }
 
 export interface Decision {
@@ -97,6 +113,9 @@ export type Production =
 
 /** "no probe run in this pass": the sentence the Decider says when production cannot be read. */
 export const NO_PROBE_RUN = "no probe run in this pass";
+
+/** The classes the Decider weighs against the setting's approved value and its vault copies. */
+export const APPROVAL_CLASSES: readonly FindingClass[] = ["drift_vs_approved", "approved_missing"];
 
 const VALID: readonly string[] = ["ok", "ok_with_gaps"];
 const hex = (h: string, n: number): string => h.replace(/^sha256:/, "").slice(0, n);
@@ -144,6 +163,16 @@ function copyText(copies: readonly CopyCandidate[]): string {
   return `no valid copy (${plural(copies.length, "copy", "copies")} in the vault, latest validation ${results})`;
 }
 
+/** A HOLD the rule gave, against the setting's prior HOLD on the same live value. */
+function againstPriorHold(d: Decision, prior: PriorHold | null | undefined, decidedAt: string): Decision {
+  if (d.verb !== "HOLD" || !prior) return d;
+  const rule = prior.rule_id ?? d.rule_id;
+  if (Date.parse(prior.expires_at) > Date.parse(decidedAt)) {
+    return { ...d, expires_at: prior.expires_at, reason: `held since ${prior.decided_at} until ${prior.expires_at} under rule ${rule}` };
+  }
+  return { ...d, verb: "ESCALATE", expires_at: null, reason: `hold under rule ${rule} expired ${prior.expires_at}; the finding stands` };
+}
+
 export function decide(input: DecideInput): Decision {
   const { rule, exception: ex, checks } = input;
   if (ex.state === "applied") {
@@ -159,37 +188,47 @@ export function decide(input: DecideInput): Decision {
     };
   }
   if (!rule) return { verb: checks.verb, reason: checks.why, expires_at: null, decided_by: "default", rule_id: null };
+  return againstPriorHold(byRule(input, rule), input.priorHold, input.decidedAt);
+}
 
+/** Step 2 of the contract before the prior HOLD is weighed: the verb the rule gives. */
+function byRule(input: DecideInput, rule: PolicyRule): Decision {
   const by = (verb: DispositionVerb, reason: string, expires_at: string | null = null): Decision => ({ verb, reason, expires_at, decided_by: "policy", rule_id: rule.rule_id });
   const until = holdUntil(input.decidedAt, rule.hold_max_hours);
   const prod = production(input.probes, input.serves);
   const id = rule.rule_id;
   const cls = input.finding.class;
 
-  if (cls === "drift_vs_approved" && input.approved) {
-    const a12 = hex(input.approved.value_hash, 12);
+  if (APPROVAL_CLASSES.includes(cls) && input.approved) {
+    const approvedHash = input.approved.value_hash;
+    const a12 = hex(approvedHash, 12);
+    const missing = cls === "approved_missing";
+    // what the setting is against its approval, and what restoring or adopting it does
+    const state = missing ? `approved ${a12} is absent from the run` : `live value drifted from approved ${a12}`;
+    const restores = missing ? "restores it from that copy" : "rolls it back to that copy";
+    const adopts = missing ? "adopts its absence" : "adopts the live value";
     if (rule.lock === 1 || rule.on_drift === "rollback") {
-      const copy = validCopy(input.copies, input.approved.value_hash);
+      const copy = validCopy(input.copies, approvedHash);
       if (copy) {
-        return by("ROLLBACK", `live value drifted from approved ${a12}; vault commit ${hex(copy.git_commit, 8)} holds the approved copy, validated ${copy.result} with ${plural(gapCount(copy), "gap", "gaps")}, so rule ${id} rolls it back to that copy`);
+        return by("ROLLBACK", `${state}; vault commit ${hex(copy.git_commit, 8)} holds the approved copy, validated ${copy.result} with ${plural(gapCount(copy), "gap", "gaps")}, so rule ${id} ${restores}`);
       }
-      const candidates = input.copies.filter((c) => c.blob_sha256 === input.approved!.value_hash || c.value_hash === input.approved!.value_hash);
-      const lead = `live value drifted from approved ${a12} with ${copyText(candidates)} and ${productionText(prod)}`;
+      const candidates = input.copies.filter((c) => c.blob_sha256 === approvedHash || c.value_hash === approvedHash);
+      const lead = `${state} with ${copyText(candidates)} and ${productionText(prod)}`;
       if (prod.state === "affected") {
         if (rule.on_no_copy === "investigate_ticket") return by("FIX", `${lead}, so rule ${id} investigates, fixes where allowed, documents and opens a ticket`);
         if (rule.on_no_copy === "ticket") return by("ESCALATE", `${lead}, so rule ${id} opens a ticket for a technician`);
-        return by("ADOPT", `${lead}, so rule ${id} adopts the live value`);
+        return by("ADOPT", `${lead}, so rule ${id} ${adopts}`);
       }
       if (prod.state === "unknown") return by("ESCALATE", `${lead}, so production is unknown and rule ${id} sends it to a technician`);
       return by("HOLD", `${lead}, so rule ${id} holds it until ${until}`, until);
     }
     if (rule.on_drift === "investigate") {
       return prod.state === "affected"
-        ? by("FIX", `live value drifted from approved ${a12} with ${productionText(prod)}, so rule ${id} investigates and fixes where allowed`)
-        : by("ESCALATE", `live value drifted from approved ${a12} with ${productionText(prod)}, so rule ${id} sends it to a technician`);
+        ? by("FIX", `${state} with ${productionText(prod)}, so rule ${id} investigates and fixes where allowed`)
+        : by("ESCALATE", `${state} with ${productionText(prod)}, so rule ${id} sends it to a technician`);
     }
-    if (rule.on_drift === "hold") return by("HOLD", `live value drifted from approved ${a12}; rule ${id} holds it until ${until}`, until);
-    return by("ADOPT", `live value drifted from approved ${a12}; rule ${id} (${rule.criticality}) adopts the live value`);
+    if (rule.on_drift === "hold") return by("HOLD", `${state}; rule ${id} holds it until ${until}`, until);
+    return by("ADOPT", `${state}; rule ${id} (${rule.criticality}) ${adopts}`);
   }
 
   if (rule.on_drift === "adopt") return by("ADOPT", `rule ${id} (${rule.criticality}) adopts this ${cls} finding`);

@@ -17,13 +17,14 @@ import { RUN_COMPLETE_SQL } from "../data/queries.ts";
  * apex (proxy_split), a proxied name served by a block that trusts no real_ip range
  * (proxied_without_real_ip), a record landing on a host with no enabled block for it (orphan_record)
  * and a server_name with no record and no covering wildcard (orphan_vhost). src/pipeline.ts raises
- * changed_since_backup (a file the host's newest backup lacks or holds with other bytes) and
- * drift_vs_approved (a setting whose live value differs from its latest approval) through the detectors
- * of data/queries.ts.
+ * changed_since_backup (a file the host's newest backup lacks or holds with other bytes),
+ * drift_vs_approved (a setting whose live value differs from its latest approval) and approved_missing
+ * (an approved setting whose object the latest passing run holds no observation of: a deleted vhost file,
+ * a deleted record) through the detectors of data/queries.ts.
  */
 export const FINDING_CLASSES = [
   "found_but_different", "changed_since_backup", "drift_vs_approved", "dns_change",
-  "proxy_split", "proxied_without_real_ip", "orphan_record", "orphan_vhost",
+  "proxy_split", "proxied_without_real_ip", "orphan_record", "orphan_vhost", "approved_missing",
 ] as const;
 export type FindingClass = (typeof FINDING_CLASSES)[number];
 
@@ -58,6 +59,8 @@ const hash = () => z.string().regex(/^(sha256:)?[0-9a-f]{64}$/, "sha256 hex, opt
 
 const s = (p: Params, k: string): string => String(p[k] ?? "");
 const n = (count: number, word: string): string => `${count} ${word}${count === 1 ? "" : "s"}`;
+/** A hash as the reasons write it: 12 hex, the sha256: prefix left out. */
+const h12 = (h: string): string => h.replace(/^sha256:/, "").slice(0, 12);
 
 export const CATALOGUE: readonly Template[] = [
   {
@@ -93,8 +96,8 @@ ORDER BY d.record_id, d.content`,
   },
   {
     id: "change_in_last_backup",
-    purpose: "The host's most recent backup already holds the live value of this setting; no rows also when the host has no backup at all (pair with backup_recent).",
-    appliesTo: ["changed_since_backup", "drift_vs_approved"],
+    purpose: "The host's most recent backup holds this setting at value_hash: the live value, or for approved_missing the approved value (approved_hash); no rows also when the host has no backup at all (pair with backup_recent).",
+    appliesTo: ["changed_since_backup", "drift_vs_approved", "approved_missing"],
     params: z.object({ tenant_id: id(), host: id(), object_id: id(), setting_path: id(), value_hash: hash() }),
     sql: `SELECT s.snapshot_id, s.kind, s.taken_at, b.value_hash
 FROM {{t:backup_snapshot}} s
@@ -105,13 +108,13 @@ WHERE s.tenant_id = {{p:tenant_id}} AND s.host = {{p:host}}
 ORDER BY s.snapshot_id`,
     rowsMean: "holds",
     explain: (p, c) => c > 0
-      ? `The latest backup of ${s(p, "host")} already holds the live value of ${s(p, "object_id")} ${s(p, "setting_path")}.`
-      : `The latest backup of ${s(p, "host")} does not hold the live value of ${s(p, "object_id")} ${s(p, "setting_path")}, so a restore would undo it.`,
+      ? `The latest backup of ${s(p, "host")} holds ${s(p, "object_id")} ${s(p, "setting_path")} at ${h12(s(p, "value_hash"))}.`
+      : `The latest backup of ${s(p, "host")} holds no copy of ${s(p, "object_id")} ${s(p, "setting_path")} at ${h12(s(p, "value_hash"))}, so a restore from it sets another value or none.`,
   },
   {
     id: "actor_attributed",
     purpose: "An audit event with a named actor touched the resource inside the window.",
-    appliesTo: ["dns_change", "found_but_different", "changed_since_backup", "drift_vs_approved", "proxy_split", "proxied_without_real_ip", "orphan_record"],
+    appliesTo: ["dns_change", "found_but_different", "changed_since_backup", "drift_vs_approved", "proxy_split", "proxied_without_real_ip", "orphan_record", "approved_missing"],
     params: z.object({ tenant_id: id(), resource_id: id(), since: iso(), until: iso() }),
     sql: `SELECT event_id, source, actor, action, old_value, new_value, occurred_at
 FROM {{t:audit_event}}
@@ -127,7 +130,7 @@ ORDER BY occurred_at, event_id`,
   {
     id: "previous_value_recoverable",
     purpose: "The value the resource had before its latest audit event is on record: either that event carries old_value, or an earlier create or update on the same resource carries the body that was in force (Cloudflare logs no old values; the previous state is the latest earlier body).",
-    appliesTo: ["dns_change", "found_but_different", "drift_vs_approved", "proxy_split", "proxied_without_real_ip", "orphan_record"],
+    appliesTo: ["dns_change", "found_but_different", "drift_vs_approved", "proxy_split", "proxied_without_real_ip", "orphan_record", "approved_missing"],
     params: z.object({ tenant_id: id(), resource_id: id() }),
     sql: `SELECT e.event_id, e.source, e.action, e.old_value AS previous_value, e.occurred_at AS recorded_at, 'old_value' AS evidence
 FROM {{t:audit_event}} e
@@ -268,7 +271,7 @@ ORDER BY reverted_at, revert_event_id, change_event_id`,
   {
     id: "backup_recent",
     purpose: "A backup snapshot of the host exists taken at or after the given time; without one, changed-since-backup has no baseline.",
-    appliesTo: ["changed_since_backup", "drift_vs_approved", "orphan_vhost"],
+    appliesTo: ["changed_since_backup", "drift_vs_approved", "orphan_vhost", "approved_missing"],
     params: z.object({ tenant_id: id(), host: id(), since: iso() }),
     sql: `SELECT snapshot_id, kind, taken_at, source_ref
 FROM {{t:backup_snapshot}}

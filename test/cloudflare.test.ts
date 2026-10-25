@@ -8,6 +8,7 @@ import { AUTHORITY, REDACT, eventId, obsId, type AuditEvent, type Observation } 
 import { Redactor } from "../src/redactor.ts";
 import { cloudflareVaultFiles } from "../src/vault/hook.ts";
 import { TOKEN, fakeApi, type FakeOptions } from "./fixtures/cloudflare/fake-api.ts";
+import { CF_TOKEN, fakeCloudflare } from "./fixtures/actions/fake-cloudflare.ts";
 import zonesFile from "./fixtures/cloudflare/zones.json" with { type: "json" };
 import recordsFile from "./fixtures/cloudflare/records.json" with { type: "json" };
 import auditFile from "./fixtures/cloudflare/audit.json" with { type: "json" };
@@ -436,5 +437,44 @@ describe("collectCloudflare", () => {
     expect(dns.dnsRun).toMatchObject({ expected_count: null, observed_count: 0, status: "failed" });
     expect([dns.records, dns.observations, dns.rawRecords]).toEqual([[], [], []]);
     expect(dns.auditRun.status).toBe("complete");
+  });
+});
+
+describe("Cloudflare record writes (patchRecord, createRecord)", () => {
+  const mail: CfRecord = { id: "rec-c3", name: "mail.example.invalid", type: "A", content: "198.51.100.11", ttl: 3600, proxied: false };
+  const writer = (opts: { failWrites?: boolean } = {}) => {
+    const fake = fakeCloudflare([{ id: "zone-0001", name: "example.invalid" }], { "zone-0001": [mail] }, { ...opts, nextId: "rec-new-0001" });
+    return { fake, cf: new Cloudflare({ token: CF_TOKEN, fetch: fake.fetch }) };
+  };
+
+  it("patchRecord PATCHes the record with type, name, content, ttl and proxied as JSON and returns the record as the API holds it", async () => {
+    const { fake, cf } = writer();
+    const got = await cf.patchRecord("zone-0001", "rec-c3", { type: "A", name: "mail.example.invalid", content: "198.51.100.12", ttl: 3600, proxied: false });
+    expect(got).toEqual({ ...mail, content: "198.51.100.12" });
+    expect(fake.log).toEqual([{ method: "PATCH", path: "/zones/zone-0001/dns_records/rec-c3", body: { type: "A", name: "mail.example.invalid", content: "198.51.100.12", ttl: 3600, proxied: false } }]);
+    expect(cf.requests).toEqual(["PATCH /zones/zone-0001/dns_records/rec-c3"]);
+  });
+
+  it("createRecord POSTs the fields and returns the record with the id Cloudflare gave it; a body without ttl and proxied sends neither", async () => {
+    const { fake, cf } = writer();
+    const got = await cf.createRecord("zone-0001", { type: "CNAME", name: "www.example.invalid", content: "mail.example.invalid" });
+    expect(got).toEqual({ id: "rec-new-0001", type: "CNAME", name: "www.example.invalid", content: "mail.example.invalid" });
+    expect(fake.log).toEqual([{ method: "POST", path: "/zones/zone-0001/dns_records", body: { type: "CNAME", name: "www.example.invalid", content: "mail.example.invalid" } }]);
+  });
+
+  it("a body of another shape is refused before any request; an API refusal carries the method, the path and Cloudflare's message, never the token", async () => {
+    const { fake, cf } = writer();
+    await expect(cf.patchRecord("zone-0001", "rec-c3", { type: "A", name: "mail.example.invalid", content: "" })).rejects.toThrow(/content must be a non-empty string/);
+    await expect(cf.createRecord("zone-0001", { type: "A", name: "x.example.invalid", content: "198.51.100.1", ttl: 0 })).rejects.toThrow(/ttl must be a positive integer/);
+    await expect(cf.createRecord("zone-0001", { type: "A", name: "x.example.invalid", content: "198.51.100.1", proxied: "true" as unknown as boolean })).rejects.toThrow(/proxied must be true or false/);
+    expect(fake.log).toEqual([]);
+    const refused = writer({ failWrites: true });
+    const err = await refused.cf.patchRecord("zone-0001", "rec-c3", { type: "A", name: "mail.example.invalid", content: "198.51.100.12" }).catch((e) => e);
+    expect(err).toBeInstanceOf(CloudflareError);
+    expect([err.status, err.message]).toEqual([403, "Cloudflare 403 PATCH /zones/zone-0001/dns_records/rec-c3: 10000: Authentication error"]);
+    expect(err.message).not.toContain(CF_TOKEN);
+    const none = new Cloudflare({ token: "", fetch: refused.fake.fetch });
+    await expect(none.createRecord("zone-0001", { type: "A", name: "x.example.invalid", content: "198.51.100.1" })).rejects.toThrow(/CLOUDFLARE_API_TOKEN is not set/);
+    expect(refused.fake.log).toHaveLength(1);
   });
 });

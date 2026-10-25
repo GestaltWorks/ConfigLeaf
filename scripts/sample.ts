@@ -2,7 +2,7 @@
 // DataLayer(SqlJsEngine), with no model. The DQ gate, the hero query and every precondition run as
 // SQL over the bundle's rows and the World Model confirms FOUND-BUT-DIFFERENT from what it recorded;
 // nothing here maps an input to a stored answer. Prints one JSON finding per line, then one disposition
-// line per finding as the ledger holds it, then one summary.
+// line per finding as the ledger holds it under the finding's disposition_id, then one summary.
 //
 // The Decider consults the technician's memory (src/engine/memory.ts, the vendored H-MEM reference under
 // .world/memory, gitignored): a lesson recorded with `npm run answer` changes the verb of the finding it
@@ -20,6 +20,7 @@ import { DISPOSITIONS_SQL, objects } from "../src/data/queries.ts";
 import { TechnicianMemory } from "../src/engine/memory.ts";
 import { DriftWorld } from "../src/engine/world.ts";
 import { MemoryLedger } from "../src/ledger.ts";
+import { dispositionIdOf } from "../src/loop/pass.ts";
 import { VERBS, runPass } from "../src/pipeline.ts";
 import { Tracer } from "../src/trace.ts";
 import bundle from "../sample/bundle.json" with { type: "json" };
@@ -42,10 +43,12 @@ const layer = new DataLayer(engine);
 const pass = await runPass(layer, { tracer, world: new DriftWorld("sample"), memory, ledger: new MemoryLedger(engine), decidedAt: decisionInstant(bundle) });
 
 for (const f of pass.findings) console.log(JSON.stringify(f));
-// The ledger's rows, read back through the DataLayer, in the order of the findings they decide.
-const ledger = new Map(objects(await layer.run(DISPOSITIONS_SQL, {}, { limit: 100_000 })).map((d) => [d.finding_id, d]));
+// The ledger's rows, read back through the DataLayer, in the order of the findings they decide: each the row under
+// the disposition_id the pass gives the finding (src/loop/pass.ts dispositionIdOf), which a recorded pass over the same
+// run may have written first; the bundle holds one row per finding and run of every recorded pass.
+const ledger = new Map(objects(await layer.run(DISPOSITIONS_SQL, {}, { limit: 100_000 })).map((d) => [d.disposition_id, d]));
 for (const f of pass.findings) {
-  const d = ledger.get(f.id);
+  const d = ledger.get(dispositionIdOf(f));
   console.log(d
     ? `DISPOSITION ${d.finding_id} ${d.verb} by ${d.decided_by}${d.rule_id ? ` under ${d.rule_id}` : ""} expires ${d.expires_at || "-"}: ${d.reason}`
     : `DISPOSITION ${f.id} absent from the ledger`);

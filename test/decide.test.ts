@@ -200,6 +200,82 @@ describe("decide: every other class under a rule", () => {
   });
 });
 
+describe("decide: approved_missing, a drift from the approved value to the live value \"\"", () => {
+  const missing = (over: Partial<DecideInput> = {}) => input({ finding: { class: "approved_missing" }, ...over });
+
+  it("with a valid copy of the approved value: ROLLBACK, the copy restored", () => {
+    expect(decide(missing({ copies: [copy()] }))).toEqual({
+      verb: "ROLLBACK", decided_by: "policy", rule_id: "rule-00000000000000a1", expires_at: null,
+      reason: "approved a1b2c3d4e5f6 is absent from the run; vault commit 5a14a89d holds the approved copy, validated ok with 0 gaps, so rule rule-00000000000000a1 restores it from that copy",
+    });
+    // a record's copy: the run's observation of the field carries the approved hash
+    expect(decide(missing({ copies: [copy({ validator: "cf-schema", blob_sha256: OTHER_HASH })] })).verb).toBe("ROLLBACK");
+  });
+
+  it("with no valid copy: the on_no_copy terms when production is affected, ESCALATE when it is unknown, HOLD when it answers", () => {
+    expect(decide(missing({ copies: [copy({ result: "fail" })], probes: FAILING })).reason)
+      .toBe(`approved a1b2c3d4e5f6 is absent from the run with no valid copy (1 copy in the vault, latest validation fail) and production affected (1 failing probe in run-probe: http ${NAME}), so rule rule-00000000000000a1 investigates, fixes where allowed, documents and opens a ticket`);
+    expect(decide(missing({ probes: FAILING })).verb).toBe("FIX");
+    expect(decide(missing({ rule: rule({ on_no_copy: "ticket" }), probes: FAILING })).verb).toBe("ESCALATE");
+    expect(decide(missing({ rule: rule({ on_no_copy: "adopt" }), probes: FAILING })).reason).toMatch(/, so rule rule-00000000000000a1 adopts its absence$/);
+    expect(decide(missing({ probes: NONE }))).toMatchObject({ verb: "ESCALATE", expires_at: null, reason: `approved a1b2c3d4e5f6 is absent from the run with no valid copy (none in the vault) and ${NO_PROBE_RUN}, so production is unknown and rule rule-00000000000000a1 sends it to a technician` });
+    expect(decide(missing({ probes: ANSWERING }))).toMatchObject({ verb: "HOLD", expires_at: "2026-10-25T12:00:00.000Z" });
+  });
+
+  it("under rules that do not roll back: investigate, hold and adopt as for a drift, the absence named", () => {
+    expect(decide(missing({ rule: rule({ lock: 0, on_drift: "investigate" }), probes: FAILING })).reason)
+      .toBe(`approved a1b2c3d4e5f6 is absent from the run with production affected (1 failing probe in run-probe: http ${NAME}), so rule rule-00000000000000a1 investigates and fixes where allowed`);
+    expect(decide(missing({ rule: rule({ lock: 0, on_drift: "hold", hold_max_hours: 72 }) }))).toMatchObject({ verb: "HOLD", expires_at: "2026-10-27T12:00:00.000Z", reason: "approved a1b2c3d4e5f6 is absent from the run; rule rule-00000000000000a1 holds it until 2026-10-27T12:00:00.000Z" });
+    expect(decide(missing({ rule: rule({ lock: 0, on_drift: "adopt", criticality: "low" }) })).reason).toBe("approved a1b2c3d4e5f6 is absent from the run; rule rule-00000000000000a1 (low) adopts its absence");
+  });
+
+  it("with no rule the default decides from the checks, as for every class", () => {
+    expect(decide(missing({ rule: null, checks: { verb: "ADOPT", why: "all 3 preconditions hold; candidate pending a judge" } }))).toEqual({ verb: "ADOPT", reason: "all 3 preconditions hold; candidate pending a judge", expires_at: null, decided_by: "default", rule_id: null });
+  });
+});
+
+describe("decide: the setting's prior HOLD on the same live value", () => {
+  const held = (over: Partial<DecideInput> = {}) => input({ finding: { class: "proxied_without_real_ip" }, approved: null, rule: rule({ lock: 0, on_drift: "hold", criticality: "high", hold_max_hours: 72 }), ...over });
+  const PRIOR = { decided_at: "2026-10-22T12:00:00.000Z", expires_at: "2026-10-25T12:00:00.000Z", rule_id: "rule-00000000000000a1" };
+
+  it("a HOLD whose expiry is after decided_at keeps HOLD with that expiry, naming since when and under which rule", () => {
+    expect(decide(held({ priorHold: PRIOR }))).toEqual({
+      verb: "HOLD", decided_by: "policy", rule_id: "rule-00000000000000a1", expires_at: "2026-10-25T12:00:00.000Z",
+      reason: "held since 2026-10-22T12:00:00.000Z until 2026-10-25T12:00:00.000Z under rule rule-00000000000000a1",
+    });
+  });
+
+  it("a HOLD whose expiry is at or before decided_at gives ESCALATE with no expiry: the finding stands", () => {
+    const expired = { ...PRIOR, expires_at: "2026-10-24T11:00:00.000Z" };
+    expect(decide(held({ priorHold: expired }))).toEqual({
+      verb: "ESCALATE", decided_by: "policy", rule_id: "rule-00000000000000a1", expires_at: null,
+      reason: "hold under rule rule-00000000000000a1 expired 2026-10-24T11:00:00.000Z; the finding stands",
+    });
+    expect(decide(held({ priorHold: { ...PRIOR, expires_at: AT } })).verb).toBe("ESCALATE");
+  });
+
+  it("the prior HOLD's own rule is named; with none recorded, the rule deciding now", () => {
+    expect(decide(held({ priorHold: { ...PRIOR, rule_id: "rule-00000000000000b2" } })).reason).toBe("held since 2026-10-22T12:00:00.000Z until 2026-10-25T12:00:00.000Z under rule rule-00000000000000b2");
+    expect(decide(held({ priorHold: { ...PRIOR, rule_id: null } })).reason).toBe("held since 2026-10-22T12:00:00.000Z until 2026-10-25T12:00:00.000Z under rule rule-00000000000000a1");
+  });
+
+  it("weighs a HOLD only: a verb other than HOLD the rule gives stands, and with no prior HOLD the rule's own expiry runs from decided_at", () => {
+    expect(decide(input({ copies: [copy()], priorHold: PRIOR })).verb).toBe("ROLLBACK");
+    expect(decide(input({ probes: FAILING, priorHold: { ...PRIOR, expires_at: "2026-10-01T00:00:00.000Z" } })).verb).toBe("FIX");
+    expect(decide(held({ rule: rule({ lock: 0, on_drift: "adopt" }), priorHold: PRIOR })).verb).toBe("ADOPT");
+    expect(decide(held({ priorHold: null })).expires_at).toBe("2026-10-27T12:00:00.000Z");
+    // a drift HOLD (no valid copy, production answering) meets the prior HOLD the same way
+    expect(decide(input({ probes: ANSWERING, priorHold: { ...PRIOR, expires_at: "2026-10-24T00:00:00.000Z" } })).verb).toBe("ESCALATE");
+  });
+
+  it("the operator's exception outranks both, and with no rule the default decides whatever the ledger held", () => {
+    const applied = { state: "applied" as const, lesson: "mem-9", expires_at: "2026-12-01T00:00:00.000Z", reason: "accepted for the quarter" };
+    expect(decide(held({ exception: applied, priorHold: { ...PRIOR, expires_at: "2026-10-01T00:00:00.000Z" } }))).toMatchObject({ verb: "ADOPT", decided_by: "operator", expires_at: "2026-12-01T00:00:00.000Z" });
+    expect(decide(held({ exception: { ...applied, state: "lapsed", expires_at: "2026-10-01T00:00:00.000Z" }, priorHold: PRIOR }))).toMatchObject({ verb: "ESCALATE", decided_by: "operator" });
+    expect(decide(held({ rule: null, priorHold: PRIOR }))).toMatchObject({ verb: "ESCALATE", decided_by: "default" });
+  });
+});
+
 describe("the Decider's helpers", () => {
   it("holdUntil adds whole hours to decided_at, in the millisecond form", () => {
     expect(holdUntil("2026-10-24T12:00:00.000Z", 24)).toBe("2026-10-25T12:00:00.000Z");

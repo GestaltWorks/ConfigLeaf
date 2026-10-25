@@ -1,0 +1,40 @@
+{
+  "_note": "The field each ticket column maps to in the three PSAs whose adapters are absent (src/psa/index.ts). Per PSA: the ticket API, then per column the PSA field and, for the enumerated columns, the PSA value of each of the agent's values. Picklist and record ids are the defaults of a fresh instance; an MSP's own instance supplies its ids for them. github is the present backend, for comparison.",
+  "columns": ["type", "priority", "status", "summary", "details", "configuration_item"],
+  "github": {
+    "api": "POST /repos/{owner}/{repo}/issues",
+    "type": { "field": "labels", "values": { "change": "type:change", "incident": "type:incident" } },
+    "priority": { "field": "labels", "values": { "P1": "P1", "P2": "P2", "P3": "P3", "P4": "P4" } },
+    "status": { "field": "state", "values": { "open": "open", "closed": "closed" } },
+    "summary": { "field": "title" },
+    "details": { "field": "body" },
+    "configuration_item": { "field": "body", "note": "the What section names the object, the host or zone and the finding" }
+  },
+  "halo": {
+    "api": "POST /api/Tickets",
+    "type": { "field": "tickettype_id", "values": { "change": "Change Request", "incident": "Incident" } },
+    "priority": { "field": "priority_id", "values": { "P1": 1, "P2": 2, "P3": 3, "P4": 4 } },
+    "status": { "field": "status_id", "values": { "open": "New", "closed": "Closed" } },
+    "summary": { "field": "summary" },
+    "details": { "field": "details" },
+    "configuration_item": { "field": "assets", "note": "the asset id of the host, or of the zone as a configuration item" }
+  },
+  "connectwise": {
+    "api": "POST /service/tickets",
+    "type": { "field": "type", "values": { "change": "Change", "incident": "Incident" } },
+    "priority": { "field": "priority", "values": { "P1": "Priority 1 - Emergency Response", "P2": "Priority 2 - Quick Response", "P3": "Priority 3 - Normal Response", "P4": "Priority 4 - Schedule Maintenance" } },
+    "status": { "field": "status", "values": { "open": "New", "closed": "Closed" } },
+    "summary": { "field": "summary" },
+    "details": { "field": "initialDescription" },
+    "configuration_item": { "field": "configurations", "note": "POST /service/tickets/{id}/configurations with the configuration id of the host or zone" }
+  },
+  "autotask": {
+    "api": "POST /Tickets",
+    "type": { "field": "ticketType", "values": { "change": 4, "incident": 2 } },
+    "priority": { "field": "priority", "values": { "P1": 4, "P2": 1, "P3": 2, "P4": 3 } },
+    "status": { "field": "status", "values": { "open": 1, "closed": 5 } },
+    "summary": { "field": "title" },
+    "details": { "field": "description" },
+    "configuration_item": { "field": "configurationItemID", "note": "the configuration item id of the host or zone" }
+  }
+}

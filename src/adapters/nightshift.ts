@@ -45,7 +45,7 @@ export class Nightshift {
   private readonly base = config.nightshift.baseUrl;
   private readonly root = config.nightshift.baseUrl.replace(/\/v1$/, "");
 
-  /** `appId` overrides the meterless-app header for one call (per client, "drift-agent:<tenant>", see gate.ts tenantAppId), so the receipt is filed under it and the gate can verify it. */
+  /** `appId` overrides the meterless-app header for one call (per client, "drift-agent-<tenant>", see gate.ts tenantAppId), so the receipt is filed under it and the gate can verify it. */
   private headers(extra: Record<string, string> = {}, appId: string = config.nightshift.appId): Record<string, string> {
     if (!config.nightshift.token) throw new NightshiftError("no Nightshift runtime token", 0);
     return {

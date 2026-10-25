@@ -5,20 +5,21 @@
 // and not a planted answer. The recorded bundle (test/fixtures/recorded-bundle.json, the export of the 07:58 UTC collection of 24 Oct 2026: the real estate redacted) exercises
 // the survey: 27 findings in four classes, each one checked against a copy where the cause is removed, and
 // the 11 files the hosts' newest backups lack. The policy fixture (test/fixtures/policy-bundle.json, the
-// authored rows plus the hackathon policy, approvals, vault copies, validations and a probe run) exercises
-// the Decider through the DataLayer: every verb the design's table reaches, its reason and expiry, and the
+// authored rows plus the hackathon policy, approvals, vault copies, validations, a probe run, an approved file
+// the latest run lacks and two HOLDs of an earlier pass) exercises the Decider through the DataLayer: every verb
+// the design's table reaches, its reason and expiry, approved_missing, the HOLD kept and the HOLD expired, and the
 // ledger rows read back through SQL. The MemTracer builds events as the real Tracer writes them (redacted,
 // model: none), so the exact-text assertions also show the bundles' vocabulary survives.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { FIXTURE as POLICY_FIXTURE, policyBundleText } from "../scripts/fixtures/policy-bundle.ts";
+import { BLOG, BLOG_HASH, FIXTURE as POLICY_FIXTURE, HOLD_EXPIRED, HOLD_IN_FORCE, policyBundleText } from "../scripts/fixtures/policy-bundle.ts";
 import { decisionInstant } from "../src/data/instant.ts";
 import { holdUntil } from "../src/policy/decide.ts";
 import { DataLayer, DataLayerError, type Params, type RunOptions } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import {
-  APPROVED_COPIES_SQL, DISPOSITIONS_SQL, FOUND_BUT_DIFFERENT_SQL, LATEST_APPROVALS_SQL, POLICY_RULES_SQL, PROBES_OF_RUN_SQL, objects,
+  APPROVED_COPIES_SQL, APPROVED_MISSING_SQL, DISPOSITIONS_SQL, FOUND_BUT_DIFFERENT_SQL, LATEST_APPROVALS_SQL, POLICY_RULES_SQL, PRIOR_HOLDS_SQL, PROBES_OF_RUN_SQL, objects,
 } from "../src/data/queries.ts";
 import { dispositionId, type PolicyRule } from "../src/data/rows.ts";
 import { TechnicianMemory } from "../src/engine/memory.ts";
@@ -128,7 +129,8 @@ describe("pass over the authored fixture, model: none", () => {
     //   the first event of its state; the authored log carries plain old and new values, so no earlier-body count is needed
     // + the Decider's policy read (one tenant) + drift_vs_approved over the three latest passing runs (linux.etc and linux.nginx on
     //   host-7f1c, the DNS run) + changed_since_backup over the nginx one: 0 rows each (the approvals hold the live values, no `file` row)
-    expect(okQueries(ev)).toHaveLength(1 + 12 + 5 + 5 + 2 + 4 + 1 + 1 + 4 + 4 + 2 * 2 + 1 + 3 + 1);
+    // + approved_missing over the same three runs: 0 rows each (every approved object is in its run); no prior-HOLD read (no rule)
+    expect(okQueries(ev)).toHaveLength(1 + 12 + 5 + 5 + 2 + 4 + 1 + 1 + 4 + 4 + 2 * 2 + 1 + 3 + 1 + 3);
     expect(ev.filter((e) => e.action === "query" && e.status === "failed")).toEqual([]);
   });
 
@@ -194,8 +196,9 @@ describe("pass over the authored fixture, model: none", () => {
     // 1 runs + 12 gate + 5 observations + 3 resolutions (the 20 Oct host runs still pair with run-dns-1020); no hero, no hero checks;
     // survey: 1 audit span + 1 proxy_split + 4 checks, and no host survey (no host run pairs with a passing DNS run);
     // exposure: 2 SELECTs for the proxy_split's record (rec-b2 in run-dns-1020);
-    // the policy read, drift_vs_approved over host-7f1c's two latest runs and run-dns-1020, changed_since_backup over its nginx run
-    expect(okQueries(tracer.events)).toHaveLength(1 + 12 + 5 + 3 + 1 + 1 + 4 + 2 + 1 + 3 + 1);
+    // the policy read, drift_vs_approved over host-7f1c's two latest runs and run-dns-1020, changed_since_backup over its nginx run,
+    // approved_missing over the same three runs
+    expect(okQueries(tracer.events)).toHaveLength(1 + 12 + 5 + 3 + 1 + 1 + 4 + 2 + 1 + 3 + 1 + 3);
   });
 
   it("a name with an A and an AAAA record gives two findings, each carrying its own record and checked against it", async () => {
@@ -390,7 +393,8 @@ describe("pass over the recorded bundle (the real estate, redacted), model: none
     // 1 runs + 4 gate + 2 observations + 2 resolutions + 2 hero + 1 audit span + 1 proxy_split + 2 hosts x 4 survey queries + checks (4 x 24 + 3 x 3)
     // + exposure (test/exposure.test.ts measures it): 15 distinct (record, state) pairs -> 15 record rows + 15 first-event queries + 4 earlier-body counts
     // + the policy read + drift_vs_approved over both host runs and the DNS run + changed_since_backup over both host runs + 4 checks x 11 backup findings
-    expect(okQueries(ev)).toHaveLength(1 + 4 + 2 + 2 + 2 + 1 + 1 + 8 + 4 * 24 + 3 * 3 + 15 + 15 + 4 + 1 + 3 + 2 + 4 * 11);
+    // + approved_missing over both host runs and the DNS run (0 rows: the recording holds no approval)
+    expect(okQueries(ev)).toHaveLength(1 + 4 + 2 + 2 + 2 + 1 + 1 + 8 + 4 * 24 + 3 * 3 + 15 + 15 + 4 + 1 + 3 + 2 + 4 * 11 + 3);
     // the decide lines the default settled carry the default policy, and one decider line counts what the locked rules lack
     expect(ev.filter((e) => e.action === "decide").every((e) => e.detail === DEFAULT_POLICY_DETAIL)).toBe(true);
     expect(ev.filter((e) => e.input_summary === "policy").map((e) => [e.agent, e.action, e.output_summary, e.detail])).toEqual([[
@@ -607,27 +611,107 @@ describe("the Decider under the MSP's policy (test/fixtures/policy-bundle.json)"
     expect(policyBundle._note).toContain("the 15 rules of policy/hackathon.json (version 2)");
   });
 
-  it("ten findings, one disposition each: ROLLBACK the file and the record with a valid copy, FIX the file whose copy failed while its name fails a probe, HOLD the uncopied file whose names answer, ADOPT the .bak", async () => {
+  it("eleven findings, one disposition each: ROLLBACK the file and the record with a valid copy and the approved file the run lacks, FIX the file whose copy failed while its name fails a probe, HOLD the uncopied file whose names answer, ADOPT the .bak; the prior HOLD in force kept, the expired one ESCALATE", async () => {
     const { result } = await policyPass();
     expect(result.findings.map((f) => [f.finding.class, f.finding.object_id, f.finding.setting_path, f.verb, f.disposition.decided_by, f.disposition.rule_id, f.disposition.expires_at])).toEqual([
-      ["found_but_different", APP, "server.location./.proxy_pass", "HOLD", "policy", CATCH_ALL, "2026-10-26T03:00:00.000Z"],
-      ["proxy_split", "rec-b2", "proxied", "HOLD", "policy", PROXIED, "2026-10-23T07:00:00.000Z"],
+      ["found_but_different", APP, "server.location./.proxy_pass", "HOLD", "policy", CATCH_ALL, HOLD_IN_FORCE.expires_at],
+      ["proxy_split", "rec-b2", "proxied", "ESCALATE", "policy", PROXIED, null],
       ["drift_vs_approved", API, "file", "HOLD", "policy", CONFD, "2026-10-24T03:00:00.000Z"],
       ["drift_vs_approved", APP, "file", "ROLLBACK", "policy", CONFD, null],
       ["drift_vs_approved", BAK, "file", "ADOPT", "policy", COPIES, null],
       ["drift_vs_approved", SHOP, "file", "FIX", "policy", CONFD, null],
+      ["approved_missing", BLOG, "file", "ROLLBACK", "policy", CONFD, null],
       ["changed_since_backup", API, "file", "HOLD", "policy", CONFD, "2026-10-24T03:00:00.000Z"],
       ["changed_since_backup", APP, "file", "HOLD", "policy", CONFD, "2026-10-24T03:00:00.000Z"],
       ["changed_since_backup", BAK, "file", "ADOPT", "policy", COPIES, null],
       ["drift_vs_approved", "rec-c3", "content", "ROLLBACK", "policy", CONTENT, null],
     ]);
-    expect(result.verbs).toEqual({ ADOPT: 2, HOLD: 5, ESCALATE: 0, ROLLBACK: 2, FIX: 1 });
-    expect([result.rules, result.locked, result.ledger]).toEqual([15, 1, { dispositions: 10, fingerprints: 6 }]);
-    // every default check bound: the record's drift gets its record list, the files theirs
+    expect(result.verbs).toEqual({ ADOPT: 2, HOLD: 4, ESCALATE: 1, ROLLBACK: 3, FIX: 1 });
+    expect([result.rules, result.locked, result.ledger]).toEqual([15, 1, { dispositions: 11, fingerprints: 6 }]);
+    // every default check bound: the record's drift gets its record list, the files theirs, the absent file its own
     expect(result.findings.every((f) => f.rejected.length === 0 && f.verb === f.disposition.verb)).toBe(true);
     expect(of(result.findings, "drift_vs_approved", "rec-c3", "content").checks.map((c) => c.template)).toEqual(["run_complete", "actor_attributed", "previous_value_recoverable"]);
     expect(of(result.findings, "drift_vs_approved", APP).checks.map((c) => c.template)).toEqual(["run_complete", "setting_matches_approved", "restore_would_regress", "change_in_last_backup"]);
     expect(of(result.findings, "changed_since_backup", APP).checks.map((c) => [c.template, c.holds])).toEqual([["run_complete", true], ["backup_recent", true], ["change_in_last_backup", false], ["setting_matches_approved", false]]);
+    expect(of(result.findings, "approved_missing", BLOG).checks.map((c) => [c.template, c.holds])).toEqual([["run_complete", true], ["backup_recent", true], ["change_in_last_backup", true]]);
+  });
+
+  it("approved_missing: blog.conf, approved and copied on 20 Oct and absent from the 23 Oct run, is one finding with no live value, its checks read the approved value, and the rule restores it from the vault copy", async () => {
+    const { result, tracer } = await policyPass();
+    const blog = of(result.findings, "approved_missing", BLOG);
+    expect(blog.finding).toEqual({
+      class: "approved_missing", tenant_id: "client-a", run_id: "run-nginx-7f1c-1023", surface: "linux.nginx", host: "host-7f1c", object_id: BLOG, setting_path: "file",
+      value_hash: "", approved_hash: BLOG_HASH, value_redacted: null, refers_to_type: null, refers_to_id: null, dns_name: null, resolves_to: null, resource_id: null,
+      dns_run_id: "run-dns-1023", since: "2026-10-19T09:00:00.000Z", until: "2026-10-23T02:01:02.000Z",
+      summary: `file in ${BLOG} on host-7f1c is approved as ${h12(BLOG_HASH)} and absent from run run-nginx-7f1c-1023`,
+    });
+    expect(blog.checks.find((c) => c.template === "change_in_last_backup")?.explanation).toBe(`The latest backup of host-7f1c holds ${BLOG} file at ${h12(BLOG_HASH)}.`);
+    expect(blog.disposition.reason).toBe(`approved ${h12(BLOG_HASH)} is absent from the run; vault commit ${commitOf("run-nginx-7f1c-1020", BLOG).slice(0, 8)} holds the approved copy, validated ok with 0 gaps, so rule ${CONFD} restores it from that copy`);
+    expect(tracer.events.filter((e) => e.action === "detect" && e.input_summary?.startsWith("approved_missing ")).map((e) => [e.input_summary, e.output_summary])).toEqual([
+      ["approved_missing run-etc-7f1c-1023", "linux.etc host-7f1c: 0 approved setting(s) whose object the run lacks"],
+      ["approved_missing run-nginx-7f1c-1023", "linux.nginx host-7f1c: 1 approved setting(s) whose object the run lacks"],
+      ["approved_missing run-dns-1023", "cloudflare.dns: 0 approved setting(s) whose object the run lacks"],
+    ]);
+    expect(tracer.events.find((e) => e.action === "decide" && e.input_summary === `approved_missing file in ${BLOG} on host-7f1c`)?.detail)
+      .toContain(`the checks alone say ADOPT; no probe in ${PROBE_RUN} targets a name it serves; approved ${h12(BLOG_HASH)}, 1 copy row(s), valid copy`);
+    // the gated 23 Oct run of host-2b9e is not read for absent objects: its group is not checked
+    expect(tracer.events.some((e) => e.input_summary === "approved_missing run-nginx-2b9e-1023")).toBe(false);
+  });
+
+  it("approved_missing with no valid copy: the copy's latest validation fails and a probe of the name the file served in the 20 Oct run fails, so the rule investigates (FIX)", async () => {
+    const b = without((x) => {
+      x.observation.push({ ...x.observation.find((o) => o.run_id === "run-nginx-7f1c-1020" && o.object_id === BLOG)!, obs_id: "obs-blog-name", setting_path: "server[blog.example.invalid:443].server_name[blog.example.invalid]", value_hash: `sha256:${"b".repeat(64)}`, value_redacted: "blog.example.invalid", refers_to_type: "dns_name", refers_to_id: "blog.example.invalid" });
+      x.probe.push({ ...x.probe.find((p) => p.status === "fail")!, probe_id: "probe-blog-http", target: "blog.example.invalid" });
+      x.copy_validation.push({ ...x.copy_validation.find((v) => v.copy_id === x.vault_copy.find((c) => c.object_id === BLOG)!.copy_id)!, validation_id: "val-blog-fail", result: "fail", validated_at: "2026-10-22T04:00:00.000Z" });
+    });
+    const blog = of((await policyPass(b)).result.findings, "approved_missing", BLOG);
+    expect([blog.verb, blog.disposition.expires_at]).toEqual(["FIX", null]);
+    expect(blog.disposition.reason).toBe(`approved ${h12(BLOG_HASH)} is absent from the run with no valid copy (1 copy in the vault, latest validation fail) and production affected (1 failing probe in ${PROBE_RUN}: http blog.example.invalid), so rule ${CONFD} investigates, fixes where allowed, documents and opens a ticket`);
+  });
+
+  it("approved_missing on a deleted record: rec-c3 gone from the 23 Oct DNS run is one finding on its approved content, named from the 20 Oct run, checked through the record's audit trail and restored from its cf-schema copy", async () => {
+    const b = without((x) => {
+      x.dns_record = x.dns_record.filter((d) => !(d.run_id === "run-dns-1023" && d.record_id === "rec-c3"));
+      x.observation = x.observation.filter((o) => !(o.run_id === "run-dns-1023" && o.object_id === "rec-c3"));
+      const dns = x.collection_run.find((r) => r.run_id === "run-dns-1023")!;
+      dns.expected_count = 2;
+      dns.observed_count = 2;
+    });
+    const { result } = await policyPass(b);
+    expect(ofClass(result.findings, "drift_vs_approved").map((f) => f.finding.object_id)).toEqual([API, APP, BAK, SHOP]);
+    const rec = of(result.findings, "approved_missing", "rec-c3", "content");
+    expect(rec.finding).toMatchObject({
+      surface: "cloudflare.dns", host: null, run_id: "run-dns-1023", value_hash: "", approved_hash: approvedOf("rec-c3", "content"), dns_name: "mail.example.invalid", resource_id: "rec-c3",
+      dns_run_id: "run-dns-1023", since: "2026-10-19T09:00:00.000Z", until: "2026-10-23T02:05:01.000Z",
+      summary: `content in rec-c3 is approved as ${h12(approvedOf("rec-c3", "content"))} and absent from run run-dns-1023`,
+    });
+    expect(rec.checks.map((c) => c.template)).toEqual(["run_complete", "actor_attributed", "previous_value_recoverable"]);
+    expect([rec.verb, rec.disposition.rule_id]).toEqual(["ROLLBACK", CONTENT]);
+    expect(rec.disposition.reason).toBe(`approved ${h12(approvedOf("rec-c3", "content"))} is absent from the run; vault commit ${commitOf("run-dns-1020", "rec-c3").slice(0, 8)} holds the approved copy, validated ok with 0 gaps, so rule ${CONTENT} restores it from that copy`);
+    // the locked proxied field without an approval went with the record
+    expect(result.locked).toBe(0);
+  });
+
+  it("the prior HOLD: the found_but_different setting held on 21 Oct until 24 Oct 03:00 UTC keeps that expiry; the proxy_split held until 23 Oct 00:00 UTC is ESCALATE; each decide line names the HOLD it read", async () => {
+    const { result, tracer } = await policyPass();
+    const fbd = ofClass(result.findings, "found_but_different")[0];
+    const split = ofClass(result.findings, "proxy_split")[0];
+    expect(fbd.disposition).toEqual({ verb: "HOLD", decided_by: "policy", rule_id: CATCH_ALL, expires_at: HOLD_IN_FORCE.expires_at, reason: `held since ${HOLD_IN_FORCE.decided_at} until ${HOLD_IN_FORCE.expires_at} under rule ${CATCH_ALL}` });
+    expect(split.disposition).toEqual({ verb: "ESCALATE", decided_by: "policy", rule_id: PROXIED, expires_at: null, reason: `hold under rule ${PROXIED} expired ${HOLD_EXPIRED.expires_at}; the finding stands` });
+    // the prior rows are the ledger's own: the fixture's two HOLDs, on the live values this pass decides on
+    const prior = policyBundle.disposition;
+    expect(prior.map((d) => [d.finding_id, d.value_hash])).toEqual([[fbd.id, fbd.finding.value_hash], [split.id, split.finding.value_hash]]);
+    const line = (cls: string) => tracer.events.find((e) => e.action === "decide" && e.input_summary?.startsWith(`${cls} `))?.detail;
+    expect(line("found_but_different")).toMatch(new RegExp(`; prior HOLD since ${HOLD_IN_FORCE.decided_at} until ${HOLD_IN_FORCE.expires_at}$`));
+    expect(line("proxy_split")).toMatch(new RegExp(`; prior HOLD since ${HOLD_EXPIRED.decided_at} until ${HOLD_EXPIRED.expires_at}$`));
+    // decided at the first HOLD's own instant, the ledger holds no HOLD decided before it: each finding gets the rule's own HOLD and expiry
+    const early = (await policyPass(policyBundle, { decidedAt: HOLD_IN_FORCE.decided_at })).result;
+    expect(ofClass(early.findings, "found_but_different")[0].disposition).toMatchObject({ verb: "HOLD", expires_at: "2026-10-24T03:00:00.000Z", reason: `rule ${CATCH_ALL} (normal) holds this found_but_different finding until 2026-10-24T03:00:00.000Z` });
+    expect(ofClass(early.findings, "proxy_split")[0].disposition).toMatchObject({ verb: "HOLD", expires_at: "2026-10-21T07:00:00.000Z" });
+    // with the ledger's prior rows taken out, both are held from this pass's instant
+    const fresh = (await policyPass(without((x) => { x.disposition = []; }))).result;
+    expect(ofClass(fresh.findings, "found_but_different")[0].disposition.expires_at).toBe("2026-10-26T03:00:00.000Z");
+    expect(ofClass(fresh.findings, "proxy_split")[0].disposition).toMatchObject({ verb: "HOLD", expires_at: "2026-10-23T07:00:00.000Z" });
   });
 
   it("each reason is one plain sentence naming what decided it: the approved hash, the vault commit and the validation; the copy and the probes; the expiry", async () => {
@@ -639,7 +723,9 @@ describe("the Decider under the MSP's policy (test/fixtures/policy-bundle.json)"
     expect(reason("drift_vs_approved", API)).toBe(`live value drifted from approved ${h12(approvedOf(API))} with no valid copy (none in the vault) and production answering (3 probes of its names ok in ${PROBE_RUN}), so rule ${CONFD} holds it until 2026-10-24T03:00:00.000Z`);
     expect(reason("drift_vs_approved", BAK)).toBe(`live value drifted from approved ${h12(approvedOf(BAK))}; rule ${COPIES} (low) adopts the live value`);
     expect(reason("changed_since_backup", API)).toBe(`rule ${CONFD} restores a setting to its approved value; this changed_since_backup finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-24T03:00:00.000Z`);
-    expect(reason("found_but_different", APP, "server.location./.proxy_pass")).toBe(`rule ${CATCH_ALL} (normal) holds this found_but_different finding until 2026-10-26T03:00:00.000Z`);
+    expect(reason("found_but_different", APP, "server.location./.proxy_pass")).toBe(`held since ${HOLD_IN_FORCE.decided_at} until ${HOLD_IN_FORCE.expires_at} under rule ${CATCH_ALL}`);
+    expect(reason("proxy_split", "rec-b2", "proxied")).toBe(`hold under rule ${PROXIED} expired ${HOLD_EXPIRED.expires_at}; the finding stands`);
+    expect(reason("approved_missing", BLOG)).toBe(`approved ${h12(BLOG_HASH)} is absent from the run; vault commit ${commitOf("run-nginx-7f1c-1020", BLOG).slice(0, 8)} holds the approved copy, validated ok with 0 gaps, so rule ${CONFD} restores it from that copy`);
     // the detector's own sentence for the drift and for the backup difference
     expect(of(result.findings, "drift_vs_approved", "rec-c3", "content").finding).toMatchObject({
       host: null, dns_name: "mail.example.invalid", resolves_to: "198.51.100.11", resource_id: "rec-c3", dns_run_id: "run-dns-1023", since: "2026-10-19T09:00:00.000Z", until: "2026-10-23T02:05:00.000Z",
@@ -657,29 +743,32 @@ describe("the Decider under the MSP's policy (test/fixtures/policy-bundle.json)"
     expect(decide[5].detail).toContain(`production affected (1 failing probe in ${PROBE_RUN}: http shop.example.invalid); approved ${h12(approvedOf(SHOP))}, 1 copy row(s), no valid copy`);
     expect(tracer.events.filter((e) => e.input_summary === "policy").map((e) => [e.output_summary, e.detail])).toEqual([[
       "locked settings without an approved value: 1",
-      `15 policy rule(s) read; verbs ADOPT 2, HOLD 5, ROLLBACK 2, FIX 1; decided by policy 10, operator 0, default 0; probe run(s) ${PROBE_RUN}; ledger: 10 disposition(s) and 6 referent fingerprint(s) written; model: none`,
+      `15 policy rule(s) read; verbs ADOPT 2, HOLD 4, ESCALATE 1, ROLLBACK 3, FIX 1; decided by policy 11, operator 0, default 0; probe run(s) ${PROBE_RUN}; ledger: 11 disposition(s) and 6 referent fingerprint(s) written; model: none`,
     ]]);
     expect(tracer.events.every((e) => e.model_requested === "none") && tracer.events.every((e) => !(e.action === "query" && e.status === "failed"))).toBe(true);
   });
 
-  it("the ledger rows read back through SQL are the dispositions, column for column; a second pass into the same ledger writes none", async () => {
+  it("the ledger rows read back through SQL are the dispositions, column for column, beside the fixture's two prior HOLDs; a second pass into the same ledger writes none", async () => {
     const { result, layer, ledger, engine } = await policyPass();
     const rows = objects(await layer.run(DISPOSITIONS_SQL));
-    expect(rows).toHaveLength(10);
+    expect(rows).toHaveLength(11 + 2);
     const expected = result.findings.map((f) => ({
       disposition_id: dispositionId(f.finding.tenant_id, f.finding.surface, f.finding.host, f.finding.object_id, f.finding.setting_path, f.finding.value_hash, f.id, f.finding.run_id),
       tenant_id: "client-a", surface: f.finding.surface, host: f.finding.host ?? "", object_id: f.finding.object_id, setting_path: f.finding.setting_path, value_hash: f.finding.value_hash,
       verb: f.verb, reason: f.disposition.reason, expires_at: f.disposition.expires_at ?? "", decided_by: "policy", rule_id: f.disposition.rule_id ?? "", finding_id: f.id, run_id: f.finding.run_id, decided_at: AT,
     }));
-    expect(rows).toEqual([...expected].sort((a, b) => (a.disposition_id < b.disposition_id ? -1 : 1)));
-    // a ROLLBACK is about the live value of the run: it joins the observation it decides on
+    const prior = policyBundle.disposition.map((d) => Object.fromEntries(Object.entries(d).map(([k, v]) => [k, v === null ? "" : String(v)])));
+    expect(rows).toEqual([...expected, ...prior].sort((a, b) => (a.disposition_id < b.disposition_id ? -1 : 1)));
+    // the approved_missing row carries no live value
+    expect(rows.find((r) => r.object_id === BLOG)).toMatchObject({ verb: "ROLLBACK", value_hash: "", run_id: "run-nginx-7f1c-1023" });
+    // a drift ROLLBACK is about the live value of the run: it joins the observation it decides on; the absent file's has none to join
     const live = objects(await layer.run(`SELECT d.object_id, d.setting_path, o.obs_id FROM {{t:disposition}} d JOIN {{t:observation}} o ON o.run_id = d.run_id AND o.object_id = d.object_id
   AND o.setting_path = d.setting_path AND o.value_hash = d.value_hash WHERE d.verb = 'ROLLBACK' ORDER BY d.object_id, d.disposition_id`));
     expect(live.map((r) => [r.object_id, r.setting_path])).toEqual([[APP, "file"], ["rec-c3", "content"]]);
     const again = await runPass(layer, { world: new DriftWorld("again"), ledger, at: AT, decidedAt: AT });
     expect(again.ledger).toEqual({ dispositions: 0, fingerprints: 0 });
     expect(again.findings.map((f) => f.disposition)).toEqual(result.findings.map((f) => f.disposition));
-    expect(objects(await layer.run(DISPOSITIONS_SQL))).toHaveLength(10);
+    expect(objects(await layer.run(DISPOSITIONS_SQL))).toHaveLength(13);
     engine.close();
   });
 
@@ -705,7 +794,8 @@ describe("the Decider under the MSP's policy (test/fixtures/policy-bundle.json)"
     expect(split.disposition.reason).toBe(`accepted exception ${lesson.id} holds until 2026-11-30T00:00:00.000Z (the apex stays direct during the move); the checks alone would say ESCALATE`);
     expect(tracer.events.find((e) => e.action === "decide" && e.input_summary === "proxy_split proxied in rec-b2")?.detail)
       .toBe(`${DEFAULT_POLICY_DETAIL}; exception: ${lesson.id} applied; policy: ${PROXIED} governs the setting, the exception decides`);
-    expect(result.verbs).toEqual({ ADOPT: 3, HOLD: 4, ESCALATE: 0, ROLLBACK: 2, FIX: 1 });
+    // the expired prior HOLD of the proxy_split changes nothing under the exception
+    expect(result.verbs).toEqual({ ADOPT: 3, HOLD: 4, ESCALATE: 0, ROLLBACK: 3, FIX: 1 });
   });
 
   it("with no probe run in the pass production is unknown: the two files with no valid copy escalate, and the reasons say there was no probe run", async () => {
@@ -722,7 +812,7 @@ describe("the Decider under the MSP's policy (test/fixtures/policy-bundle.json)"
     expect(of(result.findings, "drift_vs_approved", API).disposition.reason).toBe(`live value drifted from approved ${h12(approvedOf(API))} with no valid copy (none in the vault) and no probe run in this pass, so production is unknown and rule ${CONFD} sends it to a technician`);
     // the file with a valid copy still rolls back; the rollback rule's other classes are held as before
     expect(of(result.findings, "drift_vs_approved", APP).verb).toBe("ROLLBACK");
-    expect(result.verbs).toEqual({ ADOPT: 2, HOLD: 4, ESCALATE: 2, ROLLBACK: 2, FIX: 0 });
+    expect(result.verbs).toEqual({ ADOPT: 2, HOLD: 3, ESCALATE: 3, ROLLBACK: 3, FIX: 0 });
     expect(tracer.events.find((e) => e.input_summary === "policy")?.detail).toContain("; no probe run in this pass; ");
   });
 
@@ -751,7 +841,8 @@ describe("the Decider under the MSP's policy (test/fixtures/policy-bundle.json)"
     const { result, tracer } = await policyPass(without((x) => { x.policy_rule = []; }));
     expect(result.findings.map((f) => f.id)).toEqual(withRules.findings.map((f) => f.id));
     expect(result.findings.every((f) => f.disposition.decided_by === "default" && f.disposition.rule_id === null && ["ADOPT", "ESCALATE"].includes(f.verb))).toBe(true);
-    expect(result.verbs).toEqual({ ADOPT: 0, HOLD: 0, ESCALATE: 10, ROLLBACK: 0, FIX: 0 });
+    // the absent blog.conf adopts as a candidate: its three checks hold
+    expect(result.verbs).toEqual({ ADOPT: 1, HOLD: 0, ESCALATE: 10, ROLLBACK: 0, FIX: 0 });
     expect(tracer.events.filter((e) => e.action === "decide").every((e) => e.detail === DEFAULT_POLICY_DETAIL)).toBe(true);
     expect([result.rules, result.locked]).toEqual([0, 0]);
   });
@@ -776,11 +867,11 @@ describe("the Decider under the MSP's policy (test/fixtures/policy-bundle.json)"
 
     it("LATEST_APPROVALS_SQL: one row per setting key, the latest approval; an older approval of the same key is left out", async () => {
       const r = objects(await (await layer()).run(LATEST_APPROVALS_SQL, { tenant_id: "client-a" }));
-      expect(r).toHaveLength(8);
+      expect(r).toHaveLength(9);
       expect(r.find((x) => x.object_id === "rec-c3")).toMatchObject({ surface: "cloudflare.dns", host: "", setting_path: "content", value_hash: approvedOf("rec-c3", "content") });
       const older = without((x) => { x.approved_setting.push({ ...x.approved_setting.find((a) => a.object_id === APP && a.setting_path === "file")!, approval_id: "appr-0000000000000001", value_hash: `sha256:${"0".repeat(64)}`, approved_at: "2026-10-01T09:00:00.000Z" }); });
       const r2 = objects(await (await layer(older)).run(LATEST_APPROVALS_SQL, { tenant_id: "client-a" }));
-      expect(r2).toHaveLength(8);
+      expect(r2).toHaveLength(9);
       expect(r2.find((x) => x.object_id === APP && x.setting_path === "file")?.value_hash).toBe(approvedOf(APP));
     });
 
@@ -804,6 +895,54 @@ describe("the Decider under the MSP's policy (test/fixtures/policy-bundle.json)"
       expect(r.map((p) => p.probe_id)).toEqual([...policyBundle.probe].map((p) => p.probe_id).sort());
       expect(r.filter((p) => p.status === "fail").map((p) => [p.kind, p.target, p.observed])).toEqual([["http", "shop.example.invalid", "status 502 server=nginx cf-ray absent"]]);
       expect((await dl.run(PROBES_OF_RUN_SQL, { tenant_id: "client-a", run_id: "run-dns-1023" })).rowCount).toBe(0);
+    });
+
+    it("APPROVED_MISSING_SQL: the latest approvals of a surface and host whose object the run lacks; the DNS run read with host ''", async () => {
+      const dl = await layer();
+      const q = (surface: string, host: string, run: string) => dl.run(APPROVED_MISSING_SQL, { tenant_id: "client-a", surface, host, run_id: run }).then(objects);
+      const r = await q("linux.nginx", "host-7f1c", "run-nginx-7f1c-1023");
+      expect(r.map((x) => [x.surface, x.host, x.object_id, x.setting_path, x.approved_hash, x.approved_at, x.approved_by])).toEqual([
+        ["linux.nginx", "host-7f1c", BLOG, "file", BLOG_HASH, "2026-10-19T09:00:00.000Z", "tech-4e"],
+      ]);
+      // the 20 Oct run holds blog.conf and lacks app.conf.bak, which only the 23 Oct run holds
+      expect((await q("linux.nginx", "host-7f1c", "run-nginx-7f1c-1020")).map((x) => x.object_id)).toEqual(["/etc/nginx/conf.d/app.conf.bak"]);
+      expect(await q("linux.etc", "host-7f1c", "run-etc-7f1c-1023")).toEqual([]);
+      expect(await q("cloudflare.dns", "", "run-dns-1023")).toEqual([]);
+      // another host and another run's surface give nothing
+      expect(await q("linux.nginx", "host-2b9e", "run-nginx-7f1c-1023")).toEqual([]);
+      // an approval newer than the latest one at another value is the one returned
+      const later = without((x) => {
+        x.approved_setting.push({ ...x.approved_setting.find((a) => a.object_id === BLOG)!, approval_id: "appr-blog-later", value_hash: `sha256:${"c".repeat(64)}`, approved_at: "2026-10-22T09:00:00.000Z" });
+      });
+      expect(objects(await (await layer(later)).run(APPROVED_MISSING_SQL, { tenant_id: "client-a", surface: "linux.nginx", host: "host-7f1c", run_id: "run-nginx-7f1c-1023" })).map((x) => [x.approval_id, x.approved_hash]))
+        .toEqual([["appr-blog-later", `sha256:${"c".repeat(64)}`]]);
+      // a record is present by its record row or its field observations: with the observations gone it stands, with both gone it is absent
+      const dns = (b: PB) => layer(b).then((l) => l.run(APPROVED_MISSING_SQL, { tenant_id: "client-a", surface: "cloudflare.dns", host: "", run_id: "run-dns-1023" })).then(objects);
+      const noFields = without((x) => { x.observation = x.observation.filter((o) => !(o.run_id === "run-dns-1023" && o.object_id === "rec-c3")); });
+      expect(await dns(noFields)).toEqual([]);
+      const gone = without((x) => {
+        x.observation = x.observation.filter((o) => !(o.run_id === "run-dns-1023" && o.object_id === "rec-c3"));
+        x.dns_record = x.dns_record.filter((d) => !(d.run_id === "run-dns-1023" && d.record_id === "rec-c3"));
+      });
+      expect((await dns(gone)).map((x) => [x.host, x.object_id, x.setting_path])).toEqual([["", "rec-c3", "content"]]);
+    });
+
+    it("PRIOR_HOLDS_SQL: the earliest HOLD of each live value decided before the instant; a later HOLD of the same value and another verb are passed over", async () => {
+      const q = async (b: Readonly<Record<string, unknown>>, at: string) => objects(await (await layer(b)).run(PRIOR_HOLDS_SQL, { tenant_id: "client-a", decided_at: at }));
+      const [fbd, split] = policyBundle.disposition;
+      expect((await q(policyBundle, "2026-10-23T03:00:00.000Z")).map((r) => [r.disposition_id, r.surface, r.host, r.object_id, r.setting_path, r.rule_id, r.expires_at, r.decided_at])).toEqual([
+        [split.disposition_id, "cloudflare.dns", "", "rec-b2", "proxied", split.rule_id, HOLD_EXPIRED.expires_at, HOLD_EXPIRED.decided_at],
+        [fbd.disposition_id, "linux.nginx", "host-7f1c", fbd.object_id, fbd.setting_path, fbd.rule_id, HOLD_IN_FORCE.expires_at, HOLD_IN_FORCE.decided_at],
+      ]);
+      // before the proxy_split's HOLD only the found_but_different one stands; at its own instant neither
+      expect((await q(policyBundle, "2026-10-22T00:00:00.000Z")).map((r) => r.disposition_id)).toEqual([fbd.disposition_id]);
+      expect(await q(policyBundle, HOLD_IN_FORCE.decided_at)).toEqual([]);
+      const more = without((x) => {
+        x.disposition.push({ ...x.disposition[0], disposition_id: "disp-later-hold", run_id: "run-nginx-7f1c-1023", decided_at: "2026-10-22T03:00:00.000Z" });
+        x.disposition.push({ ...x.disposition[0], disposition_id: "disp-0000-escalate", verb: "ESCALATE", expires_at: null as unknown as string, decided_at: "2026-10-20T03:00:00.000Z" });
+        x.disposition.push({ ...x.disposition[0], disposition_id: "disp-other-tenant", tenant_id: "client-b", decided_at: "2026-10-20T03:00:00.000Z" });
+      });
+      expect((await q(more, "2026-10-23T03:00:00.000Z")).map((r) => r.disposition_id)).toEqual([split.disposition_id, fbd.disposition_id]);
     });
   });
 });

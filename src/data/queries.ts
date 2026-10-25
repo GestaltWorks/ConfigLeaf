@@ -406,3 +406,197 @@ WHERE tenant_id = {{p:tenant_id}}`;
 export function auditSpan(dl: DataLayer, tenantId: string, opts?: RunOptions): Promise<QueryResult> {
   return dl.run(AUDIT_SPAN_SQL, { tenant_id: tenantId }, opts);
 }
+
+// ---- the ticket step's reads (src/psa/step.ts) ---------------------------------------------------------------
+//
+// Plain column comparisons in every top-level WHERE, every ORDER BY ending on a key. The step also reads the runs
+// (RUNS_SQL), the policy (POLICY_RULES_SQL), the ledger (DISPOSITIONS_SQL), the probes of a probe run
+// (PROBES_OF_RUN_SQL) and the observations of a finding's run (OBSERVATIONS_SQL) for the names its object serves.
+// Measured 24 Oct 2026 over sample/bundle.json (test/psa.test.ts), each query alone and over derived tables that
+// give it rows: TICKETS_SQL 0 rows, and 22 with one ticket per file of the sites-enabled host's run (0 for another
+// tenant); TICKET_ACTIONS_SQL 0, and 22 with one action per file of both hosts' runs (54) and a disposition for the
+// sites-enabled host's 22; TICKET_ZONES_SQL 58, one per record of the DNS run. Through Zetaris over the datasource
+// holding the same rows (PARITY_LIVE=true): 6 of 6 cases return the columns, rows and totals sql.js returns.
+
+/** Every ticket row of the tenant, in ticket_id order. */
+export const TICKETS_SQL = `SELECT ticket_id, tenant_id, psa, external_id, url, type, priority, status, action_id, finding_id, created_at, updated_at
+FROM {{t:ticket}}
+WHERE tenant_id = {{p:tenant_id}}
+ORDER BY ticket_id`;
+
+export function tenantTickets(dl: DataLayer, tenantId: string, opts?: RunOptions): Promise<QueryResult> {
+  return dl.run(TICKETS_SQL, { tenant_id: tenantId }, opts);
+}
+
+/**
+ * Every action of the tenant with the finding and the verb of the disposition it carries out, in finding_id, then
+ * started_at, then action_id order: what a ticket's Work done section and its closing rule read. An action whose
+ * disposition the ledger lacks gives no row.
+ */
+export const TICKET_ACTIONS_SQL = `SELECT a.action_id, a.tenant_id, a.kind, a.target, a.before_hash, a.after_hash, a.vault_commit, a.verification, a.receipts,
+       a.status, a.started_at, a.finished_at, a.disposition_id, d.finding_id, d.verb
+FROM {{t:action}} a
+JOIN {{t:disposition}} d ON d.disposition_id = a.disposition_id AND d.tenant_id = a.tenant_id
+WHERE a.tenant_id = {{p:tenant_id}}
+ORDER BY d.finding_id, a.started_at, a.action_id`;
+
+export function ticketActions(dl: DataLayer, tenantId: string, opts?: RunOptions): Promise<QueryResult> {
+  return dl.run(TICKET_ACTIONS_SQL, { tenant_id: tenantId }, opts);
+}
+
+/** The zone of every record of one DNS run of the tenant, in record_id order: the "on <zone>" of a record ticket's title. */
+export const TICKET_ZONES_SQL = `SELECT record_id, zone
+FROM {{t:dns_record}}
+WHERE tenant_id = {{p:tenant_id}} AND run_id = {{p:dns_run_id}}
+ORDER BY record_id, zone`;
+
+export function ticketZones(dl: DataLayer, params: DnsSurveyParams, opts?: RunOptions): Promise<QueryResult> {
+  return dl.run(TICKET_ZONES_SQL, params, opts);
+}
+
+/**
+ * Every action row of the tenant, in action_id order: the Actor's idempotency read (src/actions/act.ts). An
+ * action is keyed on its disposition and kind (rows.ts actionId), so a (disposition_id, kind) pair present here
+ * has been acted on and the Actor leaves it alone. Measured 24 Oct 2026 (test/parity.test.ts, PARITY_LIVE): over the
+ * datasource's 0 action rows and over a derived action table of one row per sites-host file plus one of another
+ * tenant, Zetaris returns the columns, rows and totals sql.js returns, 2 of 2 cases.
+ */
+export const ACTIONS_SQL = `SELECT action_id, tenant_id, kind, target, before_hash, after_hash, vault_commit, verification, receipts, status, started_at, finished_at, disposition_id
+FROM {{t:action}}
+WHERE tenant_id = {{p:tenant_id}}
+ORDER BY action_id`;
+
+export function tenantActions(dl: DataLayer, tenantId: string, opts?: RunOptions): Promise<QueryResult> {
+  return dl.run(ACTIONS_SQL, { tenant_id: tenantId }, opts);
+}
+
+// ---- build B, pipeline and the owner's document: approved_missing, the prior HOLD, src/document/ --------------
+//
+// The approved_missing detector and the Decider's prior-HOLD read (src/pipeline.ts), then the reads of the owner's
+// document (src/document/render.ts). Plain column comparisons in every top-level WHERE, COALESCE only inside a
+// correlated subquery's WHERE, every correlation in a subquery's WHERE, every ORDER BY ending on a key. Measured
+// 24 Oct 2026 through sql.js (test/pipeline.test.ts, test/document.test.ts): APPROVED_MISSING_SQL gives 0 rows on
+// each latest passing run of sample/bundle.json and 1 on test/fixtures/policy-bundle.json (blog.conf, approved and
+// absent from host-7f1c's 23 Oct run); PRIOR_HOLDS_SQL gives that fixture's 2 prior HOLD rows. Measured live the same
+// day on Zetaris 2.4.3.1 over the datasource holding sample/bundle.json's rows (test/parity.test.ts, PARITY_LIVE=true):
+// 21 of 21 cases of these queries, over the bundle and over derived tables that give each rows, return the columns,
+// rows and totals sql.js returns, 7.5 s.
+
+export type ApprovedMissingParams = { tenant_id: string; surface: string; host: string; run_id: string };
+
+/**
+ * approved_missing: the latest approval of every setting key of one tenant, surface and host whose object run_id,
+ * the latest passing run of that surface and host, holds no row of: no observation of the object, and no dns_record
+ * row of it (a record is present in a DNS run by its record row as well as by its five field observations, and a
+ * slice of a bundle, examples/, keeps the record rows alone). A record's approvals carry no host, so the DNS run is
+ * read with host ''. The latest approval of a key is DRIFT_VS_APPROVED_SQL's: no approval of the same key at a later
+ * approved_at, and at an equal approved_at the greater approval_id. One row per approved setting of an absent object:
+ * a deleted vhost file gives its `file` row, a deleted record one row per approved field.
+ */
+export const APPROVED_MISSING_SQL = `SELECT a.approval_id, a.surface, a.host, a.object_id, a.setting_path, a.value_hash AS approved_hash, a.approved_at, a.approved_by
+FROM {{t:approved_setting}} a
+WHERE a.tenant_id = {{p:tenant_id}} AND a.surface = {{p:surface}}
+  AND (a.host = {{p:host}} OR (a.host IS NULL AND {{p:host}} = ''))
+  AND NOT EXISTS (SELECT 1 FROM {{t:approved_setting}} n WHERE n.tenant_id = a.tenant_id AND n.surface = a.surface AND n.object_id = a.object_id
+    AND n.setting_path = a.setting_path AND COALESCE(n.host, '') = COALESCE(a.host, '')
+    AND (n.approved_at > a.approved_at OR (n.approved_at = a.approved_at AND n.approval_id > a.approval_id)))
+  AND NOT EXISTS (SELECT 1 FROM {{t:observation}} o WHERE o.tenant_id = a.tenant_id AND o.run_id = {{p:run_id}} AND o.object_id = a.object_id)
+  AND NOT EXISTS (SELECT 1 FROM {{t:dns_record}} d WHERE d.tenant_id = a.tenant_id AND d.run_id = {{p:run_id}} AND d.record_id = a.object_id)
+ORDER BY a.object_id, a.setting_path, a.approval_id`;
+
+export function approvedMissing(dl: DataLayer, params: ApprovedMissingParams, opts?: RunOptions): Promise<QueryResult> {
+  return dl.run(APPROVED_MISSING_SQL, params, opts);
+}
+
+/**
+ * The earliest HOLD of every live value of the tenant's settings decided before decided_at: one row per (surface,
+ * host with NULL as a value, object_id, setting_path, value_hash) whose disposition rows hold a HOLD, the one with
+ * no HOLD of the same key at an earlier decided_at (at an equal decided_at the lesser disposition_id). A HOLD the
+ * Decider keeps carries this row's expires_at, so every HOLD of a key shares it and the earliest says since when it
+ * has been held. In surface, object_id, setting_path, value_hash, then disposition_id order.
+ */
+export const PRIOR_HOLDS_SQL = `SELECT d.disposition_id, d.surface, d.host, d.object_id, d.setting_path, d.value_hash, d.rule_id, d.expires_at, d.decided_at, d.finding_id
+FROM {{t:disposition}} d
+WHERE d.tenant_id = {{p:tenant_id}} AND d.verb = 'HOLD' AND d.decided_at < {{p:decided_at}}
+  AND NOT EXISTS (SELECT 1 FROM {{t:disposition}} n WHERE n.tenant_id = d.tenant_id AND n.surface = d.surface AND n.object_id = d.object_id
+    AND n.setting_path = d.setting_path AND n.value_hash = d.value_hash AND COALESCE(n.host, '') = COALESCE(d.host, '') AND n.verb = 'HOLD'
+    AND (n.decided_at < d.decided_at OR (n.decided_at = d.decided_at AND n.disposition_id < d.disposition_id)))
+ORDER BY d.surface, d.object_id, d.setting_path, d.value_hash, d.disposition_id`;
+
+export function priorHolds(dl: DataLayer, params: { tenant_id: string; decided_at: string }, opts?: RunOptions): Promise<QueryResult> {
+  return dl.run(PRIOR_HOLDS_SQL, params, opts);
+}
+
+/** The objects and settings one run observed: one row. */
+export const DOC_RUN_SHAPE_SQL = `SELECT COUNT(DISTINCT object_id) AS objects, COUNT(*) AS settings
+FROM {{t:observation}}
+WHERE run_id = {{p:run_id}}`;
+
+/** The zones of one DNS run of the tenant, each with its records, how many are proxied and how many direct, in zone order. */
+export const DOC_ZONES_SQL = `SELECT zone, COUNT(*) AS records, SUM(CASE WHEN proxied = 1 THEN 1 ELSE 0 END) AS proxied, SUM(CASE WHEN proxied = 1 THEN 0 ELSE 1 END) AS direct
+FROM {{t:dns_record}}
+WHERE tenant_id = {{p:tenant_id}} AND run_id = {{p:dns_run_id}}
+GROUP BY zone
+ORDER BY zone`;
+
+/**
+ * The vault copies at the latest commit of each of the tenant's repositories (the copies of the latest taken_at of
+ * each surface and host, host NULL as a value: one repository per host and one for the account's records), each
+ * with its latest validation (every column of it "" when there is none) and, for a record, its zone in the copy's
+ * run. In copy_id order.
+ */
+export const DOC_COPIES_SQL = `SELECT v.copy_id, v.surface, v.host, z.zone, v.object_id, v.run_id, v.git_commit, v.taken_at,
+       c.validation_id, c.validator, c.result, c.missing_dependencies, c.validated_at
+FROM {{t:vault_copy}} v
+LEFT JOIN {{t:copy_validation}} c ON c.copy_id = v.copy_id
+LEFT JOIN {{t:dns_record}} z ON z.run_id = v.run_id AND z.record_id = v.object_id
+WHERE v.tenant_id = {{p:tenant_id}}
+  AND NOT EXISTS (SELECT 1 FROM {{t:vault_copy}} x WHERE x.tenant_id = v.tenant_id AND x.surface = v.surface
+    AND COALESCE(x.host, '') = COALESCE(v.host, '') AND x.taken_at > v.taken_at)
+  AND NOT EXISTS (SELECT 1 FROM {{t:copy_validation}} y WHERE y.copy_id = v.copy_id
+    AND (y.validated_at > c.validated_at OR (y.validated_at = c.validated_at AND y.validation_id > c.validation_id)))
+ORDER BY v.copy_id`;
+
+/** The settings of one run with no approval of their key (surface, host with NULL as a value, object_id, setting_path), in object_id, setting_path, obs_id order. */
+export const DOC_UNAPPROVED_SQL = `SELECT o.obs_id, o.surface, o.host, o.object_id, o.setting_path
+FROM {{t:observation}} o
+WHERE o.tenant_id = {{p:tenant_id}} AND o.run_id = {{p:run_id}}
+  AND NOT EXISTS (SELECT 1 FROM {{t:approved_setting}} a WHERE a.tenant_id = o.tenant_id AND a.surface = o.surface AND a.object_id = o.object_id
+    AND a.setting_path = o.setting_path AND COALESCE(a.host, '') = COALESCE(o.host, ''))
+ORDER BY o.object_id, o.setting_path, o.obs_id`;
+
+/**
+ * The dispositions on one run of the tenant, in verb, finding_id, disposition_id order. A disposition is keyed on its
+ * finding's run (rows.ts dispositionId), so the dispositions on the latest passing runs are the findings those runs raise.
+ */
+export const DOC_DISPOSITIONS_OF_RUN_SQL = `SELECT d.disposition_id, d.surface, d.host, d.object_id, d.setting_path, d.value_hash, d.verb, d.reason, d.expires_at,
+       d.decided_by, d.rule_id, d.finding_id, d.run_id, d.decided_at
+FROM {{t:disposition}} d
+WHERE d.tenant_id = {{p:tenant_id}} AND d.run_id = {{p:run_id}}
+ORDER BY d.verb, d.finding_id, d.disposition_id`;
+
+/** The tenant's actions counted by kind and status, in kind, status order. */
+export const DOC_ACTIONS_SQL = `SELECT kind, status, COUNT(*) AS n
+FROM {{t:action}}
+WHERE tenant_id = {{p:tenant_id}}
+GROUP BY kind, status
+ORDER BY kind, status`;
+
+/** Every ticket of the tenant, in type, status, ticket_id order. */
+export const DOC_TICKETS_SQL = `SELECT ticket_id, psa, external_id, url, type, priority, status, action_id, finding_id, updated_at
+FROM {{t:ticket}}
+WHERE tenant_id = {{p:tenant_id}}
+ORDER BY type, status, ticket_id`;
+
+/** One probe run's probes counted by kind and status, in kind, status order. */
+export const DOC_PROBES_SQL = `SELECT kind, status, COUNT(*) AS n
+FROM {{t:probe}}
+WHERE tenant_id = {{p:tenant_id}} AND run_id = {{p:run_id}}
+GROUP BY kind, status
+ORDER BY kind, status`;
+
+/** The failing probes of one probe run, in kind, target, probe_id order. */
+export const DOC_PROBE_FAILURES_SQL = `SELECT kind, target, probe_id
+FROM {{t:probe}}
+WHERE tenant_id = {{p:tenant_id}} AND run_id = {{p:run_id}} AND status = 'fail'
+ORDER BY kind, target, probe_id`;

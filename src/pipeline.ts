@@ -41,7 +41,12 @@
 //            and over the tenant's latest passing DNS run: every setting whose live value differs from its
 //            latest approval (drift_vs_approved, window from the approval to the observation); and over
 //            each such nginx run, every file the host's newest backup lacks or holds with other bytes
-//            (changed_since_backup, window from the backup to the observation).
+//            (changed_since_backup, window from the backup to the observation); and over each such run and
+//            the DNS run, every approved setting whose object the run holds neither an observation nor a
+//            record row of (approved_missing, APPROVED_MISSING_SQL: a deleted vhost file, a deleted record; value_hash "",
+//            approved_hash the approved value, window from the approval to the run). The names an absent
+//            nginx object serves are its server_name values in the latest passing run of its host that held
+//            it; an absent record's name is its name in the latest passing DNS run that held it.
 //   check    the default precondition policy for the class, bound from the finding and run through
 //            the catalogue; a parameter the finding cannot supply, or a check the SQL guard refuses,
 //            is a recorded rejection, not a guess: it escalates that one finding and the pass goes on.
@@ -51,8 +56,11 @@
 //            default: every check holds and none was rejected -> ADOPT, as a candidate; anything else ->
 //            ESCALATE. A rule decides ADOPT, HOLD (with an expiry), ESCALATE, ROLLBACK or FIX from the
 //            finding's class, the setting's approval, the vault copies of the approved value with their
-//            latest validation and the probes of the pass on the names the object serves. Without a
-//            governing rule the verbs and the decide line are the default's. [stoprule] Between checks the
+//            latest validation and the probes of the pass on the names the object serves; approved_missing
+//            is weighed as drift_vs_approved is, against the live value "". A HOLD the rule gives meets the
+//            earliest HOLD the ledger holds on the same live value (PRIOR_HOLDS_SQL, read once per tenant
+//            with rules, decided before this pass): in force, the HOLD keeps that expiry; expired, ESCALATE.
+//            Without a governing rule the verbs and the decide line are the default's. [stoprule] Between checks the
 //            stop rule (src/stoprule.ts) may end checking early; [exposure] for a finding on a DNS record
 //            the step dates its exposure (src/engine/world.ts). [memory] When the pass is given a
 //            TechnicianMemory (src/engine/memory.ts) the Decider recalls the technician's lessons for the
@@ -66,10 +74,13 @@
 //   judge    skipped and traced as such: model: none; [stoprule] or "verdict cannot move" when the
 //            withdraw rule says no judge call would be worth spending, or when an exception settled it.
 //
-// Measured 24 Oct 2026 on sample/bundle.json (no policy_rule, approval, copy or probe rows): the 27 findings
-// of the hero query and the survey keep their classes, verbs and decide lines; changed_since_backup adds 11
-// (the certbot renewal configs under /etc/letsencrypt/renewal/, absent from each host's newest export), all
-// ESCALATE by the default; 0 locked settings without an approved value.
+// Measured 24 Oct 2026 on sample/bundle.json (26 policy rules, 333 approvals, 224 vault copies, two probe runs, no
+// disposition): 27 findings, HOLD 27 by policy; approved_missing over the three latest passing runs finds 0 (every
+// approved object of the 19:56 UTC runs is in the 21:21 UTC runs); the prior-HOLD read returns 0 rows; 0 locked
+// settings without an approved value; the finding, disposition and summary lines are the ones the pass printed
+// before approved_missing and the prior HOLD were read. On test/fixtures/policy-bundle.json (test/pipeline.test.ts):
+// 11 findings, ADOPT 2, HOLD 4, ESCALATE 1, ROLLBACK 3, FIX 1; blog.conf's approved_missing is ROLLBACK from its
+// copy, the HOLD in force keeps its expiry and the expired one is ESCALATE.
 
 import { createHash } from "node:crypto";
 import { defaultChecks, type FindingSummary, type RejectedCheck } from "./catalogue/select.ts";
@@ -77,15 +88,17 @@ import { CATALOGUE, runCheck, type CheckResult, type FindingClass } from "./cata
 import { fingerprintRows } from "./data/fingerprint.ts";
 import { DataLayerError, type DataLayer } from "./data/layer.ts";
 import {
-  approvedCopies, auditSpan, changedSinceBackup, driftVsApproved, hero, latestApprovals, listRuns, objects, observationsOf, orphanRecords, orphanVhosts,
-  policyRules, probesOfRun, proxiedWithoutRealIp, proxySplit, resolutions, runComplete, wildcardWithoutRealIp,
+  approvedCopies, approvedMissing, auditSpan, changedSinceBackup, driftVsApproved, hero, latestApprovals, listRuns, objects, observationsOf, orphanRecords, orphanVhosts,
+  policyRules, priorHolds, probesOfRun, proxiedWithoutRealIp, proxySplit, resolutions, runComplete, wildcardWithoutRealIp,
 } from "./data/queries.ts";
 import { dispositionId, type DecidedBy, type Disposition, type DispositionVerb, type PolicyRule } from "./data/rows.ts";
 import type { ExceptionLesson, TechnicianMemory } from "./engine/memory.ts";
 import { DriftWorld, recordExposure, type ExposureLine, type ExposureMeasure, type Observation } from "./engine/world.ts";
 import type { Ledger } from "./ledger.ts";
 // [policy] the Decider and the rule that governs a setting (src/policy/).
-import { NO_PROBE_RUN, decide, production, productionText, validCopy, type ApprovedValue, type CopyCandidate, type ExceptionState, type ProbeView } from "./policy/decide.ts";
+import {
+  APPROVAL_CLASSES, NO_PROBE_RUN, decide, production, productionText, validCopy, type ApprovedValue, type CopyCandidate, type ExceptionState, type PriorHold, type ProbeView,
+} from "./policy/decide.ts";
 import { resolvePolicy } from "./policy/resolve.ts";
 import { PolicyRuleRow, issues } from "./policy/schema.ts";
 import type { Tracer } from "./trace.ts";
@@ -224,7 +237,7 @@ const h12 = (h: string): string => h.replace(/^sha256:/, "").slice(0, 12);
 const earlier = (a: string, b: string): string => (a < b ? a : b);
 
 /** A policy_rule row as the DataLayer returns it (every value a string, NULL as "") back to its type; a row the schema refuses gives the reason. */
-function ruleOf(r: Row): PolicyRule | { refused: string } {
+export function ruleOf(r: Readonly<Record<string, string>>): PolicyRule | { refused: string } {
   const row = {
     rule_id: r.rule_id, tenant_id: r.tenant_id, surface: r.surface, object_glob: r.object_glob, setting_glob: r.setting_glob,
     criticality: r.criticality, lock: Number(r.lock), on_drift: r.on_drift, on_no_copy: r.on_no_copy, hold_max_hours: Number(r.hold_max_hours),
@@ -281,14 +294,30 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     return { run_id: run.run_id, rows: probeRows.get(run.run_id)! };
   };
 
-  /** The redacted names the finding's object serves: a record's own name, or an nginx object's server_name values in the run. */
+  /**
+   * The redacted names the finding's object serves: a record's own name, or an nginx object's server_name values in the run;
+   * for an approved_missing object, absent from its run, the values in the latest passing run of its host that held it.
+   */
   const servedNames = (finding: FindingSummary): string[] => {
     if (finding.surface === "cloudflare.dns") return finding.dns_name ? [finding.dns_name] : [];
-    const obs = obsByRun.get(finding.run_id) ?? [];
-    return [...new Set(obs.filter((o) => o.object_id === finding.object_id && o.refers_to_type === "dns_name" && o.setting_path.includes(".server_name[")).map((o) => o.refers_to_id))].sort();
+    const namesIn = (obs: readonly Row[]): string[] =>
+      [...new Set(obs.filter((o) => o.object_id === finding.object_id && o.refers_to_type === "dns_name" && o.setting_path.includes(".server_name[")).map((o) => o.refers_to_id))].sort();
+    if (finding.class !== "approved_missing") return namesIn(obsByRun.get(finding.run_id) ?? []);
+    const held = passingRuns
+      .filter((r) => r.tenant_id === finding.tenant_id && r.surface === finding.surface && r.host === (finding.host ?? ""))
+      .map((r) => obsByRun.get(r.run_id) ?? [])
+      .filter((obs) => obs.some((o) => o.object_id === finding.object_id))
+      .at(-1);
+    return held ? namesIn(held) : [];
   };
 
-  /** check, decide, judge for one finding, whatever produced it; appends to findings. `approved` is the setting's latest approval, which a drift_vs_approved row carries. */
+  // [policy] The earliest HOLD of each live value of the tenant's settings decided before this pass (PRIOR_HOLDS_SQL), read once
+  // per tenant with rules: a HOLD comes from a rule only. Keyed on surface, host, object, setting and live value.
+  const holdsByTenant = new Map<string, Map<string, PriorHold>>();
+  const holdKey = (x: { surface: string; host: string | null; object_id: string; setting_path: string; value_hash: string }): string =>
+    [x.surface, x.host ?? "", x.object_id, x.setting_path, x.value_hash].join("\u001f");
+
+  /** check, decide, judge for one finding, whatever produced it; appends to findings. `approved` is the setting's latest approval, which a drift_vs_approved and an approved_missing row carry. */
   const assess = async (finding: FindingSummary, view: WorldView | undefined, approved: ApprovedValue | null = null): Promise<void> => {
     const cls = finding.class;
     const setting = `${finding.setting_path} in ${finding.object_id}${finding.host ? ` on ${finding.host}` : ""}`;
@@ -372,14 +401,15 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
       ? { state: "applied", lesson: applied.id, expires_at: applied.expiresAt, reason: applied.reason }
       : lapsed ? { state: "lapsed", lesson: lapsed.id, expires_at: lapsed.expiresAt, reason: lapsed.reason } : { state: "none" };
     const weigh = rule !== null && lesson === null;
-    const copies = weigh && cls === "drift_vs_approved" && approved && (rule.lock === 1 || rule.on_drift === "rollback")
+    const copies = weigh && APPROVAL_CLASSES.includes(cls) && approved && (rule.lock === 1 || rule.on_drift === "rollback")
       ? objects(await approvedCopies(layer, {
         tenant_id: finding.tenant_id, surface: finding.surface, host: finding.host ?? "", object_id: finding.object_id, setting_path: finding.setting_path, approved_hash: approved.value_hash,
       }, { tracer, agent: "decider" })).map(copyOf)
       : [];
     const probes = weigh ? await probesFor(finding) : NO_PROBES;
     const serves = weigh ? servedNames(finding) : [];
-    const decision = decide({ finding: { class: cls }, rule, exception: exceptionState, checks: { verb: policyVerb, why: policyWhy }, approved, copies, probes, serves, decidedAt });
+    const priorHold = weigh ? (holdsByTenant.get(finding.tenant_id)?.get(holdKey(finding)) ?? null) : null;
+    const decision = decide({ finding: { class: cls }, rule, exception: exceptionState, checks: { verb: policyVerb, why: policyWhy }, approved, copies, probes, serves, decidedAt, priorHold });
     const verb: Verb = decision.verb;
     const why = decision.reason;
     if (applied && recalled) recalled.applied += 1;
@@ -405,6 +435,7 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
       ? `model: none; policy: ${rule.rule_id} (${rule.surface} ${rule.object_glob} ${rule.setting_glob} v${rule.version}: ${rule.criticality}, lock ${rule.lock}, on_drift ${rule.on_drift}, on_no_copy ${rule.on_no_copy}, hold ${rule.hold_max_hours} h); `
         + `the checks alone say ${policyVerb}; ${productionText(prod!)}`
         + (approved ? `; approved ${h12(approved.value_hash)}, ${copies.length} copy row(s), ${copy ? `valid copy ${copy.copy_id} at ${copy.git_commit.slice(0, 8)}` : "no valid copy"}` : "")
+        + (priorHold ? `; prior HOLD since ${priorHold.decided_at} until ${priorHold.expires_at}` : "")
       : DEFAULT_POLICY_DETAIL;
     tracer?.emit({
       agent: "decider", action: "decide", status: "ok", input_summary: `${cls} ${setting}`, output_summary: `${verb}: ${why}`,
@@ -464,6 +495,13 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     }
     rulesByTenant.set(tenant, kept);
     rulesRead += kept.length;
+    if (!kept.length) continue;
+    const holds = new Map<string, PriorHold>();
+    for (const h of objects(await priorHolds(layer, { tenant_id: tenant, decided_at: decidedAt }, { tracer, agent: "decider", limit: 100_000 }))) {
+      const key = holdKey({ surface: h.surface, host: nul(h.host), object_id: h.object_id, setting_path: h.setting_path, value_hash: h.value_hash });
+      if (h.expires_at) holds.set(key, { decided_at: h.decided_at, expires_at: h.expires_at, rule_id: nul(h.rule_id) });
+    }
+    holdsByTenant.set(tenant, holds);
   }
 
   // gate
@@ -681,6 +719,38 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     };
   };
   const approvalOf = (row: Row): ApprovedValue => ({ value_hash: row.approved_hash, approved_at: row.approved_at, approved_by: nul(row.approved_by) });
+  /** An approved_missing finding: one row of APPROVED_MISSING_SQL against `run`, the latest passing run of its surface and host. */
+  const missingFinding = (row: Row, run: Row, dnsRunId: string | null, recordName: string | null): FindingSummary => {
+    const isRecord = row.surface === "cloudflare.dns";
+    const summary = `${row.setting_path} in ${row.object_id}${row.host ? ` on ${row.host}` : ""} is approved as ${h12(row.approved_hash)} and absent from run ${run.run_id}`;
+    return {
+      class: "approved_missing", tenant_id: run.tenant_id, run_id: run.run_id, surface: row.surface, host: nul(row.host),
+      object_id: row.object_id, setting_path: row.setting_path, value_hash: "", approved_hash: row.approved_hash, value_redacted: null,
+      refers_to_type: null, refers_to_id: null, dns_name: isRecord ? recordName : null, resolves_to: null,
+      resource_id: isRecord ? row.object_id : null, dns_run_id: isRecord ? run.run_id : dnsRunId,
+      since: earlier(row.approved_at, run.started_at), until: run.finished_at || run.started_at, summary,
+    };
+  };
+  /** The approved settings whose object `run` lacks (APPROVED_MISSING_SQL), traced, each checked and decided. */
+  const detectMissing = async (run: Row, surface: string, host: string, where: string, dnsRunId: string | null): Promise<void> => {
+    const rows = objects(await approvedMissing(layer, { tenant_id: run.tenant_id, surface, host, run_id: run.run_id }, surveyOpts));
+    tracer?.emit({ agent: "detector", action: "detect", status: "ok", input_summary: `approved_missing ${run.run_id}`, output_summary: `${where}: ${rows.length} approved setting(s) whose object the run lacks`, detail: "model: none" });
+    for (const row of rows) {
+      const name = surface === "cloudflare.dns" ? await lastRecordName(run, row.object_id) : null;
+      const finding = missingFinding(row, run, dnsRunId, name);
+      tracer?.emit({ agent: "detector", action: "detect", status: "ok", input_summary: `${row.setting_path} in ${row.object_id}${row.host ? ` on ${row.host}` : ""}`, output_summary: `approved_missing: ${finding.summary}`, detail: "model: none" });
+      await assess(finding, undefined, approvalOf(row));
+    }
+  };
+  /** A record's redacted name in the latest passing DNS run of the tenant before `run` that held it; null when none did. */
+  const lastRecordName = async (run: Row, recordId: string): Promise<string | null> => {
+    const before = passing.filter((r) => r.tenant_id === run.tenant_id && r.surface === "cloudflare.dns" && r.run_id !== run.run_id && r.started_at <= run.started_at);
+    for (const r of before.reverse()) {
+      const name = (await dnsObservations(r.run_id, "detector")).find((o) => o.object_id === recordId && o.setting_path === "name");
+      if (name) return name.value_redacted || null;
+    }
+    return null;
+  };
 
   for (const group of groups.values()) {
     const latest = group[group.length - 1];
@@ -694,6 +764,7 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
       tracer?.emit({ agent: "detector", action: "detect", status: "ok", input_summary: `${row.setting_path} in ${row.object_id} on ${row.host}`, output_summary: `drift_vs_approved: ${finding.summary}`, detail: "model: none" });
       await assess(finding, undefined, approvalOf(row));
     }
+    await detectMissing(latest, latest.surface, latest.host, where, dns?.run_id ?? null);
     if (latest.surface !== "linux.nginx") continue;
     const backup = objects(await changedSinceBackup(layer, { tenant_id: latest.tenant_id, run_id: latest.run_id, host: latest.host }, surveyOpts));
     tracer?.emit({ agent: "detector", action: "detect", status: "ok", input_summary: `changed_since_backup ${latest.run_id}`, output_summary: `${where}: ${backup.length} file(s) the host's newest backup lacks or holds with other bytes`, detail: "model: none" });
@@ -714,13 +785,15 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
   for (const [tenant, dns] of latestDns) {
     const drift = objects(await driftVsApproved(layer, { tenant_id: tenant, run_id: dns.run_id }, surveyOpts));
     tracer?.emit({ agent: "detector", action: "detect", status: "ok", input_summary: `drift_vs_approved ${dns.run_id}`, output_summary: `cloudflare.dns: ${drift.length} record field(s) drifted from their latest approval`, detail: "model: none" });
-    if (!drift.length) continue;
-    const names = new Map((await dnsObservations(dns.run_id, "detector")).filter((o) => o.setting_path === "name").map((o) => [o.object_id, o.value_redacted]));
-    for (const row of drift) {
-      const finding = driftFinding(row, dns, dns.run_id, names.get(row.object_id) || null);
-      tracer?.emit({ agent: "detector", action: "detect", status: "ok", input_summary: `${row.setting_path} of record ${row.object_id}`, output_summary: `drift_vs_approved: ${finding.summary}`, detail: "model: none" });
-      await assess(finding, undefined, approvalOf(row));
+    if (drift.length) {
+      const names = new Map((await dnsObservations(dns.run_id, "detector")).filter((o) => o.setting_path === "name").map((o) => [o.object_id, o.value_redacted]));
+      for (const row of drift) {
+        const finding = driftFinding(row, dns, dns.run_id, names.get(row.object_id) || null);
+        tracer?.emit({ agent: "detector", action: "detect", status: "ok", input_summary: `${row.setting_path} of record ${row.object_id}`, output_summary: `drift_vs_approved: ${finding.summary}`, detail: "model: none" });
+        await assess(finding, undefined, approvalOf(row));
+      }
     }
+    await detectMissing(dns, "cloudflare.dns", "", "cloudflare.dns", dns.run_id);
   }
 
   // [policy] the settings of the pass's latest passing runs that a locked rule governs and that have no approved value on

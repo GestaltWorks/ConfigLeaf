@@ -257,8 +257,8 @@ describe("gateWithCustody: discard, retry once as a fresh request, fail closed",
 
 describe("tenantAppId and newNonce", () => {
   it("builds the per-client app id from the configured base and refuses a tenant that is not a header-safe token", () => {
-    expect(tenantAppId("client-a")).toBe(`${config.nightshift.appId}:client-a`);
-    expect(tenantAppId("client-1", "drift-agent")).toBe("drift-agent:client-1");
+    expect(tenantAppId("client-a")).toBe(`${config.nightshift.appId}-client-a`);
+    expect(tenantAppId("client-1", "drift-agent")).toBe("drift-agent-client-1");
     expect(() => tenantAppId("client a")).toThrow(/header-safe/);
     expect(() => tenantAppId("")).toThrow(/header-safe/);
     expect(() => tenantAppId("x\ny")).toThrow(/header-safe/);

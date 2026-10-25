@@ -17,7 +17,12 @@ import { ZetarisEngine } from "../src/data/engines/zetaris.ts";
 import {
   APPROVED_COPIES_SQL, AUDIT_SPAN_SQL, CHANGED_SINCE_BACKUP_SQL, DISPOSITIONS_SQL, DRIFT_VS_APPROVED_SQL, FOUND_BUT_DIFFERENT_SQL, HERO_SQL, LATEST_APPROVALS_SQL,
   OBSERVATIONS_SQL, ORPHAN_RECORD_SQL, ORPHAN_VHOST_SQL, POLICY_RULES_SQL, PROBES_OF_RUN_SQL, PROXIED_WITHOUT_REAL_IP_SQL, PROXY_SPLIT_SQL, RESOLUTIONS_SQL,
-  RUNS_SQL, RUN_COMPLETE_SQL, WILDCARD_WITHOUT_REAL_IP_SQL,
+  RUNS_SQL, RUN_COMPLETE_SQL, WILDCARD_WITHOUT_REAL_IP_SQL, ACTIONS_SQL,
+} from "../src/data/queries.ts";
+// build B, the pipeline and the owner's document: approved_missing, the prior HOLD read, the document's reads
+import {
+  APPROVED_MISSING_SQL, DOC_ACTIONS_SQL, DOC_COPIES_SQL, DOC_DISPOSITIONS_OF_RUN_SQL, DOC_PROBES_SQL, DOC_PROBE_FAILURES_SQL, DOC_RUN_SHAPE_SQL, DOC_TICKETS_SQL,
+  DOC_UNAPPROVED_SQL, DOC_ZONES_SQL, PRIOR_HOLDS_SQL,
 } from "../src/data/queries.ts";
 import { SCHEMA_TABLES } from "../src/data/schema.ts";
 import { CATALOGUE } from "../src/catalogue/templates.ts";
@@ -156,7 +161,19 @@ SELECT obs_id AS disposition_id, tenant_id, surface, host, object_id, setting_pa
        'policy' AS decided_by, 'rule-00000000000000c3' AS rule_id, obs_id AS finding_id, run_id, '2026-10-24T08:00:00.000Z' AS decided_at
 FROM {{t:observation}} WHERE run_id = '${SITES_RUN}' AND setting_path = 'file'`,
 };
-const copyParams = (host: string): Params => ({ tenant_id: T, surface: "linux.nginx", host, object_id: QUEST_FILE, setting_path: "file", approved_hash: QUEST_HASH });
+/** One rollback_file action per file of the sites host's run, and one of another tenant, which the tenant's read leaves out. */
+const ACTIONS: Overlays = {
+  action: `SELECT action_id, tenant_id, kind, target, before_hash, after_hash, vault_commit, verification, receipts, status, started_at, finished_at, disposition_id FROM {{t:action}}
+UNION ALL
+SELECT obs_id AS action_id, tenant_id, 'rollback_file' AS kind, object_id AS target, value_hash AS before_hash, value_hash AS after_hash, '5a14a89d0123456789abcdef0123456789abcdef' AS vault_commit,
+       obs_id AS verification, '' AS receipts, 'done' AS status, observed_at AS started_at, observed_at AS finished_at, obs_id AS disposition_id
+FROM {{t:observation}} WHERE run_id = '${SITES_RUN}' AND setting_path = 'file'
+UNION ALL
+SELECT 'act-00000000000000c2' AS action_id, 'client-2' AS tenant_id, 'fix' AS kind, object_id AS target, value_hash AS before_hash, value_hash AS after_hash, '' AS vault_commit,
+       '' AS verification, '' AS receipts, 'refused' AS status, observed_at AS started_at, observed_at AS finished_at, obs_id AS disposition_id
+FROM {{t:observation}} WHERE obs_id = '${bundle.observation.find((o) => o.run_id === SITES_RUN && o.setting_path === "file")?.obs_id ?? ""}'`,
+};
+const copyParams =(host: string): Params => ({ tenant_id: T, surface: "linux.nginx", host, object_id: QUEST_FILE, setting_path: "file", approved_hash: QUEST_HASH });
 const PROBE_RUN = bundle.collection_run.filter((r) => r.surface === "probe").map((r) => r.run_id).sort().at(-1) ?? "";
 const rowsOf = (table: string): { tenant_id?: string; run_id?: string }[] => (bundle as unknown as Record<string, { tenant_id?: string; run_id?: string }[] | undefined>)[table] ?? [];
 
@@ -166,6 +183,86 @@ const noFileBodies = (row: string[], columns: string[]): string[] => {
   const vr = columns.indexOf("value_redacted");
   return sp >= 0 && vr >= 0 && row[sp] === "file" ? row.map((v, i) => (i === vr ? "" : v)) : row;
 };
+
+// ---- build B, the pipeline and the owner's document: approved_missing, the prior HOLD read, the document's reads ----
+type BRow = Record<string, string | number | null>;
+const tbl = (t: string): BRow[] => (bundle as unknown as Record<string, BRow[] | undefined>)[t] ?? [];
+const SITES_FILES = bundle.observation.filter((o) => o.run_id === SITES_RUN && o.setting_path === "file").length;
+const keyOfApproval = (a: BRow): string => [a.surface, a.host ?? "", a.object_id, a.setting_path].join("\u001f");
+const LATEST_APPROVAL_ROWS = tbl("approved_setting").filter((a) => a.tenant_id === T && !tbl("approved_setting").some((n) => n.tenant_id === T && keyOfApproval(n) === keyOfApproval(a)
+  && (String(n.approved_at) > String(a.approved_at) || (n.approved_at === a.approved_at && String(n.approval_id) > String(a.approval_id)))));
+/** The latest approvals of a surface and host whose object the run holds neither an observation nor a record row of, counted from the bundle: what APPROVED_MISSING_SQL returns. */
+const missingOf = (surface: string, host: string, run: string): number =>
+  LATEST_APPROVAL_ROWS.filter((a) => a.surface === surface && (a.host ?? "") === host
+    && !bundle.observation.some((o) => o.run_id === run && o.object_id === a.object_id) && !bundle.dns_record.some((d) => d.run_id === run && d.record_id === a.object_id)).length;
+const SITES_APPROVAL = String(tbl("approved_setting").find((a) => a.tenant_id === T && a.surface === "linux.nginx" && a.host === SITES_HOST)?.approval_id ?? "");
+const RECORD_APPROVAL = String(tbl("approved_setting").find((a) => a.tenant_id === T && a.surface === "cloudflare.dns")?.approval_id ?? "");
+/** Two approvals more, each a copy of a stored one on an object no run holds: a vhost file of the sites host and a record. */
+const APPROVED_ABSENT: Overlays = {
+  approved_setting: `SELECT approval_id, tenant_id, surface, host, object_id, setting_path, value_hash, approved_at, approved_by, note FROM {{t:approved_setting}}
+UNION ALL
+SELECT 'appr-parity-absent-file' AS approval_id, tenant_id, surface, host, '/etc/nginx/sites-available/parity-absent' AS object_id, setting_path, value_hash,
+       '2026-10-24T23:00:00.000Z' AS approved_at, approved_by, note
+FROM {{t:approved_setting}} WHERE approval_id = '${SITES_APPROVAL}'
+UNION ALL
+SELECT 'appr-parity-absent-record' AS approval_id, tenant_id, surface, host, 'parity-absent-record' AS object_id, setting_path, value_hash,
+       '2026-10-24T23:00:00.000Z' AS approved_at, approved_by, note
+FROM {{t:approved_setting}} WHERE approval_id = '${RECORD_APPROVAL}'`,
+};
+/** Every file of the sites host's run held twice, at 08:00 and at 09:00 UTC: the earlier HOLD of each is the one PRIOR_HOLDS_SQL returns. */
+const HELD_TWICE: Overlays = {
+  disposition: `${DISPOSITIONS.disposition}
+UNION ALL
+SELECT object_id AS disposition_id, tenant_id, surface, host, object_id, setting_path, value_hash, 'HOLD' AS verb, 'held again under the catch-all rule' AS reason, '2026-10-27T08:00:00.000Z' AS expires_at,
+       'policy' AS decided_by, 'rule-00000000000000c3' AS rule_id, obs_id AS finding_id, run_id, '2026-10-24T09:00:00.000Z' AS decided_at
+FROM {{t:observation}} WHERE run_id = '${SITES_RUN}' AND setting_path = 'file'`,
+};
+/** One action per file of the sites host's run (done) and one more (failed), and one ticket per file. */
+const DOC_WORK: Overlays = {
+  action: `SELECT action_id, tenant_id, kind, target, before_hash, after_hash, vault_commit, verification, receipts, status, started_at, finished_at, disposition_id FROM {{t:action}}
+UNION ALL
+SELECT obs_id AS action_id, tenant_id, 'rollback_file' AS kind, object_id AS target, value_hash AS before_hash, value_hash AS after_hash, '5a14a89d0123456789abcdef0123456789abcdef' AS vault_commit,
+       obs_id AS verification, '' AS receipts, 'done' AS status, observed_at AS started_at, observed_at AS finished_at, obs_id AS disposition_id
+FROM {{t:observation}} WHERE run_id = '${SITES_RUN}' AND setting_path = 'file'
+UNION ALL
+SELECT 'act-parity-failed' AS action_id, tenant_id, 'rollback_file' AS kind, object_id AS target, value_hash AS before_hash, value_hash AS after_hash, '' AS vault_commit,
+       '' AS verification, '' AS receipts, 'failed' AS status, observed_at AS started_at, observed_at AS finished_at, obs_id AS disposition_id
+FROM {{t:observation}} WHERE obs_id = '${bundle.observation.find((o) => o.run_id === SITES_RUN && o.setting_path === "file")?.obs_id ?? ""}'`,
+  ticket: `SELECT ticket_id, tenant_id, psa, external_id, url, type, priority, status, action_id, finding_id, created_at, updated_at FROM {{t:ticket}}
+UNION ALL
+SELECT obs_id AS ticket_id, tenant_id, 'github' AS psa, obs_id AS external_id, 'https://tickets.example.invalid/issues/1' AS url, 'change' AS type, 'P1' AS priority, 'open' AS status,
+       obs_id AS action_id, obs_id AS finding_id, observed_at AS created_at, observed_at AS updated_at
+FROM {{t:observation}} WHERE run_id = '${SITES_RUN}' AND setting_path = 'file'`,
+};
+const noDispositions = tbl("disposition").length === 0;
+const headCopies = tbl("vault_copy").filter((c) => c.tenant_id === T && !tbl("vault_copy").some((x) => x.tenant_id === T && x.surface === c.surface && (x.host ?? "") === (c.host ?? "") && String(x.taken_at) > String(c.taken_at))).length;
+const unapprovedOf = (run: string): number => bundle.observation.filter((o) => o.tenant_id === T && o.run_id === run
+  && !tbl("approved_setting").some((a) => a.tenant_id === T && keyOfApproval(a) === keyOfApproval(o as unknown as BRow))).length;
+const probesOf = tbl("probe").filter((p) => p.tenant_id === T && p.run_id === PROBE_RUN);
+const groupsOf = (rows: BRow[], cols: string[]): number => new Set(rows.map((r) => cols.map((c) => r[c]).join("\u001f"))).size;
+const BUILD_B_CASES: Case[] = [
+  { name: "approved_missing (sites host)", sql: APPROVED_MISSING_SQL, params: { tenant_id: T, surface: "linux.nginx", host: SITES_HOST, run_id: SITES_RUN }, rows: missingOf("linux.nginx", SITES_HOST, SITES_RUN) },
+  { name: "approved_missing (confd host)", sql: APPROVED_MISSING_SQL, params: { tenant_id: T, surface: "linux.nginx", host: CONFD_HOST, run_id: CONFD_RUN }, rows: missingOf("linux.nginx", CONFD_HOST, CONFD_RUN) },
+  { name: "approved_missing (dns, host '')", sql: APPROVED_MISSING_SQL, params: { tenant_id: T, surface: "cloudflare.dns", host: "", run_id: DNS_RUN }, rows: missingOf("cloudflare.dns", "", DNS_RUN) },
+  { name: "approved_missing (sites host, a file approved that no run holds)", sql: APPROVED_MISSING_SQL, params: { tenant_id: T, surface: "linux.nginx", host: SITES_HOST, run_id: SITES_RUN }, overlays: APPROVED_ABSENT, rows: missingOf("linux.nginx", SITES_HOST, SITES_RUN) + 1 },
+  { name: "approved_missing (dns, a record approved that no run holds)", sql: APPROVED_MISSING_SQL, params: { tenant_id: T, surface: "cloudflare.dns", host: "", run_id: DNS_RUN }, overlays: APPROVED_ABSENT, rows: missingOf("cloudflare.dns", "", DNS_RUN) + 1 },
+  { name: "prior holds", sql: PRIOR_HOLDS_SQL, params: { tenant_id: T, decided_at: "2026-10-25T00:00:00.000Z" }, rows: noDispositions ? 0 : undefined },
+  { name: "prior holds (one per sites file)", sql: PRIOR_HOLDS_SQL, params: { tenant_id: T, decided_at: "2026-10-25T00:00:00.000Z" }, overlays: DISPOSITIONS, rows: noDispositions ? SITES_FILES : undefined },
+  { name: "prior holds (each sites file held twice, the earlier stands)", sql: PRIOR_HOLDS_SQL, params: { tenant_id: T, decided_at: "2026-10-25T00:00:00.000Z" }, overlays: HELD_TWICE, rows: noDispositions ? SITES_FILES : undefined },
+  { name: "prior holds (an instant before every HOLD)", sql: PRIOR_HOLDS_SQL, params: { tenant_id: T, decided_at: "2026-10-24T07:00:00.000Z" }, overlays: HELD_TWICE, rows: noDispositions ? 0 : undefined },
+  { name: "document: run shape", sql: DOC_RUN_SHAPE_SQL, params: { run_id: SITES_RUN }, rows: 1 },
+  { name: "document: zones", sql: DOC_ZONES_SQL, params: { tenant_id: T, dns_run_id: DNS_RUN }, rows: new Set(bundle.dns_record.filter((d) => d.run_id === DNS_RUN).map((d) => d.zone)).size },
+  { name: "document: head copies", sql: DOC_COPIES_SQL, params: { tenant_id: T }, rows: headCopies },
+  { name: "document: unapproved settings (sites host)", sql: DOC_UNAPPROVED_SQL, params: { tenant_id: T, run_id: SITES_RUN }, rows: unapprovedOf(SITES_RUN) },
+  { name: "document: unapproved settings (dns)", sql: DOC_UNAPPROVED_SQL, params: { tenant_id: T, run_id: DNS_RUN }, rows: unapprovedOf(DNS_RUN) },
+  { name: "document: dispositions of a run (one per sites file)", sql: DOC_DISPOSITIONS_OF_RUN_SQL, params: { tenant_id: T, run_id: SITES_RUN }, overlays: DISPOSITIONS, rows: noDispositions ? SITES_FILES : undefined },
+  { name: "document: actions by kind and status", sql: DOC_ACTIONS_SQL, params: { tenant_id: T }, rows: groupsOf(tbl("action").filter((a) => a.tenant_id === T), ["kind", "status"]) },
+  { name: "document: actions by kind and status (one per sites file, one failed)", sql: DOC_ACTIONS_SQL, params: { tenant_id: T }, overlays: DOC_WORK, rows: tbl("action").length === 0 ? 2 : undefined },
+  { name: "document: tickets", sql: DOC_TICKETS_SQL, params: { tenant_id: T }, rows: tbl("ticket").filter((t) => t.tenant_id === T).length },
+  { name: "document: tickets (one per sites file)", sql: DOC_TICKETS_SQL, params: { tenant_id: T }, overlays: DOC_WORK, rows: tbl("ticket").filter((t) => t.tenant_id === T).length + SITES_FILES },
+  { name: "document: probes by kind and status", sql: DOC_PROBES_SQL, params: { tenant_id: T, run_id: PROBE_RUN }, rows: groupsOf(probesOf, ["kind", "status"]) },
+  { name: "document: failing probes", sql: DOC_PROBE_FAILURES_SQL, params: { tenant_id: T, run_id: PROBE_RUN }, rows: probesOf.filter((p) => p.status === "fail").length },
+];
 
 const CASES: Case[] = [
   { name: "hero (confd host)", sql: HERO_SQL, params: confd, rows: 0 },
@@ -208,6 +305,9 @@ const CASES: Case[] = [
   { name: "probes of a run (one http probe per A record)", sql: PROBES_OF_RUN_SQL, params: { tenant_id: T, run_id: "run-00000000000000p1" }, overlays: PROBES, rows: bundle.dns_record.filter((d) => d.run_id === DNS_RUN && d.type === "A").length },
   { name: "dispositions", sql: DISPOSITIONS_SQL, params: {}, rows: rowsOf("disposition").length },
   { name: "dispositions (one per sites file)", sql: DISPOSITIONS_SQL, params: {}, overlays: DISPOSITIONS, rows: rowsOf("disposition").length + bundle.observation.filter((o) => o.run_id === SITES_RUN && o.setting_path === "file").length },
+  { name: "actions", sql: ACTIONS_SQL, params: { tenant_id: T }, rows: rowsOf("action").filter((a) => a.tenant_id === T).length },
+  { name: "actions (one per sites file, one of another tenant)", sql: ACTIONS_SQL, params: { tenant_id: T }, overlays: ACTIONS, rows: rowsOf("action").filter((a) => a.tenant_id === T).length + bundle.observation.filter((o) => o.run_id === SITES_RUN && o.setting_path === "file").length },
+  ...BUILD_B_CASES,
   ...CATALOGUE.map((t) => ({ name: `template ${t.id}`, sql: t.sql, params: SAMPLE[t.id], rows: t.id === "setting_matches_approved" ? QUEST_APPROVALS : SAMPLE_ROWS[t.id] })),
   // Every table, the eight of the design included: a bundle exported before they existed holds none of their rows, and the datasource then holds none either.
   ...SCHEMA_TABLES.map((t) => ({

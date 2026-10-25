@@ -261,7 +261,7 @@ describe("judgeClaim under a tenant: the call goes out under the tenant's app id
   const find = (...rs: SignedReceipt[]) => ({ find: async (id: string) => rs.find((r) => r.body.receipt.receipt_id === id) ?? null });
   const nonceOf = (o: ChatOpts): string => o.messages[1].content.match(/^\[request ([0-9a-f]{16})\]\n/)![1];
 
-  it("custody holds on the first call: the request went out under drift-agent:<tenant> with a nonce first in the user message, the receipt is ours, the verdict carries the custody check", async () => {
+  it("custody holds on the first call: the request went out under drift-agent-<tenant> with a nonce first in the user message, the receipt is ours, the verdict carries the custody check", async () => {
     const ours = ultraReceipt("rcpt_ours", "chatcmpl-ours", CLIENT_APP);
     const ns = planned([{ receipt: ours, requestId: "chatcmpl-ours" }]);
     const tracer = new MemTracer("test_judge");

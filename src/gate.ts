@@ -28,7 +28,10 @@
 // a match; a preview of a shared message, or one too short to reach the nonce, is uninformative; a
 // preview that is a prefix of nothing we sent is a mismatch and fails identity whatever the id says,
 // which is what catches a replay of our own earlier receipt and id. Attribution holds when app is the
-// id we sent, per client "drift-agent:<tenant>" (tenantAppId). A failure discards the answer and
+// id we sent, per client "drift-agent-<tenant>" (tenantAppId; the runtime files a meterless-app value
+// with ':' as receipt.app with '-' in its place, 12 of 12 receipts on 24 Oct 2026, so the base and the
+// tenant are joined with '-'; under drift-agent-client-1 custody held on 9 of 9 calls of the 23:49 UTC
+// eval smoke the same day). A failure discards the answer and
 // gateWithCustody makes the call once more as a fresh request (a new nonce for the prompt, so a new
 // request_id and no cache hit); a second failure fails closed, not_judged, with a reason that starts
 // "custody". Every custody check is one trace event; the prompt text never reaches the trace, only ids.
@@ -165,10 +168,10 @@ export function checkCustody(receipt: SignedReceipt, result: ChatResult, expect:
   return { ok, requestId, promptPreview, app: appField, cacheStatus, reason };
 }
 
-/** The per-client app id a judge call goes out under, so its receipt is attributable to that client: "<base>:<tenant>". */
+/** The per-client app id a judge call goes out under, so its receipt is attributable to that client: "<base>-<tenant>", the form receipt.app carries. */
 export function tenantAppId(tenantId: string, base: string = config.nightshift.appId): string {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(tenantId)) throw new Error(`tenant id is not a header-safe token: ${JSON.stringify(tenantId)}`);
-  return `${base}:${tenantId}`;
+  return `${base}-${tenantId}`;
 }
 
 /** A fresh request nonce, 16 hex. Put into the prompt so a retried call is a new request to the runtime: new request_id, no cache hit. */

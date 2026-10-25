@@ -1,0 +1,77 @@
+{
+ "created": "2026-10-24",
+ "note": "Planted false claims, eval/PROTOCOL.md \"Planted false claims\": each is constructed false against the rows of the recording below, false_sql is the SELECT that shows it false (rows mean false), evidence_sql the rows the judge is handed as the claim's supporting rows. The judges of C2 and C3 receive every claim once per run; a strike is a refuting SELECT that ran and returned rows. The recording holds no partial run, so the run claim states a complete run partial.",
+ "recording": "test/fixtures/recorded-bundle.json",
+ "claims": [
+  {
+   "id": "P01",
+   "kind": "inventory address stated absent",
+   "claim": "ip-6b6bba, the address the A records of host-aa516a's vhosts point at, is absent from client-1's inventory: nothing the client owns is recorded at that address.",
+   "evidence_sql": "SELECT record_id, zone, name, type, content FROM {{t:dns_record}} WHERE tenant_id = 'client-1' AND run_id = 'run-f9470e2f5f175899' AND content = 'ip-6b6bba' ORDER BY record_id",
+   "false_sql": "SELECT asset_id, host, address FROM {{t:inventory_asset}} WHERE tenant_id = 'client-1' AND address = 'ip-6b6bba' ORDER BY asset_id"
+  },
+  {
+   "id": "P02",
+   "kind": "changed record stated unchanged",
+   "claim": "Record bce1ca2bb7caa2de9b6823d5f6ecd3f2 (host-524b42.quest) has stood unchanged since the audit log begins: the log holds no update to it.",
+   "evidence_sql": "SELECT record_id, zone, name, type, content, observed_at FROM {{t:dns_record}} WHERE tenant_id = 'client-1' AND run_id = 'run-f9470e2f5f175899' AND record_id = 'bce1ca2bb7caa2de9b6823d5f6ecd3f2' ORDER BY record_id",
+   "false_sql": "SELECT event_id, action, occurred_at FROM {{t:audit_event}} WHERE tenant_id = 'client-1' AND resource_id = 'bce1ca2bb7caa2de9b6823d5f6ecd3f2' AND action = 'update' ORDER BY event_id"
+  },
+  {
+   "id": "P03",
+   "kind": "complete run stated partial",
+   "claim": "DNS run run-f9470e2f5f175899 is partial: it collected fewer records than the population it asserted before collecting.",
+   "evidence_sql": "SELECT run_id, tenant_id, surface, started_at, finished_at FROM {{t:collection_run}} WHERE run_id = 'run-f9470e2f5f175899' ORDER BY run_id",
+   "false_sql": "SELECT run_id, expected_count, observed_count, status FROM {{t:collection_run}} WHERE run_id = 'run-f9470e2f5f175899' AND status = 'complete' AND observed_count = expected_count ORDER BY run_id"
+  },
+  {
+   "id": "P04",
+   "kind": "backed-up host stated unbacked",
+   "claim": "host-aa516a has no backup snapshot on record: a restore of its nginx configuration has no baseline.",
+   "evidence_sql": "SELECT run_id, surface, host, started_at, status FROM {{t:collection_run}} WHERE tenant_id = 'client-1' AND host = 'host-aa516a' ORDER BY run_id",
+   "false_sql": "SELECT snapshot_id, kind, taken_at FROM {{t:backup_snapshot}} WHERE tenant_id = 'client-1' AND host = 'host-aa516a' ORDER BY snapshot_id"
+  },
+  {
+   "id": "P05",
+   "kind": "served name stated unserved",
+   "claim": "No server block on host-4b4dc1 names host-22b64a.com in run run-15638d43819ba756: requests for it reach the default server.",
+   "evidence_sql": "SELECT record_id, zone, name, type, content, proxied FROM {{t:dns_record}} WHERE tenant_id = 'client-1' AND run_id = 'run-f9470e2f5f175899' AND name = 'host-22b64a.com' ORDER BY record_id",
+   "false_sql": "SELECT obs_id, object_id, setting_path FROM {{t:observation}} WHERE run_id = 'run-15638d43819ba756' AND refers_to_type = 'dns_name' AND refers_to_id = 'host-22b64a.com' AND setting_path LIKE '%.server_name[%' ORDER BY obs_id"
+  },
+  {
+   "id": "P06",
+   "kind": "direct record stated proxied",
+   "claim": "The A record of host-4c795e.quest in DNS run run-f9470e2f5f175899 is proxied through Cloudflare, so its origin address stays hidden.",
+   "evidence_sql": "SELECT record_id, zone, name, type, content FROM {{t:dns_record}} WHERE tenant_id = 'client-1' AND run_id = 'run-f9470e2f5f175899' AND name = 'host-4c795e.quest' ORDER BY record_id",
+   "false_sql": "SELECT record_id, type, proxied FROM {{t:dns_record}} WHERE tenant_id = 'client-1' AND run_id = 'run-f9470e2f5f175899' AND name = 'host-4c795e.quest' AND type = 'A' AND proxied = 0 ORDER BY record_id"
+  },
+  {
+   "id": "P07",
+   "kind": "missing setting stated present everywhere",
+   "claim": "Every server block on host-aa516a in run run-67f4d6923cb4838d trusts a Cloudflare real_ip range, so every block logs the visitor's own address.",
+   "evidence_sql": "SELECT obs_id, object_id, setting_path, value_redacted FROM {{t:observation}} WHERE run_id = 'run-67f4d6923cb4838d' AND setting_path LIKE '%.enabled' AND value_redacted = '1' ORDER BY obs_id",
+   "false_sql": "SELECT obs_id, object_id, setting_path FROM {{t:observation}} WHERE run_id = 'run-67f4d6923cb4838d' AND setting_path LIKE '%.real_ip' AND value_redacted = 'absent' ORDER BY obs_id"
+  },
+  {
+   "id": "P08",
+   "kind": "attributed change stated unattributed",
+   "claim": "No audit event names who changed record 6dfbfac693d6faabbaa448bbefe8cf3f (host-922448.ai): its change is unattributed.",
+   "evidence_sql": "SELECT event_id, action, resource_type, resource_id, occurred_at FROM {{t:audit_event}} WHERE tenant_id = 'client-1' AND resource_id = '6dfbfac693d6faabbaa448bbefe8cf3f' ORDER BY event_id",
+   "false_sql": "SELECT event_id, occurred_at FROM {{t:audit_event}} WHERE tenant_id = 'client-1' AND resource_id = '6dfbfac693d6faabbaa448bbefe8cf3f' AND actor IS NOT NULL AND actor <> '' ORDER BY event_id"
+  },
+  {
+   "id": "P09",
+   "kind": "deletion day stated quiet",
+   "claim": "No DNS record of client-1 was deleted on 2026-10-11: the zone host-17a03d.info lost nothing that day.",
+   "evidence_sql": "SELECT record_id, zone, name, type FROM {{t:dns_record}} WHERE tenant_id = 'client-1' AND run_id = 'run-f9470e2f5f175899' AND zone = 'host-17a03d.info' ORDER BY record_id",
+   "false_sql": "SELECT event_id, resource_id, occurred_at FROM {{t:audit_event}} WHERE tenant_id = 'client-1' AND action = 'delete' AND occurred_at >= '2026-10-11T00:00:00.000Z' AND occurred_at < '2026-10-12T00:00:00.000Z' ORDER BY event_id"
+  },
+  {
+   "id": "P10",
+   "kind": "backed-up file stated absent from the backup",
+   "claim": "/etc/nginx/nginx.conf on host-aa516a is absent from the host's newest backup snapshot: a restore from that backup holds no copy of it.",
+   "evidence_sql": "SELECT obs_id, object_id, setting_path, value_hash, observed_at FROM {{t:observation}} WHERE run_id = 'run-67f4d6923cb4838d' AND object_id = '/etc/nginx/nginx.conf' AND setting_path = 'file' ORDER BY obs_id",
+   "false_sql": "SELECT b.snapshot_id, b.value_hash, s.taken_at FROM {{t:backup_item}} b JOIN {{t:backup_snapshot}} s ON s.snapshot_id = b.snapshot_id WHERE s.tenant_id = 'client-1' AND s.host = 'host-aa516a' AND b.object_id = '/etc/nginx/nginx.conf' AND b.setting_path = 'file' AND NOT EXISTS (SELECT 1 FROM {{t:backup_snapshot}} x WHERE x.tenant_id = s.tenant_id AND x.host = s.host AND x.taken_at > s.taken_at) ORDER BY b.snapshot_id"
+  }
+ ]
+}

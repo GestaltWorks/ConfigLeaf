@@ -17,6 +17,10 @@
 //     Logs expire after 18 months"); before two days ahead was accepted; before is not a strict UTC
 //     midnight bound (before=2026-04-17 returned a row timed 2026-04-17). action.time carries 0 to 3
 //     fractional digits; occurred_at is normalised to the millisecond form the loader requires.
+//   PATCH /zones/{id}/dns_records/{record}           patchRecord, and POST /zones/{id}/dns_records, createRecord:
+//     the two record writes, made by the Actor behind --apply (src/actions/revert.ts) with a token that holds DNS
+//     Edit; the collector reads only. Exercised through a fake fetch (test/cloudflare.test.ts); the account had
+//     received 0 writes from this code on 24 Oct 2026.
 //   Event shapes: a record UPDATE is product dns_records, type null, resource.id = the record id,
 //     request = the body (name, type, content, proxied, ...). A CREATE through the API or dash is
 //     product dns_records with resource.id null. System create/delete is product dns, type record,
@@ -68,6 +72,19 @@ export class CloudflareError extends Error {
   constructor(message: string, readonly status: number) { super(redact(message)); }
 }
 
+/** What a record write sends: the fields the vault's record JSON holds (src/vault/hook.ts recordJson). */
+export interface CfRecordBody { type: string; name: string; content: string; ttl?: number; proxied?: boolean }
+
+/** The body checked and in the field order Cloudflare documents; refused before any request when a field has another shape. */
+function recordBody(b: CfRecordBody): CfRecordBody {
+  for (const k of ["type", "name", "content"] as const) {
+    if (typeof b?.[k] !== "string" || !b[k]) throw new CloudflareError(`record body: ${k} must be a non-empty string`, 0);
+  }
+  if (b.ttl !== undefined && (!Number.isInteger(b.ttl) || b.ttl < 1)) throw new CloudflareError("record body: ttl must be a positive integer", 0);
+  if (b.proxied !== undefined && typeof b.proxied !== "boolean") throw new CloudflareError("record body: proxied must be true or false", 0);
+  return { type: b.type, name: b.name, content: b.content, ...(b.ttl === undefined ? {} : { ttl: b.ttl }), ...(b.proxied === undefined ? {} : { proxied: b.proxied }) };
+}
+
 export class Cloudflare {
   private readonly token: string;
   private readonly fetchFn: FetchLike;
@@ -81,11 +98,18 @@ export class Cloudflare {
     this.base = (opts.baseUrl ?? API).replace(/\/+$/, "");
   }
 
-  private async get<T>(path: string): Promise<Envelope<T>> {
+  private get<T>(path: string): Promise<Envelope<T>> {
+    return this.call<T>("GET", path);
+  }
+
+  /** One request. A GET is logged as its path and query; a write as "<METHOD> <path>". The body, when given, is JSON. */
+  private async call<T>(method: "GET" | "PATCH" | "POST", path: string, body?: unknown): Promise<Envelope<T>> {
     if (!this.token) throw new CloudflareError("CLOUDFLARE_API_TOKEN is not set", 0);
-    this.requests.push(path);
+    this.requests.push(method === "GET" ? path : `${method} ${path}`);
     const r = await this.fetchFn(this.base + path, {
-      headers: { Authorization: `Bearer ${this.token}`, Accept: "application/json" },
+      method,
+      headers: { Authorization: `Bearer ${this.token}`, Accept: "application/json", ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       signal: AbortSignal.timeout(30_000),
     });
     const text = await r.text();
@@ -93,9 +117,23 @@ export class Cloudflare {
     try { j = JSON.parse(text) as Envelope<T>; } catch { /* not JSON; reported below */ }
     if (!r.ok || !j?.success) {
       const why = j?.errors?.map((e) => `${e.code ?? "?"}: ${e.message ?? ""}`).join("; ") || text.slice(0, 200);
-      throw new CloudflareError(`Cloudflare ${r.status} GET ${path.split("?")[0]}: ${why}`, r.status);
+      throw new CloudflareError(`Cloudflare ${r.status} ${method} ${path.split("?")[0]}: ${why}`, r.status);
     }
     return j;
+  }
+
+  /**
+   * PATCH /zones/{zone}/dns_records/{id}: the record's type, name, content, ttl and proxied set to the body's (ttl and
+   * proxied sent when the body carries them). Returns the record as the API answers it. A write: the token needs DNS
+   * Edit, and the Actor (src/actions/revert.ts) calls it behind --apply only.
+   */
+  async patchRecord(zoneId: string, recordId: string, body: CfRecordBody): Promise<CfRecord> {
+    return (await this.call<CfRecord>("PATCH", `/zones/${encodeURIComponent(zoneId)}/dns_records/${encodeURIComponent(recordId)}`, recordBody(body))).result;
+  }
+
+  /** POST /zones/{zone}/dns_records: a new record with the body's fields; returns it with the id Cloudflare gave it. A write, as patchRecord. */
+  async createRecord(zoneId: string, body: CfRecordBody): Promise<CfRecord> {
+    return (await this.call<CfRecord>("POST", `/zones/${encodeURIComponent(zoneId)}/dns_records`, recordBody(body))).result;
   }
 
   /** Page 1, then pages 2..total_pages as page 1 reported them; an empty page ends the walk early. */

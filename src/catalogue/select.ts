@@ -38,7 +38,8 @@ export interface ValidatedSelection { valid: SelectedCheck[]; rejected: Rejected
  * setting itself are what the referent and the audit trail are known as: the DNS name in play
  * (the referent of a found_but_different, or the record's own name for a dns_change), what it now
  * resolves to, the id the audit log uses for it, the DNS run to compare against, and the window
- * between the previous observation (or backup) and this one.
+ * between the previous observation (or backup) and this one. An approved_missing finding has no live
+ * value: its value_hash is "" and approved_hash carries the approved value the run lacks.
  */
 export interface FindingSummary {
   class: FindingClass;
@@ -49,6 +50,8 @@ export interface FindingSummary {
   object_id: string;
   setting_path: string;
   value_hash: string;
+  /** approved_missing only: the hash of the latest approval of the setting, the value the run holds no observation of. */
+  approved_hash?: string | null;
   value_redacted?: string | null;
   refers_to_type?: string | null;
   refers_to_id?: string | null;
@@ -133,16 +136,20 @@ const DEFAULT_CHECKS: Record<FindingClass, readonly string[]> = {
   proxied_without_real_ip: ["run_complete", "host_in_inventory", "actor_attributed", "previous_value_recoverable"],
   orphan_record: ["run_complete", "host_in_inventory", "actor_attributed", "previous_value_recoverable"],
   orphan_vhost: ["run_complete", "other_settings_reference", "backup_recent"],
+  // An approved object absent from the run: the run is whole, a backup since the approval exists, and the newest backup holds the approved value.
+  approved_missing: ["run_complete", "backup_recent", "change_in_last_backup"],
 };
 
 /**
  * The list a finding on a DNS record (host null) gets where its class's list reads the host: drift_vs_approved
  * on a record field binds no host for setting_matches_approved, restore_would_regress or
  * change_in_last_backup, so it gets the record's audit checks over the window from its approval to the run:
- * who touched the record and whether the state before the change is on record.
+ * who touched the record and whether the state before the change is on record. approved_missing on a record
+ * (a deleted record) gets the same two: who deleted it, and whether the log holds the record as it was.
  */
 const DEFAULT_CHECKS_RECORD: Partial<Record<FindingClass, readonly string[]>> = {
   drift_vs_approved: ["run_complete", "actor_attributed", "previous_value_recoverable"],
+  approved_missing: ["run_complete", "actor_attributed", "previous_value_recoverable"],
 };
 
 /** Deterministic: the template ids every finding of this class gets when no model answered. */
@@ -163,7 +170,8 @@ export const BIND: Readonly<Record<string, (f: FindingSummary) => Param | undefi
   host: (f) => f.host ?? undefined,
   object_id: (f) => f.object_id,
   setting_path: (f) => f.setting_path,
-  value_hash: (f) => f.value_hash,
+  // approved_missing has no live value: its value_hash is the approved one the run lacks
+  value_hash: (f) => (f.class === "approved_missing" ? (f.approved_hash ?? undefined) : f.value_hash),
   address: (f) => f.resolves_to ?? undefined,
   name: (f) => f.dns_name ?? f.refers_to_id ?? undefined,
   refers_to_id: (f) => f.refers_to_id ?? undefined,

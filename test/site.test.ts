@@ -76,8 +76,10 @@ describe("the replay page", () => {
     expect([ru.holds, ru.rowCount, ru.rows?.rows.length]).toEqual([false, 3, 3]);
     expect(ru.sql).toContain("FROM dns_record a");
     expect(f.sample?.match).toBe("same");
-    // the slice's DNS run is the 21:20:58 UTC collection of 24 Oct 2026, 191 whole days after the body
-    expect(f.exposure).toEqual({ since: "2026-04-16T21:12:47.270Z", days: 191, bound: "exact", source: "audit:evt-05fa48325110cdcb", still_open_in: "run-de1564466df1d59b" });
+    // the slice's DNS run is the latest DNS collection of the recorded bundle (24 Oct 2026), 191 whole days after the body
+    const slice = JSON.parse(readFileSync(path.join(EXAMPLES, "proxy-split", "bundle.json"), "utf8")) as { collection_run: { run_id: string; surface: string; started_at: string }[] };
+    const dnsRun = slice.collection_run.filter((r) => r.surface === "cloudflare.dns").sort((a, b) => (a.started_at < b.started_at ? -1 : 1)).at(-1)!.run_id;
+    expect(f.exposure).toEqual({ since: "2026-04-16T21:12:47.270Z", days: 191, bound: "exact", source: "audit:evt-05fa48325110cdcb", still_open_in: dnsRun });
     expect(f.fields.find((p) => p[0] === "finding id")?.[1]).toMatch(/^fnd-[0-9a-f]{16}$/);
   });
 

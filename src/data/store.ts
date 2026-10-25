@@ -25,7 +25,10 @@
 //     copy_validation, probe, disposition, action, ticket, referent_fingerprint), each ON CONFLICT DO
 //     NOTHING on its key. Reads: latestPassingRun (the gate's definition of passing), observationsOf,
 //     dnsRecordsOf, policyRules (the tenant's and every "*" rule), and rowsOf for any table by column
-//     equality; every read is one READ ONLY transaction and returns rows in natural-key order.
+//     equality; every read is one READ ONLY transaction and returns rows in natural-key order. One
+//     update: updateTicket, a ticket row's external_id, url, status and action_id by ticket_id with
+//     updated_at, the url redacted (the PSA step, src/psa/step.ts); ticketsOf reads one tenant's tickets; actionsOf the
+//     actions that carry out a list of dispositions (src/actions/).
 //   - Error text is scrubbed (connection-string password, bearer tokens) before it leaves.
 //
 // The bundle half (toBundle, formatBundle, writeBundle) is how recorded collections become
@@ -123,6 +126,10 @@ function redactRow(redactor: Redactor, table: TableName, row: Row): number {
   return changed;
 }
 
+/** The ticket columns updateTicket sets; updated_at is set on every update. */
+export const TICKET_MUTABLE = ["external_id", "url", "status", "action_id", "updated_at"] as const;
+export type TicketPatch = Partial<Pick<Ticket, "external_id" | "url" | "status" | "action_id">> & Pick<Ticket, "updated_at">;
+
 /** What beginRun takes: a run before it collects. finished_at, observed_count and status are ignored if present. */
 export type RunStart = Omit<CollectionRun, "finished_at" | "observed_count" | "status"> & Partial<Pick<CollectionRun, "finished_at" | "observed_count" | "status">>;
 
@@ -186,8 +193,36 @@ export class Store {
   insertProbes(rows: readonly Probe[]): Promise<number> { return this.write("probe", rows); }
   insertDispositions(rows: readonly Disposition[]): Promise<number> { return this.write("disposition", rows); }
   insertActions(rows: readonly Action[]): Promise<number> { return this.write("action", rows); }
+
+  /** The action rows that carry out these dispositions, in action_id order; [] for an empty list. */
+  async actionsOf(dispositionIds: readonly string[]): Promise<Action[]> {
+    if (!dispositionIds.length) return [];
+    const rows = await this.query<Row>(`SELECT ${COLUMNS.action.join(", ")} FROM action WHERE disposition_id = ANY($1)`, [[...new Set(dispositionIds)]]);
+    return rows.sort(byKey("action")) as unknown as Action[];
+  }
   insertTickets(rows: readonly Ticket[]): Promise<number> { return this.write("ticket", rows); }
   insertReferentFingerprints(rows: readonly ReferentFingerprint[]): Promise<number> { return this.write("referent_fingerprint", rows); }
+
+  /**
+   * One ticket row's mutable columns by ticket_id: external_id, url, status and action_id as the patch names
+   * them, and updated_at always. The url goes through the redactor as on insert; updated_at must be the
+   * canonical millisecond form. Returns the rows changed: 1, or 0 for a ticket_id the table lacks.
+   */
+  async updateTicket(ticketId: string, patch: TicketPatch): Promise<number> {
+    const sets: [string, string | null][] = [];
+    for (const [c, v] of Object.entries(patch)) {
+      if (!(TICKET_MUTABLE as readonly string[]).includes(c)) throw new StoreError(`ticket: column ${c} is not updatable`);
+      if (v !== null && typeof v !== "string") throw new StoreError(`ticket.${c}: unsupported value type ${typeof v}`);
+      sets.push([c, c === "url" && typeof v === "string" ? this.redactor.text(v) : v]);
+    }
+    if (!ISO_MS.test(patch.updated_at)) throw new StoreError(`ticket.updated_at: timestamps must be ISO 8601 UTC in the millisecond form YYYY-MM-DDTHH:MM:SS.mmmZ, got ${patch.updated_at}`);
+    const params: (string | null)[] = [ticketId];
+    const assign = sets.map(([c, v]) => `${c} = $${params.push(v)}`).join(", ");
+    return this.tx(async (c) => (await c.query(`UPDATE ticket SET ${assign} WHERE ticket_id = $1`, params)).rowCount ?? 0);
+  }
+
+  /** Every ticket row of one tenant, in ticket_id order. */
+  ticketsOf(tenantId: string): Promise<Ticket[]> { return this.rowsOf("ticket", { tenant_id: tenantId }); }
 
   /**
    * The tenant's latest run of one surface (and host; null for an account surface) that passes the DQ
@@ -269,7 +304,7 @@ export class Store {
   }
 
   /** One read-only SELECT, its rows as objects. */
-  private async query<T extends object>(sql: string, params: readonly (string | number)[]): Promise<T[]> {
+  private async query<T extends object>(sql: string, params: readonly (string | number | readonly string[])[]): Promise<T[]> {
     return this.tx(async (c) => (await c.query<T & pg.QueryResultRow>(sql, [...params])).rows, "BEGIN READ ONLY");
   }
 

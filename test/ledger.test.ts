@@ -1,5 +1,6 @@
 // The ledger over sql.js: a disposition recorded through MemoryLedger is a row of the disposition table the
-// DataLayer reads as {{t:disposition}}, on the recorded bundle; recording is idempotent on disposition_id.
+// DataLayer reads as {{t:disposition}}, on the recorded bundle with its disposition table emptied; recording is
+// idempotent on disposition_id.
 // PgLedger is the same contract through Store.insertDispositions (test/store.test.ts, live half).
 import { beforeAll, describe, expect, it } from "vitest";
 import { DataLayer } from "../src/data/layer.ts";
@@ -29,7 +30,8 @@ describe("MemoryLedger (sql.js)", () => {
 
   beforeAll(async () => {
     engine = await SqlJsEngine.create();
-    engine.loadBundle(bundle);
+    // the recorded rows with an empty disposition table: the ledger's own rows are the ones these cases count
+    engine.loadBundle({ ...bundle, disposition: [] });
     dl = new DataLayer(engine);
     ledger = new MemoryLedger(engine);
   });

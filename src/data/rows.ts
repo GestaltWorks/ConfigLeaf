@@ -195,17 +195,21 @@ export interface Disposition {
   decided_at: string;
 }
 
+export type ActionKind = "rollback_file" | "revert_record" | "fix" | "investigate";
+/** not_judged: an investigation whose verdict the receipt gate refused, or whose judge never answered. */
+export type ActionStatus = "done" | "failed" | "refused" | "not_judged";
+
 export interface Action {
   action_id: string;
   tenant_id: string;
-  kind: "rollback_file" | "revert_record" | "fix" | "investigate";
+  kind: ActionKind;
   target: string;
   before_hash: string | null;
   after_hash: string | null;
   vault_commit: string | null;
   verification: string; // probe ids, comma-separated; "" when none
   receipts: string; // receipt ids, comma-separated; "" when none
-  status: "done" | "failed" | "refused";
+  status: ActionStatus;
   started_at: string;
   finished_at: string | null;
   disposition_id: string;
@@ -364,6 +368,9 @@ export const copyId = (runId: string, objectId: string): string => stableId("cop
 export const validationId = (copyIdValue: string, validator: string, validatedAt: string): string => stableId("val", copyIdValue, validator, validatedAt);
 
 export const probeId = (runId: string, kind: string, target: string): string => stableId("probe", runId, kind, target);
+
+/** One action of one kind on one disposition: the Actor acts once per (disposition, kind). */
+export const actionId = (tenantId: string, dispositionIdValue: string, kind: ActionKind): string => stableId("act", tenantId, dispositionIdValue, kind);
 
 /** One decision about one live value of one setting, for one finding, in one run. */
 export const dispositionId = (
