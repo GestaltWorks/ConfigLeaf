@@ -30,7 +30,8 @@
 //                  (DOC_TICKETS_SQL).
 //   Probes         the passing probe runs counted by surface, probe (the pass's, every served name) and probe.verify
 //                  (the Actor's, after a write); the latest passing run of surface probe, its probes by kind and
-//                  status (DOC_PROBES_SQL) and the failing names by kind (DOC_PROBE_FAILURES_SQL).
+//                  status, ok, fail and skipped (DOC_PROBES_SQL; a skipped probe did not run and counts neither way),
+//                  and the failing names by kind (DOC_PROBE_FAILURES_SQL).
 //   Queries        each query the document ran, its runs and the rows it returned.
 //   last line      the decision instant: the latest decided_at of the open dispositions.
 // Every collected text in the tables is redacted before it is stored, so the page carries pseudonyms only.
@@ -365,7 +366,7 @@ export async function renderDocument(layer: DataLayer, opts: DocumentOptions): P
     const kinds = [...new Set(byKind.map((k) => k.kind))].sort(cmp);
     const num = (kind: string, status: string): string => byKind.find((k) => k.kind === kind && k.status === status)?.n ?? "0";
     line(`Probe run ${probeRun.run_id} (surface ${PROBE_SURFACE}), finished ${dash(probeRun.finished_at)}: ${plural(failing.length, "probe fails", "probes fail")}.`, "");
-    line(...table(["kind", "ok", "fail"], kinds.map((k) => [k, num(k, "ok"), num(k, "fail")])), "");
+    line(...table(["kind", "ok", "fail", "skipped"], kinds.map((k) => [k, num(k, "ok"), num(k, "fail"), num(k, "skipped")])), "");
     if (failing.length) line("The failing names:", "", ...groupBy(failing, (f) => f.kind).map(([kind, rows]) => `- ${kind}: ${[...new Set(rows.map((f) => f.target))].sort(cmp).join(", ")}`), "");
   }
 

@@ -4,19 +4,21 @@
 // nothing here maps an input to a stored answer. Prints one JSON finding per line, then one disposition
 // line per finding as the ledger holds it under the finding's disposition_id, then one summary.
 //
-// The Decider consults the technician's memory (src/engine/memory.ts, the vendored H-MEM reference under
-// .world/memory, gitignored): a lesson recorded with `npm run answer` changes the verb of the finding it
-// scopes on the next run of this script, until it expires. The pass records its dispositions and referent
+// The Decider consults the technician's memory (src/engine/memory.ts, the vendored H-MEM reference in the
+// directory DRIFT_MEMORY_DIR names, .world/memory when it is blank), opened read only: a lesson recorded with
+// `npm run answer` changes the verb of the finding it scopes on the next run of this script, until it expires,
+// and the store is left as it was. The pass records its dispositions and referent
 // fingerprints through a MemoryLedger into the same sql.js engine, and the disposition lines are read back
 // from it through the DataLayer. With no lesson recorded and no policy_rule rows in the bundle every
 // disposition is the default's (decided_by default) and the verbs are ADOPT and ESCALATE. Every disposition
 // is decided at the bundle's own instant (src/data/instant.ts: the later of its latest run's finish and its latest
-// ledger row), so two runs over the same bundle print the same finding, disposition and summary lines; the trace
-// lines carry their own timestamps and latencies.
+// ledger row), or at the instant the latest lesson was taught when that is later (decisionInstantWith), so two runs
+// over the same bundle and store print the same finding, disposition and summary lines; the trace lines carry their
+// own timestamps and latencies.
 import { config } from "../src/config.ts";
 import { DataLayer } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
-import { decisionInstant } from "../src/data/instant.ts";
+import { decisionInstantWith } from "../src/data/instant.ts";
 import { DISPOSITIONS_SQL, objects } from "../src/data/queries.ts";
 import { TechnicianMemory } from "../src/engine/memory.ts";
 import { DriftWorld } from "../src/engine/world.ts";
@@ -37,11 +39,12 @@ const engine = await SqlJsEngine.create();
 const counts = engine.loadBundle(bundle);
 tracer.emit({ agent: "collector", action: "observe", status: "ok", output_summary: `sample/bundle.json loaded into sql.js: ${Object.entries(counts).map(([t, n]) => `${t} ${n}`).join(", ")}`, detail: "model: none (recorded, redacted rows exported from the app Postgres; see sample/bundle.json _note)" });
 
-const memory = new TechnicianMemory({ storage: "local" });
+const memory = new TechnicianMemory({ storage: "read" });
 const layer = new DataLayer(engine);
-// decidedAt: the bundle's own instant (the later of its latest run's finish and its latest ledger row), so every disposition
-// and HOLD expiry is the same on every run; lessons are recalled at the memory's clock.
-const decidedAt = new Date(decisionInstant(bundle) ?? Date.now()).toISOString();
+// decidedAt: the bundle's own instant (the later of its latest run's finish and its latest ledger row), or the instant the
+// latest lesson was taught when that is later, so every disposition and HOLD expiry is the same on every run with the same
+// store; lessons are recalled at the memory's clock.
+const decidedAt = new Date(decisionInstantWith(bundle, memory.lessons().map((l) => l.recordedAt)) ?? Date.now()).toISOString();
 const pass = await runPass(layer, { tracer, world: new DriftWorld("sample"), memory, ledger: new MemoryLedger(engine), decidedAt });
 
 for (const f of pass.findings) console.log(JSON.stringify(f));

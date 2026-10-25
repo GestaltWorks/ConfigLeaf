@@ -4,7 +4,7 @@
     "finding": {
       "class": "proxy_split",
       "tenant_id": "client-1",
-      "run_id": "run-9e232bb5e1ebdb81",
+      "run_id": "run-9d48791b00433777",
       "surface": "cloudflare.dns",
       "host": null,
       "object_id": "bce1ca2bb7caa2de9b6823d5f6ecd3f2",
@@ -16,9 +16,9 @@
       "dns_name": "host-524b42.quest",
       "resolves_to": "ip-6fb86d",
       "resource_id": "bce1ca2bb7caa2de9b6823d5f6ecd3f2",
-      "dns_run_id": "run-9e232bb5e1ebdb81",
+      "dns_run_id": "run-9d48791b00433777",
       "since": "2026-04-16T21:11:15.232Z",
-      "until": "2026-10-25T03:25:09.111Z",
+      "until": "2026-10-25T13:53:44.528Z",
       "summary": "host-524b42.quest is proxied and aliases host-4c795e.quest, whose A record is direct to ip-6fb86d: the origin the proxy hides is published on the name it points at"
     },
     "verb": "ESCALATE",
@@ -34,13 +34,13 @@
         "template": "run_complete",
         "holds": true,
         "rowCount": 0,
-        "explanation": "Run run-9e232bb5e1ebdb81 collected everything it set out to collect."
+        "explanation": "Run run-9d48791b00433777 collected everything it set out to collect."
       },
       {
         "template": "actor_attributed",
         "holds": true,
         "rowCount": 2,
-        "explanation": "2 audit events with a named actor touched bce1ca2bb7caa2de9b6823d5f6ecd3f2 between 2026-04-16T21:11:15.232Z and 2026-10-25T03:25:09.111Z."
+        "explanation": "2 audit events with a named actor touched bce1ca2bb7caa2de9b6823d5f6ecd3f2 between 2026-04-16T21:11:15.232Z and 2026-10-25T13:53:44.528Z."
       },
       {
         "template": "previous_value_recoverable",
@@ -52,7 +52,7 @@
         "template": "referent_unchanged",
         "holds": false,
         "rowCount": 3,
-        "explanation": "host-524b42.quest changed between 2026-04-16T21:11:15.232Z and 2026-10-25T03:25:09.111Z (3 pieces of evidence)."
+        "explanation": "host-524b42.quest changed between 2026-04-16T21:11:15.232Z and 2026-10-25T13:53:44.528Z (3 pieces of evidence)."
       }
     ],
     "rejected": [],
@@ -62,7 +62,7 @@
       "days": 191,
       "bound": "exact",
       "source": "audit:evt-05fa48325110cdcb",
-      "still_open_in": "run-9e232bb5e1ebdb81"
+      "still_open_in": "run-9d48791b00433777"
     }
   }
 ]

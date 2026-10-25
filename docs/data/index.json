@@ -30,7 +30,8 @@
     "checksRerun": 33,
     "verbs": {
       "ESCALATE": 2,
-      "HOLD": 7
+      "ADOPT": 4,
+      "HOLD": 3
     },
     "classes": {
       "proxy_split": 2,
@@ -44,10 +45,10 @@
   },
   "sample": {
     "bundle": "sample/bundle.json",
-    "sha256": "sha256:125ef477ef0d9da315b0a41eccd5ee2d56261bc7123ab533c76d2ec493a64560",
-    "runs": 26,
+    "sha256": "sha256:d2230b8d979149ae3a19c7fc0c7f5854ceb98340173b6bbbe90fa136940a2bf1",
+    "runs": 80,
     "gatedOut": 0,
-    "observed": 6372,
+    "observed": 14174,
     "findings": 27,
     "classes": {
       "proxy_split": 1,
@@ -57,7 +58,8 @@
     },
     "verbs": {
       "ESCALATE": 1,
-      "HOLD": 26
+      "ADOPT": 23,
+      "HOLD": 3
     }
   },
   "decisionRule": "The technician's accepted exception in force decides ADOPT until it expires, and a lapsed one ESCALATE. Next, the MSP's policy rule that governs the setting decides ADOPT, HOLD until an expiry, ESCALATE, ROLLBACK or FIX, and the decision names the rule and the reason. With no governing rule: every check holds and none was rejected, ADOPT, as a candidate pending a judge; any check fails or was rejected, ESCALATE.",

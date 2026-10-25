@@ -16,6 +16,8 @@ import { sourceRows, sourcesMarkdown } from "../src/document/render.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const EXAMPLES = path.join(ROOT, "examples");
+/** The committed technician's lessons the committed examples and docs/ were built with (DRIFT_MEMORY_DIR=examples/memory). */
+const STORE = path.join(EXAMPLES, "memory");
 const tmp = mkdtempSync(path.join(os.tmpdir(), "drift-site-"));
 const WORDS = [...new Set([...config.redactWords, ...config.exportDenyWords])];
 
@@ -30,7 +32,7 @@ function panel(id: string): string {
 const count = (s: string, tag: string): number => s.split(tag).length - 1;
 
 beforeAll(async () => {
-  built = await buildSite({ examplesDir: EXAMPLES, outDir: path.join(tmp, "out") });
+  built = await buildSite({ examplesDir: EXAMPLES, outDir: path.join(tmp, "out"), memoryDir: STORE });
 }, 120_000);
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
 
@@ -50,7 +52,10 @@ describe("the replay page", () => {
     expect([...built.files.keys()].sort()).toEqual([".nojekyll", "data/index.json", "data/orphans.json", "data/proxy-split.json", "data/wildcard-no-real-ip.json", "index.html"]);
     for (const name of built.files.keys()) expect(existsSync(path.join(tmp, "out", name))).toBe(true);
     expect(built.index.examples.map((e) => [e.dir, e.findings])).toEqual([["proxy-split", 1], ["wildcard-no-real-ip", 1], ["orphans", 7]]);
-    expect(built.index.totals).toMatchObject({ examples: 3, findings: 9, verbs: { HOLD: 7, ESCALATE: 2 } });
+    // an exception in force gives ADOPT until its expiry: the wildcard and the three orphan vhosts the operator's lessons
+    // scope are ADOPT; the three orphan records stay HOLD and the proxy_split, in two slices, ESCALATE, by policy
+    expect(built.index.totals).toMatchObject({ examples: 3, findings: 9, verbs: { ADOPT: 4, HOLD: 3, ESCALATE: 2 } });
+    expect(built.index.sample?.verbs).toEqual({ ADOPT: 23, HOLD: 3, ESCALATE: 1 });
     expect(built.index.examples.every((e) => e.reproduced)).toBe(true);
   });
 
@@ -86,7 +91,7 @@ describe("the replay page", () => {
     expect([ru.holds, ru.rowCount, ru.rows?.rows.length]).toEqual([false, 3, 3]);
     expect(ru.sql).toContain("FROM dns_record a");
     expect(f.sample?.match).toBe("same");
-    // the slice's DNS run is the latest DNS collection of the recorded bundle (24 Oct 2026), 191 whole days after the body
+    // the slice's DNS run is the latest DNS collection of the recorded bundle (25 Oct 2026, 13:53 UTC), 191 whole days after the body
     const slice = JSON.parse(readFileSync(path.join(EXAMPLES, "proxy-split", "bundle.json"), "utf8")) as { collection_run: { run_id: string; surface: string; started_at: string }[] };
     const dnsRun = slice.collection_run.filter((r) => r.surface === "cloudflare.dns").sort((a, b) => (a.started_at < b.started_at ? -1 : 1)).at(-1)!.run_id;
     expect(f.exposure).toEqual({ since: "2026-04-16T21:12:47.270Z", days: 191, bound: "exact", source: "audit:evt-05fa48325110cdcb", still_open_in: dnsRun });
@@ -169,7 +174,7 @@ describe("the replay page", () => {
   });
 
   it("a second build is byte-identical, page and data alike", async () => {
-    const again = await buildSite({ examplesDir: EXAMPLES, write: false });
+    const again = await buildSite({ examplesDir: EXAMPLES, write: false, memoryDir: STORE });
     expect([...again.files.keys()]).toEqual([...built.files.keys()]);
     for (const [name, text] of built.files) expect(again.files.get(name), name).toBe(text);
   }, 120_000);

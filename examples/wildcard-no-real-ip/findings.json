@@ -4,7 +4,7 @@
     "finding": {
       "class": "proxied_without_real_ip",
       "tenant_id": "client-1",
-      "run_id": "run-49fc76bf3b823051",
+      "run_id": "run-f74b40064e093f2c",
       "surface": "linux.nginx",
       "host": "host-aa516a",
       "object_id": "/etc/nginx/nginx.conf",
@@ -16,25 +16,25 @@
       "dns_name": "*.host-503b27.ai",
       "resolves_to": "ip-6b6bba",
       "resource_id": "c922e6966d55b15bd96b5e8ea932b715",
-      "dns_run_id": "run-9e232bb5e1ebdb81",
-      "since": "2026-10-25T03:25:09.111Z",
-      "until": "2026-10-25T03:25:17.438Z",
+      "dns_run_id": "run-9d48791b00433777",
+      "since": "2026-10-25T13:53:44.528Z",
+      "until": "2026-10-25T13:53:52.585Z",
       "summary": "*.host-503b27.ai is proxied through Cloudflare to ip-6b6bba, and no server block on host-aa516a trusts a Cloudflare range (http.real_ip in /etc/nginx/nginx.conf is absent): every name under the wildcard sees Cloudflare's addresses as its visitors"
     },
-    "verb": "HOLD",
+    "verb": "ADOPT",
     "disposition": {
-      "verb": "HOLD",
-      "reason": "rule rule-b8d9962485c3ced4 (normal) holds this proxied_without_real_ip finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-b8d9962485c3ced4",
-      "expires_at": "2026-10-27T23:21:06.870Z",
-      "decided_by": "policy",
-      "rule_id": "rule-b8d9962485c3ced4"
+      "verb": "ADOPT",
+      "reason": "accepted exception mem-19 holds until 2026-11-30T00:00:00.000Z (Personal estate, known and intentional: proxied names without real_ip and the leftover records are not a production risk.); the checks alone would say ESCALATE",
+      "expires_at": "2026-11-30T00:00:00.000Z",
+      "decided_by": "operator",
+      "rule_id": null
     },
     "checks": [
       {
         "template": "run_complete",
         "holds": true,
         "rowCount": 0,
-        "explanation": "Run run-49fc76bf3b823051 collected everything it set out to collect."
+        "explanation": "Run run-f74b40064e093f2c collected everything it set out to collect."
       },
       {
         "template": "host_in_inventory",
@@ -46,7 +46,7 @@
         "template": "actor_attributed",
         "holds": false,
         "rowCount": 0,
-        "explanation": "No audit event names who changed c922e6966d55b15bd96b5e8ea932b715 between 2026-10-25T03:25:09.111Z and 2026-10-25T03:25:17.438Z."
+        "explanation": "No audit event names who changed c922e6966d55b15bd96b5e8ea932b715 between 2026-10-25T13:53:44.528Z and 2026-10-25T13:53:52.585Z."
       },
       {
         "template": "previous_value_recoverable",
@@ -56,6 +56,16 @@
       }
     ],
     "rejected": [],
-    "judge": "skipped"
+    "judge": "skipped",
+    "judgeWithheld": "verdict cannot move: accepted exception mem-19 holds until 2026-11-30T00:00:00.000Z; the technician's acceptance, not a judge, settles it",
+    "exception": {
+      "lesson": "mem-19",
+      "status": "applied",
+      "expires_at": "2026-11-30T00:00:00.000Z",
+      "scope_key": "*.host-503b27.ai",
+      "reason": "Personal estate, known and intentional: proxied names without real_ip and the leftover records are not a production risk.",
+      "accepted_by": "technician",
+      "accepted_at": "2026-10-25T14:17:43.955Z"
+    }
   }
 ]

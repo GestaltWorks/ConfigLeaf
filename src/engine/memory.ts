@@ -11,8 +11,12 @@
 // embed alike. An expired lesson comes back flagged so the Decider re-raises the finding; it is never
 // applied silently.
 //
-// The store is the reference's own: state.json and ledger.jsonl under .world/memory (gitignored with
-// the rest of .world/), or in memory for tests and the sample pass. The free-text fields of a lesson
+// The store is the reference's own: state.json and ledger.jsonl in the directory DRIFT_MEMORY_DIR names
+// (src/config.ts; .world/memory by default, gitignored with the rest of .world/), or in memory for tests.
+// `npm run answer` opens it "local", reading and writing. Every pass opens it "read": the lessons as the
+// technician left them, loaded once, with the pass's recalls logged in the process's own H-MEM ledger and
+// nothing written back, so a committed store (examples/memory) stays byte for byte as committed and a
+// clean clone decides with the same lessons. The free-text fields of a lesson
 // (question, answer, reason, who taught it) go through the same redactor as collected data before they
 // are stored, so a hostname typed into an answer is stored as its pseudonym. A scope key is matched
 // exactly, so it cannot be rewritten: it must already be a pseudonym the findings carry (or a
@@ -31,6 +35,7 @@ export type {
 } from "../../vendor/hmem/src/index.ts";
 
 import { randomBytes } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { HMEM, type MemoryRecord } from "../../vendor/hmem/src/index.ts";
@@ -80,8 +85,13 @@ export interface Recall {
 export class MemoryError extends Error {}
 
 export interface TechnicianMemoryOptions {
-  /** "memory" (default) keeps nothing on disk; "local" persists under <directory>/.world/memory. */
-  storage?: "memory" | "local";
+  /**
+   * "memory" (default) keeps nothing on disk. "local" reads and writes the store in `directory` (npm run answer).
+   * "read" loads the store in `directory` as it stands (none when state.json is absent) and writes nothing back:
+   * recalls are logged in this process's H-MEM ledger only, and recording or withdrawing a lesson is refused.
+   */
+  storage?: "memory" | "local" | "read";
+  /** The store's own directory (state.json, ledger.jsonl), resolved against the working directory; DRIFT_MEMORY_DIR when absent. */
   directory?: string;
   /** Milliseconds since the epoch, like the reference's; injectable for tests. */
   clock?: () => number;
@@ -153,8 +163,10 @@ const normQuestion = (q: string): string => q.toLowerCase().replace(/\s+/g, " ")
 
 export class TechnicianMemory {
   readonly hmem: HMEM;
-  /** Where state.json and ledger.jsonl live, or null in memory. */
+  /** Where state.json and ledger.jsonl live (absolute), or null in memory. */
   readonly directory: string | null;
+  /** True when opened "read": the store on disk is never written. */
+  readonly readOnly: boolean;
   private readonly clock: () => number;
   private readonly actor: string;
   private readonly index = new Map<string, Lesson>();
@@ -162,8 +174,23 @@ export class TechnicianMemory {
   constructor(opts: TechnicianMemoryOptions = {}) {
     this.clock = opts.clock ?? Date.now;
     this.actor = opts.actor ?? "technician-memory";
-    this.directory = opts.storage === "local" ? path.join(opts.directory ?? process.cwd(), ".world", "memory") : null;
-    this.hmem = new HMEM({ clock: this.clock, persistDir: this.directory ?? undefined, actor: this.actor });
+    const storage = opts.storage ?? "memory";
+    this.directory = storage === "memory" ? null : path.resolve(opts.directory ?? config.memoryDir);
+    this.readOnly = storage === "read";
+    this.hmem = new HMEM({ clock: this.clock, persistDir: storage === "local" ? this.directory! : undefined, actor: this.actor });
+    if (this.readOnly) {
+      // The reference's own state file, restored into an in-memory store: nothing below writes to the directory.
+      const file = path.join(this.directory!, "state.json");
+      if (existsSync(file)) {
+        let saved: { seq: number; records: MemoryRecord[] };
+        try {
+          saved = JSON.parse(readFileSync(file, "utf8")) as { seq: number; records: MemoryRecord[] };
+        } catch (err) {
+          throw new MemoryError(`the store at ${this.directory} does not parse: ${(err as Error).message}`);
+        }
+        this.hmem.store.restoreAll(saved.records ?? [], saved.seq ?? 0);
+      }
+    }
     for (const r of this.hmem.store.all()) {
       const l = lessonOf(r);
       if (l) this.index.set(l.id, l);
@@ -174,12 +201,18 @@ export class TechnicianMemory {
     return new Date(this.clock()).toISOString();
   }
 
+  /** Refuses a write to a store opened "read". */
+  private writable(what: string): void {
+    if (this.readOnly) throw new MemoryError(`${what} refused: the store at ${this.directory} is open read-only; npm run answer records and withdraws lessons`);
+  }
+
   private provTags(p: LessonProvenance, by: string): string[] {
     return [`${TAG.provKind}${p.kind}`, `${TAG.provAt}${p.at}`, `${TAG.provBy}${by}`, ...(p.runId ? [`${TAG.provRun}${p.runId}`] : [])];
   }
 
   /** (a) A question the agent asked and the technician answered, on one scope of the tenant's estate, until it expires. */
   recordAnswer(input: AnswerInput): AnswerLesson {
+    this.writable("answer");
     const v = parse(AnswerSchema, input, "answer");
     const recordedAt = this.nowIso();
     const question = clean(v.question), answer = clean(v.answer), by = clean(v.provenance.by);
@@ -203,6 +236,7 @@ export class TechnicianMemory {
 
   /** (b) An exception the technician accepted: findings of this class on this scope are ADOPT until the expiry, then re-raised. */
   recordException(input: ExceptionInput): ExceptionLesson {
+    this.writable("exception");
     const v = parse(ExceptionSchema, input, "exception");
     const recordedAt = this.nowIso();
     const reason = clean(v.reason), by = clean(v.provenance.by);
@@ -276,6 +310,7 @@ export class TechnicianMemory {
    * consulting it. Returns the lesson withdrawn, or null when no lesson has that id.
    */
   forget(id: string, reason: string): Lesson | null {
+    this.writable("forget");
     const l = this.index.get(id);
     if (!l) return null;
     this.hmem.store.delete(id, clean(parse(text, reason, "forget reason")));

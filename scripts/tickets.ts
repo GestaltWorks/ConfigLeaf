@@ -27,6 +27,8 @@ import { DriftWorld } from "../src/engine/world.ts";
 import { MemoryLedger } from "../src/ledger.ts";
 import { runPass } from "../src/pipeline.ts";
 import { TENANT } from "../src/policy/schema.ts";
+import { labelledRows } from "../src/loop/steps.ts";
+import { LabelTracer } from "../src/loop/trace.ts";
 import { GithubIssues } from "../src/psa/github.ts";
 import { storeTicketRows, ticketStep } from "../src/psa/step.ts";
 import { Redactor } from "../src/redactor.ts";
@@ -56,10 +58,15 @@ const tenant = args.tenant;
 const dryRun = args["dry-run"] === true || config.sampleMode;
 if (!dryRun && !config.redactSalt) usage("REDACT_SALT is blank: what the step sends and stores carries the tenant's pseudonyms only under its salt (set it in .env, or run with --dry-run)");
 
-const redactor = new Redactor(config.redactSalt || randomBytes(16).toString("hex"), config.redactWords);
+const salt = config.redactSalt || randomBytes(16).toString("hex");
+const redactor = new Redactor(salt, config.redactWords);
 const deny = [...new Set([...config.redactWords, ...config.exportDenyWords])];
-const tracer = new Tracer(`tickets_${Date.now().toString(36)}`, { model: "none" });
-const print = (l: string): void => console.log(l);
+// the cycle's tickets step does the same (src/loop/steps.ts): the PSA's url names the tickets repository, whose owner
+// can be an EXPORT_DENY_WORDS label, so the stored urls, the trace lines and stdout go through REDACT_WORDS and
+// EXPORT_DENY_WORDS together
+const labels = new Redactor(salt, deny);
+const tracer = new LabelTracer(new Tracer(`tickets_${Date.now().toString(36)}`, { model: "none" }), labels);
+const print = (l: string): void => console.log(labels.text(l));
 
 let store: Store | undefined;
 let engine: SqlJsEngine | undefined;
@@ -81,11 +88,11 @@ try {
   }
   const adapter = dryRun ? null : new GithubIssues({ redactor, deny });
   if (!dryRun) store = Store.fromEnv({ schema: args.schema });
-  const result = await ticketStep(layer, pass, adapter, store ? storeTicketRows(store) : null, { tenant, dryRun, redactor, deny, tracer, print });
-  console.log(result.summary);
+  const result = await ticketStep(layer, pass, adapter, store ? labelledRows(storeTicketRows(store), labels) : null, { tenant, dryRun, redactor, deny, tracer, print });
+  console.log(labels.text(result.summary));
   process.exitCode = result.outcomes.some((o) => o.status === "failed" || o.status === "refused") ? 1 : 0;
 } catch (e) {
-  const msg = redactor.text(redact((e as Error)?.message ?? String(e)));
+  const msg = labels.text(redact((e as Error)?.message ?? String(e)));
   console.error(`tickets: ${msg}`);
   process.exitCode = /DRIFT_TICKETS_REPO/.test(msg) ? 2 : 1;
 } finally {

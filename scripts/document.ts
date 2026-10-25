@@ -2,12 +2,13 @@
 //
 // The owner's document for one tenant (src/document/render.ts): one markdown page rendered from SQL through one
 // DataLayer. Sample mode (SAMPLE_MODE=true, or --bundle): sql.js over the bundle (default sample/bundle.json); the
-// pass (src/pipeline.ts) runs over it first, decided at the bundle's own instant (src/data/instant.ts) and recorded
-// through a MemoryLedger into the same engine, so the page reads the dispositions that pass decided; default out
-// examples/document.md. Live: the DataLayer over Zetaris, as scripts/zetaris-queries.ts builds it (every {{t:x}} is
-// DRIFT.x); the dispositions are the ledger's (npm run pass writes them), and the pass runs over the same layer
-// with no ledger for the class of each finding they name; default out document.md at the repository root. The pass
-// runs with no technician memory, so the page depends on the rows alone.
+// pass (src/pipeline.ts) runs over it first with the technician's lessons read from the store DRIFT_MEMORY_DIR names,
+// as the live pass reads them, decided at the bundle's own instant or the latest lesson's when that is later
+// (src/data/instant.ts decisionInstantWith) and recorded through a MemoryLedger into the same engine, so the page
+// reads the dispositions that pass decided; default out examples/document.md. Live: the DataLayer over Zetaris, as
+// scripts/zetaris-queries.ts builds it (every {{t:x}} is DRIFT.x); the dispositions are the ledger's (npm run pass
+// writes them, with the lessons), and the pass runs over the same layer with no ledger and no memory for the class
+// of each finding they name; default out document.md at the repository root.
 // The page passes the deny-list probe (redactor.ts countLabels over REDACT_WORDS and EXPORT_DENY_WORDS) before it is
 // written; one match and nothing is written. Prints the trace (one JSON line per step, also in logs/) and one
 // summary line. Exit 0 when the page is written; 1 when a query fails or the probe refuses; 2 on a usage error.
@@ -26,8 +27,9 @@ import { config, redact } from "../src/config.ts";
 import { DataLayer } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { ZetarisEngine } from "../src/data/engines/zetaris.ts";
-import { decisionInstant } from "../src/data/instant.ts";
+import { decisionInstantWith } from "../src/data/instant.ts";
 import { renderDocument } from "../src/document/render.ts";
+import { TechnicianMemory } from "../src/engine/memory.ts";
 import { DriftWorld } from "../src/engine/world.ts";
 import { MemoryLedger } from "../src/ledger.ts";
 import { runPass } from "../src/pipeline.ts";
@@ -71,7 +73,9 @@ try {
     engine.loadBundle(bundle);
     layer = new DataLayer(engine);
     source = `sql.js over ${path.relative(ROOT, file).replace(/\\/g, "/")}`;
-    const pass = await runPass(layer, { tracer, world: new DriftWorld("document"), ledger: new MemoryLedger(engine), decidedAt: decisionInstant(bundle) });
+    const memory = new TechnicianMemory({ storage: "read" });
+    const decidedAt = decisionInstantWith(bundle, memory.lessons().map((l) => l.recordedAt));
+    const pass = await runPass(layer, { tracer, world: new DriftWorld("document"), memory, ledger: new MemoryLedger(engine), decidedAt });
     classes = new Map(pass.findings.map((f) => [f.id, f.finding.class]));
   } else {
     layer = new DataLayer(new ZetarisEngine());

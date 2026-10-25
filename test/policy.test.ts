@@ -267,7 +267,8 @@ describe("resolvePolicy over the committed policy and the recorded bundle", () =
   });
 
   it("every file of both hosts in sample/bundle.json: each .bak, .pre-symlink and dated copy resolves to a low adopt rule, each live vhost file and nginx.conf to its critical rule; the tally is pinned", () => {
-    const files = [...new Map(bundle.observation.filter((o) => o.surface === "linux.nginx" && o.setting_path === "file").map((o) => [`${o.host} ${o.object_id}`, o])).values()];
+    // the operator's two hosts, tenant client-1; the lab host's files (tenant lab-1) are the lab's own
+    const files = [...new Map(bundle.observation.filter((o) => o.tenant_id === T && o.surface === "linux.nginx" && o.setting_path === "file").map((o) => [`${o.host} ${o.object_id}`, o])).values()];
     const isCopy = (id: string): boolean => /^\/etc\/nginx\/(conf\.d|sites-available)\/[^/]*(\.bak|\.pre-symlink|\.orig$|\.conf\.)/.test(id);
     const isLive = (id: string): boolean => !isCopy(id) && (/^\/etc\/nginx\/conf\.d\/[^/]+\.conf$/.test(id) || /^\/etc\/nginx\/sites-available\/[^/]+$/.test(id));
     const copies = files.filter((o) => isCopy(o.object_id));

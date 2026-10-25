@@ -54,7 +54,7 @@ npm install && cp .env.example .env
 SAMPLE_MODE=true npm run sample                         # the whole pass over the recorded rows
 SAMPLE_MODE=true npm run preflight -- --proposal examples/proposals/a-unproxy-www.json   # GO, NO-GO, GO-IF or ESCALATE for one change
 SAMPLE_MODE=true npm run document -- --tenant client-1  # the owner's document -> examples/document.md
-npm run answer -- --finding <fnd-id> --accept --until <ISO 8601 UTC> --reason "..."   # teach one exception; --list, --forget <id>
+npm run answer -- --finding <fnd-id> --accept --until <ISO 8601 UTC> --reason "..."   # teach one exception -> DRIFT_MEMORY_DIR; --list, --forget <id>
 npm run eval -- --set dev --configs C0                  # the pre-registered eval with no model -> eval/results/<UTC stamp>/
 npm run site                                            # rebuild the replay page in docs/ from examples/
 npm run sources                                         # the table under "Where each answer comes from", read off the SQL
@@ -63,12 +63,15 @@ npm test
 
 `npm run sample` prints a JSON trace line per step, a JSON object per finding with its short id (`fnd-` plus 16 hex,
 what `npm run answer` takes), a `DISPOSITION` line per finding and a summary; the trace also lands in `logs/`,
-gitignored.
+gitignored. The technician's lessons come from the directory `DRIFT_MEMORY_DIR` names: `.env.example` sets
+`examples/memory`, the committed store of the operator's 23 accepted exceptions, so a clean clone and CI decide with
+them; blank, it is `.world/memory`, gitignored. On 25 Oct 2026 the sample pass prints ADOPT 23 under those
+exceptions, HOLD 3 and ESCALATE 1.
 
 Live runs read `.env`, each key described in `.env.example`: `DATABASE_URL`, `ZETARIS_API_KEY`, `ZETARIS_PG_HOST`,
-`CLOUDFLARE_API_TOKEN`, `LINUX_HOSTS`, `DRIFT_VAULT_DIR`, `DRIFT_POLICY_FILE`, `DRIFT_TICKETS_REPO`, `REDACT_SALT`,
-`REDACT_WORDS`, `EXPORT_DENY_WORDS`; the Nightshift and GitHub tokens are read at run time. In cycle order, after the
-one-time setup:
+`CLOUDFLARE_API_TOKEN`, `LINUX_HOSTS`, `DRIFT_VAULT_DIR`, `DRIFT_POLICY_FILE`, `DRIFT_MEMORY_DIR`, `DRIFT_TICKETS_REPO`,
+`REDACT_SALT`, `REDACT_WORDS`, `EXPORT_DENY_WORDS`; the Nightshift and GitHub tokens are read at run time. In cycle
+order, after the one-time setup:
 
 ```bash
 npm run zetaris:setup                                   # once: the DRIFT datasource, the ten-entity USL, three DQ rules
@@ -88,26 +91,28 @@ npm run watch -- --tenant <id> --every 60               # the cycle every 60 min
 
 ## What it proves
 
-Measured on the operator's estate, tenant `client-1`, dates in UTC; the replay page in [docs/](docs/) holds the
-detail.
+Measured on the operator's estate, tenant `client-1`, and the writes on the lab estate, tenant `lab-1`
+([lab/README.md](lab/README.md)), dates in UTC; the replay page in [docs/](docs/) holds the detail.
 
 | Command | Proves | Measured |
 |---|---|---|
-| `npm test` | Every module against fixtures, fakes and a throwaway Postgres schema; the live halves run behind their flags. | 905 tests in 35 files: 792 pass and 113 wait on a live flag, 25 Oct 2026. |
-| `PARITY_LIVE=true npx vitest run test/parity.test.ts` | Every query the agent runs returns the same columns, rows and totals on sql.js and on Zetaris over the same rows. | 107 of 107 cases equal, 25 Oct 2026. |
-| `SAMPLE_MODE=true npm run sample` | The whole pass over `sample/bundle.json`, with no credentials and no model. | 26 runs, 6,372 observations, 27 findings (HOLD 26 and ESCALATE 1, all by policy), two runs byte-identical, 25 Oct 2026. |
-| `npm run collect:cloudflare`, `npm run collect:linux` | The collectors read the live estate in full, each population asserted before the first row. | 58 of 58 records in 6 zones, 860 of 860 audit rows, 24 of 24 and 14 of 14 vhost files, 25 Oct 2026. |
-| `npm run vault:status` | Every complete run is one commit in a per-host or per-account git repository. | 3 repositories of 3 commits each, 58, 32 and 22 files at the heads, 24 Oct 2026. |
+| `npm test` | Every module against fixtures, fakes and a throwaway Postgres schema; the live halves run behind their flags. | 935 tests in 36 files: 822 pass and 113 wait on a live flag, 25 Oct 2026. |
+| `PARITY_LIVE=true npx vitest run test/parity.test.ts` | Every query the agent runs returns the same columns, rows and totals on sql.js and on Zetaris over the same rows. | 107 of 107 cases equal over the export of the 13:53 UTC cycle, 17,364 observation rows read whole on both engines, 25 Oct 2026. |
+| `SAMPLE_MODE=true npm run sample` | The whole pass over `sample/bundle.json`, with no credentials and no model. | 80 runs, 14,174 observations, 27 findings: ADOPT 23 under the operator's accepted exceptions, HOLD 3 and ESCALATE 1 by policy, decided at 2026-10-25T14:17:53.416Z; two runs byte-identical, 25 Oct 2026. |
+| `npm run collect:cloudflare`, `npm run collect:linux` | The collectors read the live estate in full, each population asserted before the first row. | 58 of 58 records in 6 zones, 1,014 of 1,014 audit rows, 24 of 24 and 14 of 14 vhost files, at 13:53 UTC, 25 Oct 2026. |
+| `npm run vault:status` | Every complete run is one commit in a per-host or per-account git repository. | 3 repositories of 11, 12 and 12 commits, 58, 32 and 22 files at the heads, 25 Oct 2026. |
 | `npm run validate:copies` | Each newest vault commit restores to a tree `nginx -t` accepts and each record copy passes its schema, every missing dependency named. | both nginx trees ok_with_gaps (16 and 13 gaps), records 42 ok and 16 ok_with_gaps, 0 fail, 24 Oct 2026. |
-| `npm run probe` | http, dns and tls on every served name, from outside, as one collection run. | 37 names, 111 of 111 probes complete, 20 failing, the same counts in three runs, 24 Oct 2026. |
+| `npm run probe` | http, dns and tls on every served name, from outside, as one collection run. | 37 names, 111 of 111 probes complete, 20 failing, the same counts in 11 runs from 24 Oct 19:59 to 25 Oct 13:53 UTC, 25 Oct 2026. |
 | `npm run approve` | The documentation of record, written from the latest passing run, idempotent. | 333 approvals, then 0 written over the next runs, 24 Oct 2026. |
 | `npm run policy:load` | The MSP's policy file, validated against a closed schema, redacted and stored as versioned rules. | version 2: 15 rules written, a second load 0, 24 Oct 2026. |
-| `npm run pass` | The live pass through Zetaris writes one disposition per finding to the ledger and reads each back through Zetaris. | 27 findings, 27 dispositions written and read back, 24 Oct 2026. |
-| `npm run cycle` | One cycle of the loop, every step once, the first failing step stopping it. | 9 of 9 steps ok in 95.1 s, a dry run, 25 Oct 2026. |
-| `npm run tickets` | One GitHub issue per ticket row, opened, commented on and closed by the ticket rules. | the smoke opened, commented on and closed issue #1 and a cycle opened issue #2 for the `proxy_split` HOLD, 24 Oct 2026; the first cycle after that HOLD expired commented on #2, 25 Oct 2026. |
-| `npm run document` | The owner's document: one page per tenant from 14 named queries, through the deny-list probe before it is written. | 27 findings open; `examples/document.md` byte-identical on a second render, 25 Oct 2026. |
+| `npm run pass` | The live pass through Zetaris writes one disposition per finding to the ledger and reads each back through Zetaris. | 27 findings and 27 dispositions written and read back in each of 12 live passes, from 24 Oct 23:21 to 25 Oct 13:54 UTC; the ledger holds the 324 rows, 25 Oct 2026. |
+| `npm run act -- --apply` | The Actor carries out a ROLLBACK and a FIX on a real host, verifies every write with probes and records each action. | On the lab: `rollback_file` done at 09:53 UTC, the copy written, `nginx -t` passed, nginx reloaded and the write verified by probe `probe-36eb2c1bba298a2a`; a FIX investigated inside the Actor, Lightning's selection on receipt `rcpt_req_nn4ag0yu` and Ultra's verdict on receipt `rcpt_req_iehg9gmt`, both verified, and its `fix` refused without a valid copy; a rollback at 05:47 UTC completed with no probe of the lab's names and is `unverified`, 25 Oct 2026. |
+| `npm run cycle` | One cycle of the loop, every step once, the first failing step stopping it. | 9 of 9 steps ok in 101.5 s, a dry run, the 13:53 UTC cycle of 25 Oct 2026. |
+| `npm run watch` | The cycle on a schedule, each cycle traced to its own file. | 7 cycles every 45 minutes from 09:23 to 13:53 UTC, a dry run: 9 of 9 steps ok in each, 75.0 to 101.5 s a cycle, 101.5 s the last, 0 failed, 25 Oct 2026. |
+| `npm run tickets` | One GitHub issue per ticket row, opened, commented on and closed by the ticket rules. | the smoke opened, commented on and closed issue #1 and a cycle opened issue #2 for the `proxy_split` HOLD, 24 Oct 2026; the first cycle after that HOLD expired commented on #2, 25 Oct 2026. On the lab, issue #3 opened as the FIX's incident with the investigation under Evidence and stays open, and issue #4 opened and closed as the rollback's change with its verification probe, 25 Oct 2026. `sample/bundle.json` carries the three ticket rows, #2 on the estate and #3 and #4 on the lab, each URL redacted. |
+| `npm run document` | The owner's document: one page per tenant from 14 named queries, through the deny-list probe before it is written. | 27 findings open, ADOPT 23, HOLD 3 and ESCALATE 1, decided at 2026-10-25T14:17:53.416Z; `examples/document.md` byte-identical on a second render, 25 Oct 2026. |
 | `npm run eval -- --set dev --configs C0 --runs 2` | The pre-registered eval of [eval/PROTOCOL.md](eval/PROTOCOL.md). | C0 on the 15 development items under `policy/hackathon.json` version 2: 11 scored, 11 with a verdict, agreement 9 of 9 (Wilson 95% 0.701 to 1.000), 0 of 9 labelled no read yes, 0 differences between runs, 25 Oct 2026. |
-| `npm run site` | The replay page, built from [examples/](examples/) and the repository's SQL: every finding with every check re-run to its recorded count before anything is published, the owner's document as its Document tab and "Where each answer comes from" as its Sources tab, both rendered to HTML at build time. | 9 findings (HOLD 7, ESCALATE 2), 33 checks re-run equal, the 181-line document decided at 2026-10-25T03:25:35.412Z, the 9 class rows; 165,665 bytes of the 300,000-byte budget, a rebuild byte-identical, 25 Oct 2026. |
+| `npm run site` | The replay page, built from [examples/](examples/) and the repository's SQL: every finding with every check re-run to its recorded count before anything is published, the owner's document as its Document tab and "Where each answer comes from" as its Sources tab, both rendered to HTML at build time. | 9 findings (ADOPT 4, HOLD 3, ESCALATE 2), 33 checks re-run equal, the 181-line document decided at 2026-10-25T14:17:53.416Z, the 9 class rows; 167,554 bytes of the 300,000-byte budget, a rebuild byte-identical, 25 Oct 2026. |
 | `npm run conformance`, `npm run conformance:hmem` | The vendored Meterless suites pass through the agent's own engine modules. | World Model 8 of 8, 23 Oct 2026; H-MEM 13 of 13, 24 Oct 2026. |
 | `npm run zetaris:setup` | The idempotent setup of the `DRIFT` datasource, the ten-entity USL and its three DQ rules. | 42 statements, 0 failed; `run_complete` 19 of 19 runs valid, 25 Oct 2026. |
 | `npm run zetaris:queries` | The hero query, the survey and the detectors run through Zetaris itself. | 0 hero rows, the 27 survey findings, 0 invalid runs, 24 Oct 2026. |
@@ -150,9 +155,9 @@ versioned `policy_rule` rows. A rule matches a tenant, a surface and two globs a
 - ADOPT: `on_drift` adopt, or the technician's exception in force; with no rule, ADOPT when every check holds and ESCALATE otherwise.
 
 Version 2's 15 rules are in [DESIGN.md](DESIGN.md): vhost files, `nginx.conf` and a record's `content` and `proxied`
-are critical and locked; copies beside live files are adopted; the rest is held. On 25 Oct 2026 the sample pass held
-19 findings under the `real_ip` rule and 7 under the catch-all; the `proxy_split` is ESCALATE, its 4-hour hold
-expired.
+are critical and locked; copies beside live files are adopted; the rest is held. On 25 Oct 2026 the sample pass adopts
+23 findings under the operator's accepted exceptions, which outrank the rules, holds the 3 `orphan_record` findings
+under the catch-all until 2026-10-27T23:21:06.870Z, and gives the `proxy_split` ESCALATE, its 4-hour hold expired.
 
 ## The vault and validation
 
@@ -217,10 +222,10 @@ actions against a fake host, probe and fetch, and a second run wrote 0.
 change becomes a derived table for one call, the whole pass runs in that world, and its findings are compared with the
 baseline by key, with nothing written. The verdict is GO when the change adds no finding, GO-IF when up to three
 prerequisites from a catalogue clear what it adds, NO-GO when it adds a finding no prerequisite clears, and ESCALATE
-when the simulation cannot run or three prerequisites leave a finding standing. On 24 Oct 2026, over the four
-proposals in [examples/proposals/](examples/proposals/): un-proxying www GO, removing 3 findings; the 16 April body
-replayed GO with zero delta, the state already in force; trusted ranges on the vhost that serves www GO, removing 2;
-retargeting the apex outside the inventory NO-GO, adding 2 hero findings (`found_but_different` when the previous host run paired with an earlier DNS run, `dns_change` when both pair with the same one; `dns_change` on the recording of 25 Oct 2026).
+when the simulation cannot run or three prerequisites leave a finding standing. On 25 Oct 2026, over the four
+proposals in [examples/proposals/](examples/proposals/) and the recording of 13:53 UTC: un-proxying www GO, removing 3
+findings; the 16 April body replayed GO with zero delta, the state already in force; trusted ranges on the vhost that
+serves www GO, removing 2; retargeting the apex outside the inventory NO-GO, adding 2 hero findings (`found_but_different` when the previous host run paired with an earlier DNS run, `dns_change` when both pair with the same one; `found_but_different` on this recording, the 13:08 UTC host run paired with the 13:08 UTC DNS run).
 
 ## Evaluation
 
@@ -231,9 +236,9 @@ gives 15 development items and 23 held out; tuning uses the development set only
 after the feature freeze, its results published whatever they say. Yes expects ESCALATE or FIX; no expects ADOPT, HOLD
 or ROLLBACK. Every model call passes the receipt gate with a fresh nonce, a substitution invalidates its run, and the
 ten planted false claims of `eval/planted.json` go to every judge. Results, with Wilson 95% intervals, land in
-`eval/results/<UTC stamp>/`. C0 runs the pass as SAMPLE_MODE does, under `policy/hackathon.json` version 2 loaded for
-the recording's tenant (the protocol's changelog, 25 Oct 2026): on the development set every finding is HOLD by
-policy and C0 agrees with 9 of the 9 items labelled yes or no.
+`eval/results/<UTC stamp>/`. C0 runs the pass as SAMPLE_MODE does with the technician's memory empty, under
+`policy/hackathon.json` version 2 loaded for the recording's tenant (the protocol's changelog, 25 Oct 2026): on the
+development set every finding is HOLD by policy and C0 agrees with 9 of the 9 items labelled yes or no.
 
 ## Zetaris
 
@@ -254,7 +259,12 @@ holds every observation of a passing run, the referent fingerprints FOUND-BUT-DI
 line's open edges; its conformance suite passes 8 of 8 through that module. H-MEM (`memory.ts`) holds the technician's
 lessons: `npm run answer` records an exception or an answer on one finding's scope with a tenant, an expiry and
 provenance, and the Decider recalls it by exact scope key, an exception in force giving ADOPT until its expiry and a
-lapsed one ESCALATE. Lessons live under `.world/memory`, gitignored; the vendored H-MEM suite passes 13 of 13.
+lapsed one ESCALATE. Lessons live in the directory `DRIFT_MEMORY_DIR` names (`.world/memory`, gitignored, when it is
+blank); every pass opens the store read only, and `npm run answer` is the one writer. The store is committed under
+`examples/memory`: on 25 Oct 2026 the operator accepted 23 exceptions, one per `proxied_without_real_ip` and
+`orphan_vhost` finding of the recorded estate, in his words "Personal estate, known and intentional: proxied names
+without real_ip and the leftover records are not a production risk.", each until 2026-11-30T00:00:00Z, and all 23
+are in force on the recorded estate. The vendored H-MEM suite passes 13 of 13.
 Nightshift, the Meterless runtime, serves Nemotron and signs a receipt for every successful call.
 
 ## Nemotron
@@ -278,15 +288,19 @@ when the Ed25519-signed receipt verifies, the served tier is the one requested, 
 and `app` is `drift-agent-<tenant>`; a substituted tier, a tampered body, an unreceipted response or a receipt of
 another request on a fresh retry files the finding `not_judged`, and it escalates. On 24 Oct 2026 the eval smoke made
 9 calls under `drift-agent-client-1`, every receipt verified and custody holding on the first attempt; the per-call
-record is `logs/eval_live_2026-10-24T23-49-31Z.log`, kept locally.
+record is `logs/eval_live_2026-10-24T23-49-31Z.log`, kept locally. On 25 Oct 2026 Nemotron ran inside the Actor on
+the lab, beside the eval: for a FIX, Lightning selected four valid checks on receipt `rcpt_req_nn4ag0yu` and Ultra's
+refuting SELECT returned no rows on receipt `rcpt_req_iehg9gmt`, both receipts verified and custody holding under
+`drift-agent-lab-1`.
 
 ## Limits
 
-- The write paths run behind `--apply` only. The lab estate (`lab/README.md`, tenant `lab-1`) proves the host's write path: on 25 Oct 2026 at 05:47 UTC `rollback_file` wrote the copy, passed `nginx -t`, reloaded and ended `unverified`, and the next pass found 0 findings. Verification is measured on hosts whose names resolve; the lab's names sit in no zone. `revert_record` has run against a fake fetch only, and the operator's hosts and zones hold 0 writes from the Actor; the first is the operator's rehearsal.
+- The write paths run behind `--apply` only, and on 25 Oct 2026 they ran for real on the lab estate (`lab/README.md`, tenant `lab-1`): `rollback_file` reached `done` at 09:53 UTC, verified by probe `probe-36eb2c1bba298a2a` with the probe population from `PROBE_TARGETS_OVERRIDE`, since the lab's names sit in no zone; a FIX ran `investigate` with Nemotron Lightning and Ultra and its `fix` was refused without a valid copy; the 05:47 UTC rollback, run without the override, found no record of the lab's names in the account and is `unverified`. `revert_record` has run against a fake fetch only. The operator's hosts and zones hold 0 writes from the Actor; the first is the operator's rehearsal.
 - One tenant, two hosts, six zones, one policy file, one machine and one PSA backend, GitHub Issues (HaloPSA, ConnectWise and Autotask are a field map): `npm run watch` schedules cycles while its process lives, and a GitHub issue is the one notification.
-- The live model calls so far are the 9 of the eval smoke, and the eval has run C0 on the development set; the held-out set runs once, on 26 October, after the feature freeze.
+- The receipted model calls before the eval's three-run development pass are the 9 of the eval smoke and the 3 of the lab's two investigations, 25 Oct 2026; the held-out set runs once, on 26 October, after the feature freeze.
 - The hero classes find nothing on the recorded estate, where every name a vhost serves lands on an inventory host; pre-flight raises two hero findings in simulation, and `test/fixtures/authored-bundle.json` carries the full story for the tests.
-- `drift_vs_approved`, `changed_since_backup` and `approved_missing` find 0 on the bundle; ROLLBACK and FIX run on `test/fixtures/policy-bundle.json` only.
+- `drift_vs_approved`, `changed_since_backup` and `approved_missing` find 0 on the operator's estate; ROLLBACK and FIX run on the lab estate and on `test/fixtures/policy-bundle.json`.
+- The 23 accepted exceptions in `examples/memory` hold until 2026-11-30T00:00:00Z, and recall runs at the clock: from that instant the sample pass, the examples and the replay page give those 23 findings ESCALATE (exception lapsed), and `npm run examples`, `npm run document` and `npm run site` regenerate the committed outputs the tests hold to the store. The 23 lessons sit on 15 names: a name served by a :443 and a :80 block raises two findings, one lesson was taught per finding, and the Decider applies the earlier lesson on a name, so withdrawing one of a pair leaves its twin in force (25 Oct 2026).
 - `verifyReceipt` trusts the public key each receipt carries; pinning the runtime's key in config would close a receipt forged with a fresh key.
 - Probes run from one machine through two public resolvers; a name resolves through its A and AAAA records, a CNAME followed one level.
 - The collector reads with the operator's own SSH key, so its read-only property lives in the fixed script it streams. [ops/](ops/) holds the designed second stage, not yet installed: a dedicated user whose key is bound to a forced command running the same reads, and one sudoers line for the two root-only reads.
@@ -325,3 +339,4 @@ configuration history (audit log, nightly tarballs, dated vhost copies) predates
 - 2026-10-24: `approved_missing` counts an object absent only when the run holds neither an observation nor a `dns_record` row of it; every HOLD on a live value shares the first HOLD's expiry.
 - 2026-10-24: `tenantAppId` joins base and tenant with `-`, the form the runtime files under `receipt.app` (12 of 12 receipts).
 - 2026-10-25: Every pass writes its own ledger rows (`disposition_id` carries `decided_at`); a bundle's decision instant is the later of its runs' latest finish and its latest ledger row; the `action` row carries the Actor's `reason` and `record`; the judge takes the tier the gate expects.
+- 2026-10-25: The technician's lessons live where `DRIFT_MEMORY_DIR` says, committed under `examples/memory`; every pass opens the store read only, so a run leaves it as committed; a replay over a bundle decides at the later of the bundle's instant and the latest lesson's, so a lesson taught after the recorded pass writes rows of its own.

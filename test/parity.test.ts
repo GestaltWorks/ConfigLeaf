@@ -113,6 +113,9 @@ const QUEST_APPROVALS = (bundle.approved_setting as { tenant_id: string; host: s
   .filter((a) => a.tenant_id === T && (a.host === SITES_HOST || a.host === null) && a.object_id === QUEST_FILE && a.setting_path === "file"
     && bundle.observation.some((o) => o.run_id === SITES_RUN && o.object_id === QUEST_FILE && o.setting_path === "file" && o.value_hash === a.value_hash)).length;
 
+/** backup_recent with SAMPLE params over this bundle's own snapshots: the host's export tarballs taken since the window opens (each nightly export adds one). */
+const RECENT_BACKUPS = bundle.backup_snapshot.filter((s) => s.tenant_id === T && s.host === SITES_HOST && s.taken_at >= "2026-10-20T00:00:00.000Z").length;
+
 /** The Decider's reads (src/pipeline.ts) over the bundle's own rows and over derived rows that widen them. */
 const one = `FROM {{t:collection_run}} WHERE run_id = '${DNS_RUN}'`;
 /** Three more rules: a "*" rule, the tenant's own at version 2, another tenant's (which the tenant's read leaves out). */
@@ -382,7 +385,7 @@ const CASES: Case[] = [
   ...BUILD_B_CASES,
   ...TICKET_CASES,
   ...EVAL_PARITY_CASES.map((c) => ({ ...c, mask: noEvidenceBodies })),
-  ...CATALOGUE.map((t) => ({ name: `template ${t.id}`, sql: t.sql, params: SAMPLE[t.id], rows: t.id === "setting_matches_approved" ? QUEST_APPROVALS : SAMPLE_ROWS[t.id] })),
+  ...CATALOGUE.map((t) => ({ name: `template ${t.id}`, sql: t.sql, params: SAMPLE[t.id], rows: t.id === "setting_matches_approved" ? QUEST_APPROVALS : t.id === "backup_recent" ? RECENT_BACKUPS : SAMPLE_ROWS[t.id] })),
   // Every table, the eight of the design included: a bundle exported before they existed holds none of their rows, and the datasource then holds none either.
   ...SCHEMA_TABLES.map((t) => ({
     name: `table ${t.name}`,
@@ -393,6 +396,11 @@ const CASES: Case[] = [
 ];
 
 const live = process.env.PARITY_LIVE === "true" && config.zetaris.apiKey !== "";
+/**
+ * The row limit of every case, above the largest table of the bundle (17,364 observation rows on 25 Oct 2026), so both
+ * engines return and count every row: measured 25 Oct 2026, Zetaris's `total` stops at the request limit.
+ */
+const EVERY_ROW = 100_000;
 if (!live) console.log("parity: live Zetaris half skipped (set PARITY_LIVE=true and ZETARIS_API_KEY to run it)");
 
 describe("engine parity", () => {
@@ -409,14 +417,14 @@ describe("engine parity", () => {
 
   for (const c of CASES) {
     it(`sqljs: ${c.name}`, async () => {
-      const r = await on(sqljs, c).run(c.sql, c.params, { limit: 10_000 });
+      const r = await on(sqljs, c).run(c.sql, c.params, { limit: EVERY_ROW });
       expect(r.columns.length).toBeGreaterThan(0);
       expect(r.rows.every((row) => row.length === r.columns.length && row.every((v) => typeof v === "string"))).toBe(true);
       if (c.rows !== undefined) expect(r.rowCount).toBe(c.rows);
     });
 
     it.skipIf(!live)(`zetaris = sqljs: ${c.name}`, { timeout: 60_000 }, async () => {
-      const [a, b] = await Promise.all([on(sqljs, c).run(c.sql, c.params, { limit: 10_000 }), on(zetaris!, c).run(c.sql, c.params, { agent: "parity", limit: 10_000 })]);
+      const [a, b] = await Promise.all([on(sqljs, c).run(c.sql, c.params, { limit: EVERY_ROW }), on(zetaris!, c).run(c.sql, c.params, { agent: "parity", limit: EVERY_ROW })]);
       expect(b.columns).toEqual(a.columns);
       const mask = c.mask ?? ((row: string[]) => row);
       expect(b.rows.map((r) => mask(r, b.columns))).toEqual(a.rows.map((r) => mask(r, a.columns)));

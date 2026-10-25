@@ -33,8 +33,12 @@
 // holds with the deny-list blank too); or when the page and its data exceed MAX_BYTES. Every refusal names
 // the file and the position in the list, never the label.
 //
-// Deterministic: no clock, no machine path, so the committed docs/ is exactly the build of the committed
-// examples (test/site.test.ts asserts it). File hashes are over LF text, as git stores it.
+// The pass over each slice and the full sample pass read the technician's lessons from the store DRIFT_MEMORY_DIR
+// names (BuildOptions.memoryDir; read only) and decide at the bundle's instant or the latest lesson's, as npm run
+// examples and npm run sample do, so an exception in force decides here as it decided there.
+//
+// Deterministic: no clock in the output, no machine path, so the committed docs/ is exactly the build of the
+// committed examples (test/site.test.ts asserts it). File hashes are over LF text, as git stores it.
 
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -48,11 +52,12 @@ import { renderTemplate, templateById } from "../src/catalogue/templates.ts";
 import { config } from "../src/config.ts";
 import { DataLayer, type Param, type Params } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
-import { decisionInstant } from "../src/data/instant.ts";
+import { decisionInstantWith } from "../src/data/instant.ts";
 import {
   HERO_SQL, ORPHAN_RECORD_SQL, ORPHAN_VHOST_SQL, PROXIED_WITHOUT_REAL_IP_SQL, PROXY_SPLIT_SQL, RUNS_SQL, WILDCARD_WITHOUT_REAL_IP_SQL, objects,
 } from "../src/data/queries.ts";
 import { sourceRows, sourcesMarkdown } from "../src/document/render.ts";
+import { TechnicianMemory } from "../src/engine/memory.ts";
 import { DriftWorld } from "../src/engine/world.ts";
 import { runPass, type Finding } from "../src/pipeline.ts";
 import { Redactor, countLabels, describeRedactions } from "../src/redactor.ts";
@@ -172,6 +177,8 @@ export interface BuildOptions {
   allowStale?: boolean;
   /** The owner's document the Document tab shows; default examples/document.md. */
   documentPath?: string;
+  /** The technician's lessons every pass of the build reads (opened read only); default DRIFT_MEMORY_DIR. */
+  memoryDir?: string;
 }
 export interface DocumentTab { file: string; bytes: number; sha256: string; decidedAt: string | null }
 export interface BuildResult { outDir: string; files: Map<string, string>; bytes: number; index: SiteIndex; scan: ScanReport; document: DocumentTab; sources: number }
@@ -361,12 +368,13 @@ async function judgeView(layer: DataLayer, j: JudgeRec, where: string): Promise<
 const keyOf = (f: { class: string; host: string | null; object_id: string; setting_path: string; resource_id?: string | null }): string =>
   [f.class, f.host ?? "", f.object_id, f.setting_path, f.resource_id ?? ""].join("|");
 
-async function passOver(bundle: unknown, world: string): Promise<{ pass: Awaited<ReturnType<typeof runPass>>; counts: Record<string, number> }> {
+async function passOver(bundle: unknown, world: string, memory: TechnicianMemory): Promise<{ pass: Awaited<ReturnType<typeof runPass>>; counts: Record<string, number> }> {
   const engine = await SqlJsEngine.create();
   try {
     const counts = engine.loadBundle(bundle as Record<string, unknown>);
-    // decidedAt: the bundle's own instant (src/data/instant.ts), so a HOLD's expiry is the same on every build
-    return { pass: await runPass(new DataLayer(engine), { world: new DriftWorld(world), decidedAt: decisionInstant(bundle) }), counts };
+    // decidedAt: the bundle's own instant, or the latest lesson's when that is later (src/data/instant.ts), so a HOLD's expiry is the same on every build
+    const decidedAt = decisionInstantWith(bundle, memory.lessons().map((l) => l.recordedAt));
+    return { pass: await runPass(new DataLayer(engine), { world: new DriftWorld(world), memory, decidedAt }), counts };
   } finally {
     engine.close();
   }
@@ -388,7 +396,7 @@ function sampleMatch(rec: FindingRec, full: Map<string, Finding>): FindingView["
 
 // ---- one example -----------------------------------------------------------------------------------------------
 
-async function exampleView(dir: string, examplesDir: string, full: Map<string, Finding> | null): Promise<ExampleView> {
+async function exampleView(dir: string, examplesDir: string, full: Map<string, Finding> | null, memory: TechnicianMemory): Promise<ExampleView> {
   const bundlePath = path.join(examplesDir, dir, "bundle.json");
   const findingsPath = path.join(examplesDir, dir, "findings.json");
   const bundleText = lf(readFileSync(bundlePath, "utf8"));
@@ -436,7 +444,7 @@ async function exampleView(dir: string, examplesDir: string, full: Map<string, F
     engine.close();
   }
 
-  const again = await passOver(bundle, `site_${dir}`);
+  const again = await passOver(bundle, `site_${dir}`, memory);
   const reproduced = `${JSON.stringify(again.pass.findings, null, 2)}\n` === findingsText;
   return {
     dir, note: typeof bundle._note === "string" ? bundle._note : "", tables: Object.fromEntries(Object.entries(tables).filter(([, n]) => n > 0)),
@@ -593,12 +601,13 @@ export async function buildSite(opts: BuildOptions = {}): Promise<BuildResult> {
 
   const dirs = exampleDirs(examplesDir);
   if (!dirs.length) throw new SiteError(`no example under ${examplesDir} has both bundle.json and findings.json`);
+  const memory = new TechnicianMemory({ storage: "read", directory: opts.memoryDir });
 
   let sample: SampleSummary | null = null;
   let full: Map<string, Finding> | null = null;
   if (samplePath) {
     const text = lf(readFileSync(samplePath, "utf8"));
-    const { pass } = await passOver(JSON.parse(text), "site_sample");
+    const { pass } = await passOver(JSON.parse(text), "site_sample", memory);
     full = new Map(pass.findings.map((f) => [keyOf(f.finding), f]));
     sample = {
       bundle: shownPath(samplePath), sha256: sha(text), runs: pass.runs, gatedOut: pass.gatedOut.length, observed: pass.observed, findings: pass.findings.length,
@@ -607,7 +616,7 @@ export async function buildSite(opts: BuildOptions = {}): Promise<BuildResult> {
   }
 
   const examples: ExampleView[] = [];
-  for (const d of dirs) examples.push(await exampleView(d, examplesDir, full));
+  for (const d of dirs) examples.push(await exampleView(d, examplesDir, full, memory));
   const stale = examples.filter((e) => !e.reproduced).map((e) => `examples/${e.dir}/findings.json`);
   if (stale.length && !opts.allowStale) {
     throw new SiteError(`refusing to publish: ${stale.join(", ")} ${stale.length === 1 ? "is" : "are"} stale: re-running the pass over the slice does not give the committed findings; run npm run examples, then npm run site (or pass --allow-stale to publish the page marked stale)`);

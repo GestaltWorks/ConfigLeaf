@@ -18,8 +18,9 @@
 //               its host, or the address it resolves to. Exact match only; a lesson about one name never
 //               applies to another.
 //
-// Lessons live in <memory-dir>/.world/memory (state.json, ledger.jsonl), the working directory by default;
-// .world/ is gitignored, so nothing recorded here reaches the repository. Free text (reason, question,
+// Lessons live in the directory DRIFT_MEMORY_DIR names (state.json, ledger.jsonl; src/config.ts), --memory-dir
+// for one command: .world/memory when it is blank, gitignored; examples/memory is the committed store a clean clone
+// and CI decide with. Recording and --forget write the store; --list only reads it. Free text (reason, question,
 // answer, --by) goes through the redactor before it is stored; the printed lesson is the stored one.
 
 import { readFileSync } from "node:fs";
@@ -54,7 +55,7 @@ const USAGE = [
   '  npm run answer -- --finding <id> --question "..." --answer "..." [--until <ISO 8601 UTC>] [--scope host|name|address] [--by <role>]',
   "  npm run answer -- --list [--tenant <id>]",
   '  npm run answer -- --forget <lesson id> [--reason "..."]',
-  "  options: --bundle sample/bundle.json  --memory-dir <dir>   (lessons live in <dir>/.world/memory; the working directory by default)",
+  "  options: --bundle sample/bundle.json  --memory-dir <dir>   (the store's directory; DRIFT_MEMORY_DIR by default, .world/memory when that is blank)",
 ].join("\n");
 
 const fail = (msg: string, code = 2): never => {
@@ -62,7 +63,7 @@ const fail = (msg: string, code = 2): never => {
   process.exit(code);
 };
 
-const memory = new TechnicianMemory({ storage: "local", directory: args["memory-dir"] });
+const memory = new TechnicianMemory({ storage: args.list ? "read" : "local", directory: args["memory-dir"] });
 const where = memory.directory!;
 
 const describe = (l: Lesson): string => l.kind === "exception"
@@ -117,7 +118,7 @@ try {
   console.log(JSON.stringify(lesson, null, 2));
   console.log("");
   console.log(`recorded ${describe(lesson)}`);
-  console.log(`stored in ${where} (gitignored); the store holds ${memory.lessons().length} lesson(s)`);
+  console.log(`stored in ${where}; the store holds ${memory.lessons().length} lesson(s)`);
   if (lesson.kind === "exception") {
     const affected = pass.findings.filter((x) => x.finding.tenant_id === f.tenant_id && x.finding.class === f.class && Object.values(scopeValuesOf(x.finding)).flat().includes(key!));
     console.log(`on the next pass ${affected.length} finding(s) of class ${f.class} on ${type} ${key} are ADOPT under this exception until ${lesson.expiresAt}, then re-raised: ${affected.map((x) => `${x.id} (${x.verb} today)`).join(", ")}`);

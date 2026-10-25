@@ -3,13 +3,20 @@
 // records, the validations of those copies, the probes of the slice's names and the tenant's probe runs, and every
 // policy rule of the tenant and of "*". Over sample/bundle.json, each of the three slices holds exactly the
 // approvals, copies, validations, probes and disposition rows of its own rows, recomputed here from the slice, and
-// decides at the full bundle's instant. Offline; nothing is written.
+// decides at the full bundle's instant; the committed findings carry the verbs the committed lessons
+// (examples/memory) give. Offline; nothing is written.
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { decisionInstant } from "../src/data/instant.ts";
 import type { Tables } from "../src/data/store.ts";
+import { TechnicianMemory } from "../src/engine/memory.ts";
+import type { Finding } from "../src/pipeline.ts";
 import bundle from "../sample/bundle.json" with { type: "json" };
 import { buildExamples, sliceDeciderRows } from "../scripts/examples.ts";
 
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const T = "client-t";
 const rows = <K extends keyof Tables>(xs: Record<string, unknown>[]): Tables[K] => xs as unknown as Tables[K];
 
@@ -88,6 +95,9 @@ describe("sliceDeciderRows over synthetic rows", () => {
 
 describe("the three slices of sample/bundle.json", () => {
   const B = bundle as unknown as Tables;
+  /** The slices are the operator's estate; the bundle also holds the lab's rows (tenant lab-1), which no slice keeps. */
+  const TENANT = "client-1";
+  const own = <R extends { tenant_id: string }>(xs: readonly R[]): R[] => xs.filter((x) => x.tenant_id === TENANT);
 
   it("each holds exactly the approvals, copies, validations, probes and disposition rows of its own rows, recomputed from the slice, and decides at the bundle's instant", async () => {
     const examples = await buildExamples();
@@ -99,18 +109,36 @@ describe("the three slices of sample/bundle.json", () => {
       const t = ex.tables;
       const objects = new Set([...(t.observation ?? []).map((o) => o.object_id), ...(t.dns_record ?? []).map((d) => d.record_id)]);
       const names = new Set([...(t.dns_record ?? []).map((d) => d.name), ...(t.observation ?? []).filter((o) => o.refers_to_type === "dns_name" && o.setting_path.includes(".server_name[")).map((o) => o.refers_to_id)]);
-      const approvals = B.approved_setting.filter((a) => objects.has(a.object_id));
-      const copies = B.vault_copy.filter((c) => objects.has(c.object_id));
+      const approvals = own(B.approved_setting).filter((a) => objects.has(a.object_id));
+      const copies = own(B.vault_copy).filter((c) => objects.has(c.object_id));
       const copyIds = new Set(copies.map((c) => c.copy_id));
       expect(t.approved_setting ?? [], ex.dir).toEqual(approvals);
       expect(t.vault_copy ?? [], ex.dir).toEqual(copies);
-      expect(t.copy_validation ?? [], ex.dir).toEqual(B.copy_validation.filter((v) => copyIds.has(v.copy_id)));
-      expect(t.probe ?? [], ex.dir).toEqual(B.probe.filter((p) => names.has(p.target)));
-      expect(t.disposition ?? [], ex.dir).toEqual(B.disposition.filter((d) => objects.has(d.object_id)));
+      expect(t.copy_validation ?? [], ex.dir).toEqual(own(B.copy_validation).filter((v) => copyIds.has(v.copy_id)));
+      expect(t.probe ?? [], ex.dir).toEqual(own(B.probe).filter((p) => names.has(p.target)));
+      expect(t.disposition ?? [], ex.dir).toEqual(own(B.disposition).filter((d) => objects.has(d.object_id)));
       expect(t.policy_rule, ex.dir).toEqual(B.policy_rule);
       // the slice's dispositions carry the latest pass's rows, so the slice decides at the full bundle's instant
       expect(decisionInstant(t), ex.dir).toBe(decisionInstant(bundle));
       console.log(`examples: ${ex.dir}: approved_setting ${(t.approved_setting ?? []).length}/${B.approved_setting.length}, vault_copy ${(t.vault_copy ?? []).length}/${B.vault_copy.length}, copy_validation ${(t.copy_validation ?? []).length}/${B.copy_validation.length}, probe ${(t.probe ?? []).length}/${B.probe.length}, disposition ${(t.disposition ?? []).length}/${B.disposition.length}`);
     }
   }, 60_000);
+
+  it("the committed findings under the committed lessons: an exception in force gives ADOPT until its expiry, decided by the operator under a lesson the store holds; every other finding is the policy's", () => {
+    const store = new TechnicianMemory({ storage: "read", directory: path.join(ROOT, "examples", "memory") });
+    const read = (dir: string): Finding[] => JSON.parse(readFileSync(path.join(ROOT, "examples", dir, "findings.json"), "utf8")) as Finding[];
+    const mix = (fs: Finding[]) => fs.map((f) => [f.finding.class, f.verb, f.disposition.decided_by, f.exception?.status ?? null]);
+    expect(mix(read("proxy-split"))).toEqual([["proxy_split", "ESCALATE", "policy", null]]);
+    expect(mix(read("wildcard-no-real-ip"))).toEqual([["proxied_without_real_ip", "ADOPT", "operator", "applied"]]);
+    expect(mix(read("orphans"))).toEqual([
+      ["proxy_split", "ESCALATE", "policy", null],
+      ...Array(3).fill(["orphan_record", "HOLD", "policy", null]),
+      ...Array(3).fill(["orphan_vhost", "ADOPT", "operator", "applied"]),
+    ]);
+    for (const f of ["proxy-split", "wildcard-no-real-ip", "orphans"].flatMap(read).filter((x) => x.exception)) {
+      const lesson = store.lesson(f.exception!.lesson);
+      expect(lesson, f.id).toMatchObject({ kind: "exception", findingClass: f.finding.class, scopeKey: f.exception!.scope_key, expiresAt: f.exception!.expires_at });
+      expect(f.disposition.expires_at, f.id).toBe(f.exception!.expires_at);
+    }
+  });
 });

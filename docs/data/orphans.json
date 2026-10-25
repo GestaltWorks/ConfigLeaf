@@ -2,35 +2,36 @@
  "dir": "orphans",
  "note": "orphan_record and orphan_vhost: A records land on a collected host where no enabled server block names them (requests reach the default server), and one host carries a vhost file on disk and one enabled vhost with two names that have no record in any collected zone and no wildcard covering their zone. Rows: the DNS and audit runs, every A and CNAME record (a name served through a CNAME alone is not an orphan, so the aliases are needed), the audit events on the records the findings name, both host runs' server_name rows with their .zone and .enabled siblings, the inventory (each host's global addresses) and the export tarballs backup_recent reads. The CNAMEs bring the one proxied alias of a direct apex with them, so the pass also reports that proxy_split here. Cut from sample/bundle.json by scripts/examples.ts.",
  "tables": {
-  "collection_run": 8,
+  "collection_run": 15,
   "observation": 282,
   "approved_setting": 234,
-  "backup_snapshot": 18,
+  "backup_snapshot": 20,
   "dns_record": 39,
   "audit_event": 4,
   "inventory_asset": 10,
   "policy_rule": 26,
-  "vault_copy": 351,
-  "copy_validation": 312,
-  "probe": 444,
-  "disposition": 130
+  "vault_copy": 897,
+  "copy_validation": 858,
+  "probe": 1221,
+  "disposition": 312
  },
  "files": [
   {
    "path": "examples/orphans/bundle.json",
-   "bytes": 967004,
-   "sha256": "sha256:c166bd57ca7c0643a3ea52fb3b7c508221cac2e3a22e2777ff14b22175b377c5"
+   "bytes": 2145671,
+   "sha256": "sha256:25701b94831001008a64670296c2a9cbd37872196dccf4c1c2a5f7485c8dfe51"
   },
   {
    "path": "examples/orphans/findings.json",
-   "bytes": 15638,
-   "sha256": "sha256:29a16f99e7f609232bb4147a82e76641a2760ec54cf87949e4f96d4162ac75e2"
+   "bytes": 17408,
+   "sha256": "sha256:d064ba43e96fb2ad35a03287d8b1d6c9b0e84314f9f751f3522ea0dc8130fdb5"
   }
  ],
  "reproduced": true,
  "verbs": {
   "ESCALATE": 1,
-  "HOLD": 6
+  "HOLD": 3,
+  "ADOPT": 3
  },
  "classes": {
   "proxy_split": 1,
@@ -87,15 +88,15 @@
     ],
     [
      "collection run",
-     "run-9e232bb5e1ebdb81"
+     "run-9d48791b00433777"
     ],
     [
      "DNS run",
-     "run-9e232bb5e1ebdb81"
+     "run-9d48791b00433777"
     ],
     [
      "window",
-     "2026-04-16T21:11:15.232Z to 2026-10-25T03:25:09.111Z"
+     "2026-04-16T21:11:15.232Z to 2026-10-25T13:53:44.528Z"
     ],
     [
      "value_hash",
@@ -112,16 +113,16 @@
     "days": 191,
     "bound": "exact",
     "source": "audit:evt-05fa48325110cdcb",
-    "still_open_in": "run-9e232bb5e1ebdb81"
+    "still_open_in": "run-9d48791b00433777"
    },
    "detection": {
     "query": "proxy_split",
     "description": "A proxied CNAME whose target in the same DNS run is a direct A or AAAA record: the address the proxy hides on one name is published on the other.",
-    "sql": "SELECT c.zone, c.name AS proxied_name, c.record_id AS proxied_record_id, a.name AS target_name, a.type AS target_type,\n       a.content AS target_content, a.record_id AS target_record_id, c.observed_at\nFROM dns_record c\nJOIN dns_record a ON a.tenant_id = c.tenant_id AND a.run_id = c.run_id AND a.name = c.content AND a.type IN ('A', 'AAAA') AND a.proxied = 0\nWHERE c.tenant_id = 'client-1' AND c.run_id = 'run-9e232bb5e1ebdb81' AND c.type = 'CNAME' AND c.proxied = 1\nORDER BY c.zone, c.name, c.record_id, a.record_id",
-    "sqlSha256": "sha256:52d0b448ff0063cbab81361eb71f74671ec0d7a44724b0021e14c9584ff26de1",
+    "sql": "SELECT c.zone, c.name AS proxied_name, c.record_id AS proxied_record_id, a.name AS target_name, a.type AS target_type,\n       a.content AS target_content, a.record_id AS target_record_id, c.observed_at\nFROM dns_record c\nJOIN dns_record a ON a.tenant_id = c.tenant_id AND a.run_id = c.run_id AND a.name = c.content AND a.type IN ('A', 'AAAA') AND a.proxied = 0\nWHERE c.tenant_id = 'client-1' AND c.run_id = 'run-9d48791b00433777' AND c.type = 'CNAME' AND c.proxied = 1\nORDER BY c.zone, c.name, c.record_id, a.record_id",
+    "sqlSha256": "sha256:7aa2967a6324b1ac5654652b410938b75064c4e61510539267d64aad7dd4d885",
     "params": {
      "tenant_id": "client-1",
-     "dns_run_id": "run-9e232bb5e1ebdb81"
+     "dns_run_id": "run-9d48791b00433777"
     },
     "total": 1,
     "matched": {
@@ -144,13 +145,13 @@
        "A",
        "ip-6fb86d",
        "f32e72c0d010752462567852ca872d12",
-       "2026-10-25T03:25:09.111Z"
+       "2026-10-25T13:53:44.528Z"
       ]
      ],
      "total": 1,
      "shown": 1,
      "cutCells": 0,
-     "sha256": "sha256:f004aaede5e340a4599b26791bb6b6389525a2ba6d6d19b008ab2bd8eaa4616e"
+     "sha256": "sha256:49fe7b0f66939c30d1a8512098e998a384815796ef9cc10231d9b5979b4cb899"
     }
    },
    "checks": [
@@ -161,7 +162,7 @@
      "status": "ran",
      "holds": true,
      "rowCount": 0,
-     "explanation": "Run run-9e232bb5e1ebdb81 collected everything it set out to collect.",
+     "explanation": "Run run-9d48791b00433777 collected everything it set out to collect.",
      "rerun": {
       "rowCount": 0,
       "holds": true
@@ -169,10 +170,10 @@
      "bound": "bound from the finding",
      "extra": {},
      "params": {
-      "run_id": "run-9e232bb5e1ebdb81"
+      "run_id": "run-9d48791b00433777"
      },
-     "sql": "SELECT c.run_id, c.tenant_id, c.surface, c.host, c.expected_count, c.observed_count, c.status\nFROM collection_run c\nWHERE c.run_id = 'run-9e232bb5e1ebdb81'\n  AND (c.observed_count < c.expected_count OR c.status <> 'complete'\n    OR c.expected_count IS NULL OR c.observed_count IS NULL\n    OR (c.surface LIKE 'linux.%' AND c.expected_count > (SELECT COUNT(*) FROM observation x WHERE x.run_id = c.run_id)))",
-     "sqlSha256": "sha256:044b45367ff8536167d845b659ad3c74242d78329a7f34dc97a997dc861e4786",
+     "sql": "SELECT c.run_id, c.tenant_id, c.surface, c.host, c.expected_count, c.observed_count, c.status\nFROM collection_run c\nWHERE c.run_id = 'run-9d48791b00433777'\n  AND (c.observed_count < c.expected_count OR c.status <> 'complete'\n    OR c.expected_count IS NULL OR c.observed_count IS NULL\n    OR (c.surface LIKE 'linux.%' AND c.expected_count > (SELECT COUNT(*) FROM observation x WHERE x.run_id = c.run_id)))",
+     "sqlSha256": "sha256:c715db73efa516706bff77cd2772a47770aab8a5ddc0efd1725e720b08800333",
      "rows": {
       "columns": [
        "run_id",
@@ -197,7 +198,7 @@
      "status": "ran",
      "holds": true,
      "rowCount": 2,
-     "explanation": "2 audit events with a named actor touched bce1ca2bb7caa2de9b6823d5f6ecd3f2 between 2026-04-16T21:11:15.232Z and 2026-10-25T03:25:09.111Z.",
+     "explanation": "2 audit events with a named actor touched bce1ca2bb7caa2de9b6823d5f6ecd3f2 between 2026-04-16T21:11:15.232Z and 2026-10-25T13:53:44.528Z.",
      "rerun": {
       "rowCount": 2,
       "holds": true
@@ -208,10 +209,10 @@
       "tenant_id": "client-1",
       "resource_id": "bce1ca2bb7caa2de9b6823d5f6ecd3f2",
       "since": "2026-04-16T21:11:15.232Z",
-      "until": "2026-10-25T03:25:09.111Z"
+      "until": "2026-10-25T13:53:44.528Z"
      },
-     "sql": "SELECT event_id, source, actor, action, old_value, new_value, occurred_at\nFROM audit_event\nWHERE tenant_id = 'client-1' AND resource_id = 'bce1ca2bb7caa2de9b6823d5f6ecd3f2'\n  AND occurred_at >= '2026-04-16T21:11:15.232Z' AND occurred_at <= '2026-10-25T03:25:09.111Z'\n  AND actor IS NOT NULL AND actor <> ''\nORDER BY occurred_at, event_id",
-     "sqlSha256": "sha256:4504ddd9fe2935a1028af86909c16beee1b754e046a4d9ba9aa8f5dc3bf34d81",
+     "sql": "SELECT event_id, source, actor, action, old_value, new_value, occurred_at\nFROM audit_event\nWHERE tenant_id = 'client-1' AND resource_id = 'bce1ca2bb7caa2de9b6823d5f6ecd3f2'\n  AND occurred_at >= '2026-04-16T21:11:15.232Z' AND occurred_at <= '2026-10-25T13:53:44.528Z'\n  AND actor IS NOT NULL AND actor <> ''\nORDER BY occurred_at, event_id",
+     "sqlSha256": "sha256:d83d34403d55de0b3207cf057e69cadee98741ee7aa6c2b6dd0d132531ce35aa",
      "rows": {
       "columns": [
        "event_id",
@@ -300,7 +301,7 @@
      "status": "ran",
      "holds": false,
      "rowCount": 3,
-     "explanation": "host-524b42.quest changed between 2026-04-16T21:11:15.232Z and 2026-10-25T03:25:09.111Z (3 pieces of evidence).",
+     "explanation": "host-524b42.quest changed between 2026-04-16T21:11:15.232Z and 2026-10-25T13:53:44.528Z (3 pieces of evidence).",
      "rerun": {
       "rowCount": 3,
       "holds": false
@@ -311,10 +312,10 @@
       "tenant_id": "client-1",
       "name": "host-524b42.quest",
       "since": "2026-04-16T21:11:15.232Z",
-      "until": "2026-10-25T03:25:09.111Z"
+      "until": "2026-10-25T13:53:44.528Z"
      },
-     "sql": "SELECT 'dns_record' AS evidence, a.record_id AS resource_id, a.content AS old_value, b.content AS new_value, b.observed_at AS seen_at\nFROM dns_record a\nJOIN dns_record b ON b.tenant_id = a.tenant_id AND b.record_id = a.record_id AND b.observed_at > a.observed_at AND b.content <> a.content\nWHERE a.tenant_id = 'client-1' AND a.name = 'host-524b42.quest' AND b.name = 'host-524b42.quest'\n  AND a.observed_at >= '2026-04-16T21:11:15.232Z' AND b.observed_at <= '2026-10-25T03:25:09.111Z'\n  AND NOT EXISTS (SELECT 1 FROM dns_record m WHERE m.tenant_id = a.tenant_id AND m.record_id = a.record_id AND m.observed_at > a.observed_at AND m.observed_at < b.observed_at)\nUNION ALL\nSELECT 'audit_event' AS evidence, e.resource_id, e.old_value, e.new_value, e.occurred_at AS seen_at\nFROM audit_event e\nWHERE e.tenant_id = 'client-1' AND e.occurred_at >= '2026-04-16T21:11:15.232Z' AND e.occurred_at <= '2026-10-25T03:25:09.111Z'\n  AND e.resource_id IN (SELECT d.record_id FROM dns_record d WHERE d.tenant_id = 'client-1' AND d.name = 'host-524b42.quest')\nORDER BY seen_at, evidence, resource_id",
-     "sqlSha256": "sha256:91ad34a0507523dd5d76a6a4a19cb028e6090c32f1f49196097ead794a4b113c",
+     "sql": "SELECT 'dns_record' AS evidence, a.record_id AS resource_id, a.content AS old_value, b.content AS new_value, b.observed_at AS seen_at\nFROM dns_record a\nJOIN dns_record b ON b.tenant_id = a.tenant_id AND b.record_id = a.record_id AND b.observed_at > a.observed_at AND b.content <> a.content\nWHERE a.tenant_id = 'client-1' AND a.name = 'host-524b42.quest' AND b.name = 'host-524b42.quest'\n  AND a.observed_at >= '2026-04-16T21:11:15.232Z' AND b.observed_at <= '2026-10-25T13:53:44.528Z'\n  AND NOT EXISTS (SELECT 1 FROM dns_record m WHERE m.tenant_id = a.tenant_id AND m.record_id = a.record_id AND m.observed_at > a.observed_at AND m.observed_at < b.observed_at)\nUNION ALL\nSELECT 'audit_event' AS evidence, e.resource_id, e.old_value, e.new_value, e.occurred_at AS seen_at\nFROM audit_event e\nWHERE e.tenant_id = 'client-1' AND e.occurred_at >= '2026-04-16T21:11:15.232Z' AND e.occurred_at <= '2026-10-25T13:53:44.528Z'\n  AND e.resource_id IN (SELECT d.record_id FROM dns_record d WHERE d.tenant_id = 'client-1' AND d.name = 'host-524b42.quest')\nORDER BY seen_at, evidence, resource_id",
+     "sqlSha256": "sha256:712f21f759d0b1f73d537a2eae0d1d57d164e8e57aa55b4e687ed21f9de843aa",
      "rows": {
       "columns": [
        "evidence",
@@ -378,7 +379,7 @@
    "class": "orphan_record",
    "verb": "HOLD",
    "claim": "host-3fef97.club (A, direct) lands on ip-6b6bba, host-aa516a, where no enabled server block names it: requests for it reach the default server",
-   "decision": "2 of 4 preconditions fail: actor_attributed, previous_value_recoverable; decided by policy under rule-b8d9962485c3ced4: rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-b8d9962485c3ced4",
+   "decision": "2 of 4 preconditions fail: actor_attributed, previous_value_recoverable; decided by policy under rule-b8d9962485c3ced4: rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T13:54:08.785Z under rule rule-b8d9962485c3ced4",
    "fields": [
     [
      "finding id",
@@ -422,15 +423,15 @@
     ],
     [
      "collection run",
-     "run-9e232bb5e1ebdb81"
+     "run-9d48791b00433777"
     ],
     [
      "DNS run",
-     "run-9e232bb5e1ebdb81"
+     "run-9d48791b00433777"
     ],
     [
      "window",
-     "2026-04-16T21:11:15.232Z to 2026-10-25T03:25:17.438Z"
+     "2026-04-16T21:11:15.232Z to 2026-10-25T13:53:52.585Z"
     ],
     [
      "value_hash",
@@ -446,12 +447,12 @@
    "detection": {
     "query": "orphan_record",
     "description": "A record that lands on the host of the nginx run while no enabled server block there names it: requests for it reach the default server.",
-    "sql": "SELECT d.record_id, d.zone, d.name, d.type, d.content, COALESCE(t.content, d.content) AS origin, d.proxied, i.host, d.observed_at\nFROM dns_record d\nLEFT JOIN dns_record t ON t.tenant_id = d.tenant_id AND t.run_id = d.run_id AND d.type = 'CNAME' AND t.name = d.content AND t.type IN ('A', 'AAAA')\nJOIN inventory_asset i ON i.tenant_id = d.tenant_id AND i.address = COALESCE(t.content, d.content)\nJOIN collection_run c ON c.run_id = 'run-49fc76bf3b823051' AND c.host = i.host\nWHERE d.tenant_id = 'client-1' AND d.run_id = 'run-9e232bb5e1ebdb81' AND d.type IN ('A', 'AAAA', 'CNAME') AND d.name NOT LIKE '*.%'\n  AND NOT EXISTS (SELECT 1 FROM observation n JOIN observation e ON e.run_id = n.run_id AND e.object_id = n.object_id AND e.setting_path LIKE '%.enabled' AND substr(e.setting_path, 1, length(e.setting_path) - 8) = substr(n.setting_path, 1, instr(n.setting_path, '.server_name[') - 1)\n    WHERE n.run_id = c.run_id AND n.refers_to_type = 'dns_name' AND n.refers_to_id = d.name AND n.setting_path LIKE '%.server_name[%' AND e.value_redacted = '1')\nORDER BY d.name, d.record_id",
-    "sqlSha256": "sha256:73a7c9388232e7816bbbba3e2cccd8956fd151f554cd38e74fd6cd5189d19fdb",
+    "sql": "SELECT d.record_id, d.zone, d.name, d.type, d.content, COALESCE(t.content, d.content) AS origin, d.proxied, i.host, d.observed_at\nFROM dns_record d\nLEFT JOIN dns_record t ON t.tenant_id = d.tenant_id AND t.run_id = d.run_id AND d.type = 'CNAME' AND t.name = d.content AND t.type IN ('A', 'AAAA')\nJOIN inventory_asset i ON i.tenant_id = d.tenant_id AND i.address = COALESCE(t.content, d.content)\nJOIN collection_run c ON c.run_id = 'run-f74b40064e093f2c' AND c.host = i.host\nWHERE d.tenant_id = 'client-1' AND d.run_id = 'run-9d48791b00433777' AND d.type IN ('A', 'AAAA', 'CNAME') AND d.name NOT LIKE '*.%'\n  AND NOT EXISTS (SELECT 1 FROM observation n JOIN observation e ON e.run_id = n.run_id AND e.object_id = n.object_id AND e.setting_path LIKE '%.enabled' AND substr(e.setting_path, 1, length(e.setting_path) - 8) = substr(n.setting_path, 1, instr(n.setting_path, '.server_name[') - 1)\n    WHERE n.run_id = c.run_id AND n.refers_to_type = 'dns_name' AND n.refers_to_id = d.name AND n.setting_path LIKE '%.server_name[%' AND e.value_redacted = '1')\nORDER BY d.name, d.record_id",
+    "sqlSha256": "sha256:25cf4ccdf9f447fbb04250ef8d389be48bdc2a8938d2e9553724a3034db76748",
     "params": {
      "tenant_id": "client-1",
-     "dns_run_id": "run-9e232bb5e1ebdb81",
-     "run_id": "run-49fc76bf3b823051"
+     "dns_run_id": "run-9d48791b00433777",
+     "run_id": "run-f74b40064e093f2c"
     },
     "total": 1,
     "matched": {
@@ -476,13 +477,13 @@
        "ip-6b6bba",
        "0",
        "host-aa516a",
-       "2026-10-25T03:25:09.111Z"
+       "2026-10-25T13:53:44.528Z"
       ]
      ],
      "total": 1,
      "shown": 1,
      "cutCells": 0,
-     "sha256": "sha256:6e73f80b6d27072968b4f15d5a8312f3a7121581b0fbd2a1e7436af462bb297a"
+     "sha256": "sha256:e8c764737eab59b27e854cfd783745b3a30904bcd0fdeecc9c3c543628c55f76"
     }
    },
    "checks": [
@@ -493,7 +494,7 @@
      "status": "ran",
      "holds": true,
      "rowCount": 0,
-     "explanation": "Run run-9e232bb5e1ebdb81 collected everything it set out to collect.",
+     "explanation": "Run run-9d48791b00433777 collected everything it set out to collect.",
      "rerun": {
       "rowCount": 0,
       "holds": true
@@ -501,10 +502,10 @@
      "bound": "bound from the finding",
      "extra": {},
      "params": {
-      "run_id": "run-9e232bb5e1ebdb81"
+      "run_id": "run-9d48791b00433777"
      },
-     "sql": "SELECT c.run_id, c.tenant_id, c.surface, c.host, c.expected_count, c.observed_count, c.status\nFROM collection_run c\nWHERE c.run_id = 'run-9e232bb5e1ebdb81'\n  AND (c.observed_count < c.expected_count OR c.status <> 'complete'\n    OR c.expected_count IS NULL OR c.observed_count IS NULL\n    OR (c.surface LIKE 'linux.%' AND c.expected_count > (SELECT COUNT(*) FROM observation x WHERE x.run_id = c.run_id)))",
-     "sqlSha256": "sha256:044b45367ff8536167d845b659ad3c74242d78329a7f34dc97a997dc861e4786",
+     "sql": "SELECT c.run_id, c.tenant_id, c.surface, c.host, c.expected_count, c.observed_count, c.status\nFROM collection_run c\nWHERE c.run_id = 'run-9d48791b00433777'\n  AND (c.observed_count < c.expected_count OR c.status <> 'complete'\n    OR c.expected_count IS NULL OR c.observed_count IS NULL\n    OR (c.surface LIKE 'linux.%' AND c.expected_count > (SELECT COUNT(*) FROM observation x WHERE x.run_id = c.run_id)))",
+     "sqlSha256": "sha256:c715db73efa516706bff77cd2772a47770aab8a5ddc0efd1725e720b08800333",
      "rows": {
       "columns": [
        "run_id",
@@ -558,13 +559,13 @@
         "ip-6b6bba",
         "vps",
         "ssh",
-        "2026-10-25T03:25:17.438Z"
+        "2026-10-25T13:53:52.585Z"
        ]
       ],
       "total": 1,
       "shown": 1,
       "cutCells": 0,
-      "sha256": "sha256:c0ab39015a9e8296a8b5fd097a38f03e8eee2114244f5567c29b37d12f0b277e"
+      "sha256": "sha256:bb887342313f5d7b9e7719ba5f54643a8a0be29956205723408e1b1c6fac0daa"
      }
     },
     {
@@ -574,7 +575,7 @@
      "status": "ran",
      "holds": false,
      "rowCount": 0,
-     "explanation": "No audit event names who changed c8b1963847dafe3548b1a4b93f520c0a between 2026-04-16T21:11:15.232Z and 2026-10-25T03:25:17.438Z.",
+     "explanation": "No audit event names who changed c8b1963847dafe3548b1a4b93f520c0a between 2026-04-16T21:11:15.232Z and 2026-10-25T13:53:52.585Z.",
      "rerun": {
       "rowCount": 0,
       "holds": false
@@ -585,10 +586,10 @@
       "tenant_id": "client-1",
       "resource_id": "c8b1963847dafe3548b1a4b93f520c0a",
       "since": "2026-04-16T21:11:15.232Z",
-      "until": "2026-10-25T03:25:17.438Z"
+      "until": "2026-10-25T13:53:52.585Z"
      },
-     "sql": "SELECT event_id, source, actor, action, old_value, new_value, occurred_at\nFROM audit_event\nWHERE tenant_id = 'client-1' AND resource_id = 'c8b1963847dafe3548b1a4b93f520c0a'\n  AND occurred_at >= '2026-04-16T21:11:15.232Z' AND occurred_at <= '2026-10-25T03:25:17.438Z'\n  AND actor IS NOT NULL AND actor <> ''\nORDER BY occurred_at, event_id",
-     "sqlSha256": "sha256:98c241273fb8d3c2c0f30220a60dc22c01239c75e1a129146c9943faaf103e99",
+     "sql": "SELECT event_id, source, actor, action, old_value, new_value, occurred_at\nFROM audit_event\nWHERE tenant_id = 'client-1' AND resource_id = 'c8b1963847dafe3548b1a4b93f520c0a'\n  AND occurred_at >= '2026-04-16T21:11:15.232Z' AND occurred_at <= '2026-10-25T13:53:52.585Z'\n  AND actor IS NOT NULL AND actor <> ''\nORDER BY occurred_at, event_id",
+     "sqlSha256": "sha256:052c1a83dfe8d143430fddc529b6d6957bd2894a0717b02854eb6e91d7e22c30",
      "rows": {
       "columns": [
        "event_id",
@@ -668,7 +669,7 @@
    "class": "orphan_record",
    "verb": "HOLD",
    "claim": "host-50b116.com (A, proxied) lands on ip-6fb86d, host-4b4dc1, where no enabled server block names it: requests for it reach the default server",
-   "decision": "2 of 4 preconditions fail: actor_attributed, previous_value_recoverable; decided by policy under rule-b8d9962485c3ced4: rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-b8d9962485c3ced4",
+   "decision": "2 of 4 preconditions fail: actor_attributed, previous_value_recoverable; decided by policy under rule-b8d9962485c3ced4: rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T13:54:08.785Z under rule rule-b8d9962485c3ced4",
    "fields": [
     [
      "finding id",
@@ -712,15 +713,15 @@
     ],
     [
      "collection run",
-     "run-9e232bb5e1ebdb81"
+     "run-9d48791b00433777"
     ],
     [
      "DNS run",
-     "run-9e232bb5e1ebdb81"
+     "run-9d48791b00433777"
     ],
     [
      "window",
-     "2026-04-16T21:11:15.232Z to 2026-10-25T03:25:20.710Z"
+     "2026-04-16T21:11:15.232Z to 2026-10-25T13:53:56.023Z"
     ],
     [
      "value_hash",
@@ -736,12 +737,12 @@
    "detection": {
     "query": "orphan_record",
     "description": "A record that lands on the host of the nginx run while no enabled server block there names it: requests for it reach the default server.",
-    "sql": "SELECT d.record_id, d.zone, d.name, d.type, d.content, COALESCE(t.content, d.content) AS origin, d.proxied, i.host, d.observed_at\nFROM dns_record d\nLEFT JOIN dns_record t ON t.tenant_id = d.tenant_id AND t.run_id = d.run_id AND d.type = 'CNAME' AND t.name = d.content AND t.type IN ('A', 'AAAA')\nJOIN inventory_asset i ON i.tenant_id = d.tenant_id AND i.address = COALESCE(t.content, d.content)\nJOIN collection_run c ON c.run_id = 'run-ea10fdeb1eae1a46' AND c.host = i.host\nWHERE d.tenant_id = 'client-1' AND d.run_id = 'run-9e232bb5e1ebdb81' AND d.type IN ('A', 'AAAA', 'CNAME') AND d.name NOT LIKE '*.%'\n  AND NOT EXISTS (SELECT 1 FROM observation n JOIN observation e ON e.run_id = n.run_id AND e.object_id = n.object_id AND e.setting_path LIKE '%.enabled' AND substr(e.setting_path, 1, length(e.setting_path) - 8) = substr(n.setting_path, 1, instr(n.setting_path, '.server_name[') - 1)\n    WHERE n.run_id = c.run_id AND n.refers_to_type = 'dns_name' AND n.refers_to_id = d.name AND n.setting_path LIKE '%.server_name[%' AND e.value_redacted = '1')\nORDER BY d.name, d.record_id",
-    "sqlSha256": "sha256:0432d5f665b641ed13ace2c56e518de4fd2b0fb30bad5de164e4ed9adcd0f147",
+    "sql": "SELECT d.record_id, d.zone, d.name, d.type, d.content, COALESCE(t.content, d.content) AS origin, d.proxied, i.host, d.observed_at\nFROM dns_record d\nLEFT JOIN dns_record t ON t.tenant_id = d.tenant_id AND t.run_id = d.run_id AND d.type = 'CNAME' AND t.name = d.content AND t.type IN ('A', 'AAAA')\nJOIN inventory_asset i ON i.tenant_id = d.tenant_id AND i.address = COALESCE(t.content, d.content)\nJOIN collection_run c ON c.run_id = 'run-28ad36002e466ed5' AND c.host = i.host\nWHERE d.tenant_id = 'client-1' AND d.run_id = 'run-9d48791b00433777' AND d.type IN ('A', 'AAAA', 'CNAME') AND d.name NOT LIKE '*.%'\n  AND NOT EXISTS (SELECT 1 FROM observation n JOIN observation e ON e.run_id = n.run_id AND e.object_id = n.object_id AND e.setting_path LIKE '%.enabled' AND substr(e.setting_path, 1, length(e.setting_path) - 8) = substr(n.setting_path, 1, instr(n.setting_path, '.server_name[') - 1)\n    WHERE n.run_id = c.run_id AND n.refers_to_type = 'dns_name' AND n.refers_to_id = d.name AND n.setting_path LIKE '%.server_name[%' AND e.value_redacted = '1')\nORDER BY d.name, d.record_id",
+    "sqlSha256": "sha256:f315dadbe2060791e106aed70cafa59103bba596423e775afb512b547dbb39e9",
     "params": {
      "tenant_id": "client-1",
-     "dns_run_id": "run-9e232bb5e1ebdb81",
-     "run_id": "run-ea10fdeb1eae1a46"
+     "dns_run_id": "run-9d48791b00433777",
+     "run_id": "run-28ad36002e466ed5"
     },
     "total": 2,
     "matched": {
@@ -766,13 +767,13 @@
        "ip-6fb86d",
        "1",
        "host-4b4dc1",
-       "2026-10-25T03:25:09.111Z"
+       "2026-10-25T13:53:44.528Z"
       ]
      ],
      "total": 1,
      "shown": 1,
      "cutCells": 0,
-     "sha256": "sha256:33a3a11f4e76fda923943ad3c0fb790aa90d0768d180d6b6860e29614857d155"
+     "sha256": "sha256:b6ddf9e5b6eabf9a3e2879867f22e300f1f332eba9ba91f4b68e643fa4eed5a8"
     }
    },
    "checks": [
@@ -783,7 +784,7 @@
      "status": "ran",
      "holds": true,
      "rowCount": 0,
-     "explanation": "Run run-9e232bb5e1ebdb81 collected everything it set out to collect.",
+     "explanation": "Run run-9d48791b00433777 collected everything it set out to collect.",
      "rerun": {
       "rowCount": 0,
       "holds": true
@@ -791,10 +792,10 @@
      "bound": "bound from the finding",
      "extra": {},
      "params": {
-      "run_id": "run-9e232bb5e1ebdb81"
+      "run_id": "run-9d48791b00433777"
      },
-     "sql": "SELECT c.run_id, c.tenant_id, c.surface, c.host, c.expected_count, c.observed_count, c.status\nFROM collection_run c\nWHERE c.run_id = 'run-9e232bb5e1ebdb81'\n  AND (c.observed_count < c.expected_count OR c.status <> 'complete'\n    OR c.expected_count IS NULL OR c.observed_count IS NULL\n    OR (c.surface LIKE 'linux.%' AND c.expected_count > (SELECT COUNT(*) FROM observation x WHERE x.run_id = c.run_id)))",
-     "sqlSha256": "sha256:044b45367ff8536167d845b659ad3c74242d78329a7f34dc97a997dc861e4786",
+     "sql": "SELECT c.run_id, c.tenant_id, c.surface, c.host, c.expected_count, c.observed_count, c.status\nFROM collection_run c\nWHERE c.run_id = 'run-9d48791b00433777'\n  AND (c.observed_count < c.expected_count OR c.status <> 'complete'\n    OR c.expected_count IS NULL OR c.observed_count IS NULL\n    OR (c.surface LIKE 'linux.%' AND c.expected_count > (SELECT COUNT(*) FROM observation x WHERE x.run_id = c.run_id)))",
+     "sqlSha256": "sha256:c715db73efa516706bff77cd2772a47770aab8a5ddc0efd1725e720b08800333",
      "rows": {
       "columns": [
        "run_id",
@@ -848,13 +849,13 @@
         "ip-6fb86d",
         "vps",
         "ssh",
-        "2026-10-25T03:25:20.710Z"
+        "2026-10-25T13:53:56.023Z"
        ]
       ],
       "total": 1,
       "shown": 1,
       "cutCells": 0,
-      "sha256": "sha256:a0f5f1e949ec08d7aebed8262b02f7679c7bc5e66ba2726fe51f1b2644d11490"
+      "sha256": "sha256:83459842e37d5128892140f0ca674708678dfbc252d8accd49c6980a9ba28273"
      }
     },
     {
@@ -864,7 +865,7 @@
      "status": "ran",
      "holds": false,
      "rowCount": 0,
-     "explanation": "No audit event names who changed b0a17a719bd2118a535a763379ab7ba9 between 2026-04-16T21:11:15.232Z and 2026-10-25T03:25:20.710Z.",
+     "explanation": "No audit event names who changed b0a17a719bd2118a535a763379ab7ba9 between 2026-04-16T21:11:15.232Z and 2026-10-25T13:53:56.023Z.",
      "rerun": {
       "rowCount": 0,
       "holds": false
@@ -875,10 +876,10 @@
       "tenant_id": "client-1",
       "resource_id": "b0a17a719bd2118a535a763379ab7ba9",
       "since": "2026-04-16T21:11:15.232Z",
-      "until": "2026-10-25T03:25:20.710Z"
+      "until": "2026-10-25T13:53:56.023Z"
      },
-     "sql": "SELECT event_id, source, actor, action, old_value, new_value, occurred_at\nFROM audit_event\nWHERE tenant_id = 'client-1' AND resource_id = 'b0a17a719bd2118a535a763379ab7ba9'\n  AND occurred_at >= '2026-04-16T21:11:15.232Z' AND occurred_at <= '2026-10-25T03:25:20.710Z'\n  AND actor IS NOT NULL AND actor <> ''\nORDER BY occurred_at, event_id",
-     "sqlSha256": "sha256:367afdf975f6212af10ea751ce66aa8e3c2dfb5d82cfe7f35a92db7336b1c7bb",
+     "sql": "SELECT event_id, source, actor, action, old_value, new_value, occurred_at\nFROM audit_event\nWHERE tenant_id = 'client-1' AND resource_id = 'b0a17a719bd2118a535a763379ab7ba9'\n  AND occurred_at >= '2026-04-16T21:11:15.232Z' AND occurred_at <= '2026-10-25T13:53:56.023Z'\n  AND actor IS NOT NULL AND actor <> ''\nORDER BY occurred_at, event_id",
+     "sqlSha256": "sha256:1d088ceb8fe582cd14f5c693de8451f1ed8874399d8c82104e11ab8d7d172bd6",
      "rows": {
       "columns": [
        "event_id",
@@ -958,7 +959,7 @@
    "class": "orphan_record",
    "verb": "HOLD",
    "claim": "host-c10fff.com (A, proxied) lands on ip-6fb86d, host-4b4dc1, where no enabled server block names it: requests for it reach the default server",
-   "decision": "1 of 4 preconditions fail: previous_value_recoverable; decided by policy under rule-b8d9962485c3ced4: rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-b8d9962485c3ced4",
+   "decision": "1 of 4 preconditions fail: previous_value_recoverable; decided by policy under rule-b8d9962485c3ced4: rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T13:54:08.785Z under rule rule-b8d9962485c3ced4",
    "fields": [
     [
      "finding id",
@@ -1002,15 +1003,15 @@
     ],
     [
      "collection run",
-     "run-9e232bb5e1ebdb81"
+     "run-9d48791b00433777"
     ],
     [
      "DNS run",
-     "run-9e232bb5e1ebdb81"
+     "run-9d48791b00433777"
     ],
     [
      "window",
-     "2026-04-16T21:11:15.232Z to 2026-10-25T03:25:20.710Z"
+     "2026-04-16T21:11:15.232Z to 2026-10-25T13:53:56.023Z"
     ],
     [
      "value_hash",
@@ -1027,17 +1028,17 @@
     "days": 110,
     "bound": "at_least",
     "source": "audit:evt-48d6696c1de70593",
-    "still_open_in": "run-9e232bb5e1ebdb81"
+    "still_open_in": "run-9d48791b00433777"
    },
    "detection": {
     "query": "orphan_record",
     "description": "A record that lands on the host of the nginx run while no enabled server block there names it: requests for it reach the default server.",
-    "sql": "SELECT d.record_id, d.zone, d.name, d.type, d.content, COALESCE(t.content, d.content) AS origin, d.proxied, i.host, d.observed_at\nFROM dns_record d\nLEFT JOIN dns_record t ON t.tenant_id = d.tenant_id AND t.run_id = d.run_id AND d.type = 'CNAME' AND t.name = d.content AND t.type IN ('A', 'AAAA')\nJOIN inventory_asset i ON i.tenant_id = d.tenant_id AND i.address = COALESCE(t.content, d.content)\nJOIN collection_run c ON c.run_id = 'run-ea10fdeb1eae1a46' AND c.host = i.host\nWHERE d.tenant_id = 'client-1' AND d.run_id = 'run-9e232bb5e1ebdb81' AND d.type IN ('A', 'AAAA', 'CNAME') AND d.name NOT LIKE '*.%'\n  AND NOT EXISTS (SELECT 1 FROM observation n JOIN observation e ON e.run_id = n.run_id AND e.object_id = n.object_id AND e.setting_path LIKE '%.enabled' AND substr(e.setting_path, 1, length(e.setting_path) - 8) = substr(n.setting_path, 1, instr(n.setting_path, '.server_name[') - 1)\n    WHERE n.run_id = c.run_id AND n.refers_to_type = 'dns_name' AND n.refers_to_id = d.name AND n.setting_path LIKE '%.server_name[%' AND e.value_redacted = '1')\nORDER BY d.name, d.record_id",
-    "sqlSha256": "sha256:0432d5f665b641ed13ace2c56e518de4fd2b0fb30bad5de164e4ed9adcd0f147",
+    "sql": "SELECT d.record_id, d.zone, d.name, d.type, d.content, COALESCE(t.content, d.content) AS origin, d.proxied, i.host, d.observed_at\nFROM dns_record d\nLEFT JOIN dns_record t ON t.tenant_id = d.tenant_id AND t.run_id = d.run_id AND d.type = 'CNAME' AND t.name = d.content AND t.type IN ('A', 'AAAA')\nJOIN inventory_asset i ON i.tenant_id = d.tenant_id AND i.address = COALESCE(t.content, d.content)\nJOIN collection_run c ON c.run_id = 'run-28ad36002e466ed5' AND c.host = i.host\nWHERE d.tenant_id = 'client-1' AND d.run_id = 'run-9d48791b00433777' AND d.type IN ('A', 'AAAA', 'CNAME') AND d.name NOT LIKE '*.%'\n  AND NOT EXISTS (SELECT 1 FROM observation n JOIN observation e ON e.run_id = n.run_id AND e.object_id = n.object_id AND e.setting_path LIKE '%.enabled' AND substr(e.setting_path, 1, length(e.setting_path) - 8) = substr(n.setting_path, 1, instr(n.setting_path, '.server_name[') - 1)\n    WHERE n.run_id = c.run_id AND n.refers_to_type = 'dns_name' AND n.refers_to_id = d.name AND n.setting_path LIKE '%.server_name[%' AND e.value_redacted = '1')\nORDER BY d.name, d.record_id",
+    "sqlSha256": "sha256:f315dadbe2060791e106aed70cafa59103bba596423e775afb512b547dbb39e9",
     "params": {
      "tenant_id": "client-1",
-     "dns_run_id": "run-9e232bb5e1ebdb81",
-     "run_id": "run-ea10fdeb1eae1a46"
+     "dns_run_id": "run-9d48791b00433777",
+     "run_id": "run-28ad36002e466ed5"
     },
     "total": 2,
     "matched": {
@@ -1062,13 +1063,13 @@
        "ip-6fb86d",
        "1",
        "host-4b4dc1",
-       "2026-10-25T03:25:09.111Z"
+       "2026-10-25T13:53:44.528Z"
       ]
      ],
      "total": 1,
      "shown": 1,
      "cutCells": 0,
-     "sha256": "sha256:e15ccd4dba2c6671670fb6c847811076bc4de509ec7f32222b7afb171c3ddc7a"
+     "sha256": "sha256:065c0b6283cbd70be28bb4656d7adb074c218dc195b0ac47866b3332e8636b06"
     }
    },
    "checks": [
@@ -1079,7 +1080,7 @@
      "status": "ran",
      "holds": true,
      "rowCount": 0,
-     "explanation": "Run run-9e232bb5e1ebdb81 collected everything it set out to collect.",
+     "explanation": "Run run-9d48791b00433777 collected everything it set out to collect.",
      "rerun": {
       "rowCount": 0,
       "holds": true
@@ -1087,10 +1088,10 @@
      "bound": "bound from the finding",
      "extra": {},
      "params": {
-      "run_id": "run-9e232bb5e1ebdb81"
+      "run_id": "run-9d48791b00433777"
      },
-     "sql": "SELECT c.run_id, c.tenant_id, c.surface, c.host, c.expected_count, c.observed_count, c.status\nFROM collection_run c\nWHERE c.run_id = 'run-9e232bb5e1ebdb81'\n  AND (c.observed_count < c.expected_count OR c.status <> 'complete'\n    OR c.expected_count IS NULL OR c.observed_count IS NULL\n    OR (c.surface LIKE 'linux.%' AND c.expected_count > (SELECT COUNT(*) FROM observation x WHERE x.run_id = c.run_id)))",
-     "sqlSha256": "sha256:044b45367ff8536167d845b659ad3c74242d78329a7f34dc97a997dc861e4786",
+     "sql": "SELECT c.run_id, c.tenant_id, c.surface, c.host, c.expected_count, c.observed_count, c.status\nFROM collection_run c\nWHERE c.run_id = 'run-9d48791b00433777'\n  AND (c.observed_count < c.expected_count OR c.status <> 'complete'\n    OR c.expected_count IS NULL OR c.observed_count IS NULL\n    OR (c.surface LIKE 'linux.%' AND c.expected_count > (SELECT COUNT(*) FROM observation x WHERE x.run_id = c.run_id)))",
+     "sqlSha256": "sha256:c715db73efa516706bff77cd2772a47770aab8a5ddc0efd1725e720b08800333",
      "rows": {
       "columns": [
        "run_id",
@@ -1144,13 +1145,13 @@
         "ip-6fb86d",
         "vps",
         "ssh",
-        "2026-10-25T03:25:20.710Z"
+        "2026-10-25T13:53:56.023Z"
        ]
       ],
       "total": 1,
       "shown": 1,
       "cutCells": 0,
-      "sha256": "sha256:a0f5f1e949ec08d7aebed8262b02f7679c7bc5e66ba2726fe51f1b2644d11490"
+      "sha256": "sha256:83459842e37d5128892140f0ca674708678dfbc252d8accd49c6980a9ba28273"
      }
     },
     {
@@ -1160,7 +1161,7 @@
      "status": "ran",
      "holds": true,
      "rowCount": 1,
-     "explanation": "1 audit event with a named actor touched 25a23b5c40a3de0ea11b6054a7b54d07 between 2026-04-16T21:11:15.232Z and 2026-10-25T03:25:20.710Z.",
+     "explanation": "1 audit event with a named actor touched 25a23b5c40a3de0ea11b6054a7b54d07 between 2026-04-16T21:11:15.232Z and 2026-10-25T13:53:56.023Z.",
      "rerun": {
       "rowCount": 1,
       "holds": true
@@ -1171,10 +1172,10 @@
       "tenant_id": "client-1",
       "resource_id": "25a23b5c40a3de0ea11b6054a7b54d07",
       "since": "2026-04-16T21:11:15.232Z",
-      "until": "2026-10-25T03:25:20.710Z"
+      "until": "2026-10-25T13:53:56.023Z"
      },
-     "sql": "SELECT event_id, source, actor, action, old_value, new_value, occurred_at\nFROM audit_event\nWHERE tenant_id = 'client-1' AND resource_id = '25a23b5c40a3de0ea11b6054a7b54d07'\n  AND occurred_at >= '2026-04-16T21:11:15.232Z' AND occurred_at <= '2026-10-25T03:25:20.710Z'\n  AND actor IS NOT NULL AND actor <> ''\nORDER BY occurred_at, event_id",
-     "sqlSha256": "sha256:367b17ba1662b82035467fd1994db3ad46af0d92ebbd81d1b7648edbbb30a7ad",
+     "sql": "SELECT event_id, source, actor, action, old_value, new_value, occurred_at\nFROM audit_event\nWHERE tenant_id = 'client-1' AND resource_id = '25a23b5c40a3de0ea11b6054a7b54d07'\n  AND occurred_at >= '2026-04-16T21:11:15.232Z' AND occurred_at <= '2026-10-25T13:53:56.023Z'\n  AND actor IS NOT NULL AND actor <> ''\nORDER BY occurred_at, event_id",
+     "sqlSha256": "sha256:627f18f7b094973c52666f31f85a640e460fcb4653aebe40c02817591f20c71b",
      "rows": {
       "columns": [
        "event_id",
@@ -1262,9 +1263,9 @@
   {
    "id": "orphans-5",
    "class": "orphan_vhost",
-   "verb": "HOLD",
+   "verb": "ADOPT",
    "claim": "host-085e02.com is a server_name in /etc/nginx/sites-available/host-085e02.com on host-4b4dc1 (on disk, not enabled) with no record of that name in the collected zones and no wildcard covering its zone",
-   "decision": "3 of 3 preconditions hold; decided by policy under rule-b8d9962485c3ced4: rule rule-b8d9962485c3ced4 (normal) holds this orphan_vhost finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-b8d9962485c3ced4",
+   "decision": "3 of 3 preconditions hold; decided by operator: accepted exception mem-8 holds until 2026-11-30T00:00:00.000Z (Personal estate, known and intentional: proxied names without real_ip and the leftover records are not a production risk.); the checks alone would say ADOPT",
    "fields": [
     [
      "finding id",
@@ -1308,15 +1309,15 @@
     ],
     [
      "collection run",
-     "run-ea10fdeb1eae1a46"
+     "run-28ad36002e466ed5"
     ],
     [
      "DNS run",
-     "run-9e232bb5e1ebdb81"
+     "run-9d48791b00433777"
     ],
     [
      "window",
-     "2026-04-16T21:11:15.232Z to 2026-10-25T03:25:20.710Z"
+     "2026-04-16T21:11:15.232Z to 2026-10-25T13:53:56.023Z"
     ],
     [
      "value_hash",
@@ -1332,12 +1333,12 @@
    "detection": {
     "query": "orphan_vhost",
     "description": "A server_name with no record of that name in the DNS run and no wildcard record covering its zone.",
-    "sql": "SELECT n.obs_id, n.host, n.object_id, n.setting_path, n.refers_to_id AS server_name, e.value_redacted AS enabled, n.value_hash, n.observed_at\nFROM observation n\nJOIN observation e ON e.run_id = n.run_id AND e.object_id = n.object_id AND e.setting_path LIKE '%.enabled' AND substr(e.setting_path, 1, length(e.setting_path) - 8) = substr(n.setting_path, 1, instr(n.setting_path, '.server_name[') - 1)\nWHERE n.tenant_id = 'client-1' AND n.run_id = 'run-ea10fdeb1eae1a46' AND n.refers_to_type = 'dns_name' AND n.setting_path LIKE '%.server_name[%'\n  AND NOT EXISTS (SELECT 1 FROM dns_record d WHERE d.tenant_id = n.tenant_id AND d.run_id = 'run-9e232bb5e1ebdb81' AND d.name = n.refers_to_id)\n  AND (e.value_redacted = '1' OR NOT EXISTS (SELECT 1 FROM observation n2 JOIN observation e2 ON e2.run_id = n2.run_id AND e2.object_id = n2.object_id AND e2.setting_path LIKE '%.enabled' AND substr(e2.setting_path, 1, length(e2.setting_path) - 8) = substr(n2.setting_path, 1, instr(n2.setting_path, '.server_name[') - 1)\n    WHERE n2.run_id = n.run_id AND n2.refers_to_type = 'dns_name' AND n2.refers_to_id = n.refers_to_id AND n2.setting_path LIKE '%.server_name[%' AND e2.value_redacted = '1'))\n  AND NOT EXISTS (SELECT 1 FROM dns_record w JOIN observation z ON z.setting_path LIKE '%.zone' AND substr(w.name, 3) = z.value_redacted\n    WHERE w.tenant_id = n.tenant_id AND w.run_id = 'run-9e232bb5e1ebdb81' AND w.name LIKE '*.%'\n    AND z.run_id = n.run_id AND z.object_id = n.object_id AND substr(z.setting_path, 1, length(z.setting_path) - 5) = n.setting_path)\n  AND NOT EXISTS (SELECT 1 FROM observation m WHERE m.run_id = n.run_id AND m.object_id = n.object_id AND m.refers_to_type = 'dns_name' AND m.refers_to_id = n.refers_to_id AND m.setting_path < n.setting_path)\nORDER BY n.host, n.object_id, n.refers_to_id, n.setting_path",
-    "sqlSha256": "sha256:694179bf7a2d70c69d9cfa4e35aade81bd240067c6b42f219b76a135248f64e2",
+    "sql": "SELECT n.obs_id, n.host, n.object_id, n.setting_path, n.refers_to_id AS server_name, e.value_redacted AS enabled, n.value_hash, n.observed_at\nFROM observation n\nJOIN observation e ON e.run_id = n.run_id AND e.object_id = n.object_id AND e.setting_path LIKE '%.enabled' AND substr(e.setting_path, 1, length(e.setting_path) - 8) = substr(n.setting_path, 1, instr(n.setting_path, '.server_name[') - 1)\nWHERE n.tenant_id = 'client-1' AND n.run_id = 'run-28ad36002e466ed5' AND n.refers_to_type = 'dns_name' AND n.setting_path LIKE '%.server_name[%'\n  AND NOT EXISTS (SELECT 1 FROM dns_record d WHERE d.tenant_id = n.tenant_id AND d.run_id = 'run-9d48791b00433777' AND d.name = n.refers_to_id)\n  AND (e.value_redacted = '1' OR NOT EXISTS (SELECT 1 FROM observation n2 JOIN observation e2 ON e2.run_id = n2.run_id AND e2.object_id = n2.object_id AND e2.setting_path LIKE '%.enabled' AND substr(e2.setting_path, 1, length(e2.setting_path) - 8) = substr(n2.setting_path, 1, instr(n2.setting_path, '.server_name[') - 1)\n    WHERE n2.run_id = n.run_id AND n2.refers_to_type = 'dns_name' AND n2.refers_to_id = n.refers_to_id AND n2.setting_path LIKE '%.server_name[%' AND e2.value_redacted = '1'))\n  AND NOT EXISTS (SELECT 1 FROM dns_record w JOIN observation z ON z.setting_path LIKE '%.zone' AND substr(w.name, 3) = z.value_redacted\n    WHERE w.tenant_id = n.tenant_id AND w.run_id = 'run-9d48791b00433777' AND w.name LIKE '*.%'\n    AND z.run_id = n.run_id AND z.object_id = n.object_id AND substr(z.setting_path, 1, length(z.setting_path) - 5) = n.setting_path)\n  AND NOT EXISTS (SELECT 1 FROM observation m WHERE m.run_id = n.run_id AND m.object_id = n.object_id AND m.refers_to_type = 'dns_name' AND m.refers_to_id = n.refers_to_id AND m.setting_path < n.setting_path)\nORDER BY n.host, n.object_id, n.refers_to_id, n.setting_path",
+    "sqlSha256": "sha256:e95ca2007065cec7627c8f31a1cb3553eae0e8b381c329590f1cc731965fe616",
     "params": {
      "tenant_id": "client-1",
-     "dns_run_id": "run-9e232bb5e1ebdb81",
-     "run_id": "run-ea10fdeb1eae1a46"
+     "dns_run_id": "run-9d48791b00433777",
+     "run_id": "run-28ad36002e466ed5"
     },
     "total": 3,
     "matched": {
@@ -1353,20 +1354,20 @@
      ],
      "rows": [
       [
-       "obs-219bfc4179f75c18",
+       "obs-c48724d67e1592e3",
        "host-4b4dc1",
        "/etc/nginx/sites-available/host-085e02.com",
        "server[host-085e02.com:443].server_name[host-085e02.com]",
        "host-085e02.com",
        "0",
        "sha256:194ea5d80cf6fef9f4fba29cfb86fc587c80f06943593be4ccf8a919fb773acb",
-       "2026-10-25T03:25:20.710Z"
+       "2026-10-25T13:53:56.023Z"
       ]
      ],
      "total": 1,
      "shown": 1,
      "cutCells": 0,
-     "sha256": "sha256:1ed05a18bc42fa945546ec22f4958fef001af71e36e4abc3497e449dbea33dff"
+     "sha256": "sha256:3a5b502b93a0793366a30d3da0c27e6ef09653406611d5a756c5c45885a75dfb"
     }
    },
    "checks": [
@@ -1377,7 +1378,7 @@
      "status": "ran",
      "holds": true,
      "rowCount": 0,
-     "explanation": "Run run-ea10fdeb1eae1a46 collected everything it set out to collect.",
+     "explanation": "Run run-28ad36002e466ed5 collected everything it set out to collect.",
      "rerun": {
       "rowCount": 0,
       "holds": true
@@ -1385,10 +1386,10 @@
      "bound": "bound from the finding",
      "extra": {},
      "params": {
-      "run_id": "run-ea10fdeb1eae1a46"
+      "run_id": "run-28ad36002e466ed5"
      },
-     "sql": "SELECT c.run_id, c.tenant_id, c.surface, c.host, c.expected_count, c.observed_count, c.status\nFROM collection_run c\nWHERE c.run_id = 'run-ea10fdeb1eae1a46'\n  AND (c.observed_count < c.expected_count OR c.status <> 'complete'\n    OR c.expected_count IS NULL OR c.observed_count IS NULL\n    OR (c.surface LIKE 'linux.%' AND c.expected_count > (SELECT COUNT(*) FROM observation x WHERE x.run_id = c.run_id)))",
-     "sqlSha256": "sha256:013f68d42659d200c475858f7046b7a3ae896321635c68760fedba3aeae5a24f",
+     "sql": "SELECT c.run_id, c.tenant_id, c.surface, c.host, c.expected_count, c.observed_count, c.status\nFROM collection_run c\nWHERE c.run_id = 'run-28ad36002e466ed5'\n  AND (c.observed_count < c.expected_count OR c.status <> 'complete'\n    OR c.expected_count IS NULL OR c.observed_count IS NULL\n    OR (c.surface LIKE 'linux.%' AND c.expected_count > (SELECT COUNT(*) FROM observation x WHERE x.run_id = c.run_id)))",
+     "sqlSha256": "sha256:e330da4f072ce2ab32ab9a44a86e1bb0d75a1ca925b1d261a54b5284a7aa01ca",
      "rows": {
       "columns": [
        "run_id",
@@ -1413,7 +1414,7 @@
      "status": "ran",
      "holds": true,
      "rowCount": 0,
-     "explanation": "No other setting in run run-ea10fdeb1eae1a46 points at host-085e02.com.",
+     "explanation": "No other setting in run run-28ad36002e466ed5 points at host-085e02.com.",
      "rerun": {
       "rowCount": 0,
       "holds": true
@@ -1423,12 +1424,12 @@
      "params": {
       "tenant_id": "client-1",
       "refers_to_id": "host-085e02.com",
-      "run_id": "run-ea10fdeb1eae1a46",
+      "run_id": "run-28ad36002e466ed5",
       "object_id": "/etc/nginx/sites-available/host-085e02.com",
       "setting_path": "server[host-085e02.com:443].server_name[host-085e02.com]"
      },
-     "sql": "SELECT o.host, o.surface, o.object_id, o.setting_path, o.refers_to_type, o.observed_at\nFROM observation o\nWHERE o.tenant_id = 'client-1' AND o.run_id = 'run-ea10fdeb1eae1a46' AND o.refers_to_id = 'host-085e02.com'\n  AND NOT (o.object_id = '/etc/nginx/sites-available/host-085e02.com' AND o.setting_path = 'server[host-085e02.com:443].server_name[host-085e02.com]')\nORDER BY o.object_id, o.setting_path",
-     "sqlSha256": "sha256:f6dfa7bf591f8159c417f1936575939f0cf055a3d8f6ef57fc12dacacc1e4f98",
+     "sql": "SELECT o.host, o.surface, o.object_id, o.setting_path, o.refers_to_type, o.observed_at\nFROM observation o\nWHERE o.tenant_id = 'client-1' AND o.run_id = 'run-28ad36002e466ed5' AND o.refers_to_id = 'host-085e02.com'\n  AND NOT (o.object_id = '/etc/nginx/sites-available/host-085e02.com' AND o.setting_path = 'server[host-085e02.com:443].server_name[host-085e02.com]')\nORDER BY o.object_id, o.setting_path",
+     "sqlSha256": "sha256:1830e7e556234b09a23e26204f54d392b33d0e1c907f777083bd5d3e0b6e2927",
      "rows": {
       "columns": [
        "host",
@@ -1451,10 +1452,10 @@
      "rowsMean": "holds",
      "status": "ran",
      "holds": true,
-     "rowCount": 9,
-     "explanation": "host-4b4dc1 has 9 backup snapshots taken since 2026-04-16T21:11:15.232Z.",
+     "rowCount": 10,
+     "explanation": "host-4b4dc1 has 10 backup snapshots taken since 2026-04-16T21:11:15.232Z.",
      "rerun": {
-      "rowCount": 9,
+      "rowCount": 10,
       "holds": true
      },
      "bound": "bound from the finding",
@@ -1527,12 +1528,18 @@
         "export",
         "2026-10-24T03:40:03.985Z",
         "/home/user-51eb89/backup-export/server-config-2026-10-24.tar.gz"
+       ],
+       [
+        "snap-038fceed7aa05c02",
+        "export",
+        "2026-10-25T03:40:05.995Z",
+        "/home/user-51eb89/backup-export/server-config-2026-10-25.tar.gz"
        ]
       ],
-      "total": 9,
-      "shown": 9,
+      "total": 10,
+      "shown": 10,
       "cutCells": 0,
-      "sha256": "sha256:b1b1eb1708eeddb2860402f560dc674ec09b7b8ac929e48837fb253ea6af8ceb"
+      "sha256": "sha256:8f90972f24b0ba9bf700ba16db2319b7c9f1cbf5a6ae78c5d7e11d4d9e17e7b1"
      }
     }
    ],
@@ -1553,15 +1560,15 @@
    },
    "sample": {
     "match": "same",
-    "detail": "The full sample pass raises the same finding with the same verb (HOLD) and the same check verdicts. Its window opens at 2026-03-20T01:29:03.000Z there and at 2026-04-16T21:11:15.232Z here: a survey finding's window starts where the bundle's audit log begins, or at its DNS run when the bundle holds no audit log."
+    "detail": "The full sample pass raises the same finding with the same verb (ADOPT) and the same check verdicts. Its window opens at 2026-03-20T01:29:03.000Z there and at 2026-04-16T21:11:15.232Z here: a survey finding's window starts where the bundle's audit log begins, or at its DNS run when the bundle holds no audit log."
    }
   },
   {
    "id": "orphans-6",
    "class": "orphan_vhost",
-   "verb": "HOLD",
+   "verb": "ADOPT",
    "claim": "host-89f6e7.com is a server_name in /etc/nginx/sites-available/host-9ac4f1.com on host-4b4dc1 (enabled) with no record of that name in the collected zones and no wildcard covering its zone",
-   "decision": "1 of 3 preconditions fail: other_settings_reference; decided by policy under rule-b8d9962485c3ced4: rule rule-b8d9962485c3ced4 (normal) holds this orphan_vhost finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-b8d9962485c3ced4",
+   "decision": "1 of 3 preconditions fail: other_settings_reference; decided by operator: accepted exception mem-4 holds until 2026-11-30T00:00:00.000Z (Personal estate, known and intentional: proxied names without real_ip and the leftover records are not a production risk.); the checks alone would say ESCALATE",
    "fields": [
     [
      "finding id",
@@ -1605,15 +1612,15 @@
     ],
     [
      "collection run",
-     "run-ea10fdeb1eae1a46"
+     "run-28ad36002e466ed5"
     ],
     [
      "DNS run",
-     "run-9e232bb5e1ebdb81"
+     "run-9d48791b00433777"
     ],
     [
      "window",
-     "2026-04-16T21:11:15.232Z to 2026-10-25T03:25:20.710Z"
+     "2026-04-16T21:11:15.232Z to 2026-10-25T13:53:56.023Z"
     ],
     [
      "value_hash",
@@ -1629,12 +1636,12 @@
    "detection": {
     "query": "orphan_vhost",
     "description": "A server_name with no record of that name in the DNS run and no wildcard record covering its zone.",
-    "sql": "SELECT n.obs_id, n.host, n.object_id, n.setting_path, n.refers_to_id AS server_name, e.value_redacted AS enabled, n.value_hash, n.observed_at\nFROM observation n\nJOIN observation e ON e.run_id = n.run_id AND e.object_id = n.object_id AND e.setting_path LIKE '%.enabled' AND substr(e.setting_path, 1, length(e.setting_path) - 8) = substr(n.setting_path, 1, instr(n.setting_path, '.server_name[') - 1)\nWHERE n.tenant_id = 'client-1' AND n.run_id = 'run-ea10fdeb1eae1a46' AND n.refers_to_type = 'dns_name' AND n.setting_path LIKE '%.server_name[%'\n  AND NOT EXISTS (SELECT 1 FROM dns_record d WHERE d.tenant_id = n.tenant_id AND d.run_id = 'run-9e232bb5e1ebdb81' AND d.name = n.refers_to_id)\n  AND (e.value_redacted = '1' OR NOT EXISTS (SELECT 1 FROM observation n2 JOIN observation e2 ON e2.run_id = n2.run_id AND e2.object_id = n2.object_id AND e2.setting_path LIKE '%.enabled' AND substr(e2.setting_path, 1, length(e2.setting_path) - 8) = substr(n2.setting_path, 1, instr(n2.setting_path, '.server_name[') - 1)\n    WHERE n2.run_id = n.run_id AND n2.refers_to_type = 'dns_name' AND n2.refers_to_id = n.refers_to_id AND n2.setting_path LIKE '%.server_name[%' AND e2.value_redacted = '1'))\n  AND NOT EXISTS (SELECT 1 FROM dns_record w JOIN observation z ON z.setting_path LIKE '%.zone' AND substr(w.name, 3) = z.value_redacted\n    WHERE w.tenant_id = n.tenant_id AND w.run_id = 'run-9e232bb5e1ebdb81' AND w.name LIKE '*.%'\n    AND z.run_id = n.run_id AND z.object_id = n.object_id AND substr(z.setting_path, 1, length(z.setting_path) - 5) = n.setting_path)\n  AND NOT EXISTS (SELECT 1 FROM observation m WHERE m.run_id = n.run_id AND m.object_id = n.object_id AND m.refers_to_type = 'dns_name' AND m.refers_to_id = n.refers_to_id AND m.setting_path < n.setting_path)\nORDER BY n.host, n.object_id, n.refers_to_id, n.setting_path",
-    "sqlSha256": "sha256:694179bf7a2d70c69d9cfa4e35aade81bd240067c6b42f219b76a135248f64e2",
+    "sql": "SELECT n.obs_id, n.host, n.object_id, n.setting_path, n.refers_to_id AS server_name, e.value_redacted AS enabled, n.value_hash, n.observed_at\nFROM observation n\nJOIN observation e ON e.run_id = n.run_id AND e.object_id = n.object_id AND e.setting_path LIKE '%.enabled' AND substr(e.setting_path, 1, length(e.setting_path) - 8) = substr(n.setting_path, 1, instr(n.setting_path, '.server_name[') - 1)\nWHERE n.tenant_id = 'client-1' AND n.run_id = 'run-28ad36002e466ed5' AND n.refers_to_type = 'dns_name' AND n.setting_path LIKE '%.server_name[%'\n  AND NOT EXISTS (SELECT 1 FROM dns_record d WHERE d.tenant_id = n.tenant_id AND d.run_id = 'run-9d48791b00433777' AND d.name = n.refers_to_id)\n  AND (e.value_redacted = '1' OR NOT EXISTS (SELECT 1 FROM observation n2 JOIN observation e2 ON e2.run_id = n2.run_id AND e2.object_id = n2.object_id AND e2.setting_path LIKE '%.enabled' AND substr(e2.setting_path, 1, length(e2.setting_path) - 8) = substr(n2.setting_path, 1, instr(n2.setting_path, '.server_name[') - 1)\n    WHERE n2.run_id = n.run_id AND n2.refers_to_type = 'dns_name' AND n2.refers_to_id = n.refers_to_id AND n2.setting_path LIKE '%.server_name[%' AND e2.value_redacted = '1'))\n  AND NOT EXISTS (SELECT 1 FROM dns_record w JOIN observation z ON z.setting_path LIKE '%.zone' AND substr(w.name, 3) = z.value_redacted\n    WHERE w.tenant_id = n.tenant_id AND w.run_id = 'run-9d48791b00433777' AND w.name LIKE '*.%'\n    AND z.run_id = n.run_id AND z.object_id = n.object_id AND substr(z.setting_path, 1, length(z.setting_path) - 5) = n.setting_path)\n  AND NOT EXISTS (SELECT 1 FROM observation m WHERE m.run_id = n.run_id AND m.object_id = n.object_id AND m.refers_to_type = 'dns_name' AND m.refers_to_id = n.refers_to_id AND m.setting_path < n.setting_path)\nORDER BY n.host, n.object_id, n.refers_to_id, n.setting_path",
+    "sqlSha256": "sha256:e95ca2007065cec7627c8f31a1cb3553eae0e8b381c329590f1cc731965fe616",
     "params": {
      "tenant_id": "client-1",
-     "dns_run_id": "run-9e232bb5e1ebdb81",
-     "run_id": "run-ea10fdeb1eae1a46"
+     "dns_run_id": "run-9d48791b00433777",
+     "run_id": "run-28ad36002e466ed5"
     },
     "total": 3,
     "matched": {
@@ -1650,20 +1657,20 @@
      ],
      "rows": [
       [
-       "obs-e39c1c38c538f315",
+       "obs-bdebc4d21cd429dc",
        "host-4b4dc1",
        "/etc/nginx/sites-available/host-9ac4f1.com",
        "server[host-9ac4f1.com:443].server_name[host-89f6e7.com]",
        "host-89f6e7.com",
        "1",
        "sha256:3d8ca55d58a9895b475424119f876a182be0f8a6ecc2a3aad5d594129daa7f3c",
-       "2026-10-25T03:25:20.710Z"
+       "2026-10-25T13:53:56.023Z"
       ]
      ],
      "total": 1,
      "shown": 1,
      "cutCells": 0,
-     "sha256": "sha256:0954e52868cc8783b9aa3270d04e97919d7a62a07c79b3b4c872b886ea285520"
+     "sha256": "sha256:e2221449bb1760bab05b18d2217d234c972da80dd9293dcb115ccf4e32ccf41c"
     }
    },
    "checks": [
@@ -1674,7 +1681,7 @@
      "status": "ran",
      "holds": true,
      "rowCount": 0,
-     "explanation": "Run run-ea10fdeb1eae1a46 collected everything it set out to collect.",
+     "explanation": "Run run-28ad36002e466ed5 collected everything it set out to collect.",
      "rerun": {
       "rowCount": 0,
       "holds": true
@@ -1682,10 +1689,10 @@
      "bound": "bound from the finding",
      "extra": {},
      "params": {
-      "run_id": "run-ea10fdeb1eae1a46"
+      "run_id": "run-28ad36002e466ed5"
      },
-     "sql": "SELECT c.run_id, c.tenant_id, c.surface, c.host, c.expected_count, c.observed_count, c.status\nFROM collection_run c\nWHERE c.run_id = 'run-ea10fdeb1eae1a46'\n  AND (c.observed_count < c.expected_count OR c.status <> 'complete'\n    OR c.expected_count IS NULL OR c.observed_count IS NULL\n    OR (c.surface LIKE 'linux.%' AND c.expected_count > (SELECT COUNT(*) FROM observation x WHERE x.run_id = c.run_id)))",
-     "sqlSha256": "sha256:013f68d42659d200c475858f7046b7a3ae896321635c68760fedba3aeae5a24f",
+     "sql": "SELECT c.run_id, c.tenant_id, c.surface, c.host, c.expected_count, c.observed_count, c.status\nFROM collection_run c\nWHERE c.run_id = 'run-28ad36002e466ed5'\n  AND (c.observed_count < c.expected_count OR c.status <> 'complete'\n    OR c.expected_count IS NULL OR c.observed_count IS NULL\n    OR (c.surface LIKE 'linux.%' AND c.expected_count > (SELECT COUNT(*) FROM observation x WHERE x.run_id = c.run_id)))",
+     "sqlSha256": "sha256:e330da4f072ce2ab32ab9a44a86e1bb0d75a1ca925b1d261a54b5284a7aa01ca",
      "rows": {
       "columns": [
        "run_id",
@@ -1710,7 +1717,7 @@
      "status": "ran",
      "holds": false,
      "rowCount": 3,
-     "explanation": "3 other settings in run run-ea10fdeb1eae1a46 also point at host-89f6e7.com.",
+     "explanation": "3 other settings in run run-28ad36002e466ed5 also point at host-89f6e7.com.",
      "rerun": {
       "rowCount": 3,
       "holds": false
@@ -1720,12 +1727,12 @@
      "params": {
       "tenant_id": "client-1",
       "refers_to_id": "host-89f6e7.com",
-      "run_id": "run-ea10fdeb1eae1a46",
+      "run_id": "run-28ad36002e466ed5",
       "object_id": "/etc/nginx/sites-available/host-9ac4f1.com",
       "setting_path": "server[host-9ac4f1.com:443].server_name[host-89f6e7.com]"
      },
-     "sql": "SELECT o.host, o.surface, o.object_id, o.setting_path, o.refers_to_type, o.observed_at\nFROM observation o\nWHERE o.tenant_id = 'client-1' AND o.run_id = 'run-ea10fdeb1eae1a46' AND o.refers_to_id = 'host-89f6e7.com'\n  AND NOT (o.object_id = '/etc/nginx/sites-available/host-9ac4f1.com' AND o.setting_path = 'server[host-9ac4f1.com:443].server_name[host-89f6e7.com]')\nORDER BY o.object_id, o.setting_path",
-     "sqlSha256": "sha256:32fe7f077af7fe7caf8c774a003ea1d060fb8ecbd8575990817476a51ca6a200",
+     "sql": "SELECT o.host, o.surface, o.object_id, o.setting_path, o.refers_to_type, o.observed_at\nFROM observation o\nWHERE o.tenant_id = 'client-1' AND o.run_id = 'run-28ad36002e466ed5' AND o.refers_to_id = 'host-89f6e7.com'\n  AND NOT (o.object_id = '/etc/nginx/sites-available/host-9ac4f1.com' AND o.setting_path = 'server[host-9ac4f1.com:443].server_name[host-89f6e7.com]')\nORDER BY o.object_id, o.setting_path",
+     "sqlSha256": "sha256:cad764c39b71ce3cc312b212bd2908b39df88a65716b49a10be194894f8df616",
      "rows": {
       "columns": [
        "host",
@@ -1742,7 +1749,7 @@
         "/etc/nginx/sites-available/host-9ac4f1.com",
         "server[host-9ac4f1.com:80].server_name[host-89f6e7.com]",
         "dns_name",
-        "2026-10-25T03:25:20.710Z"
+        "2026-10-25T13:53:56.023Z"
        ],
        [
         "host-4b4dc1",
@@ -1750,7 +1757,7 @@
         "/etc/nginx/sites-available/host-9ac4f1.com.bak.20260602-150607",
         "server[host-9ac4f1.com:443].server_name[host-89f6e7.com]",
         "dns_name",
-        "2026-10-25T03:25:20.710Z"
+        "2026-10-25T13:53:56.023Z"
        ],
        [
         "host-4b4dc1",
@@ -1758,13 +1765,13 @@
         "/etc/nginx/sites-available/host-9ac4f1.com.bak.20260602-150607",
         "server[host-9ac4f1.com:80].server_name[host-89f6e7.com]",
         "dns_name",
-        "2026-10-25T03:25:20.710Z"
+        "2026-10-25T13:53:56.023Z"
        ]
       ],
       "total": 3,
       "shown": 3,
       "cutCells": 0,
-      "sha256": "sha256:1d2376a6bb3cc34234f830403a179faddc909eea65b43722111e79bfd19a0b7f"
+      "sha256": "sha256:e311499fb19b5da2cacb85c0d2947724534d6f5ab7ba0807482f6b217215a8be"
      }
     },
     {
@@ -1773,10 +1780,10 @@
      "rowsMean": "holds",
      "status": "ran",
      "holds": true,
-     "rowCount": 9,
-     "explanation": "host-4b4dc1 has 9 backup snapshots taken since 2026-04-16T21:11:15.232Z.",
+     "rowCount": 10,
+     "explanation": "host-4b4dc1 has 10 backup snapshots taken since 2026-04-16T21:11:15.232Z.",
      "rerun": {
-      "rowCount": 9,
+      "rowCount": 10,
       "holds": true
      },
      "bound": "bound from the finding",
@@ -1849,12 +1856,18 @@
         "export",
         "2026-10-24T03:40:03.985Z",
         "/home/user-51eb89/backup-export/server-config-2026-10-24.tar.gz"
+       ],
+       [
+        "snap-038fceed7aa05c02",
+        "export",
+        "2026-10-25T03:40:05.995Z",
+        "/home/user-51eb89/backup-export/server-config-2026-10-25.tar.gz"
        ]
       ],
-      "total": 9,
-      "shown": 9,
+      "total": 10,
+      "shown": 10,
       "cutCells": 0,
-      "sha256": "sha256:b1b1eb1708eeddb2860402f560dc674ec09b7b8ac929e48837fb253ea6af8ceb"
+      "sha256": "sha256:8f90972f24b0ba9bf700ba16db2319b7c9f1cbf5a6ae78c5d7e11d4d9e17e7b1"
      }
     }
    ],
@@ -1875,15 +1888,15 @@
    },
    "sample": {
     "match": "same",
-    "detail": "The full sample pass raises the same finding with the same verb (HOLD) and the same check verdicts. Its window opens at 2026-03-20T01:29:03.000Z there and at 2026-04-16T21:11:15.232Z here: a survey finding's window starts where the bundle's audit log begins, or at its DNS run when the bundle holds no audit log."
+    "detail": "The full sample pass raises the same finding with the same verb (ADOPT) and the same check verdicts. Its window opens at 2026-03-20T01:29:03.000Z there and at 2026-04-16T21:11:15.232Z here: a survey finding's window starts where the bundle's audit log begins, or at its DNS run when the bundle holds no audit log."
    }
   },
   {
    "id": "orphans-7",
    "class": "orphan_vhost",
-   "verb": "HOLD",
+   "verb": "ADOPT",
    "claim": "host-9ac4f1.com is a server_name in /etc/nginx/sites-available/host-9ac4f1.com on host-4b4dc1 (enabled) with no record of that name in the collected zones and no wildcard covering its zone",
-   "decision": "1 of 3 preconditions fail: other_settings_reference; decided by policy under rule-b8d9962485c3ced4: rule rule-b8d9962485c3ced4 (normal) holds this orphan_vhost finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T01:45:33.962Z under rule rule-b8d9962485c3ced4",
+   "decision": "1 of 3 preconditions fail: other_settings_reference; decided by operator: accepted exception mem-16 holds until 2026-11-30T00:00:00.000Z (Personal estate, known and intentional: proxied names without real_ip and the leftover records are not a production risk.); the checks alone would say ESCALATE",
    "fields": [
     [
      "finding id",
@@ -1927,15 +1940,15 @@
     ],
     [
      "collection run",
-     "run-ea10fdeb1eae1a46"
+     "run-28ad36002e466ed5"
     ],
     [
      "DNS run",
-     "run-9e232bb5e1ebdb81"
+     "run-9d48791b00433777"
     ],
     [
      "window",
-     "2026-04-16T21:11:15.232Z to 2026-10-25T03:25:20.710Z"
+     "2026-04-16T21:11:15.232Z to 2026-10-25T13:53:56.023Z"
     ],
     [
      "value_hash",
@@ -1951,12 +1964,12 @@
    "detection": {
     "query": "orphan_vhost",
     "description": "A server_name with no record of that name in the DNS run and no wildcard record covering its zone.",
-    "sql": "SELECT n.obs_id, n.host, n.object_id, n.setting_path, n.refers_to_id AS server_name, e.value_redacted AS enabled, n.value_hash, n.observed_at\nFROM observation n\nJOIN observation e ON e.run_id = n.run_id AND e.object_id = n.object_id AND e.setting_path LIKE '%.enabled' AND substr(e.setting_path, 1, length(e.setting_path) - 8) = substr(n.setting_path, 1, instr(n.setting_path, '.server_name[') - 1)\nWHERE n.tenant_id = 'client-1' AND n.run_id = 'run-ea10fdeb1eae1a46' AND n.refers_to_type = 'dns_name' AND n.setting_path LIKE '%.server_name[%'\n  AND NOT EXISTS (SELECT 1 FROM dns_record d WHERE d.tenant_id = n.tenant_id AND d.run_id = 'run-9e232bb5e1ebdb81' AND d.name = n.refers_to_id)\n  AND (e.value_redacted = '1' OR NOT EXISTS (SELECT 1 FROM observation n2 JOIN observation e2 ON e2.run_id = n2.run_id AND e2.object_id = n2.object_id AND e2.setting_path LIKE '%.enabled' AND substr(e2.setting_path, 1, length(e2.setting_path) - 8) = substr(n2.setting_path, 1, instr(n2.setting_path, '.server_name[') - 1)\n    WHERE n2.run_id = n.run_id AND n2.refers_to_type = 'dns_name' AND n2.refers_to_id = n.refers_to_id AND n2.setting_path LIKE '%.server_name[%' AND e2.value_redacted = '1'))\n  AND NOT EXISTS (SELECT 1 FROM dns_record w JOIN observation z ON z.setting_path LIKE '%.zone' AND substr(w.name, 3) = z.value_redacted\n    WHERE w.tenant_id = n.tenant_id AND w.run_id = 'run-9e232bb5e1ebdb81' AND w.name LIKE '*.%'\n    AND z.run_id = n.run_id AND z.object_id = n.object_id AND substr(z.setting_path, 1, length(z.setting_path) - 5) = n.setting_path)\n  AND NOT EXISTS (SELECT 1 FROM observation m WHERE m.run_id = n.run_id AND m.object_id = n.object_id AND m.refers_to_type = 'dns_name' AND m.refers_to_id = n.refers_to_id AND m.setting_path < n.setting_path)\nORDER BY n.host, n.object_id, n.refers_to_id, n.setting_path",
-    "sqlSha256": "sha256:694179bf7a2d70c69d9cfa4e35aade81bd240067c6b42f219b76a135248f64e2",
+    "sql": "SELECT n.obs_id, n.host, n.object_id, n.setting_path, n.refers_to_id AS server_name, e.value_redacted AS enabled, n.value_hash, n.observed_at\nFROM observation n\nJOIN observation e ON e.run_id = n.run_id AND e.object_id = n.object_id AND e.setting_path LIKE '%.enabled' AND substr(e.setting_path, 1, length(e.setting_path) - 8) = substr(n.setting_path, 1, instr(n.setting_path, '.server_name[') - 1)\nWHERE n.tenant_id = 'client-1' AND n.run_id = 'run-28ad36002e466ed5' AND n.refers_to_type = 'dns_name' AND n.setting_path LIKE '%.server_name[%'\n  AND NOT EXISTS (SELECT 1 FROM dns_record d WHERE d.tenant_id = n.tenant_id AND d.run_id = 'run-9d48791b00433777' AND d.name = n.refers_to_id)\n  AND (e.value_redacted = '1' OR NOT EXISTS (SELECT 1 FROM observation n2 JOIN observation e2 ON e2.run_id = n2.run_id AND e2.object_id = n2.object_id AND e2.setting_path LIKE '%.enabled' AND substr(e2.setting_path, 1, length(e2.setting_path) - 8) = substr(n2.setting_path, 1, instr(n2.setting_path, '.server_name[') - 1)\n    WHERE n2.run_id = n.run_id AND n2.refers_to_type = 'dns_name' AND n2.refers_to_id = n.refers_to_id AND n2.setting_path LIKE '%.server_name[%' AND e2.value_redacted = '1'))\n  AND NOT EXISTS (SELECT 1 FROM dns_record w JOIN observation z ON z.setting_path LIKE '%.zone' AND substr(w.name, 3) = z.value_redacted\n    WHERE w.tenant_id = n.tenant_id AND w.run_id = 'run-9d48791b00433777' AND w.name LIKE '*.%'\n    AND z.run_id = n.run_id AND z.object_id = n.object_id AND substr(z.setting_path, 1, length(z.setting_path) - 5) = n.setting_path)\n  AND NOT EXISTS (SELECT 1 FROM observation m WHERE m.run_id = n.run_id AND m.object_id = n.object_id AND m.refers_to_type = 'dns_name' AND m.refers_to_id = n.refers_to_id AND m.setting_path < n.setting_path)\nORDER BY n.host, n.object_id, n.refers_to_id, n.setting_path",
+    "sqlSha256": "sha256:e95ca2007065cec7627c8f31a1cb3553eae0e8b381c329590f1cc731965fe616",
     "params": {
      "tenant_id": "client-1",
-     "dns_run_id": "run-9e232bb5e1ebdb81",
-     "run_id": "run-ea10fdeb1eae1a46"
+     "dns_run_id": "run-9d48791b00433777",
+     "run_id": "run-28ad36002e466ed5"
     },
     "total": 3,
     "matched": {
@@ -1972,20 +1985,20 @@
      ],
      "rows": [
       [
-       "obs-3c99da20a932defe",
+       "obs-6da3278c79eb0437",
        "host-4b4dc1",
        "/etc/nginx/sites-available/host-9ac4f1.com",
        "server[host-9ac4f1.com:443].server_name[host-9ac4f1.com]",
        "host-9ac4f1.com",
        "1",
        "sha256:4ef9ab258c0b9a22981ca22d8b28b30ddf2edf1a341379d508d5a87677b88f7f",
-       "2026-10-25T03:25:20.710Z"
+       "2026-10-25T13:53:56.023Z"
       ]
      ],
      "total": 1,
      "shown": 1,
      "cutCells": 0,
-     "sha256": "sha256:ed7e17e0cc0a840d551e36a7dbc1276641b5388e937d8e9d41a5358613df0540"
+     "sha256": "sha256:9d1f0e2e5cb7c5c377f7e821c770a02856c24a125cd13cf9f754d74903047a49"
     }
    },
    "checks": [
@@ -1996,7 +2009,7 @@
      "status": "ran",
      "holds": true,
      "rowCount": 0,
-     "explanation": "Run run-ea10fdeb1eae1a46 collected everything it set out to collect.",
+     "explanation": "Run run-28ad36002e466ed5 collected everything it set out to collect.",
      "rerun": {
       "rowCount": 0,
       "holds": true
@@ -2004,10 +2017,10 @@
      "bound": "bound from the finding",
      "extra": {},
      "params": {
-      "run_id": "run-ea10fdeb1eae1a46"
+      "run_id": "run-28ad36002e466ed5"
      },
-     "sql": "SELECT c.run_id, c.tenant_id, c.surface, c.host, c.expected_count, c.observed_count, c.status\nFROM collection_run c\nWHERE c.run_id = 'run-ea10fdeb1eae1a46'\n  AND (c.observed_count < c.expected_count OR c.status <> 'complete'\n    OR c.expected_count IS NULL OR c.observed_count IS NULL\n    OR (c.surface LIKE 'linux.%' AND c.expected_count > (SELECT COUNT(*) FROM observation x WHERE x.run_id = c.run_id)))",
-     "sqlSha256": "sha256:013f68d42659d200c475858f7046b7a3ae896321635c68760fedba3aeae5a24f",
+     "sql": "SELECT c.run_id, c.tenant_id, c.surface, c.host, c.expected_count, c.observed_count, c.status\nFROM collection_run c\nWHERE c.run_id = 'run-28ad36002e466ed5'\n  AND (c.observed_count < c.expected_count OR c.status <> 'complete'\n    OR c.expected_count IS NULL OR c.observed_count IS NULL\n    OR (c.surface LIKE 'linux.%' AND c.expected_count > (SELECT COUNT(*) FROM observation x WHERE x.run_id = c.run_id)))",
+     "sqlSha256": "sha256:e330da4f072ce2ab32ab9a44a86e1bb0d75a1ca925b1d261a54b5284a7aa01ca",
      "rows": {
       "columns": [
        "run_id",
@@ -2032,7 +2045,7 @@
      "status": "ran",
      "holds": false,
      "rowCount": 3,
-     "explanation": "3 other settings in run run-ea10fdeb1eae1a46 also point at host-9ac4f1.com.",
+     "explanation": "3 other settings in run run-28ad36002e466ed5 also point at host-9ac4f1.com.",
      "rerun": {
       "rowCount": 3,
       "holds": false
@@ -2042,12 +2055,12 @@
      "params": {
       "tenant_id": "client-1",
       "refers_to_id": "host-9ac4f1.com",
-      "run_id": "run-ea10fdeb1eae1a46",
+      "run_id": "run-28ad36002e466ed5",
       "object_id": "/etc/nginx/sites-available/host-9ac4f1.com",
       "setting_path": "server[host-9ac4f1.com:443].server_name[host-9ac4f1.com]"
      },
-     "sql": "SELECT o.host, o.surface, o.object_id, o.setting_path, o.refers_to_type, o.observed_at\nFROM observation o\nWHERE o.tenant_id = 'client-1' AND o.run_id = 'run-ea10fdeb1eae1a46' AND o.refers_to_id = 'host-9ac4f1.com'\n  AND NOT (o.object_id = '/etc/nginx/sites-available/host-9ac4f1.com' AND o.setting_path = 'server[host-9ac4f1.com:443].server_name[host-9ac4f1.com]')\nORDER BY o.object_id, o.setting_path",
-     "sqlSha256": "sha256:3bacecf558fbf7bb58fbbe050b9bce031f47de6a041450bd22ad45861fef06d4",
+     "sql": "SELECT o.host, o.surface, o.object_id, o.setting_path, o.refers_to_type, o.observed_at\nFROM observation o\nWHERE o.tenant_id = 'client-1' AND o.run_id = 'run-28ad36002e466ed5' AND o.refers_to_id = 'host-9ac4f1.com'\n  AND NOT (o.object_id = '/etc/nginx/sites-available/host-9ac4f1.com' AND o.setting_path = 'server[host-9ac4f1.com:443].server_name[host-9ac4f1.com]')\nORDER BY o.object_id, o.setting_path",
+     "sqlSha256": "sha256:8e7ddd6710b7a443756843eca100eb5c8c6a500c3b717d57e643c174f9ac694f",
      "rows": {
       "columns": [
        "host",
@@ -2064,7 +2077,7 @@
         "/etc/nginx/sites-available/host-9ac4f1.com",
         "server[host-9ac4f1.com:80].server_name[host-9ac4f1.com]",
         "dns_name",
-        "2026-10-25T03:25:20.710Z"
+        "2026-10-25T13:53:56.023Z"
        ],
        [
         "host-4b4dc1",
@@ -2072,7 +2085,7 @@
         "/etc/nginx/sites-available/host-9ac4f1.com.bak.20260602-150607",
         "server[host-9ac4f1.com:443].server_name[host-9ac4f1.com]",
         "dns_name",
-        "2026-10-25T03:25:20.710Z"
+        "2026-10-25T13:53:56.023Z"
        ],
        [
         "host-4b4dc1",
@@ -2080,13 +2093,13 @@
         "/etc/nginx/sites-available/host-9ac4f1.com.bak.20260602-150607",
         "server[host-9ac4f1.com:80].server_name[host-9ac4f1.com]",
         "dns_name",
-        "2026-10-25T03:25:20.710Z"
+        "2026-10-25T13:53:56.023Z"
        ]
       ],
       "total": 3,
       "shown": 3,
       "cutCells": 0,
-      "sha256": "sha256:f632437e6a129a7c5ddd95fd0b102659264d3fe3c08eeee1d045d58d53f5e1f1"
+      "sha256": "sha256:838fa1cbfd09e7762dec5e6b60ac169f1101484133704fbd6174b09aba35bc9a"
      }
     },
     {
@@ -2095,10 +2108,10 @@
      "rowsMean": "holds",
      "status": "ran",
      "holds": true,
-     "rowCount": 9,
-     "explanation": "host-4b4dc1 has 9 backup snapshots taken since 2026-04-16T21:11:15.232Z.",
+     "rowCount": 10,
+     "explanation": "host-4b4dc1 has 10 backup snapshots taken since 2026-04-16T21:11:15.232Z.",
      "rerun": {
-      "rowCount": 9,
+      "rowCount": 10,
       "holds": true
      },
      "bound": "bound from the finding",
@@ -2171,12 +2184,18 @@
         "export",
         "2026-10-24T03:40:03.985Z",
         "/home/user-51eb89/backup-export/server-config-2026-10-24.tar.gz"
+       ],
+       [
+        "snap-038fceed7aa05c02",
+        "export",
+        "2026-10-25T03:40:05.995Z",
+        "/home/user-51eb89/backup-export/server-config-2026-10-25.tar.gz"
        ]
       ],
-      "total": 9,
-      "shown": 9,
+      "total": 10,
+      "shown": 10,
       "cutCells": 0,
-      "sha256": "sha256:b1b1eb1708eeddb2860402f560dc674ec09b7b8ac929e48837fb253ea6af8ceb"
+      "sha256": "sha256:8f90972f24b0ba9bf700ba16db2319b7c9f1cbf5a6ae78c5d7e11d4d9e17e7b1"
      }
     }
    ],
@@ -2197,7 +2216,7 @@
    },
    "sample": {
     "match": "same",
-    "detail": "The full sample pass raises the same finding with the same verb (HOLD) and the same check verdicts. Its window opens at 2026-03-20T01:29:03.000Z there and at 2026-04-16T21:11:15.232Z here: a survey finding's window starts where the bundle's audit log begins, or at its DNS run when the bundle holds no audit log."
+    "detail": "The full sample pass raises the same finding with the same verb (ADOPT) and the same check verdicts. Its window opens at 2026-03-20T01:29:03.000Z there and at 2026-04-16T21:11:15.232Z here: a survey finding's window starts where the bundle's audit log begins, or at its DNS run when the bundle holds no audit log."
    }
   }
  ]

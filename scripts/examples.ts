@@ -3,7 +3,9 @@
 // collection surfaced, each a bundle in its own right: the rows the case needs and nothing else, so a
 // reader can see every row the finding rests on. The pass (src/pipeline.ts, no model) then runs over each
 // slice through sql.js and its findings are written next to it. Nothing is authored: every row is a copy
-// of a recorded, redacted row, and the findings are what the pass computed over them when this ran.
+// of a recorded, redacted row, and the findings are what the pass computed over them when this ran. Every
+// slice is one tenant's, the tenant of the latest DNS run (client-1, the operator's estate): the bundle's
+// lab rows (tenant lab-1) stay out of all three.
 //
 //   examples/proxy-split/            proxy_split              the DNS run, the two records of one zone, the three audit events on the www record
 //   examples/wildcard-no-real-ip/    proxied_without_real_ip  the DNS run, the proxied wildcard, the landing host run's real_ip and enabled rows
@@ -20,8 +22,11 @@
 //
 // Each directory gets bundle.json (the slice, in the house format) and findings.json (the pass's findings).
 // Directory names say what the case is, never which zone it is: the bundle pseudonymises the zone, and a
-// folder named after it would undo that for every row of the zone. Every pass decides at the slice's own
-// instant (src/data/instant.ts), so a re-run gives the same findings.json.
+// folder named after it would undo that for every row of the zone. Every pass reads the technician's lessons
+// from the store DRIFT_MEMORY_DIR names (read only) and decides at the slice's own instant, or at the instant the
+// latest lesson was taught when that is later (src/data/instant.ts decisionInstantWith), as the sample pass does,
+// so an exception in force decides a slice's finding as it decides the full pass's, and a re-run with the same
+// store gives the same findings.json.
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -29,9 +34,10 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { DataLayer } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
-import { decisionInstant } from "../src/data/instant.ts";
+import { decisionInstant, decisionInstantWith } from "../src/data/instant.ts";
 import { formatBundle, TABLES, type BundleFile, type Tables } from "../src/data/store.ts";
 import type { TableName } from "../src/data/rows.ts";
+import { TechnicianMemory } from "../src/engine/memory.ts";
 import { DriftWorld } from "../src/engine/world.ts";
 import { VERBS, runPass, type Finding } from "../src/pipeline.ts";
 import bundle from "../sample/bundle.json" with { type: "json" };
@@ -42,11 +48,15 @@ const latest = (surface: string, host: string | null) => [...B.collection_run].f
 
 const dns = latest("cloudflare.dns", null);
 const audit = latest("cloudflare.audit", null);
-const hosts = [...new Set(B.collection_run.filter((r) => r.surface === "linux.nginx").map((r) => r.host!))].sort();
+if (!dns || !audit) throw new Error("the recorded bundle lacks a complete DNS or audit run");
+// The slices are the operator's estate, the tenant of the latest DNS run: the bundle also holds the lab's rows (lab-1), which no slice keeps.
+const TENANT = dns.tenant_id;
+const own = <R extends { tenant_id: string }>(xs: readonly R[]): R[] => xs.filter((x) => x.tenant_id === TENANT);
+const hosts = [...new Set(own(B.collection_run).filter((r) => r.surface === "linux.nginx").map((r) => r.host!))].sort();
 const hostRuns = hosts.map((h) => latest("linux.nginx", h));
-if (!dns || !audit || hostRuns.some((r) => !r)) throw new Error("the recorded bundle lacks a complete DNS, audit or host run");
+if (hostRuns.some((r) => !r)) throw new Error("the recorded bundle lacks a complete host run");
 
-const inventoryAddresses = new Set(B.inventory_asset.map((a) => a.address));
+const inventoryAddresses = new Set(own(B.inventory_asset).map((a) => a.address));
 const records = B.dns_record.filter((d) => d.run_id === dns.run_id);
 const obsOf = (run: { run_id: string }) => B.observation.filter((o) => o.run_id === run.run_id);
 
@@ -80,7 +90,7 @@ export function sliceDeciderRows(source: Partial<Tables>, tenant: string, slice:
 
 /** The slice's own tables plus the Decider's rows for them; collection_run gains the probe runs. */
 function withDeciderRows(ex: Example): Example {
-  const extra = sliceDeciderRows(B, dns.tenant_id, ex.tables);
+  const extra = sliceDeciderRows(B, TENANT, ex.tables);
   const tables: Partial<Tables> = { ...ex.tables };
   for (const [t, rows] of Object.entries(extra) as [keyof Tables, Tables[keyof Tables]][]) {
     if (!rows.length) continue;
@@ -111,7 +121,7 @@ function proxySplitExample(): Example {
 function wildcardNoRealIp(): Example {
   const wild = records.filter((d) => d.name.startsWith("*.") && d.proxied === 1 && ["A", "AAAA"].includes(d.type) && inventoryAddresses.has(d.content));
   const origins = new Set(wild.map((d) => d.content));
-  const assets = B.inventory_asset.filter((a) => origins.has(a.address));
+  const assets = own(B.inventory_asset).filter((a) => origins.has(a.address));
   const hostSet = new Set(assets.map((a) => a.host));
   const runs = hostRuns.filter((r) => hostSet.has(r.host));
   const obs = runs.flatMap((r) => obsOf(r).filter((o) => o.setting_path === "http.real_ip" || o.setting_path.endsWith(".real_ip") || o.setting_path.endsWith(".enabled")));
@@ -132,8 +142,8 @@ function wildcardNoRealIp(): Example {
 async function orphans(): Promise<Example> {
   const obs = hostRuns.flatMap((r) => obsOf(r).filter((o) => o.setting_path.includes(".server_name[") || o.setting_path.endsWith(".enabled")));
   const tables: Partial<Tables> = {
-    collection_run: [dns, audit, ...hostRuns], dns_record: records.filter((d) => d.type === "A" || d.type === "CNAME"), observation: obs, inventory_asset: B.inventory_asset,
-    backup_snapshot: B.backup_snapshot,
+    collection_run: [dns, audit, ...hostRuns], dns_record: records.filter((d) => d.type === "A" || d.type === "CNAME"), observation: obs, inventory_asset: own(B.inventory_asset),
+    backup_snapshot: own(B.backup_snapshot),
   };
   // The audit events of the records the pass names, so the checks read what the full bundle's checks read: a first pass finds the records.
   const first = await passOver({ _note: "", ...tables });
@@ -171,11 +181,13 @@ function toBundleFile(ex: Example): BundleFile {
 const invoked = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href.toLowerCase() : "";
 if (invoked === import.meta.url.toLowerCase()) {
   const { values: args } = parseArgs({ options: { out: { type: "string", default: "examples" } } });
+  const memory = new TechnicianMemory({ storage: "read" });
+  const taught = memory.lessons().map((l) => l.recordedAt);
   for (const ex of await buildExamples()) {
     const file = toBundleFile(ex);
     const engine = await SqlJsEngine.create();
     const counts = engine.loadBundle(file);
-    const pass = await runPass(new DataLayer(engine), { world: new DriftWorld(`example_${ex.dir}`), decidedAt: decisionInstant(file) });
+    const pass = await runPass(new DataLayer(engine), { world: new DriftWorld(`example_${ex.dir}`), memory, decidedAt: decisionInstantWith(file, taught) });
     engine.close();
     const unexpected = pass.findings.filter((f) => !ex.classes.includes(f.finding.class));
     if (unexpected.length) throw new Error(`${ex.dir}: the slice produced ${unexpected.length} finding(s) outside ${ex.classes.join("/")}: ${unexpected.map((f) => f.finding.class).join(", ")}`);
@@ -185,7 +197,8 @@ if (invoked === import.meta.url.toLowerCase()) {
     writeFileSync(path.join(dir, "bundle.json"), formatBundle(file));
     writeFileSync(path.join(dir, "findings.json"), `${JSON.stringify(pass.findings satisfies Finding[], null, 2)}\n`);
     const verbs = VERBS.filter((v) => pass.verbs[v] > 0).map((v) => `${pass.verbs[v]} ${v}`).join(", ");
-    console.log(`${ex.dir}: ${Object.entries(counts).filter(([, n]) => n).map(([t, n]) => `${t} ${n}`).join(", ")}; ${pass.runs} runs, ${pass.gatedOut.length} gated; ${pass.findings.length} finding(s): ${ex.classes.join(", ")}; ${verbs}`);
-    for (const f of pass.findings) console.log(`  ${f.verb.padEnd(8)} ${f.finding.class.padEnd(24)} ${f.finding.summary}`);
+    const mem = pass.memory ? `; lessons ${pass.memory.lessons}, exceptions applied ${pass.memory.applied}, lapsed ${pass.memory.lapsed}` : "";
+    console.log(`${ex.dir}: ${Object.entries(counts).filter(([, n]) => n).map(([t, n]) => `${t} ${n}`).join(", ")}; ${pass.runs} runs, ${pass.gatedOut.length} gated; ${pass.findings.length} finding(s): ${ex.classes.join(", ")}; ${verbs}${mem}`);
+    for (const f of pass.findings) console.log(`  ${f.verb.padEnd(8)} ${f.finding.class.padEnd(24)} ${f.finding.summary}${f.exception ? ` [exception ${f.exception.lesson} ${f.exception.status}]` : ""}`);
   }
 }

@@ -8,13 +8,15 @@
 // authored rows plus the hackathon policy, approvals, vault copies, validations, a probe run, an approved file
 // the latest run lacks and two HOLDs of an earlier pass) exercises the Decider through the DataLayer: every verb
 // the design's table reaches, its reason and expiry, approved_missing, the HOLD kept and the HOLD expired, and the
-// ledger rows read back through SQL. The MemTracer builds events as the real Tracer writes them (redacted,
-// model: none), so the exact-text assertions also show the bundles' vocabulary survives.
+// ledger rows read back through SQL. The sample bundle (sample/bundle.json) with the committed technician's lessons
+// (examples/memory) pins what the operator's 23 accepted exceptions do to the recorded estate, in force and at their
+// expiry. The MemTracer builds events as the real Tracer writes them (redacted, model: none), so the exact-text
+// assertions also show the bundles' vocabulary survives.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { BLOG, BLOG_HASH, FIXTURE as POLICY_FIXTURE, HOLD_EXPIRED, HOLD_IN_FORCE, policyBundleText } from "../scripts/fixtures/policy-bundle.ts";
-import { decisionInstant } from "../src/data/instant.ts";
+import { decisionInstant, decisionInstantWith } from "../src/data/instant.ts";
 import { holdUntil } from "../src/policy/decide.ts";
 import { DataLayer, DataLayerError, type Params, type RunOptions } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
@@ -32,6 +34,7 @@ import type { TraceEvent } from "../src/trace.ts";
 import authored from "./fixtures/authored-bundle.json" with { type: "json" };
 import policyBundle from "./fixtures/policy-bundle.json" with { type: "json" };
 import recorded from "./fixtures/recorded-bundle.json" with { type: "json" };
+import sample from "../sample/bundle.json" with { type: "json" };
 import { MemTracer } from "./fixtures/mem-tracer.ts";
 import { APEX_NAME, APEX_RECORD, DNS_RUN, CONFD_HOST, CONFD_RUN, SITES_HOST, SITES_RUN, T, WWW_NAME, WWW_RECORD } from "./fixtures/catalogue-params.ts";
 
@@ -542,6 +545,44 @@ describe("the Decider consults the technician's memory (src/engine/memory.ts) be
     expect(memory.answered(split.finding, "is the apex meant to be direct?")?.answer).toBe("Yes.");
     expect(memory.exceptionFor(split.finding)).toBeNull();
   });
+});
+
+describe("the sample pass under the committed lessons (sample/bundle.json, examples/memory)", () => {
+  const STORE = fileURLToPath(new URL("../examples/memory", import.meta.url));
+  const EXPIRY = "2026-11-30T00:00:00.000Z";
+
+  it("an exception in force gives ADOPT until its expiry: 23 findings ADOPT by the operator, the 3 orphan records HOLD and the proxy_split ESCALATE by policy; at the expiry the 23 are re-raised as ESCALATE", async () => {
+    const memory = new TechnicianMemory({ storage: "read", directory: STORE });
+    const lessons = memory.lessons();
+    expect(lessons).toHaveLength(23);
+    expect(lessons.every((l) => l.kind === "exception" && l.tenantId === "client-1" && l.expiresAt === EXPIRY && ["proxied_without_real_ip", "orphan_vhost"].includes(l.findingClass))).toBe(true);
+    // a lesson taught after the bundle's instant dates the decision: the pass decides at the latest lesson's instant
+    const decidedAt = decisionInstantWith(sample, lessons.map((l) => l.recordedAt))!;
+    expect(decidedAt).toBe(lessons.map((l) => l.recordedAt).sort().at(-1));
+    expect(decidedAt > decisionInstant(sample)!).toBe(true);
+    const at = async (recallAt: string) => {
+      const engine = await SqlJsEngine.create();
+      engine.loadBundle(sample);
+      const result = await runPass(new DataLayer(engine), { world: new DriftWorld("test_pipeline_sample"), memory, ledger: new MemoryLedger(engine), decidedAt, at: recallAt });
+      engine.close();
+      return result;
+    };
+    const inForce = await at("2026-11-29T23:59:59.999Z");
+    expect(inForce.verbs).toEqual({ ADOPT: 23, HOLD: 3, ESCALATE: 1, ROLLBACK: 0, FIX: 0 });
+    expect(inForce.memory).toEqual({ lessons: 23, applied: 23, lapsed: 0 });
+    for (const f of inForce.findings) {
+      if (f.exception) expect([f.verb, f.disposition.decided_by, f.disposition.expires_at, f.exception.status], f.id).toEqual(["ADOPT", "operator", EXPIRY, "applied"]);
+      else expect([f.finding.class, f.verb, f.disposition.decided_by], f.id).toEqual(f.finding.class === "orphan_record" ? ["orphan_record", "HOLD", "policy"] : ["proxy_split", "ESCALATE", "policy"]);
+    }
+    expect(ofClass(inForce.findings, "orphan_record").every((f) => f.exception === undefined)).toBe(true);
+    // the ledger takes the pass's own 27 rows at its instant
+    expect(inForce.ledger?.dispositions).toBe(27);
+    // at the expiry the same lessons are lapsed: never applied, each finding re-raised to the technician
+    const lapsed = await at(EXPIRY);
+    expect(lapsed.verbs).toEqual({ ADOPT: 0, HOLD: 3, ESCALATE: 24, ROLLBACK: 0, FIX: 0 });
+    expect(lapsed.memory).toEqual({ lessons: 23, applied: 0, lapsed: 23 });
+    expect(lapsed.findings.filter((f) => f.exception).every((f) => f.verb === "ESCALATE" && f.exception!.status === "lapsed")).toBe(true);
+  }, 120_000);
 });
 
 describe("the authored fixture's pass is the one it was: the default decides every finding and a ledger changes nothing", () => {

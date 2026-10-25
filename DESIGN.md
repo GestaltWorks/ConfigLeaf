@@ -105,7 +105,10 @@ row's natural parts, so a re-run inserts nothing twice; every collected-text col
    request id, the per-tenant app id `drift-agent-<tenant>`). With no model, the class's default checks run and the
    judge is skipped.
 5. **Decide.** `src/policy/decide.ts`, pure: the operator's exception (an accepted H-MEM lesson in force gives ADOPT
-   until its expiry; a lapsed one ESCALATE), then the policy rule that governs the setting, then the default (ADOPT
+   until its expiry; a lapsed one ESCALATE; the lessons live in the directory `DRIFT_MEMORY_DIR` names, which every
+   pass opens read only and `npm run answer` alone writes, committed under `examples/memory`; on 25 Oct 2026 it holds
+   the operator's 23 accepted exceptions, one per `proxied_without_real_ip` and `orphan_vhost` finding of the recorded
+   estate, until 2026-11-30T00:00:00Z, all 23 in force), then the policy rule that governs the setting, then the default (ADOPT
    as a candidate when every check holds and none was rejected, else ESCALATE). A HOLD the rule gives meets the
    latest HOLD the ledger holds on the same live value decided before the pass (`PRIOR_HOLDS_SQL`): in force, it keeps
    that HOLD's expiry, which every kept HOLD carries forward from the first, and the rule's sentence built with that
@@ -137,9 +140,15 @@ row's natural parts, so a re-run inserts nothing twice; every collected-text col
    - Every write path refuses a live file or record that changed since the decision, and a retry of a failed write to
      the same target, commit and live value. An unverified write completed, so the same write again runs and its
      reason names the unverified action.
-   - The lab estate (`lab/README.md`) proves the write path: on 25 Oct 2026 at 05:47 UTC a rollback of `lab.example`
-     wrote the copy, passed `nginx -t`, reloaded and ended unverified, and the next pass found 0 findings.
-     Verification is measured on hosts whose names resolve; the lab's names sit in no zone.
+   - The lab estate (`lab/README.md`, tenant `lab-1`) runs the host's write paths for real, measured 25 Oct 2026. At
+     05:47 UTC a rollback of `lab.example` wrote the copy, passed `nginx -t`, reloaded and ended unverified: the lab's
+     names sit in no zone, and the account holds no record of them. With the probe population from
+     `PROBE_TARGETS_OVERRIDE`, the rollback at 09:53 UTC reached done, verified by probe `probe-36eb2c1bba298a2a`
+     2 s after the reload, and its change ticket, issue #4, opened and closed with that probe. A FIX on
+     `www.lab.test` ran `investigate`: Lightning selected four valid checks (receipt `rcpt_req_nn4ag0yu`), Ultra's
+     refuting SELECT returned no rows (receipt `rcpt_req_iehg9gmt`), both receipts verified with custody holding
+     under `drift-agent-lab-1`; `fix` was refused without a valid copy, and the incident, issue #3, holds the
+     investigation under Evidence and stays open for the technician.
 
    The ticket step (`src/psa/`) then plans from the pass's findings, the ledger, the actions and the ticket rows:
    ESCALATE and FIX open an incident; ROLLBACK opens a change under `alert` always or on_fix, once its action is
@@ -150,9 +159,9 @@ row's natural parts, so a re-run inserts nothing twice; every collected-text col
    setting raises nothing on it; a HOLD's ticket closes on ADOPT, or when a pass that covers the setting raises
    nothing on it; a closed row stays closed. Every string passes the tenant's redactor and the
    deny-list probe before it leaves; one label and nothing is sent.
-8. **Document and repeat.** The owner's document (`src/document/render.ts`) is one markdown page per tenant from 13
+8. **Document and repeat.** The owner's document (`src/document/render.ts`) is one markdown page per tenant from 14
    named queries: estate, copies, approvals, open findings, where each answer comes from (read off the SQL text),
-   work, probes and the queries it ran. `npm run cycle`
+   work, probes (ok, fail and skipped by kind) and the queries it ran. `npm run cycle`
    runs collect, probe, validate, pass, act, tickets and document once, the first failing step stopping it; `npm run
    watch` runs the cycle every N minutes until SIGINT.
 
@@ -345,14 +354,18 @@ Absent, with the one line each maps:
 
 - The write paths run behind `--apply` only, and on 24 Oct 2026 every Actor run was a dry run: the two live cycles
   planned 0 actions over 27 HOLD dispositions, and `rollback_file` and `revert_record` ran against a fake host, a
-  fake probe and a fake fetch (`test/actions.test.ts`). On 25 Oct 2026 the `action` table holds the lab estate's
-  rows, tenant `lab-1` (§4 step 7), and the operator's hosts and zones hold 0 writes from the Actor. The first write
-  to a host or a zone is the operator's rehearsal; `revert_record` needs a token that holds DNS Edit.
+  fake probe and a fake fetch (`test/actions.test.ts`). On 25 Oct 2026 the write paths ran for real on the lab
+  estate, tenant `lab-1` (§4 step 7): its `action` table holds 10 rows, `rollback_file` done with its verification
+  probe, one unverified, `investigate` with Nemotron Lightning and Ultra on verified receipts, `fix` refused without
+  a valid copy. `revert_record` has run against a fake fetch only, and the operator's hosts and zones hold 0 writes
+  from the Actor. The first write to the operator's hosts or zones is the operator's rehearsal; `revert_record`
+  needs a token that holds DNS Edit.
 - One PSA backend: GitHub Issues. HaloPSA, ConnectWise and Autotask are the field map in `src/psa/mapping.json`. The
-  `ticket` table holds 1 row on 25 Oct 2026: issue #2, the incident P1 for the `proxy_split` under rule 13, open.
-  The HOLD expires 2026-10-25T03:21:06.870Z; the 03:25 UTC cycle of 25 Oct 2026, the first pass after it, records
-  ESCALATE with the expired-hold reason, and its ticket step comments on issue #2 (the row's `updated_at`
-  2026-10-25T03:26:31.652Z).
+  `ticket` table holds 3 rows on 25 Oct 2026. On the estate, issue #2, the incident P1 for the `proxy_split` under
+  rule 13, open: the HOLD expires 2026-10-25T03:21:06.870Z; the 03:25 UTC cycle of 25 Oct 2026, the first pass after
+  it, records ESCALATE with the expired-hold reason, and its ticket step comments on issue #2 (the row's `updated_at`
+  2026-10-25T03:26:31.652Z). On the lab, issue #3, the FIX's incident P1 with the investigation, open, and issue #4,
+  the rollback's change P1, opened and closed at 09:54 UTC.
 - The eval runner has run C0 on the development set (two runs, 0 calls) and the `EVAL_LIVE` smoke: C1 and C3 on
   three development items, 9 calls, custody holding on all 9 under `drift-agent-client-1`. The held-out set runs
   once, on 26 October, after the feature freeze. C2 runs with Lightning as the judge and the gate expecting
@@ -378,34 +391,41 @@ Absent, with the one line each maps:
   the vault, and the restored tree names it as a gap; a restore needs every gap from the host or from certbot, and
   `rollback_file` writes the one file and leaves the rest of the tree as it is.
 - `drift_vs_approved`, `changed_since_backup` and `approved_missing` find 0 on the bundle, and locked settings without
-  an approved value are 0: the approvals come from the 19:56 UTC runs, every approved setting of the 23:35 UTC runs
-  holds its approved value and every approved object is present, and every `file` row of the 23:35 UTC runs (32 and
-  22) equals its member of the newest tarball. ROLLBACK and FIX are exercised on `test/fixtures/policy-bundle.json`
-  (11 findings: ADOPT 2, HOLD 4, ESCALATE 1, ROLLBACK 3, FIX 1, the missing `blog.conf` among the ROLLBACKs).
+  an approved value are 0: the approvals come from the 19:56 UTC runs of 24 Oct, every approved setting of the 13:53
+  UTC runs of 25 Oct holds its approved value and every approved object is present, and every `file` row of those
+  runs (32 and 22) equals its member of the newest tarball. ROLLBACK and FIX are exercised on `test/fixtures/policy-bundle.json`
+  (11 findings: ADOPT 2, HOLD 4, ESCALATE 1, ROLLBACK 3, FIX 1, the missing `blog.conf` among the ROLLBACKs) and
+  decided live on the lab estate, whose 19 disposition rows of 25 Oct 2026 hold ROLLBACK 6, FIX 2, ESCALATE 1 and
+  HOLD 10 (§4 step 7).
 - `backup_item` holds every regular-file member of the newest export tarball, 82 and 72 on 24 Oct 2026. A member
   outside `/etc/nginx/` and `/etc/letsencrypt/renewal/` (28 and 39: unit files, cron entries, an application's env
   backups) is stored under a salted `member-<16 hex>` id of its redacted path: its hash and its count reach the
   bundle, its name stays on the host, and the two live trees are the ones `changed_since_backup` joins.
 - The resolver weighs tenant, surface, globs, version and `rule_id`; `since` is provenance only. Both versions carry
-  since 2026-10-25T00:00:00.000Z, and version 2 decided all 27 dispositions of the sample pass decided at
-  2026-10-25T03:25:35.412Z (measured 25 Oct 2026).
+  since 2026-10-25T00:00:00.000Z, and version 2 decides the 4 dispositions the policy decides in the sample pass
+  decided at 2026-10-25T14:17:53.416Z; the operator's exceptions decide the other 23 (measured 25 Oct 2026).
 - A finding of a class other than `drift_vs_approved` and `approved_missing` under a rollback rule is held: the rule
   restores a setting to its approved value, and the finding concerns the setting's relation to another setting while
   its own value stands, the `proxy_split` included, whose record's `proxied` field has an approval equal to its live
   value.
 - In sample mode every disposition is decided at the bundle's own instant (the later of the latest finish of its runs
-  and the latest `decided_at` of its ledger rows, `src/data/instant.ts`; 2026-10-25T03:25:35.412Z for
-  `sample/bundle.json`, the 03:25 UTC live pass), and a HOLD with no earlier HOLD on its live value expires from it.
-  The bundle holds 26 runs, 135 ledger rows from five live passes (24 Oct 23:21 and 23:36 UTC, 25 Oct 01:16, 01:45
-  and 03:25 UTC), 630 referent fingerprints and 1 ticket, so the sample pass's findings meet the 01:45 UTC HOLDs: the
-  26 HOLDs keep the expiry carried from the 23:21 UTC pass, and the `proxy_split`, whose HOLD expired at
-  2026-10-25T03:21:06.870Z, is ESCALATE. The sample pass, the examples and `examples/document.md` decide at one instant
-  with the ledger rows the bundle carries. Measured 25 Oct 2026: two runs print byte-identical finding, disposition and
-  summary lines (the 55 lines outside the trace hash the same); the 484 trace lines carry their own `ts`, `latency_ms`
-  and `trace_id`, so the whole stdout differs run to run; the bundle holds the 03:25 UTC rows under the ids the sample
-  pass computes, so the pass writes 0 dispositions and its `DISPOSITION` lines print those rows. The examples and the
-  replay page decide at their slice's instant the same way; each slice holds the disposition rows of its own objects
-  and records (5, 55 and 130 of the 135), so its instant is the bundle's and its verbs are the full pass's: HOLD 7 and
+  and the latest `decided_at` of its ledger rows, `src/data/instant.ts`), or at the instant the latest of the
+  technician's lessons was taught when that is later (`decisionInstantWith`), and a HOLD with no earlier HOLD on its
+  live value expires from it. `sample/bundle.json`, exported 25 Oct 2026 after the 13:53 UTC cycle, holds 80 runs
+  (61 of `client-1`, 19 of the lab's `lab-1`), 343 ledger rows (324 of `client-1` from 12 live passes, 24 Oct 23:21
+  UTC to 25 Oct 13:54 UTC, each 27 rows; 19 of the lab), 1,365 referent fingerprints and 3 tickets. Its own instant is
+  2026-10-25T13:54:08.785Z, the 13:54 UTC live pass, which decided HOLD 26 and ESCALATE 1 with no lesson recorded. The
+  operator's 23 exceptions were taught from 14:17:01 to 14:17:53 UTC, so the sample pass, the examples, the replay page
+  and `examples/document.md` decide at 2026-10-25T14:17:53.416Z, an instant of their own: the 13:54 UTC rows sit under
+  the disposition ids a pass at the bundle's instant computes, and the ledger keeps a row as first written. At
+  2026-10-25T14:17:53.416Z the pass writes its own 27 rows and its `DISPOSITION` lines print them: ADOPT 23 by the
+  operator until 2026-11-30T00:00:00.000Z; the 3 `orphan_record` HOLDs meet the 13:54 UTC HOLDs and keep the expiry
+  carried from the 23:21 UTC pass of 24 Oct, 2026-10-27T23:21:06.870Z; the `proxy_split`, whose HOLD expired at
+  2026-10-25T03:21:06.870Z, is ESCALATE. Measured 25 Oct 2026: two runs print byte-identical finding, disposition and
+  summary lines (the 55 lines outside the trace hash the same); the 700 trace lines carry their own `ts`, `latency_ms`
+  and `trace_id`, so the whole stdout differs run to run. The examples and the replay page decide the same way at
+  their slice's instant; each slice holds the disposition rows of its own objects and records (12, 132 and 312 of
+  the 343), so its instant is the bundle's, and with the lessons its verbs are the full pass's: ADOPT 4, HOLD 3 and
   ESCALATE 2 over the 9 example findings, the `proxy_split` ESCALATE in both slices that show it.
 - Probes run from one machine through two public resolvers.
 - Source discovery (new hosts, new accounts, new tools) is the discovery agent's, in the larger product. This agent's
@@ -414,6 +434,7 @@ Absent, with the one line each maps:
   lives. The hero and FOUND-BUT-DIFFERENT classes find nothing on the recorded estate, where every name a vhost
   serves lands on an inventory host in each of the five collections. Pre-flight (d) raises two hero findings in
   simulation, their class set by how the previous passing host run pairs with a DNS run: `found_but_different` over
-  the 21:21 and 23:35 UTC runs of 24 Oct, fingerprinted against two DNS runs, and `dns_change` over the 03:24 and
-  03:25 UTC host runs of 25 Oct, both fingerprinted against the 03:25 UTC DNS run (measured 25 Oct 2026). The
-  authored fixture carries the full story.
+  the 21:21 and 23:35 UTC runs of 24 Oct, fingerprinted against two DNS runs, `dns_change` over the 03:24 and
+  03:25 UTC host runs of 25 Oct, both fingerprinted against the 03:25 UTC DNS run, and `found_but_different` over the
+  13:08 and 13:53 UTC runs of 25 Oct, each paired with its own DNS run (measured 25 Oct 2026). The authored fixture
+  carries the full story.

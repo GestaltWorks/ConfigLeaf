@@ -14,6 +14,9 @@ jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      # The committed technician's lessons (H-MEM store), so CI decides with the lessons the committed examples and docs/ were built with.
+      DRIFT_MEMORY_DIR: examples/memory
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

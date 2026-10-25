@@ -10,13 +10,14 @@ import { describe, expect, it } from "vitest";
 import { FINDING_CLASSES } from "../src/catalogue/templates.ts";
 import { DataLayer } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
-import { decisionInstant } from "../src/data/instant.ts";
+import { decisionInstant, decisionInstantWith } from "../src/data/instant.ts";
 import {
   DOC_ACTIONS_SQL, DOC_COPIES_SQL, DOC_DISPOSITIONS_OF_RUN_SQL, DOC_PROBES_SQL, DOC_PROBE_FAILURES_SQL, DOC_RUN_SHAPE_SQL, DOC_TICKETS_SQL, DOC_UNAPPROVED_SQL, DOC_ZONES_SQL,
   HERO_SQL, PROXIED_WITHOUT_REAL_IP_SQL, objects,
 } from "../src/data/queries.ts";
 import { TABLE_NAMES } from "../src/data/schema.ts";
 import { renderDocument, sourceOf, sourceRows, sourcesMarkdown, tablesOf } from "../src/document/render.ts";
+import { TechnicianMemory } from "../src/engine/memory.ts";
 import { DriftWorld } from "../src/engine/world.ts";
 import { MemoryLedger } from "../src/ledger.ts";
 import { dispositionIdOf } from "../src/loop/pass.ts";
@@ -35,10 +36,18 @@ async function engineOf(b: B): Promise<{ engine: SqlJsEngine; layer: DataLayer }
   return { engine, layer: new DataLayer(engine) };
 }
 
-/** The pass over the bundle into its own ledger, decided at the bundle's instant, then the page: what scripts/document.ts does in sample mode. */
-async function documentOf(b: B, tenant: string, decidedAt = decisionInstant(b), source?: string) {
+/** The committed technician's lessons (examples/memory, opened read only): the store npm run document reads with DRIFT_MEMORY_DIR=examples/memory. */
+const COMMITTED_STORE = fileURLToPath(new URL("../examples/memory", import.meta.url));
+const committedLessons = (): TechnicianMemory => new TechnicianMemory({ storage: "read", directory: COMMITTED_STORE });
+
+/**
+ * The pass over the bundle into its own ledger, then the page: what scripts/document.ts does in sample mode. With a memory
+ * the pass consults its lessons and decides at the bundle's instant or the latest lesson's, whichever is later.
+ */
+async function documentOf(b: B, tenant: string, decidedAt?: string, source?: string, memory?: TechnicianMemory) {
   const { engine, layer } = await engineOf(b);
-  const pass = await runPass(layer, { world: new DriftWorld("test_document"), ledger: new MemoryLedger(engine), decidedAt });
+  const at = decidedAt ?? (memory ? decisionInstantWith(b, memory.lessons().map((l) => l.recordedAt)) : decisionInstant(b));
+  const pass = await runPass(layer, { world: new DriftWorld("test_document"), ledger: new MemoryLedger(engine), memory, decidedAt: at });
   const classes = new Map(pass.findings.map((f) => [f.id, f.finding.class as string]));
   const doc = await renderDocument(layer, { tenant, classes, source });
   return { pass, doc, layer };
@@ -152,15 +161,16 @@ function withWork(): Record<string, unknown> {
 }
 
 describe("the page over sample/bundle.json", () => {
-  it("is examples/document.md, byte for byte, and two renders give the same page", { timeout: 30_000 }, async () => {
-    const { doc } = await documentOf(sample, T, undefined, "sql.js over sample/bundle.json");
+  it("is examples/document.md, byte for byte, under the committed lessons, and two renders give the same page", { timeout: 60_000 }, async () => {
+    const { doc } = await documentOf(sample, T, undefined, "sql.js over sample/bundle.json", committedLessons());
     const committed = readFileSync(new URL("../examples/document.md", import.meta.url), "utf8").replace(/\r\n/g, "\n");
-    expect(doc.markdown, "examples/document.md is stale: run npm run document -- --tenant client-1").toBe(committed);
-    expect((await documentOf(sample, T, undefined, "sql.js over sample/bundle.json")).doc.markdown).toBe(doc.markdown);
+    expect(doc.markdown, "examples/document.md is stale: run SAMPLE_MODE=true npm run document -- --tenant client-1 with DRIFT_MEMORY_DIR=examples/memory").toBe(committed);
+    expect((await documentOf(sample, T, undefined, "sql.js over sample/bundle.json", committedLessons())).doc.markdown).toBe(doc.markdown);
   });
 
-  it("every number on it is the bundle's: runs, the latest runs' shapes, zones, copies, approvals, findings, probes and the decision instant", async () => {
-    const { doc, pass } = await documentOf(sample, T);
+  it("every number on it is the bundle's: runs, the latest runs' shapes, zones, copies, approvals, findings, probes and the decision instant", { timeout: 60_000 }, async () => {
+    const memory = committedLessons();
+    const { doc, pass } = await documentOf(sample, T, undefined, undefined, memory);
     const md = doc.markdown;
     const runs = sample.collection_run.filter((r) => r.tenant_id === T);
     expect(md).toContain(`${runs.length} collection runs on record, ${runs.length} passing the DQ gate.`);
@@ -176,11 +186,20 @@ describe("the page over sample/bundle.json", () => {
       const z = records.filter((d) => d.zone === zone);
       expect(md).toContain(`| ${zone} | ${z.length} | ${z.filter((d) => d.proxied === 1).length} | ${z.filter((d) => d.proxied !== 1).length} |`);
     }
-    // the head copies: the copies of each repository's latest taken_at
+    // the head copies: the tenant's copies of each repository's latest taken_at (the bundle also holds the lab's, tenant lab-1)
+    const copies = sample.vault_copy.filter((c) => c.tenant_id === T);
     const repoKey = (c: { surface: string; host: string | null }) => `${c.surface}|${c.host ?? ""}`;
-    const heads = sample.vault_copy.filter((c) => !sample.vault_copy.some((x) => repoKey(x) === repoKey(c) && x.taken_at > c.taken_at));
+    const heads = copies.filter((c) => !copies.some((x) => repoKey(x) === repoKey(c) && x.taken_at > c.taken_at));
     expect(md).toContain(`${heads.length} vault copies at the latest commit of each repository`);
-    expect(md).toContain(`${sample.approved_setting.length} settings have an approval of record`);
+    expect(md).toContain(`${sample.approved_setting.filter((a) => a.tenant_id === T).length} settings have an approval of record`);
+    // an exception in force gives ADOPT until its expiry: the 23 findings the operator's lessons scope are ADOPT, decided by the
+    // operator; the three orphan_record findings (no lesson) stay HOLD and the proxy_split ESCALATE, by policy
+    expect(pass.memory).toEqual({ lessons: 23, applied: 23, lapsed: 0 });
+    expect(pass.verbs).toMatchObject({ ADOPT: 23, HOLD: 3, ESCALATE: 1 });
+    for (const f of pass.findings) {
+      if (f.exception) expect([f.verb, f.disposition.decided_by, f.exception.status, f.disposition.expires_at], f.id).toEqual(["ADOPT", "operator", "applied", f.exception.expires_at]);
+      else expect([f.finding.class, f.disposition.decided_by], f.id).toEqual([f.verb === "HOLD" ? "orphan_record" : "proxy_split", "policy"]);
+    }
     // the verbs the pass decided, in the page's order, and one column per verb in the by-class table
     const seen = Object.entries(pass.verbs).filter(([, n]) => n > 0).map(([v]) => v);
     expect(md).toContain(`${pass.findings.length} findings are open on the latest passing runs: ${seen.map((v) => `${v} ${pass.verbs[v as keyof typeof pass.verbs]}`).join(", ")}.`);
@@ -191,10 +210,18 @@ describe("the page over sample/bundle.json", () => {
     const probes = sample.probe.filter((p) => p.run_id === probeRun.run_id);
     expect(md).toContain(`Probe runs passing the DQ gate: ${runs.filter((r) => r.surface === "probe").length} of surface probe, every served name probed for the pass, and ${runs.filter((r) => r.surface === "probe.verify").length} of surface probe.verify, the Actor's probes after a write.`);
     expect(md).toContain(`Probe run ${probeRun.run_id} (surface probe), finished ${probeRun.finished_at}: ${probes.filter((p) => p.status === "fail").length} probes fail.`);
-    for (const kind of ["dns", "http", "tls"]) expect(md).toContain(`| ${kind} | ${probes.filter((p) => p.kind === kind && p.status === "ok").length} | ${probes.filter((p) => p.kind === kind && p.status === "fail").length} |`);
-    // the latest decision on the pass's runs: the sample pass's own, at the bundle's instant, which is the latest decided_at the bundle holds
-    const at = decisionInstant(sample)!;
-    expect(at).toBe(sample.disposition.map((d) => d.decided_at).sort().at(-1));
+    expect(md).toContain("| kind | ok | fail | skipped |");
+    for (const kind of ["dns", "http", "tls"]) {
+      const n = (status: string) => probes.filter((p) => p.kind === kind && p.status === status).length;
+      expect(md).toContain(`| ${kind} | ${n("ok")} | ${n("fail")} | ${n("skipped")} |`);
+    }
+    // the latest decision on the pass's runs: the sample pass's own, at the instant the latest lesson was taught, which is
+    // later than the bundle's instant (the latest decided_at the bundle holds): a lesson taught after the recorded pass dates the decision
+    const bundleAt = decisionInstant(sample)!;
+    expect(bundleAt).toBe(sample.disposition.map((d) => d.decided_at).sort().at(-1));
+    const at = memory.lessons().map((l) => l.recordedAt).sort().at(-1)!;
+    expect(at > bundleAt).toBe(true);
+    expect(decisionInstantWith(sample, memory.lessons().map((l) => l.recordedAt))).toBe(at);
     expect(pass.findings.every((f) => dispositionIdOf(f, at).startsWith("disp-"))).toBe(true);
     expect(md.trimEnd().split("\n").at(-1)).toBe(`Decided at ${at}.`);
     expect([doc.decidedAt, doc.open]).toEqual([at, pass.findings.length]);
@@ -213,8 +240,8 @@ describe("the page over sample/bundle.json", () => {
     for (const c of doc.queries) expect(md).toContain(`- ${c.name}: ${c.runs} run${c.runs === 1 ? "" : "s"}, ${c.rows} row${c.rows === 1 ? "" : "s"}`);
   });
 
-  it("the sample pass raises no approved_missing finding: every approved object of the 19:56 UTC runs is in the 21:21 UTC runs", async () => {
-    const { pass, doc } = await documentOf(sample, T);
+  it("the sample pass raises no approved_missing finding: every approved object of the 19:56 UTC runs is in the latest runs", { timeout: 60_000 }, async () => {
+    const { pass, doc } = await documentOf(sample, T, undefined, undefined, committedLessons());
     expect(pass.findings.filter((f) => f.finding.class === "approved_missing")).toEqual([]);
     expect(doc.markdown).toContain("Drift from the approved values: 0 settings differ from their latest approval (drift_vs_approved), 0 approved settings are absent from their run (approved_missing).");
   });
@@ -249,6 +276,22 @@ describe("the page over test/fixtures/policy-bundle.json with work recorded", ()
     expect(section(md, "Copies")).toContain("| records, zone example.invalid | 88d297bf | 1 | 1 | 0 | 0 | 0 |");
     expect(section(md, "Copies")).toContain("| host-7f1c (linux.nginx) | e4ad517b | 4 | 1 | 0 | 0 | 3 |");
     expect(md.trimEnd().split("\n").at(-1)).toBe(`Decided at ${AT}.`);
+  });
+
+  it("counts the skipped probes of the probe run beside ok and fail, and a skipped probe is no failing name", async () => {
+    const b = withWork();
+    // the tls probe of an override target: recorded skipped (src/probe/rules.ts TLS_SKIPPED)
+    b.probe = [...(b.probe as object[]), {
+      probe_id: "probe-skipped-000001", run_id: "run-probe-1023", tenant_id: A, kind: "tls", target: "lab.example.invalid", expected: "valid for the name, more than 7 days left",
+      observed: "skipped: no TLS on this target", status: "skipped", latency_ms: 0, observed_at: "2026-10-23T02:20:05.000Z",
+    }];
+    const probes = section((await documentOf(b, A, AT)).doc.markdown, "Probes");
+    expect(probes).toContain("| kind | ok | fail | skipped |");
+    expect(probes).toContain("| dns | 2 | 0 | 0 |");
+    expect(probes).toContain("| http | 1 | 1 | 0 |");
+    expect(probes).toContain("| tls | 2 | 0 | 1 |");
+    expect(probes).toContain(": 1 probe fails.");
+    expect(probes).not.toContain("lab.example.invalid");
   });
 
   it("with no classes the open findings carry no class, and a disposition whose finding the pass leaves unraised is counted apart", async () => {

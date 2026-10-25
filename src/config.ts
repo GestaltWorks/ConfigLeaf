@@ -57,6 +57,10 @@ const Schema = z.object({
   // The MSP's policy as data, read by npm run policy:load and the Decider: a JSON file in the shape of
   // policy/hackathon.json, the default.
   DRIFT_POLICY_FILE: z.string().default("policy/hackathon.json"),
+  // The directory of the technician's lessons, the H-MEM store (state.json, ledger.jsonl): npm run answer writes it,
+  // every pass reads it. Blank = .world/memory, gitignored; a committed directory makes a clean clone and CI decide
+  // with the same lessons.
+  DRIFT_MEMORY_DIR: z.string().default(""),
   // The command that runs nginx -t over a vault commit materialised in a temp directory, with {dir} for that
   // directory. Blank = the platform default (NGINX_T_DEFAULT below: docker, through WSL on Windows).
   DRIFT_NGINX_T: z.string().default(""),
@@ -123,6 +127,14 @@ export function nginxTCommand(platform: NodeJS.Platform = process.platform, conf
   return configured.trim() || (platform === "win32" ? NGINX_T_DEFAULT.win32 : NGINX_T_DEFAULT.other);
 }
 
+/** Where the technician's lessons live when DRIFT_MEMORY_DIR is blank: under .world/, which .gitignore keeps out of the repository. */
+export const DEFAULT_MEMORY_DIR = ".world/memory";
+
+/** DRIFT_MEMORY_DIR trimmed, else DEFAULT_MEMORY_DIR; relative to the working directory, as every npm script runs from the repository root. */
+export function memoryDir(configured: string = raw.DRIFT_MEMORY_DIR): string {
+  return configured.trim() || DEFAULT_MEMORY_DIR;
+}
+
 /** The Nightshift runtime writes its bearer token to a file; fall back to it when the env var is blank. */
 function runtimeToken(): string {
   if (raw.METERLESS_RUNTIME_TOKEN) return raw.METERLESS_RUNTIME_TOKEN;
@@ -163,6 +175,8 @@ export const config = {
   vaultDir: raw.DRIFT_VAULT_DIR.trim(),
   /** DRIFT_POLICY_FILE, default policy/hackathon.json. */
   policyFile: raw.DRIFT_POLICY_FILE.trim() || "policy/hackathon.json",
+  /** DRIFT_MEMORY_DIR, default .world/memory: the store TechnicianMemory opens (src/engine/memory.ts). */
+  memoryDir: memoryDir(),
   /** DRIFT_NGINX_T as configured; "" = the platform default (nginxTCommand). */
   nginxT: raw.DRIFT_NGINX_T.trim(),
   /** PROBE_TARGETS_OVERRIDE, parsed; [] = the probe population is the Cloudflare account's records. */

@@ -224,7 +224,7 @@ export interface PassOptions {
   tracer?: Tracer;
   world?: DriftWorld;
   stopPolicy?: Omit<StopPolicy, "gatedTables">;
-  /** [memory] The technician's lessons the Decider consults before deciding; none when absent (tests, the examples, the site build). */
+  /** [memory] The technician's lessons the Decider consults before deciding; none when absent (tests, the eval, pre-flight). */
   memory?: TechnicianMemory;
   /** [memory] The instant lessons are recalled at (ISO 8601 UTC); the memory's clock when absent. */
   at?: string;

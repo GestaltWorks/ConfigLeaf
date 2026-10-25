@@ -2,8 +2,8 @@
 //
 // The live pass (src/pipeline.ts, through src/loop/pass.ts) for one tenant: the DataLayer over ZetarisEngine (every
 // {{t:x}} is DRIFT.x, the judged data layer), the PgLedger over the Store (DATABASE_URL; --schema for another
-// search_path) for the tenant's dispositions and referent fingerprints, the technician's memory on its local store
-// (.world/memory), the trace to logs/pass_<base36 ms>.jsonl. Prints one JSON object per finding of the tenant, one
+// search_path) for the tenant's dispositions and referent fingerprints, the technician's lessons read from the store
+// DRIFT_MEMORY_DIR names (read only), the trace to logs/pass_<base36 ms>.jsonl. Prints one JSON object per finding of the tenant, one
 // DISPOSITION line per finding as the ledger holds it (read back through Zetaris), the PASS summary line and the
 // trace file. --decided-at dates every disposition and starts every HOLD expiry (default: the system clock).
 // --no-ledger records nothing and prints the pass's own decisions.
@@ -65,7 +65,7 @@ let store: Store | null = null;
 try {
   store = record ? Store.fromEnv({ schema: args.schema }) : null;
   const layer = new DataLayer(new ZetarisEngine());
-  const r = await passStep(layer, { tenant, ledger: store ? new PgLedger(store) : null, memory: new TechnicianMemory({ storage: "local" }), decidedAt, tracer });
+  const r = await passStep(layer, { tenant, ledger: store ? new PgLedger(store) : null, memory: new TechnicianMemory({ storage: "read" }), decidedAt, tracer });
   for (const l of r.lines) console.log(redactor.text(l));
   console.log(redactor.text(r.summary));
   console.log(`pass: trace ${tracer.logFile.replace(/\\/g, "/")} (${tracer.lines} lines), ${((Date.now() - t0) / 1000).toFixed(1)} s`);

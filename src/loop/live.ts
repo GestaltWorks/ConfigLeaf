@@ -7,7 +7,8 @@
 //     REDACT_SALT, DATABASE_URL and ZETARIS_API_KEY set; CLOUDFLARE_API_TOKEN when collect or probe runs or --apply
 //     is given; LINUX_HOSTS when collect runs; DRIFT_TICKETS_REPO when the tickets step sends.
 //   - liveCycle builds a FileTracer (logs/cycle_<base36 ms>.jsonl, model_requested none on a dry run), the DataLayer
-//     over ZetarisEngine, the technician's memory on its local store (.world/memory), and runs src/loop/cycle.ts over
+//     over ZetarisEngine, the technician's lessons read from the store DRIFT_MEMORY_DIR names (read only, so a cycle
+//     leaves a committed store as committed), and runs src/loop/cycle.ts over
 //     liveSteps with the hosts of LINUX_HOSTS in their configured order. The document goes to document.md at the
 //     repository root (gitignored). Printed text passes the tenant's redactor.
 
@@ -67,7 +68,7 @@ export async function liveCycle(o: LiveCycleOptions, shared: LiveShared): Promis
   const deny = [...new Set([...config.redactWords, ...config.exportDenyWords])];
   const steps = liveSteps({
     tenant: o.tenant, apply: o.apply, ticketsDryRun: o.ticketsDryRun, redactor, labels: new Redactor(config.redactSalt, deny), deny, store: shared.store, vault: shared.vault, vaultDir: config.vaultDir,
-    layer: new DataLayer(new ZetarisEngine()), tracer, memory: new TechnicianMemory({ storage: "local" }),
+    layer: new DataLayer(new ZetarisEngine()), tracer, memory: new TechnicianMemory({ storage: "read" }),
     out: path.join(ROOT, "document.md"), root: ROOT, source: `Zetaris over the ${config.zetaris.datasource} datasource`,
   });
   const result = await runCycle({ tenant: o.tenant, apply: o.apply, aliases: Object.keys(HOSTS), skip: o.skip }, steps, {
