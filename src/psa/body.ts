@@ -20,10 +20,10 @@
 // Measured 24 Oct 2026: the six sections in order on the first issue the step creates over the policy fixture
 // (test/psa.test.ts), and on the proxy_split body of SAMPLE_MODE=true npm run tickets -- --tenant client-1: three
 // checks hold, referent_unchanged fails with 3 rows, the exposure dates from 2026-04-16, the dns, tls and http probes
-// of its name are ok. Measured 25 Oct 2026 at 19:53 UTC on the lab, npm run tickets -- --tenant lab-1 --dry-run
-// through Zetaris after the rollback of 19:52 UTC: the change ticket's Why reads "The file was changed at 19:48 UTC by
-// user-212a17 over ssh from 198.51.100.7 (sudo tee), 4 minutes before the agent restored it.", 16 timeline lines and
-// the 11-line diff (8081 to 8097).
+// of its name are ok. Measured 25 Oct 2026 at 20:26 UTC on the lab, npm run tickets -- --tenant lab-1 --dry-run
+// --verbose through Zetaris after the rollback of 20:26 UTC: the change ticket's Why reads "The file was changed at
+// 20:22 UTC by user-212a17 over ssh from ip-391349 (sudo tee), 4 minutes before the agent restored it.", 20 timeline
+// lines and the 11-line diff (8081 to 8098) under "--- approved 5dde7698", the approval's own vault commit.
 
 import type { FindingSummary } from "../catalogue/select.ts";
 import type { Action, Disposition, DispositionVerb, FindingCause, PolicyRule, PsaPriority } from "../data/rows.ts";

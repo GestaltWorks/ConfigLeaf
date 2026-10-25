@@ -153,11 +153,11 @@ export class SqlJsEngine implements Engine {
       }
       const latencyMs = Date.now() - t0;
       const result: QueryResult = { queryId, columns, rows, rowCount: rows.length, total, latencyMs, raw: { engine: "sqljs", sql: clean } };
-      opts.tracer?.emit({ agent: opts.agent ?? "sqljs", action: "query", query_id: queryId, status: "ok", latency_ms: latencyMs, output_summary: `${result.rowCount} rows`, input_summary: clean.slice(0, 160) });
+      opts.tracer?.emit({ agent: opts.agent ?? "sqljs", action: "query", engine: this.name, query_id: queryId, status: "ok", latency_ms: latencyMs, output_summary: `${result.rowCount} rows`, input_summary: clean.slice(0, 160) });
       return result;
     } catch (err) {
       const msg = (err as Error).message;
-      opts.tracer?.emit({ agent: opts.agent ?? "sqljs", action: "query", query_id: queryId, status: "failed", latency_ms: Date.now() - t0, detail: msg });
+      opts.tracer?.emit({ agent: opts.agent ?? "sqljs", action: "query", engine: this.name, query_id: queryId, status: "failed", latency_ms: Date.now() - t0, detail: msg });
       throw err instanceof DataLayerError ? err : new DataLayerError(`sqljs: ${msg}`);
     } finally {
       stmt?.free();

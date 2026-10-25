@@ -1,6 +1,8 @@
 // Idempotent Zetaris setup: the DRIFT datasource over the app Postgres, the drift_usl Unified Semantic
 // Layer over it (ten tables) and three DQ rules on it. plan() lists the statements in the order they run,
-// apply() runs them one at a time.
+// apply() runs them one at a time. uslRows() and uslMarkdown() read the layer's table off USL_DDL, activation() and
+// DQ_RULES: each entity, the DRIFT tables its activation SELECT reads, its keys and its DQ rule with the rule's
+// expression. npm run sources -- --usl prints it, and the README and the replay page's Sources tab carry it.
 //
 // The ten tables: collection (collection_run), setting (observation; source_kind for source), referent (each
 // dns_name observation joined to the records of its name), backup_copy (backup_item joined to its snapshot),
@@ -259,6 +261,68 @@ export const DQ_RULES: readonly DqRule[] = [
 export const DQ_TABLES: readonly UslTable[] = ["collection", "copy", "action"];
 export const DQ_RULE = "run_complete";
 
+/** How an entity's rows are formed from its tables, for each entity whose rows are other than one table's rows under its own column names. */
+const USL_FORMED: Partial<Record<UslTable, string>> = {
+  setting: "`obs_id` as `setting_id`, `source` as `source_kind`",
+  referent: "each `observation` whose `refers_to_type` is `dns_name`, joined to the `dns_record` rows of its tenant whose `name` is its `refers_to_id`, the join the hero query makes for FOUND-BUT-DIFFERENT",
+  backup_copy: "each `backup_item` joined to its `backup_snapshot`",
+  copy: "each `vault_copy` with its latest `copy_validation` (by `validated_at`, then `validation_id`); `validated` is 1 when that result is ok or ok_with_gaps",
+};
+
+export interface UslRow {
+  entity: UslTable;
+  /** The DRIFT tables its activation SELECT reads, each once, in first-appearance order. */
+  builtFrom: string[];
+  /** How its rows are formed from those tables; empty when each row is one row of its one table. */
+  formed: string;
+  /** The PRIMARY KEY column of USL_DDL. */
+  primaryKey: string;
+  /** Each FOREIGN KEY of USL_DDL: the column and the entity(column) it references. */
+  foreignKeys: { column: string; references: string }[];
+  /** The DQ rule registered on the entity, when one is. */
+  rule?: DqRule;
+}
+
+/** One row per USL entity, in DDL order, read off USL_DDL, activation() over the DRIFT datasource and DQ_RULES. */
+export function uslRows(): UslRow[] {
+  return USL_TABLES.map((entity) => {
+    const lines = USL_DDL[entity] as readonly string[];
+    const name = (l: string): string => l.split(" ")[0];
+    return {
+      entity,
+      builtFrom: [...new Set([...activation(entity, "DRIFT").matchAll(/\bDRIFT\.(\w+)/g)].map((m) => m[1]))],
+      formed: USL_FORMED[entity] ?? "",
+      primaryKey: name(lines.find((l) => l.includes(" PRIMARY KEY"))!),
+      foreignKeys: lines.flatMap((l) => {
+        const fk = / FOREIGN KEY REFERENCES (\w+\(\w+\))/.exec(l);
+        return fk ? [{ column: name(l), references: fk[1] }] : [];
+      }),
+      rule: DQ_RULES.find((r) => r.table === entity),
+    };
+  });
+}
+
+/** The semantic layer as markdown: one sentence, then the table. What npm run sources -- --usl prints and the README carries under "The semantic layer". */
+export function uslMarkdown(): string {
+  const code = (s: string): string => `\`${s}\``;
+  const rows = uslRows();
+  const cells = (r: UslRow): string[] => [
+    code(r.entity),
+    [r.builtFrom.map(code).join(", "), r.formed].filter(Boolean).join(": "),
+    [code(r.primaryKey), ...r.foreignKeys.map((f) => `${code(f.column)} references ${code(f.references)}`)].join("; "),
+    r.rule ? code(r.rule.name) : "",
+    r.rule ? code(r.rule.expression) : "",
+  ];
+  return [
+    `${code(USL_NAME)} in ${code(NAMESPACE)} is the semantic layer over the ${code("DRIFT")} datasource: ${rows.length} entities, each activated as one SELECT over the tables it is built from (${code("activation()")} in ${code("src/zetaris/setup.ts")}), and ${DQ_RULES.length} DQ rules, each an expression RUN DQ tests on every row of its entity.`,
+    "",
+    "| entity | built from | key | DQ rule | expression |",
+    "|---|---|---|---|---|",
+    ...rows.map((r) => `| ${cells(r).join(" | ")} |`),
+    "",
+  ].join("\n");
+}
+
 export class SetupError extends Error {
   constructor(message: string) { super(redact(message)); }
 }
@@ -341,7 +405,7 @@ function createDatasource(ds: string, t: PgTarget, password: string): string {
 const keep = (cols: string): string => cols.split(/\s+/).filter(Boolean).map((c) => (c.startsWith("?") ? c.slice(1) : `COALESCE(${c}, '') AS ${c}`)).join(", ");
 
 /** The activation query per USL table: exactly the declared columns, NOT NULL varchars wrapped in COALESCE, ints CAST. */
-function activation(table: UslTable, ds: string): string {
+export function activation(table: UslTable, ds: string): string {
   switch (table) {
     case "collection":
       return `SELECT COALESCE(run_id, '') AS run_id, COALESCE(tenant_id, '') AS tenant_id, COALESCE(surface, '') AS surface, host, COALESCE(started_at, '') AS started_at, CAST(expected_count AS INT) AS expected_count, CAST(observed_count AS INT) AS observed_count, COALESCE(status, '') AS status FROM ${ds}.collection_run`;
@@ -543,7 +607,7 @@ export async function apply(deps: ApplyDeps = {}): Promise<ApplyResult> {
 
   const record = (i: number, s: Step, res: StepResult, ev: Partial<Omit<TraceEvent, "ts" | "trace_id">> = {}) => {
     results.push(res);
-    deps.tracer?.emit({ agent: AGENT, action: "query", status: res.status, input_summary: (s.traceAs ?? s.sql).slice(0, 160), output_summary: res.status === "failed" ? undefined : res.note, latency_ms: res.ms, ...ev });
+    deps.tracer?.emit({ agent: AGENT, action: "query", engine: "zetaris", status: res.status, input_summary: (s.traceAs ?? s.sql).slice(0, 160), output_summary: res.status === "failed" ? undefined : res.note, latency_ms: res.ms, ...ev });
     const label = `${String(i + 1).padStart(2, "0")} ${s.name}`;
     out(`${res.status.padEnd(7)} ${label.padEnd(44)} ${res.note}${res.ms !== undefined ? `  (${res.ms} ms)` : ""}`);
   };

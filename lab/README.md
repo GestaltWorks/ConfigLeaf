@@ -35,10 +35,11 @@ PROBE_TARGETS_OVERRIDE=lab.example=127.0.0.1:18080 npm run act -- --tenant lab-1
 
 Node's `loadEnvFile` leaves variables already set alone, so the prefix wins over `.env`. `MSYS_NO_PATHCONV=1` keeps
 Git Bash from rewriting `=/var/backups/export` into `C:/Program Files/Git/var/backups/export` (measured). Git's own
-ssh reads the key; Windows OpenSSH refuses it for the permissions `lab/.keys/` inherits on `D:`.
+ssh reads the key; Windows OpenSSH refuses it for the permissions `lab/.keys/` inherits on `D:`. A relative
+`LINUX_SSH_CONFIG` resolves against the working directory, the repository root every npm script runs from.
 
 ```bash
-export MSYS_NO_PATHCONV=1 LINUX_HOSTS=drift-lab=/var/backups/export LINUX_SSH_CONFIG=D:/Projects/drift-agent/lab/ssh_config.local
+export MSYS_NO_PATHCONV=1 LINUX_HOSTS=drift-lab=/var/backups/export LINUX_SSH_CONFIG=lab/ssh_config.local
 npm run collect:linux -- --host drift-lab --tenant lab-1
 npm run approve -- --tenant lab-1 --host drift-lab --all
 npm run validate:copies -- --tenant lab-1
@@ -173,21 +174,57 @@ The action row holds status `done`, verification `probe-36eb2c1bba298a2a`. The t
 `verb:ROLLBACK`, closing comment `The rollback is done and verified by probes probe-36eb2c1bba298a2a; closing.` The
 next collection (run run-71776a91583187d1, vault commit 5d780b42) and pass: 0 findings.
 
+## Why it changed, on the lab
+
+The journal stand-in (`lab/journalctl`, below) gives every collection a login and a `sudo tee` of `lab.example`, so a
+break collected through it reads back with its cause: who changed the file, over which login, from which address.
+
+```bash
+export MSYS_NO_PATHCONV=1 LINUX_HOSTS=drift-lab=/var/backups/export LINUX_SSH_CONFIG=lab/ssh_config.local
+export PROBE_TARGETS_OVERRIDE=lab.example=127.0.0.1:18080,www.lab.test=127.0.0.1:18080
+ssh -F lab/ssh_config.local drift-lab "sed 's#127.0.0.1:8081;#127.0.0.1:8098;#' /etc/nginx/sites-available/lab.example > /tmp/x && sudo -n tee /etc/nginx/sites-available/lab.example < /tmp/x >/dev/null && sudo -n nginx -t && sudo -n systemctl reload nginx"
+npm run collect:linux -- --host drift-lab --tenant lab-1
+npm run cycle -- --tenant lab-1 --apply --skip collect,validate --tickets-dry-run
+npm run tickets -- --tenant lab-1 --dry-run --verbose
+```
+
+Measured 25 Oct 2026, 20:24 to 20:29 UTC, after `lab/up.sh` rebuilt the image. The break to 8098 (file a5b94717c6fe);
+its collection, run run-ea6025e231e361d0, complete at 2 of 2 files, vault commit 46c5ef5e, the journal read through
+sudo -n: 5 lines kept, 5 `audit_event` rows written. The cycle, 20:24:34 to 20:26:12 UTC, its trace committed as
+[examples/traces/cycle_mvoa0l1i.jsonl](../examples/traces/cycle_mvoa0l1i.jsonl):
+
+```text
+  pass      2 findings    ROLLBACK 1 · HOLD 1                                       82.9 s
+            Zetaris Lightning SQL over DRIFT · 427 queries · 26,352 rows · 0 failed
+            changed since the last backup 1 · drifted from the approved value 1
+            ROLLBACK  drifted from the approved value · sites-available/lab.example on host-951abf · copy 5dde7698 validated ok
+  explain   1 cause       operator 1                                                 1.3 s
+  act       1 action                                                                 3.7 s
+            rollback_file  sites-available/lab.example on host-951abf · a5b94717 → a811a0a5 · nginx -t ok · reloaded · 1 probe ok, 1 skipped · done 2.3 s
+what happened
+  A vhost file drifted from its approved copy; the agent restored it, nginx reloaded, 1 probe passed, and a new ticket is drafted (tickets dry run). The file was changed at 20:22 UTC by user-212a17 over ssh from ip-391349 (sudo tee), 4 minutes before the agent restored it.
+  1 finding is held with an expiry.
+```
+
+The cause is operator_edit: the stand-in's `sudo tee` of the file at 20:22:11 UTC, its login `labtech` as
+`user-212a17`, and the same login's ssh session at 20:21:17 UTC from `ip-391349`, the pseudonym of 10.77.0.23. The
+ticket's Why holds that sentence, 20 timeline lines (the ledger's rollbacks of the file, certbot's reloads, each
+`tee` of the file and the login) and the 11-line diff from `--- approved 5dde7698`, the approval's own vault commit,
+to `+++ live 46c5ef5e`. The owner's document (`npm run document -- --tenant lab-1 --out logs/document-lab-1.md`,
+20:29 UTC) lists the same sentence under Why.
+
 ## How it differs from a real host
 
 - `systemctl` is `lab/systemctl`, a stand-in for systemd: `reload nginx` runs `nginx -s reload`, `status nginx` asks
   pgrep, `list-timers --all --no-pager` prints a fixed two-line table.
 - `journalctl` is `lab/journalctl`, a stand-in for journald, which the sudo drop-in allows: the read session's call
   prints eight lines in a host journal's shape, timed back from the call. The collector's host-side filter keeps five
-  (certbot's reload after a renewal at T-9 h; the login `labtech` from 198.51.100.7 at T-3 min; `labtech`'s sudo
+  (certbot's reload after a renewal at T-9 h; the login `labtech` from 10.77.0.23 at T-3 min; `labtech`'s sudo
   `tee` of `/etc/nginx/sites-available/lab.example`, `nginx -t` and `systemctl reload nginx` at T-2 min) and drops
   three (a `tee` to `/etc/other/app.env`, an `apt install`, a `cat` of `/etc/hosts`). Every collection adds five new
-  `audit_event` rows, since the times move with the call.
-
-Measured 25 Oct 2026, 19:13 UTC, after `lab/up.sh` rebuilt the image: `collect:linux` against drift-lab under `lab-1`,
-run run-ba8424ca531d91b2 complete at 2 of 2 files, vault commit 7f01336d, the journal read through sudo -n: 5 lines
-kept, 5 `audit_event` rows written, source `journal`, actor `user-212a17` on the four `labtech` rows and none on
-certbot's, the login's old_value `198.51.100.7` (a documentation range, which the redactor keeps).
+  `audit_event` rows, since the times move with the call. Each row carries `user-212a17` for `labtech` and none for
+  certbot; the login's old_value is `ip-391349`, the redactor's pseudonym of the private address 10.77.0.23
+  (measured 20:24 UTC, run run-ea6025e231e361d0).
 - The sudo drop-in covers `tee`, so the break goes in through `sudo -n tee`; the operator's login runs `sudo sed -i`.
 - The lab has no DNS provider: `lab-1` holds no `cloudflare.dns` run, and the classes that pair a host run with one
   (`orphan_vhost`, `orphan_record`, `proxied_without_real_ip`) stay silent.

@@ -33,11 +33,13 @@
 // act nothing to do, tickets nothing to send (1 open), document 191 lines, then the what-happened block in three
 // sentences (nothing changed on the estate, 1 finding with a technician, 23 adopted and 3 held); the table in 19
 // lines, done in 119.4 s, the trace logs/cycle_mvo37iao.jsonl.
-// Measured 25 Oct 2026 at 19:50 UTC on the lab (tenant lab-1, --skip collect,validate --tickets-dry-run, a sudo tee
-// break to 8097 collected first): pass 2 findings (ROLLBACK 1, HOLD 1) in 84.3 s, "explain   1 cause   operator 1" in
-// 1.5 s, act 1 action planned, and the what-happened line "A vhost file drifted from its approved copy; a run with
-// --apply restores it from vault copy 5dde7698 and reloads nginx. The file was changed at 19:48 UTC by user-212a17
-// over ssh from 198.51.100.7 (sudo tee)."; done in 96.5 s, the trace logs/cycle_mvo8sz1i.jsonl.
+// Measured 25 Oct 2026 at 20:24 UTC on the lab (tenant lab-1, --apply --skip collect,validate --tickets-dry-run, a
+// sudo tee break to 8098 collected first, run run-ea6025e231e361d0): pass 2 findings (ROLLBACK 1, HOLD 1) in 82.9 s,
+// 427 queries through Zetaris; "explain   1 cause   operator 1" in 1.3 s; act rollback_file done in 3.7 s, 1 probe
+// ok; and the what-happened line "A vhost file drifted from its approved copy; the agent restored it, nginx reloaded, 1
+// probe passed, and a new ticket is drafted (tickets dry run). The file was changed at 20:22 UTC by user-212a17 over
+// ssh from ip-391349 (sudo tee), 4 minutes before the agent restored it."; done in 98.1 s, 495 Zetaris queries, 0
+// failed, the trace examples/traces/cycle_mvoa0l1i.jsonl.
 
 import { parseArgs } from "node:util";
 import { redact } from "../src/config.ts";

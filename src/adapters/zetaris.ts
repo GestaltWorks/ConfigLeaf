@@ -68,11 +68,11 @@ export class Zetaris {
     const latencyMs = Date.now() - t0;
     if (!r.ok) {
       const msg = j?.message ?? j?.error ?? text.slice(0, 300);
-      opts.tracer?.emit({ agent: opts.agent ?? "zetaris", action: "query", query_id: queryId, status: "failed", latency_ms: latencyMs, detail: redact(`${r.status}: ${msg}`) });
+      opts.tracer?.emit({ agent: opts.agent ?? "zetaris", action: "query", engine: "zetaris", query_id: queryId, status: "failed", latency_ms: latencyMs, detail: redact(`${r.status}: ${msg}`) });
       throw new ZetarisError(`Zetaris ${r.status}: ${msg}`, r.status);
     }
     const result = Zetaris.normalise(j, queryId, latencyMs);
-    opts.tracer?.emit({ agent: opts.agent ?? "zetaris", action: "query", query_id: queryId, status: "ok", latency_ms: latencyMs, output_summary: `${result.rowCount} rows`, input_summary: redact(clean).slice(0, 160) });
+    opts.tracer?.emit({ agent: opts.agent ?? "zetaris", action: "query", engine: "zetaris", query_id: queryId, status: "ok", latency_ms: latencyMs, output_summary: `${result.rowCount} rows`, input_summary: redact(clean).slice(0, 160) });
     return result;
   }
 

@@ -5,7 +5,8 @@
 // pass (src/pipeline.ts) runs over it first with the technician's lessons read from the store DRIFT_MEMORY_DIR names,
 // as the live pass reads them, decided at the bundle's own instant or the latest lesson's when that is later
 // (src/data/instant.ts decisionInstantWith) and recorded through a MemoryLedger into the same engine, so the page
-// reads the dispositions that pass decided; default out examples/document.md. Live: the DataLayer over Zetaris, as
+// reads the dispositions that pass decided, then the explain step over that pass as npm run sample runs it (no vault,
+// BUNDLE_REDACTOR), so the page's Why reads its causes; default out examples/document.md. Live: the DataLayer over Zetaris, as
 // scripts/zetaris-queries.ts builds it (every {{t:x}} is DRIFT.x); the dispositions are the ledger's (npm run pass
 // writes them, with the lessons), and the pass runs over the same layer with no ledger and no memory for the class
 // of each finding they name; default out document.md at the repository root.
@@ -31,6 +32,7 @@ import { decisionInstantWith } from "../src/data/instant.ts";
 import { renderDocument } from "../src/document/render.ts";
 import { TechnicianMemory } from "../src/engine/memory.ts";
 import { DriftWorld } from "../src/engine/world.ts";
+import { BUNDLE_REDACTOR, MemoryCauseSink, explainTenants } from "../src/explain/explain.ts";
 import { MemoryLedger } from "../src/ledger.ts";
 import { runPass } from "../src/pipeline.ts";
 import { TENANT } from "../src/policy/schema.ts";
@@ -74,9 +76,11 @@ try {
     layer = new DataLayer(engine);
     source = `sql.js over ${path.relative(ROOT, file).replace(/\\/g, "/")}`;
     const memory = new TechnicianMemory({ storage: "read" });
-    const decidedAt = decisionInstantWith(bundle, memory.lessons().map((l) => l.recordedAt));
+    const decidedAt = new Date(decisionInstantWith(bundle, memory.lessons().map((l) => l.recordedAt)) ?? Date.now()).toISOString();
     const pass = await runPass(layer, { tracer, world: new DriftWorld("document"), memory, ledger: new MemoryLedger(engine), decidedAt });
     classes = new Map(pass.findings.map((f) => [f.id, f.finding.class]));
+    // the explain step over that pass, as npm run sample runs it: the page's Why reads the causes it writes
+    await explainTenants({ decidedAt, findings: pass.findings }, { layer, vault: null, redactor: BUNDLE_REDACTOR, sink: new MemoryCauseSink(engine), tracer });
   } else {
     layer = new DataLayer(new ZetarisEngine());
     source = `Zetaris over the ${config.zetaris.datasource} datasource`;

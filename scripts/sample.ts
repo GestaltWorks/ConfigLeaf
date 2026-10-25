@@ -2,11 +2,19 @@
 // DataLayer(SqlJsEngine), with no model. The DQ gate, the hero query and every precondition run as
 // SQL over the bundle's rows and the World Model confirms FOUND-BUT-DIFFERENT from what it recorded;
 // nothing here maps an input to a stored answer. Prints one JSON finding per line, then one disposition
-// line per finding as the ledger holds it under the finding's disposition_id, then one summary.
+// line per finding as the ledger holds it under the finding's disposition_id, then one CAUSE line per finding
+// the explain step explains, then one summary.
+//
+// The explain step (src/explain/explain.ts) runs after the pass, as a cycle runs it between the pass and act: for
+// each tenant of the pass's findings, from the bundle's own rows, with no vault and no model, one finding_cause row
+// per explained finding into the same engine. Its evidence is the bundle's audit_event rows: the Cloudflare audit
+// log's give an account_change or a token_change on the record a finding rests on; the bundle holds no journal rows,
+// so a file finding's cause reads unknown with its window stated. Its redactor is BUNDLE_REDACTOR, a fixed salt over
+// rows already redacted, so the CAUSE lines are the same with or without a .env.
 //
 // The Decider consults the technician's memory (src/engine/memory.ts, the vendored H-MEM reference in the
-// directory DRIFT_MEMORY_DIR names, .world/memory when it is blank), opened read only: a lesson recorded with
-// `npm run answer` changes the verb of the finding it scopes on the next run of this script, until it expires,
+// directory DRIFT_MEMORY_DIR names, examples/memory, the committed store, when it is blank), opened read only: a
+// lesson recorded with `npm run answer` changes the verb of the finding it scopes on the next run of this script, until it expires,
 // and the store is left as it was. The pass records its dispositions and referent
 // fingerprints through a MemoryLedger into the same sql.js engine, and the disposition lines are read back
 // from it through the DataLayer. With no lesson recorded and no policy_rule rows in the bundle every
@@ -22,6 +30,8 @@ import { decisionInstantWith } from "../src/data/instant.ts";
 import { DISPOSITIONS_SQL, objects } from "../src/data/queries.ts";
 import { TechnicianMemory } from "../src/engine/memory.ts";
 import { DriftWorld } from "../src/engine/world.ts";
+import { CAUSE_CLASSES } from "../src/explain/cause.ts";
+import { BUNDLE_REDACTOR, MemoryCauseSink, explainTenants } from "../src/explain/explain.ts";
 import { MemoryLedger } from "../src/ledger.ts";
 import { dispositionIdOf } from "../src/loop/pass.ts";
 import { VERBS, runPass } from "../src/pipeline.ts";
@@ -58,6 +68,13 @@ for (const f of pass.findings) {
     ? `DISPOSITION ${d.finding_id} ${d.verb} by ${d.decided_by}${d.rule_id ? ` under ${d.rule_id}` : ""} expires ${d.expires_at || "-"}: ${d.reason}`
     : `DISPOSITION ${f.id} absent from the ledger`);
 }
+// The explain step over the pass (see the header): one CAUSE line per explained finding, in the pass's order per tenant.
+const explained = await explainTenants({ decidedAt, findings: pass.findings }, { layer, vault: null, redactor: BUNDLE_REDACTOR, sink: new MemoryCauseSink(engine), tracer });
+const causes = explained.flatMap((r) => r.causes);
+for (const c of causes) console.log(`CAUSE ${c.finding_id} ${c.verb} ${c.finding_class} ${c.cause.class}: ${c.cause.summary}`);
+const causeTally = CAUSE_CLASSES.map((k) => [k, causes.filter((c) => c.cause.class === k).length] as const).filter(([, n]) => n > 0).map(([k, n]) => `${k} ${n}`).join(", ") || "none";
+const causeErrors = explained.flatMap((r) => r.errors);
+const explain = `; explain: ${causes.length} cause(s) (${causeTally}), finding_cause ${explained.reduce((n, r) => n + (r.written ?? 0), 0)} written${causeErrors.length ? `, ${causeErrors.length} error(s): ${causeErrors.join("; ")}` : ""}`;
 const described = pass.findings.map((f) => {
   const fails = f.checks.filter((c) => !c.holds).map((c) => c.template);
   const exception = f.exception ? ` [exception ${f.exception.lesson} ${f.exception.status === "applied" ? `until ${f.exception.expires_at}` : `lapsed ${f.exception.expires_at}`}]` : "";
@@ -66,4 +83,4 @@ const described = pass.findings.map((f) => {
 const mem = pass.memory ? `; memory: ${pass.memory.lessons} lesson(s), ${pass.memory.applied} exception(s) applied, ${pass.memory.lapsed} lapsed` : "";
 const verbs = VERBS.filter((v) => pass.verbs[v] > 0).map((v) => `${v} ${pass.verbs[v]}`).join(", ") || "none";
 const recorded = pass.ledger ? `; ledger: ${pass.ledger.dispositions} disposition(s), ${pass.ledger.fingerprints} referent fingerprint(s)` : "";
-console.log(`SAMPLE: ${pass.runs} collection runs, ${pass.gatedOut.length} failed the DQ gate (${pass.gatedOut.join(", ") || "none"}), ${pass.observed} observations in the World Model, ${pass.findings.length} finding(s): ${described.join("; ") || "none"}; judge skipped (model: none)${mem}; verbs: ${verbs}; policy rules ${pass.rules}, locked settings without an approved value ${pass.locked}${recorded}`);
+console.log(`SAMPLE: ${pass.runs} collection runs, ${pass.gatedOut.length} failed the DQ gate (${pass.gatedOut.join(", ") || "none"}), ${pass.observed} observations in the World Model, ${pass.findings.length} finding(s): ${described.join("; ") || "none"}; judge skipped (model: none)${mem}; verbs: ${verbs}; policy rules ${pass.rules}, locked settings without an approved value ${pass.locked}${recorded}${explain}`);

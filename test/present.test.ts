@@ -1,8 +1,10 @@
 // The terminal view (src/loop/present.ts) over fixed step results: the columns and the time at the width, thousands,
 // colour on a TTY and off under NO_COLOR, the classes in plain words and the tally wrapped at the width, the finding
-// lines for each verb, the action lines for each status, the ticket lines, a failing row and the done lines, the
-// redactor over every text, the "what happened" sentences for each case with the causes the explain step found on
-// their lines, the explain row, and --verbose and --quiet through runCycle.
+// lines for each verb, the action lines for each status (an investigation's two Nemotron calls, each with its served
+// model and receipt id, from the lab's record lines), the ticket lines, a failing row and the done lines, the Zetaris
+// queries under the pass row and on the done line, the redactor over every text, the "what happened" sentences for
+// each case with the causes the explain step found on their lines, the explain row, and --verbose and --quiet
+// through runCycle.
 // Offline and deterministic: every result is built here, with fixture names only.
 import { describe, expect, it } from "vitest";
 import type { ActionOutcome, PlanItem } from "../src/actions/plan.ts";
@@ -11,7 +13,7 @@ import type { Action, ActionKind, ActionStatus, Ticket } from "../src/data/rows.
 import { runCycle, type CycleSteps, type StepReport } from "../src/loop/cycle.ts";
 import {
   CLASS_LABEL, FINDING_LINES, MODE, PLAIN, STORY_MAX, Table, actView, classLabel, clause, cloudflareView, count, documentView, explainView, findingLine, hex8, linuxView,
-  passView, presentOptions, probeView, seconds, shortUtc, thousands, ticketsView, utcMinute, validateView, whatHappened, withoutRunIds, type PresentOptions,
+  nemotronOf, passView, presentOptions, probeView, seconds, shortModel, shortUtc, thousands, ticketsView, utcMinute, validateView, whatHappened, withoutRunIds, type PresentOptions,
   type CauseFacts, type StoryInput, type TicketFacts,
 } from "../src/loop/present.ts";
 import { dispositionIdOf, type PassStep } from "../src/loop/pass.ts";
@@ -53,6 +55,15 @@ function outcome(kind: ActionKind, status: ActionStatus, reason: string, o: Part
 
 const BEFORE = "sha256:4de292773ac4aaaabbbbccccddddeeeeffff0000111122223333444455556666";
 const AFTER = "sha256:3f565467a831aaaabbbbccccddddeeeeffff0000111122223333444455556666";
+
+// The investigation's record lines of the lab's second apply, 25 Oct 2026 09:42 UTC (lab/README.md).
+const LIGHTNING_LINE = "Lightning selection (receipt rcpt_req_nn4ag0yu, openrouter/nvidia/nemotron-3.5-lightning, cache miss, route openrouter/nvidia/nemotron-3.5-lightning): 4 valid checks: setting_matches_approved, change_in_last_backup, restore_would_regress, run_complete";
+const JUDGE_LINE = "judge stands (receipt rcpt_req_iehg9gmt, openrouter/nvidia/nemotron-3-ultra-550b-a55b:free, cache miss, route openrouter/nvidia/nemotron-3-ultra-550b-a55b:free): the refuting SELECT returned no rows, 0 rows";
+const LAB_INVESTIGATION = {
+  reason: "investigated: 4 checks ran (1 hold, 3 fail); the judge's verdict counted: stands",
+  receipts: "rcpt_req_nn4ag0yu,rcpt_req_iehg9gmt",
+  record: ["finding fnd-1 (drift_vs_approved): the live file drifted", LIGHTNING_LINE, "check run_complete (query q-1): holds, 1 row: the run is complete", JUDGE_LINE],
+};
 
 describe("numbers, times and hashes", () => {
   it("carries thousands separators, one decimal, 8 hex and the minute in UTC", () => {
@@ -165,6 +176,24 @@ describe("the table over a clean dry run", () => {
       .toBe(at("  collect   cloudflare        1 record in 1 zone · audit 0 rows · vault skipped", "0.1 s"));
     const long = t.row("act", { parts: ["x".repeat(100)] }, 100)[0];
     expect(long).toBe(`  act       ${"x".repeat(100)}  0.1 s`);
+  });
+
+  it("names the queries the pass sent through Zetaris on the first line under the pass row; without them the row is as before", () => {
+    const sent = { datasource: "DRIFT", queries: 377, rows: 14_174, failed: 0 };
+    const rows = t.row("pass", passView(cleanPass, sent), 68593);
+    expect(rows.slice(0, 3)).toEqual([
+      at("  pass      27 findings   ADOPT 23 · HOLD 3 · ESCALATE 1", "68.6 s"),
+      "            Zetaris Lightning SQL over DRIFT · 377 queries · 14,174 rows · 0 failed",
+      "            proxied name, origin trusts no Cloudflare range 20",
+    ]);
+    expect(rows[1].length).toBeLessThanOrEqual(90);
+    // the rest of the row is the row without the line, which is the row of today
+    expect([rows[0], ...rows.slice(2)]).toEqual(t.row("pass", passView(cleanPass), 68593));
+    expect(passView(cleanPass, undefined)).toEqual(passView(cleanPass));
+    // one row, failures red on a TTY
+    const c = new Table({ ...PLAIN, color: true });
+    expect(c.row("pass", passView(cleanPass, { datasource: "DRIFT", queries: 3, rows: 1, failed: 2 }), null)[1])
+      .toBe(`            Zetaris Lightning SQL over DRIFT · 3 queries · 1 row · ${ESC}[31m2 failed${ESC}[0m`);
   });
 
   it("says nothing new when no vault commit came in, and names the repositories it could not validate", () => {
@@ -348,6 +377,64 @@ describe("the action lines under the act row", () => {
       .toBe("            revert_record  DNS record rec-0001 · b2e7a764 → ad2e4ad7 · provider confirms · 1 probe ok · done 1.2 s");
   });
 
+  it("reads both Nemotron calls off an investigation's record: receipt, short served model, checks, verdict and rows", () => {
+    expect(shortModel("openrouter/nvidia/nemotron-3-ultra-550b-a55b:free")).toBe("nemotron-3-ultra-550b-a55b");
+    expect(shortModel("nemotron-3.5-lightning")).toBe("nemotron-3.5-lightning");
+    expect(nemotronOf(LAB_INVESTIGATION.record)).toEqual({
+      lightning: { receipt: "rcpt_req_nn4ag0yu", model: "nemotron-3.5-lightning", checks: 4 },
+      judge: { status: "stands", receipt: "rcpt_req_iehg9gmt", model: "nemotron-3-ultra-550b-a55b", rows: 0 },
+    });
+    expect(nemotronOf(["judge refuted (receipt rcpt_b, nvidia/nemotron-3-ultra-550b-a55b, cache hit, route x): 2 row(s) satisfy the refuting SELECT, 2 rows"]).judge)
+      .toEqual({ status: "refuted", receipt: "rcpt_b", model: "nemotron-3-ultra-550b-a55b", rows: 2 });
+    expect(nemotronOf(["judge invalid_output (receipt rcpt_c, nvidia/nemotron-3-ultra-550b-a55b): refutation SQL failed to run: syntax error"]).judge)
+      .toEqual({ status: "invalid_output", receipt: "rcpt_c", model: "nemotron-3-ultra-550b-a55b", rows: null });
+    expect(nemotronOf(["judge not_judged (receipt none, no model): receipt gate: no receipt", "judge not called: no model is configured"])).toEqual({ lightning: null, judge: null });
+  });
+
+  it("an investigation names Lightning's checks and Ultra's verdict, each with its served model and receipt id, wrapped at the width", () => {
+    const inv = outcome("investigate", "done", LAB_INVESTIGATION.reason, { receipts: LAB_INVESTIGATION.receipts, record: LAB_INVESTIGATION.record, ms: 87_000 });
+    const fix = outcome("fix", "refused", "no fix is allowed without a valid copy; investigated and ticketed");
+    const res = { apply: true, plan: [], outcomes: [inv, fix], acted: [] };
+    const rows = t.row("act", actView(res), 87_000);
+    expect(rows).toEqual([
+      at("  act       2 actions", "87.0 s"),
+      "            investigate    FIX · Lightning picked 4 checks",
+      "                           nemotron-3.5-lightning on rcpt_req_nn4ag0yu",
+      "                           Ultra's refuting SELECT: 0 rows, stands",
+      "                           nemotron-3-ultra-550b-a55b on rcpt_req_iehg9gmt",
+      "                           both receipts verified · done 87.0 s",
+      "            fix            refused · no fix is allowed without a valid copy",
+    ]);
+    expect(rows.every((l) => l.length <= 90)).toBe(true);
+    for (const s of ["rcpt_req_nn4ag0yu", "rcpt_req_iehg9gmt", "nemotron-3.5-lightning", "nemotron-3-ultra-550b-a55b"]) expect(rows.join("\n")).toContain(s);
+    // a wider terminal holds more parts to a line
+    expect(new Table({ ...PLAIN, width: 120 }).row("act", actView(res), null).slice(1, 4)).toEqual([
+      "            investigate    FIX · Lightning picked 4 checks · nemotron-3.5-lightning on rcpt_req_nn4ag0yu",
+      "                           Ultra's refuting SELECT: 0 rows, stands · nemotron-3-ultra-550b-a55b on rcpt_req_iehg9gmt",
+      "                           both receipts verified · done 87.0 s",
+    ]);
+  });
+
+  it("an investigation whose Lightning call gave no valid check names the default checks and Ultra's call", () => {
+    const judge = "judge stands (receipt rcpt_req_88ch3rxi, openrouter/nvidia/nemotron-3-ultra-550b-a55b:free, cache miss, route openrouter/nvidia/nemotron-3-ultra-550b-a55b:free): the refuting SELECT returned no rows, 0 rows";
+    const reason = "investigated: 3 checks ran (1 hold, 2 fail); the judge's verdict counted: stands";
+    const expected = [
+      "            investigate    ESCALATE · default checks: 3",
+      "                           Ultra's refuting SELECT: 0 rows, stands",
+      "                           nemotron-3-ultra-550b-a55b on rcpt_req_88ch3rxi",
+      "                           receipt verified · done 40.0 s",
+    ];
+    const silent = outcome("investigate", "done", reason, { receipts: "rcpt_req_88ch3rxi", ms: 40_000, record: [
+      "Lightning did not answer: every route answered empty_response; the drift_vs_approved default checks ran: setting_matches_approved, change_in_last_backup, run_complete", judge,
+    ] });
+    expect(t.row("act", actView({ apply: true, plan: [], outcomes: [silent], acted: [] }), null).slice(1)).toEqual(expected);
+    const empty = outcome("investigate", "done", reason, { receipts: "rcpt_x,rcpt_req_88ch3rxi", ms: 40_000, record: [
+      "Lightning selection (receipt rcpt_x, openrouter/nvidia/nemotron-3.5-lightning, cache miss, route openrouter/nvidia/nemotron-3.5-lightning): 0 valid checks, 2 rejected",
+      "Lightning's gated selection holds no valid check; the drift_vs_approved default checks ran: setting_matches_approved, change_in_last_backup, run_complete", judge,
+    ] });
+    expect(t.row("act", actView({ apply: true, plan: [], outcomes: [empty], acted: [] }), null).slice(1)).toEqual(expected);
+  });
+
   it("colours each status: done green, failed red, unverified and not judged yellow, refused dim", () => {
     const c = new Table({ ...PLAIN, color: true });
     const text = c.row("act", actView({ apply: true, plan: [], acted: [], outcomes: [
@@ -430,6 +517,10 @@ describe("a failing step and the done lines", () => {
     expect(t.done({ ms: 41_600, steps: 9, skipped: 3, trace: "logs/cycle_test.jsonl" })).toBe("done · 9 steps · 3 skipped · 41.6 s · trace logs/cycle_test.jsonl");
     expect(t.done({ ms: 12_300, steps: 9, trace: "logs/cycle_test.jsonl", stopped: { step: "probe", at: 4, of: 9 } })).toBe("stopped at probe · 4 of 9 · 12.3 s · trace logs/cycle_test.jsonl");
     expect(t.done({ ms: 34_900, trace: "logs/pass_test.jsonl" })).toBe("done · 34.9 s · trace logs/pass_test.jsonl");
+    // the cycle's Zetaris queries before the trace, when given; failures red on a TTY
+    expect(t.done({ ms: 119_400, steps: 9, trace: "logs/cycle_test.jsonl", queries: { queries: 502, failed: 0 } })).toBe("done · 9 steps · 119.4 s · 502 Zetaris queries, 0 failed · trace logs/cycle_test.jsonl");
+    expect(t.done({ ms: 1_000, queries: { queries: 1, failed: 0 } })).toBe("done · 1.0 s · 1 Zetaris query, 0 failed");
+    expect(new Table({ ...PLAIN, color: true }).done({ ms: 1_000, queries: { queries: 1_204, failed: 2 } })).toBe(`${ESC}[32mdone${ESC}[0m · 1.0 s · 1,204 Zetaris queries, ${ESC}[31m2 failed${ESC}[0m`);
   });
 
   it("passes every text through the redactor: header, subject, detail, reasons", () => {
@@ -545,6 +636,26 @@ describe("the what-happened block", () => {
     expect(story({ pass: { findings: [vhost] }, act: applied(lone) })).toEqual([
       "A finding (site with no DNS record) needs a technician; the agent ran its checks (no model is configured, so no verdict was asked for).",
       "1 finding is with a technician: site with no DNS record at conf.d/word-aaaaaa.conf on host-aaaaaa.",
+    ]);
+  });
+
+  it("an investigation whose record holds both Nemotron calls names Lightning and Ultra, each on a verified receipt", () => {
+    const fixFinding = as(finding("FIX", "drift_vs_approved", "live value drifted from approved 0df3950bca45 with no valid copy (1 copy in the vault, latest validation unvalidated) and production affected (1 failing probe in run-x: http a), so rule rule-1 investigates, fixes where allowed, documents and opens a ticket", NGINX), "fnd-0000000000000005");
+    const inv = outcome("investigate", "done", LAB_INVESTIGATION.reason, { action_id: "act-inv", disposition_id: "dsp-5", receipts: LAB_INVESTIGATION.receipts, record: LAB_INVESTIGATION.record });
+    const fix = outcome("fix", "refused", "no fix is allowed without a valid copy; investigated and ticketed", { action_id: "act-fix", disposition_id: "dsp-5" });
+    const incident = tickets([create(ticket("incident", null, { action_id: "act-fix", finding_id: fixFinding.id })), out("create", "created", "3")]);
+    const sentences = story({ pass: { findings: [fixFinding] }, act: applied(inv, fix), tickets: incident });
+    expect(sentences).toEqual([
+      "An approved setting with no valid copy affected production; Nemotron Lightning picked the checks and Nemotron Ultra's refuting SELECT left the claim standing, each on a verified receipt; the agent opened ticket #3 for a technician.",
+    ]);
+    expect(sentences[0]).toMatch(/Lightning.*Ultra.*verified receipt/);
+    const refuted = { ...inv, record: [LIGHTNING_LINE, JUDGE_LINE.replace("judge stands", "judge refuted").replace("the refuting SELECT returned no rows, 0 rows", "2 row(s) satisfy the refuting SELECT, 2 rows")] };
+    expect(story({ pass: { findings: [fixFinding] }, act: applied(refuted, fix) })).toEqual([
+      "An approved setting with no valid copy affected production; Nemotron Lightning picked the checks and Nemotron Ultra's refuting SELECT refuted the claim, each on a verified receipt.",
+    ]);
+    // the default checks ran: the sentence keeps its short form, the act line names Ultra's call
+    expect(story({ pass: { findings: [fixFinding] }, act: applied({ ...inv, record: [JUDGE_LINE] }, fix), tickets: incident })).toEqual([
+      "An approved setting with no valid copy affected production; the agent investigated with Nemotron and opened ticket #3 for a technician.",
     ]);
   });
 

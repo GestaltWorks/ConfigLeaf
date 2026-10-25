@@ -1,7 +1,8 @@
 // The loop (src/loop/): the cycle's order, skips and stop rule over fake steps; the watcher over a fake clock; the
 // tenant ledger; each live step with fakes in place of the hosts, Cloudflare, the probes and the Store; and the pass,
 // act (dry run), tickets (dry run) and document steps over sql.js with test/fixtures/policy-bundle.json and the
-// Actor's fixture vault (test/fixtures/actions/world.ts), run as one cycle with collect, probe and validate skipped.
+// Actor's fixture vault (test/fixtures/actions/world.ts), run as one cycle with collect, probe and validate skipped;
+// and the CountingEngine the live cycle reads its Zetaris queries from, its tally against the pass's trace lines.
 // Offline and deterministic: no host, no Cloudflare, no Nightshift, no GitHub, no Postgres.
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,7 +12,8 @@ import "../src/config.ts"; // loads .env into process.env
 import { Cloudflare, type FetchLike } from "../src/collectors/cloudflare.ts";
 import type { CollectResult } from "../src/collectors/linux.ts";
 import { EMPTY_ROWS } from "../src/collectors/types.ts";
-import { DataLayer } from "../src/data/layer.ts";
+import { DataLayer, DataLayerError } from "../src/data/layer.ts";
+import { CountingEngine, tallySince } from "../src/data/engines/counting.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { DISPOSITIONS_SQL, objects, tenantActions } from "../src/data/queries.ts";
 import type { ActionOutcome } from "../src/actions/plan.ts";
@@ -24,7 +26,7 @@ import { LoopError, TenantLedger, dispositionIdOf, passStep, type PassStep } fro
 import { actStep, collectCloudflareStep, collectLinuxStep, documentStep, explainStep, labelledRows, probeStep, ticketsStep, validateStep } from "../src/loop/steps.ts";
 import { CAUSE_CLASSES } from "../src/explain/cause.ts";
 import { MemoryCauseSink, causesByDisposition, type ExplainResult } from "../src/explain/explain.ts";
-import { PLAIN, Table, explainView } from "../src/loop/present.ts";
+import { PLAIN, Table, explainView, passView, thousands } from "../src/loop/present.ts";
 import { LabelTracer } from "../src/loop/trace.ts";
 import { sleep, watch } from "../src/loop/watch.ts";
 import { MemoryTicketRows } from "../src/psa/step.ts";
@@ -93,6 +95,21 @@ describe("runCycle over fake steps", () => {
     expect(tracer.events.length).toBe(11);
     expect(tracer.events.every((e) => e.agent === "cycle" && e.action === "triage" && e.model_requested === "none")).toBe(true);
     expect(tracer.events[3]).toMatchObject({ input_summary: "cycle t1 [4/10] probe", status: "ok", latency_ms: 100 });
+  });
+
+  it("names the cycle's Zetaris queries on the done line and at the end of the CYCLE summary when the hook gives them; without it, neither does", async () => {
+    const printed: string[] = [];
+    const tracer = new MemTracer("loop_test", { model: "none" });
+    const tally = { queries: 502, rows: 27_765, failed: 0, ms: 86_400 };
+    const res = await runCycle({ tenant: "t1", apply: false, aliases: [], skip: new Set() }, fakeSteps([]), { tracer, print: (l) => printed.push(l), clock: ticking(), trace: "logs/cycle_test.jsonl", queries: () => tally });
+    expect(printed.at(-1)).toMatch(/^done · 8 steps · \d+\.\d s · 502 Zetaris queries, 0 failed · trace logs\/cycle_test\.jsonl$/);
+    expect(res.summary).toMatch(/; completed; \d+\.\d s; zetaris: 502 queries, 27,765 rows, 0 failed$/);
+    expect(tracer.events.at(-1)?.output_summary).toBe(res.summary);
+    const without: string[] = [];
+    const bare = await runCycle({ tenant: "t1", apply: false, aliases: [], skip: new Set() }, fakeSteps([]), { print: (l) => without.push(l), clock: ticking(), trace: "logs/cycle_test.jsonl" });
+    expect(without.at(-1)).toMatch(/^done · 8 steps · \d+\.\d s · trace logs\/cycle_test\.jsonl$/);
+    expect(bare.summary).toMatch(/; completed; \d+\.\d s$/);
+    expect(without.join("\n")).not.toMatch(/zetaris/i);
   });
 
   it("skips the named groups, runs the pass in every cycle, and gives validate no commit when collect is skipped", async () => {
@@ -437,6 +454,35 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
 
   it("refuses a tenant with no collection run", async () => {
     await expect(passStep(layer, { tenant: "nobody", ledger: null })).rejects.toThrow(LoopError);
+  });
+
+  it("a CountingEngine counts each query the pass sends, its rows and none failed, equal to the pass's query lines in the trace; the pass row names them", async () => {
+    const counting = new CountingEngine(engine);
+    expect([counting.name, counting.qualify("observation")]).toEqual([engine.name, engine.qualify("observation")]);
+    const tracer = new MemTracer("loop_test", { model: "none" });
+    const before = counting.tally();
+    const r = await passStep(new DataLayer(counting), { tenant: TENANT, ledger: null, decidedAt: AT, world: new DriftWorld("loop_test"), tracer });
+    const sent = tallySince(before, counting.tally());
+    const queries = tracer.events.filter((e) => e.action === "query");
+    expect(sent.queries).toBeGreaterThan(10);
+    expect(sent.queries).toBe(queries.length);
+    expect(sent.rows).toBe(queries.reduce((n, e) => n + Number(/^(\d+) rows$/.exec(e.output_summary ?? "")?.[1]), 0));
+    expect(sent.failed).toBe(0);
+    const line = new Table(PLAIN).row("pass", passView(r, { datasource: "DRIFT", ...sent }), null)[1];
+    expect(line).toBe(`            Zetaris Lightning SQL over DRIFT · ${sent.queries} queries · ${thousands(sent.rows)} rows · 0 failed`);
+  });
+
+  it("a CountingEngine counts a run that throws as a failure and rethrows the same error", async () => {
+    const boom = new DataLayerError("planted");
+    const failing = new CountingEngine({ name: "zetaris", qualify: (t) => `DRIFT.${t}`, run: async () => { throw boom; } });
+    expect(failing.qualify("dns_record")).toBe("DRIFT.dns_record");
+    await expect(failing.run("SELECT 1")).rejects.toBe(boom);
+    await expect(new DataLayer(failing).run("SELECT x FROM {{t:dns_record}}")).rejects.toBe(boom);
+    expect(failing.tally()).toMatchObject({ queries: 2, rows: 0, failed: 2 });
+    const counting = new CountingEngine(engine);
+    await counting.run("SELECT 1 AS a UNION ALL SELECT 2");
+    await expect(counting.run("SELECT nope FROM no_such_table")).rejects.toThrow(DataLayerError);
+    expect(counting.tally()).toMatchObject({ queries: 2, rows: 2, failed: 1 });
   });
 
   it("without a ledger, prints the pass's own decisions and records nothing", async () => {

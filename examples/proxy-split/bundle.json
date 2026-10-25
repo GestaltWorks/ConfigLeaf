@@ -200,5 +200,6 @@
   ],
   "action": [],
   "ticket": [],
-  "referent_fingerprint": []
+  "referent_fingerprint": [],
+  "finding_cause": []
 }

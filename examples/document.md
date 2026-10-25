@@ -107,7 +107,9 @@ Each open finding, by verb and class, with the reason its disposition records:
 
 ### Why
 
-No open finding carries a cause: the explain step of a cycle records one for each finding it explains.
+Who or what changed each setting, from the hosts' journal, the provider's audit log and the agent's own actions (1 finding):
+
+- fnd-b4a40091cdb4f906 ESCALATE proxy_split: No record of who changed it: the audit log window of 18 h holds 0 events for the record.
 
 ## Where each answer comes from
 
@@ -177,7 +179,8 @@ The failing names:
 - POLICY_RULES_SQL: 1 run, 26 rows
 - DOC_UNAPPROVED_SQL: 3 runs, 1019 rows
 - DOC_DISPOSITIONS_OF_RUN_SQL: 3 runs, 27 rows
-- CAUSES_SQL: 1 run, 0 rows
+- CAUSES_SQL: 1 run, 1 row
+- ACTIONS_SQL: 1 run, 0 rows
 - DOC_ACTIONS_SQL: 1 run, 0 rows
 - DOC_TICKETS_SQL: 1 run, 1 row
 - DOC_PROBES_SQL: 1 run, 6 rows

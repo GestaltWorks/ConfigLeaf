@@ -15,8 +15,8 @@
  "files": [
   {
    "path": "examples/wildcard-no-real-ip/bundle.json",
-   "bytes": 675597,
-   "sha256": "sha256:e1a0b56c063418ed5b184a21dab0863338fff2a26b8582f72bc7e6e231e2fabb"
+   "bytes": 675620,
+   "sha256": "sha256:abbfa0ce09e45525a4501f31ce0b47e01944e65fdfcb4bceb6fe2d4387d1ac79"
   },
   {
    "path": "examples/wildcard-no-real-ip/findings.json",
@@ -107,6 +107,7 @@
     "description": "A proxied wildcard record landing on an inventory host where neither the http level nor any enabled server block trusts a real_ip range.",
     "sql": "SELECT d.record_id, d.zone, d.name, d.type, d.content AS origin, i.host,\n       h.obs_id, h.object_id, h.setting_path, h.value_hash, h.value_redacted, h.observed_at, d.observed_at AS dns_observed_at\nFROM dns_record d\nJOIN inventory_asset i ON i.tenant_id = d.tenant_id AND i.address = d.content\nJOIN observation h ON h.tenant_id = d.tenant_id AND h.run_id = 'run-f74b40064e093f2c' AND h.host = i.host AND h.setting_path = 'http.real_ip' AND h.value_redacted = 'absent'\nWHERE d.tenant_id = 'client-1' AND d.run_id = 'run-9d48791b00433777' AND d.type IN ('A', 'AAAA') AND d.proxied = 1 AND d.name LIKE '*.%'\n  AND NOT EXISTS (SELECT 1 FROM observation n WHERE n.run_id = h.run_id AND n.refers_to_type = 'dns_name' AND n.refers_to_id = d.name)\n  AND NOT EXISTS (SELECT 1 FROM observation r JOIN observation e ON e.run_id = r.run_id AND e.object_id = r.object_id AND e.setting_path LIKE '%.enabled' AND substr(e.setting_path, 1, length(e.setting_path) - 8) = substr(r.setting_path, 1, length(r.setting_path) - 8)\n    WHERE r.run_id = h.run_id AND r.setting_path LIKE '%.real_ip' AND r.setting_path <> 'http.real_ip' AND r.value_redacted <> 'absent' AND e.value_redacted = '1')\nORDER BY d.name, d.record_id, h.object_id",
     "sqlSha256": "sha256:8b9a831814d73150c600bca59e32360e3eb04ef868bcd1634b299260a83870b9",
+    "zetarisSql": "SELECT d.record_id, d.zone, d.name, d.type, d.content AS origin, i.host,\n       h.obs_id, h.object_id, h.setting_path, h.value_hash, h.value_redacted, h.observed_at, d.observed_at AS dns_observed_at\nFROM DRIFT.dns_record d\nJOIN DRIFT.inventory_asset i ON i.tenant_id = d.tenant_id AND i.address = d.content\nJOIN DRIFT.observation h ON h.tenant_id = d.tenant_id AND h.run_id = 'run-f74b40064e093f2c' AND h.host = i.host AND h.setting_path = 'http.real_ip' AND h.value_redacted = 'absent'\nWHERE d.tenant_id = 'client-1' AND d.run_id = 'run-9d48791b00433777' AND d.type IN ('A', 'AAAA') AND d.proxied = 1 AND d.name LIKE '*.%'\n  AND NOT EXISTS (SELECT 1 FROM DRIFT.observation n WHERE n.run_id = h.run_id AND n.refers_to_type = 'dns_name' AND n.refers_to_id = d.name)\n  AND NOT EXISTS (SELECT 1 FROM DRIFT.observation r JOIN DRIFT.observation e ON e.run_id = r.run_id AND e.object_id = r.object_id AND e.setting_path LIKE '%.enabled' AND substr(e.setting_path, 1, length(e.setting_path) - 8) = substr(r.setting_path, 1, length(r.setting_path) - 8)\n    WHERE r.run_id = h.run_id AND r.setting_path LIKE '%.real_ip' AND r.setting_path <> 'http.real_ip' AND r.value_redacted <> 'absent' AND e.value_redacted = '1')\nORDER BY d.name, d.record_id, h.object_id",
     "params": {
      "tenant_id": "client-1",
      "dns_run_id": "run-9d48791b00433777",
@@ -172,6 +173,7 @@
      },
      "sql": "SELECT c.run_id, c.tenant_id, c.surface, c.host, c.expected_count, c.observed_count, c.status\nFROM collection_run c\nWHERE c.run_id = 'run-f74b40064e093f2c'\n  AND (c.observed_count < c.expected_count OR c.status <> 'complete'\n    OR c.expected_count IS NULL OR c.observed_count IS NULL\n    OR (c.surface LIKE 'linux.%' AND c.expected_count > (SELECT COUNT(*) FROM observation x WHERE x.run_id = c.run_id)))",
      "sqlSha256": "sha256:cbefa004f4b75c5615d04c603444a2dcc492c4aa99dfe3366436d401b3623ca8",
+     "zetarisSql": "SELECT c.run_id, c.tenant_id, c.surface, c.host, c.expected_count, c.observed_count, c.status\nFROM DRIFT.collection_run c\nWHERE c.run_id = 'run-f74b40064e093f2c'\n  AND (c.observed_count < c.expected_count OR c.status <> 'complete'\n    OR c.expected_count IS NULL OR c.observed_count IS NULL\n    OR (c.surface LIKE 'linux.%' AND c.expected_count > (SELECT COUNT(*) FROM DRIFT.observation x WHERE x.run_id = c.run_id)))",
      "rows": {
       "columns": [
        "run_id",
@@ -209,6 +211,7 @@
      },
      "sql": "SELECT asset_id, host, address, kind, source, observed_at\nFROM inventory_asset\nWHERE tenant_id = 'client-1' AND address = 'ip-6b6bba'\nORDER BY asset_id",
      "sqlSha256": "sha256:3ad4e464b38299bdcad75214309bc7b1d7b14d937f6b735381a1ad16bff4e3d6",
+     "zetarisSql": "SELECT asset_id, host, address, kind, source, observed_at\nFROM DRIFT.inventory_asset\nWHERE tenant_id = 'client-1' AND address = 'ip-6b6bba'\nORDER BY asset_id",
      "rows": {
       "columns": [
        "asset_id",
@@ -256,6 +259,7 @@
      },
      "sql": "SELECT event_id, source, actor, action, old_value, new_value, occurred_at\nFROM audit_event\nWHERE tenant_id = 'client-1' AND resource_id = 'c922e6966d55b15bd96b5e8ea932b715'\n  AND occurred_at >= '2026-10-25T13:53:44.528Z' AND occurred_at <= '2026-10-25T13:53:52.585Z'\n  AND actor IS NOT NULL AND actor <> ''\nORDER BY occurred_at, event_id",
      "sqlSha256": "sha256:f9fd740f0827fc8a6ff9b0497561d5313a185af668c13e90cd8d437aa4b4ae1c",
+     "zetarisSql": "SELECT event_id, source, actor, action, old_value, new_value, occurred_at\nFROM DRIFT.audit_event\nWHERE tenant_id = 'client-1' AND resource_id = 'c922e6966d55b15bd96b5e8ea932b715'\n  AND occurred_at >= '2026-10-25T13:53:44.528Z' AND occurred_at <= '2026-10-25T13:53:52.585Z'\n  AND actor IS NOT NULL AND actor <> ''\nORDER BY occurred_at, event_id",
      "rows": {
       "columns": [
        "event_id",
@@ -293,6 +297,7 @@
      },
      "sql": "SELECT e.event_id, e.source, e.action, e.old_value AS previous_value, e.occurred_at AS recorded_at, 'old_value' AS evidence\nFROM audit_event e\nWHERE e.tenant_id = 'client-1' AND e.resource_id = 'c922e6966d55b15bd96b5e8ea932b715'\n  AND e.old_value IS NOT NULL AND e.old_value <> ''\n  AND NOT EXISTS (SELECT 1 FROM audit_event x WHERE x.tenant_id = e.tenant_id AND x.resource_id = e.resource_id AND x.occurred_at > e.occurred_at)\nUNION ALL\nSELECT p.event_id, p.source, p.action, p.new_value AS previous_value, p.occurred_at AS recorded_at, 'earlier_event' AS evidence\nFROM audit_event e\nJOIN audit_event p ON p.tenant_id = e.tenant_id AND p.resource_id = e.resource_id AND p.occurred_at < e.occurred_at\n  AND p.action IN ('create', 'update') AND p.new_value IS NOT NULL AND p.new_value <> ''\nWHERE e.tenant_id = 'client-1' AND e.resource_id = 'c922e6966d55b15bd96b5e8ea932b715'\n  AND NOT EXISTS (SELECT 1 FROM audit_event x WHERE x.tenant_id = e.tenant_id AND x.resource_id = e.resource_id AND x.occurred_at > e.occurred_at)\n  AND NOT EXISTS (SELECT 1 FROM audit_event y WHERE y.tenant_id = e.tenant_id AND y.resource_id = e.resource_id AND y.action IN ('create', 'update')\n    AND y.new_value IS NOT NULL AND y.new_value <> '' AND y.occurred_at < e.occurred_at AND y.occurred_at > p.occurred_at)\nORDER BY evidence, event_id",
      "sqlSha256": "sha256:bcbb66dac1ec8549e05d0431d30a857d58fc7f3564375dd1fb0aa62e0d581c19",
+     "zetarisSql": "SELECT e.event_id, e.source, e.action, e.old_value AS previous_value, e.occurred_at AS recorded_at, 'old_value' AS evidence\nFROM DRIFT.audit_event e\nWHERE e.tenant_id = 'client-1' AND e.resource_id = 'c922e6966d55b15bd96b5e8ea932b715'\n  AND e.old_value IS NOT NULL AND e.old_value <> ''\n  AND NOT EXISTS (SELECT 1 FROM DRIFT.audit_event x WHERE x.tenant_id = e.tenant_id AND x.resource_id = e.resource_id AND x.occurred_at > e.occurred_at)\nUNION ALL\nSELECT p.event_id, p.source, p.action, p.new_value AS previous_value, p.occurred_at AS recorded_at, 'earlier_event' AS evidence\nFROM DRIFT.audit_event e\nJOIN DRIFT.audit_event p ON p.tenant_id = e.tenant_id AND p.resource_id = e.resource_id AND p.occurred_at < e.occurred_at\n  AND p.action IN ('create', 'update') AND p.new_value IS NOT NULL AND p.new_value <> ''\nWHERE e.tenant_id = 'client-1' AND e.resource_id = 'c922e6966d55b15bd96b5e8ea932b715'\n  AND NOT EXISTS (SELECT 1 FROM DRIFT.audit_event x WHERE x.tenant_id = e.tenant_id AND x.resource_id = e.resource_id AND x.occurred_at > e.occurred_at)\n  AND NOT EXISTS (SELECT 1 FROM DRIFT.audit_event y WHERE y.tenant_id = e.tenant_id AND y.resource_id = e.resource_id AND y.action IN ('create', 'update')\n    AND y.new_value IS NOT NULL AND y.new_value <> '' AND y.occurred_at < e.occurred_at AND y.occurred_at > p.occurred_at)\nORDER BY evidence, event_id",
      "rows": {
       "columns": [
        "event_id",
@@ -323,7 +328,7 @@
     "extra": {},
     "status": "skipped",
     "model": "none",
-    "detail": "No model ran in this pass, so the judge step is traced as skipped (model: none). A live pass sends the claim and its rows to Nemotron Ultra for one SELECT that returns rows only if the claim is false, runs it through the same guard and data layer, and keeps the verdict only when the signed receipt names an Ultra."
+    "detail": "No model ran in this pass, so the judge step is traced as skipped (model: none). Nemotron runs in the Actor's investigation and in the eval; the Nemotron tab re-runs every SELECT its judge wrote there."
    },
    "sample": {
     "match": "same",

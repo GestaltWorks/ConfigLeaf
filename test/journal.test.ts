@@ -3,8 +3,8 @@
 // line to an audit_event row, the argument stripping that keeps typed values out of new_value, the pseudonymisation of
 // login names, and the rows' way through toRows, the sql.js loader and storeRows. The fixture lines are the two shapes
 // measured on a host on 25 Oct 2026 with the login and host names replaced by invented ones (tvance, web7), plus the
-// lab stand-in's lines (lab/journalctl). Addresses: 203.0.113.9 and 198.51.100.7 are documentation ranges the redactor
-// keeps; 100.64.12.34 is not, and becomes ip-XXXXXX.
+// lab stand-in's login line, read from lab/journalctl. Addresses: 203.0.113.9 is a documentation range the redactor
+// keeps; 100.64.12.34 and the stand-in's 10.77.0.23 are not, and become ip-XXXXXX.
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -163,6 +163,16 @@ describe("one kept line, one audit_event row", () => {
     const root = rowOf(KEPT[8]);
     expect(root).toMatchObject({ actor: "root", action: "ssh_login", resource_type: "session" });
     expect(root.old_value).toMatch(new RegExp(`^ip-${H6}$`));
+  });
+
+  it("the lab stand-in's login (lab/journalctl): its private source address reaches the row as ip-XXXXXX", () => {
+    const script = readFileSync(new URL("../lab/journalctl", import.meta.url), "utf8");
+    const line = script.split("\n").map((l) => l.match(/"\$\(at \d+\) (drift-lab sshd\[\d+\]: Accepted publickey for labtech from [^"]+)"/)?.[1]).find((l) => l !== undefined);
+    expect(line).toBeDefined();
+    const row = rowOf(`2026-10-25T20:21:17+00:00 ${line}`);
+    expect(row).toMatchObject({ actor: journalActor(r, "labtech"), action: "ssh_login", resource_type: "session", occurred_at: "2026-10-25T20:21:17.000Z" });
+    expect(row.old_value).toMatch(new RegExp(`^ip-${H6}$`));
+    expect(row.old_value).toBe(r.text("10.77.0.23"));
   });
 
   it("systemctl keeps its verb and unit in action; nginx -t is nginx; neither names a file", () => {

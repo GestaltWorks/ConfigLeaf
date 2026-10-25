@@ -8,8 +8,9 @@
 //   - Reads, once per pass and only when a finding is explained: the tenant's latest approvals (LATEST_APPROVALS_SQL),
 //     its audit_event rows of source journal and cloudflare from the earliest window's start less LOGIN_MS
 //     (CAUSE_EVENTS_SQL; a login can precede the window), and its action rows (ACTIONS_SQL). Per explained finding:
-//     a `file` setting's approved copy (APPROVED_COPIES_SQL, the latest taken) and its live copy (the vault_copy row of
-//     the finding's run, LIVE_COPY_SQL), both read from the vault (Vault.treeOf, one read per commit); any other
+//     a `file` setting's approved copy (APPROVED_COPIES_SQL, the approval's own: approvalCopy, the latest taken at or
+//     before approved_at) and its live copy (the vault_copy row of the finding's run, LIVE_COPY_SQL), both read from
+//     the vault (Vault.treeOf, one read per commit); the diff's "---" header names the approved copy's commit; any other
 //     setting's approved value text (APPROVED_VALUE_SQL: the latest observation that carries the approved hash).
 //   - The diff (diff.ts), every line through linux.ts redactText: a file's approved bytes against its live bytes (an
 //     approved_missing file against nothing); else an approved value against the observed one; else, for a hero
@@ -28,11 +29,14 @@
 //
 // Measured 25 Oct 2026. Over test/fixtures/policy-bundle.json and the Actor's fixture vault (test/explain.test.ts): 8
 // causes (account_change 2, unknown 6), 8 rows written, 0 on a second run. On the lab estate, tenant lab-1, the
-// journal from lab/journalctl: the dry-run cycle of 19:19 UTC after a sudo tee break to 8096 gave 1 cause,
-// operator_edit, "The file was changed at 19:17 UTC by user-212a17 over ssh from 198.51.100.7 (sudo tee).", 11
-// evidence rows (10 journal rows and 10 actions searched), an 11-line diff from the vault, the step 1.4 s; read back
-// through Zetaris in 0.5 s; after the rollback act-efac92f99ab27ec5 (done, 19:22:08 UTC) the reader's sentence ends
-// ", 4 minutes before the agent restored it."
+// journal from lab/journalctl: the applied cycle of 20:24 UTC after a sudo tee break to 8098 gave 1 cause,
+// operator_edit, "The file was changed at 20:22 UTC by user-212a17 over ssh from ip-391349 (sudo tee).", 20 evidence
+// rows (30 journal rows and 13 actions searched, 6 writes to the file), an 11-line diff from the vault under
+// "--- approved 5dde7698", the approval's own commit, the step 1.3 s; after the cycle's rollback act-c6f3def7f70f2554
+// (done, 20:26:02 UTC) the reader's sentence ends ", 4 minutes before the agent restored it." Over sample/bundle.json
+// (scripts/sample.ts, no vault, no journal rows): 1 cause, the proxy_split ESCALATE, unknown, "No record of who
+// changed it: the audit log window of 18 h holds 0 events for the record.", its record's three audit events dating
+// from 16 Apr 2026, before the approval that opens the window.
 
 import { actionOf } from "../actions/plan.ts";
 import { redactText } from "../collectors/linux.ts";
@@ -41,7 +45,7 @@ import type { SqlJsEngine } from "../data/engines/sqljs.ts";
 import { approvedCopies, latestApprovals, objects, tenantActions } from "../data/queries.ts";
 import { COLUMNS, type Action, type AuditEvent, type CauseClass, type FindingCause } from "../data/rows.ts";
 import type { Finding } from "../pipeline.ts";
-import type { Redactor } from "../redactor.ts";
+import { Redactor } from "../redactor.ts";
 import type { Tracer } from "../trace.ts";
 import type { Vault, VaultTree } from "../vault/vault.ts";
 import { dispositionIdOf } from "../loop/pass.ts";
@@ -139,6 +143,16 @@ export function causeOf(r: Row): FindingCause {
   };
 }
 
+/**
+ * The approval's own vault copy among the copies that hold its bytes (in taken_at order): the latest taken at or
+ * before approved_at, the run the technician signed off; the earliest when every copy is later. A copy the vault took
+ * after a restore holds the same bytes under a later commit, and is not the approval's.
+ */
+export function approvalCopy<T extends Readonly<Record<string, string>>>(copies: readonly T[], approvedAt: string): T | undefined {
+  const at = Date.parse(approvedAt);
+  return copies.filter((c) => Date.parse(c.taken_at) <= at).at(-1) ?? copies[0];
+}
+
 const keyOf = (surface: string, host: string | null, objectId: string, settingPath: string): string => [surface, host ?? "", objectId, settingPath].join("\u001f");
 const c8 = (c: string): string => c.slice(0, 8);
 
@@ -189,7 +203,7 @@ export async function explainPass(pass: { tenant: string; decidedAt: string; fin
   const fileDiff = async (f: Finding, approval: Row): Promise<string | null> => {
     const s = f.finding;
     if (!deps.vault) return null;
-    const approved = objects(await approvedCopies(layer, { tenant_id: tenant, surface: s.surface, host: s.host ?? "", object_id: s.object_id, setting_path: "file", approved_hash: approval.value_hash }, q)).at(-1);
+    const approved = approvalCopy(objects(await approvedCopies(layer, { tenant_id: tenant, surface: s.surface, host: s.host ?? "", object_id: s.object_id, setting_path: "file", approved_hash: approval.value_hash }, q)), approval.approved_at);
     const a = approved ? fileText(approved, s.object_id) : null;
     if (!approved || a === null) return null;
     const missing = s.class === "approved_missing" || s.value_hash === "";
@@ -253,6 +267,21 @@ export async function explainPass(pass: { tenant: string; decidedAt: string; fin
     detail: `${searched.journal} journal and ${searched.cloudflare} cloudflare row(s) since ${since}, ${searched.actions} action(s); ${errors.length ? errors.join("; ") : "no error"}; model: none`,
   });
   return { tenant, decidedAt, causes, counts, searched, written, errors };
+}
+
+/**
+ * The redactor of an explain run over a bundle whose rows are already redacted (sample mode, the owner's document over
+ * a bundle, the tests): a fixed salt and no labels, so a pseudonym passes as it is and the causes are the same on every
+ * machine, with or without a .env.
+ */
+export const BUNDLE_REDACTOR = new Redactor("bundle-explain", []);
+
+/** explainPass for each tenant the pass's findings name, in tenant order, through one sink: a pass over a bundle that holds several tenants. */
+export async function explainTenants(pass: { decidedAt: string; findings: readonly Finding[] }, deps: ExplainDeps): Promise<ExplainResult[]> {
+  const tenants = [...new Set(pass.findings.map((f) => f.finding.tenant_id))].sort();
+  const out: ExplainResult[] = [];
+  for (const tenant of tenants) out.push(await explainPass({ tenant, decidedAt: pass.decidedAt, findings: pass.findings }, deps));
+  return out;
 }
 
 // ---- reading causes back: act and the ticket step ------------------------------------------------------------

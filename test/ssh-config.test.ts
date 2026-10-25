@@ -23,7 +23,7 @@ vi.mock("node:child_process", () => ({
 
 const saved = { hosts: process.env.LINUX_HOSTS, sshConfig: process.env.LINUX_SSH_CONFIG };
 const FIXED = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15"];
-const LAB_CONFIG = "D:/Projects/drift-agent/lab/ssh_config.local";
+const LAB_CONFIG = "lab/ssh_config.local";
 
 async function load(sshConfig: string) {
   vi.resetModules();

@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
-import { DEFAULT_MEMORY_DIR, config, memoryDir } from "../src/config.ts";
+import { DEFAULT_MEMORY_DIR, SAMPLE_MEMORY_DIR, config, memoryDir } from "../src/config.ts";
 import { HMEM, MemoryError, TechnicianMemory, lessonOf, scopeValuesOf, type FindingScope } from "../src/engine/memory.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -212,11 +212,16 @@ describe("TechnicianMemory: redaction and validation", () => {
 });
 
 describe("DRIFT_MEMORY_DIR: the store every script opens", () => {
-  it("blank is .world/memory, which .gitignore keeps out; a value is that directory, trimmed; TechnicianMemory opens it when given no directory", () => {
+  it("blank is .world/memory, which .gitignore keeps out, and examples/memory in sample mode; a value is that directory, trimmed; TechnicianMemory opens it when given no directory", () => {
     expect(DEFAULT_MEMORY_DIR).toBe(".world/memory");
-    expect(memoryDir("")).toBe(".world/memory");
-    expect(memoryDir("   ")).toBe(".world/memory");
-    expect(memoryDir(" examples/memory ")).toBe("examples/memory");
+    expect(memoryDir("", false)).toBe(".world/memory");
+    expect(memoryDir("   ", false)).toBe(".world/memory");
+    expect(memoryDir(" examples/memory ", false)).toBe("examples/memory");
+    // sample mode: blank is the committed store under the repository root, wherever the command runs; a value still wins
+    expect(SAMPLE_MEMORY_DIR).toBe(path.join(ROOT, "examples", "memory"));
+    expect(memoryDir("", true)).toBe(SAMPLE_MEMORY_DIR);
+    expect(memoryDir("  ", true)).toBe(SAMPLE_MEMORY_DIR);
+    expect(memoryDir(" .world/memory ", true)).toBe(".world/memory");
     expect(readFileSync(path.join(ROOT, ".gitignore"), "utf8").split(/\r?\n/)).toContain(".world/");
     expect(new TechnicianMemory({ storage: "read" }).directory).toBe(path.resolve(config.memoryDir));
     expect(new TechnicianMemory().directory).toBeNull();

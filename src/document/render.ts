@@ -50,11 +50,12 @@
 // heads; 27 findings open, HOLD 26 and ESCALATE 1; probe runs 4 of surface probe, the latest, run-e839e796556a54c3, with
 // 20 failing probes; decided at 2026-10-25T03:25:35.412Z; 46 queries; 181 lines. On 24 Oct 2026 through Zetaris over the DRIFT datasource: the same Estate,
 // Copies, Approvals and Probes sections, line for line, as the render over the bundle of that day. Measured 25 Oct
-// 2026 at 19:53 UTC through Zetaris for the lab (tenant lab-1, npm run document -- --tenant lab-1 --out
-// logs/document-lab-1.md), after the 19:50 UTC cycle and its rollback: 146 lines, 2 findings open, 41 queries, the Why
-// one line, "The file was changed at 19:48 UTC by user-212a17 over ssh from 198.51.100.7 (sudo tee), 4 minutes before
-// the agent restored it.", CAUSES_SQL 2 rows, ACTIONS_SQL 12 rows. Over sample/bundle.json (no cause recorded) the
-// page gains the Why line saying so and CAUSES_SQL with 0 rows: 186 lines.
+// 2026 at 20:29 UTC through Zetaris for the lab (tenant lab-1, npm run document -- --tenant lab-1 --out
+// logs/document-lab-1.md), after the 20:24 UTC cycle and its rollback: 146 lines, 2 findings open, 47 queries, the Why
+// one line, "The file was changed at 20:22 UTC by user-212a17 over ssh from ip-391349 (sudo tee), 4 minutes before
+// the agent restored it.", CAUSES_SQL 4 rows, ACTIONS_SQL 14 rows. Over sample/bundle.json, with the explain step of
+// scripts/document.ts over the sample pass: the Why one line, the proxy_split ESCALATE's "No record of who changed it:
+// the audit log window of 18 h holds 0 events for the record.", CAUSES_SQL 1 row, ACTIONS_SQL 0 rows; 189 lines.
 
 import { defaultSelection, defaultSelectionFor } from "../catalogue/select.ts";
 import { templateById, type FindingClass } from "../catalogue/templates.ts";

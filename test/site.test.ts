@@ -1,18 +1,26 @@
 // The replay page (scripts/build-site.ts): built from the three committed examples into a throwaway
 // directory, it holds index.html and one data file per example; every check carries the SQL that ran,
-// rendered, non-empty and re-run to the recorded count; the output passes the deny-list scan; a finding
-// that cites a template the catalogue cannot render, or a count the re-run does not give, makes the build
+// rendered, non-empty and re-run to the recorded count, and with it the text a live pass sends to Zetaris (the same
+// SQL, each table <datasource>.<table>), which the lede, the Sources tab and the footer name; the output passes the
+// deny-list scan; a finding that cites a template the catalogue cannot render, or a count the re-run does not give, makes the build
 // throw and write nothing; the page carries the owner's document (Document) and "Where each answer comes from"
-// (Sources) as HTML the build renders from their markdown, escaped outside its subset; a second build is byte-identical;
+// (Sources) as HTML the build renders from their markdown, escaped outside its subset; the Nemotron tab carries the
+// eval results' calls, whose total is the run files' and summary.md's, and every judge SELECT recorded with a row count,
+// re-run equal or counted apart as recorded text that does not run, and a results copy with one recorded count moved
+// by one makes the build throw and write nothing; a second build is byte-identical;
 // and the committed docs/ is exactly this build (rerun `npm run site` when not).
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { MAX_BYTES, SiteError, buildSite, escapeHtml, markdownToHtml, scanOutput, type BuildResult, type ExampleView } from "../scripts/build-site.ts";
+import { MAX_BYTES, SiteError, buildSite, escapeHtml, markdownToHtml, nemotronView, newestResults, scanOutput, type BuildResult, type ExampleView, type JudgeSelectView } from "../scripts/build-site.ts";
+import { templateById } from "../src/catalogue/templates.ts";
 import { config } from "../src/config.ts";
+import { DataLayer } from "../src/data/layer.ts";
+import { ZetarisEngine } from "../src/data/engines/zetaris.ts";
 import { sourceRows, sourcesMarkdown } from "../src/document/render.ts";
+import { DQ_RULES, USL_NAME, USL_TABLES } from "../src/zetaris/setup.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const EXAMPLES = path.join(ROOT, "examples");
@@ -20,6 +28,12 @@ const EXAMPLES = path.join(ROOT, "examples");
 const STORE = path.join(EXAMPLES, "memory");
 const tmp = mkdtempSync(path.join(os.tmpdir(), "drift-site-"));
 const WORDS = [...new Set([...config.redactWords, ...config.exportDenyWords])];
+/** ZETARIS_DATASOURCE: DRIFT, the default and .env.example's. */
+const DS = config.zetaris.datasource;
+/** The development run of 25 Oct 2026, the values the Nemotron tab's tests hold to whichever stamp is newest. */
+const DEV = path.join(ROOT, "eval", "results", "2026-10-25T09-25-44Z");
+/** Element text as the Nemotron tab writes it: &, < and > escaped. */
+const text = (s: string): string => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 let built: BuildResult;
 const example = (dir: string): ExampleView => JSON.parse(built.files.get(`data/${dir}.json`)!) as ExampleView;
@@ -30,6 +44,17 @@ function panel(id: string): string {
   return m![0];
 }
 const count = (s: string, tag: string): number => s.split(tag).length - 1;
+/** Every judge record of the Nemotron tab: the planted claims', then the item judges'. */
+const judgesOf = (v: BuildResult["nemotron"]): JudgeSelectView[] => [...v.claims.flatMap((c) => c.judges), ...v.items];
+/** The calls column of summary.md's "Counts per configuration and run" table, summed over its rows. */
+function summaryCalls(dir: string): number {
+  const md = readFileSync(path.join(dir, "summary.md"), "utf8").replace(/\r\n/g, "\n");
+  const rows = md.split("## Counts per configuration and run")[1].split("\n## ")[0].split("\n").filter((l) => l.startsWith("|"));
+  const cells = (l: string): string[] => l.split("|").map((c) => c.trim());
+  const at = cells(rows[0]).indexOf("calls");
+  expect(at).toBeGreaterThan(0);
+  return rows.slice(2).reduce((n, l) => n + Number(cells(l)[at]), 0);
+}
 
 beforeAll(async () => {
   built = await buildSite({ examplesDir: EXAMPLES, outDir: path.join(tmp, "out"), memoryDir: STORE });
@@ -77,11 +102,46 @@ describe("the replay page", () => {
         expect(f.detection?.sql).toMatch(/^SELECT\b/);
         expect(f.detection?.matched.total).toBeGreaterThan(0);
         expect(f.judge).toMatchObject({ status: "skipped", model: "none" });
+        expect(f.judge.detail).toContain("Nemotron runs in the Actor's investigation and in the eval; the Nemotron tab re-runs every SELECT its judge wrote there.");
       }
     }
     // proxy-split 4, wildcard-no-real-ip 4 (its slice carries the audit run, so the two audit checks run and fail instead of being withheld), orphans 25
     expect(checks).toBe(33);
     expect(built.index.totals.checksRerun).toBe(checks);
+  });
+
+  it("every detector query and check carries the text the live pass sends to Zetaris: the shown SQL with each table named <datasource>.<table>", () => {
+    const zetaris = new DataLayer(new ZetarisEngine());
+    let queries = 0;
+    for (const e of built.index.examples) {
+      for (const f of example(e.dir).findings) {
+        for (const q of [f.detection!, ...f.checks]) {
+          queries++;
+          expect(q.zetarisSql).toMatch(new RegExp(`\\bFROM ${DS}\\.\\w+`));
+          expect(q.zetarisSql.replaceAll(`${DS}.`, "")).toBe(q.sql);
+        }
+        for (const c of f.checks) {
+          const t = templateById(c.template)!;
+          expect(c.zetarisSql).toBe(zetaris.render(t.sql, c.params));
+          // one qualified name per {{t:table}} of the template
+          expect(c.zetarisSql.split(`${DS}.`).length - 1).toBe([...t.sql.matchAll(/\{\{t:\w+\}\}/g)].length);
+        }
+        expect(f.judge).not.toHaveProperty("zetarisSql");
+      }
+    }
+    expect(queries).toBe(9 + 33);
+  });
+
+  it("names Zetaris where the page opens, in the Sources tab and in the footer: the datasource, the semantic layer and its DQ rules, the parity test", () => {
+    const html = built.files.get("index.html")!;
+    const lede = /<p class="lede">([\s\S]*?)<\/p>/.exec(html)![1];
+    for (const s of ["Zetaris Lightning SQL", `<code>${DS}</code> datasource`, `<code>${USL_NAME}</code> semantic layer`, "three DQ rules", "<code>test/parity.test.ts</code>"]) expect(lede).toContain(s);
+    const src = panel("sources");
+    expect(src).toContain(`Zetaris Lightning SQL over the <code>${DS}</code> datasource`);
+    expect(src).toContain(`holds ten entities (${USL_TABLES.map((t) => `<code>${t}</code>`).join(", ")})`);
+    expect(src).toContain(`three DQ rules (${DQ_RULES.map((r) => `<code>${r.name}</code> on <code>${r.table}</code>`).join(", ")})`);
+    expect(/<footer>[\s\S]*?<\/footer>/.exec(html)![0]).toContain(`<code>${DS}.&lt;table&gt;</code>`);
+    expect(html).toContain('"as the live pass sends it to Zetaris"');
   });
 
   it("shows the real 16 April record: proxy_split, ESCALATE once its HOLD under the policy expired, referent_unchanged fails on its three pieces of evidence, exposed since the 21:12:47 proxied=true body, 191 days", () => {
@@ -110,7 +170,7 @@ describe("the replay page", () => {
     // the script and the styles name no host but localhost (the file:// hint); the document's ticket url is text in a list item
     const code = [...html.matchAll(/<(script|style)>([\s\S]*?)<\/\1>/g)].map((m) => m[2]).join("\n");
     expect(code).not.toMatch(/https?:\/\/(?!localhost)/);
-    expect([...html.matchAll(/\b(?:href|src|action)="([^"]*)"/g)].map((m) => m[1])).toEqual(["#findings", "#document", "#sources"]);
+    expect([...html.matchAll(/\b(?:href|src|action)="([^"]*)"/g)].map((m) => m[1])).toEqual(["#findings", "#document", "#sources", "#nemotron"]);
     expect([...html.matchAll(/fetch\(([^)]*)\)/g)].map((m) => m[1])).toEqual(['"data/index.json"', "e.file"]);
   });
 
@@ -136,12 +196,102 @@ describe("the replay page", () => {
     const rows = sourceRows();
     expect(rows.map((r) => r.cls)).toEqual(["proxy_split", "proxied_without_real_ip", "orphan_record", "orphan_vhost", "changed_since_backup", "drift_vs_approved", "approved_missing", "found_but_different", "dns_change"]);
     for (const r of rows) expect(src).toContain(`<tr><td>${code(r.cls)}</td><td>${escapeHtml(r.question)}</td><td>${r.tables.map(code).join(", ")}</td><td>${r.sources.join(", ")}</td></tr>`);
-    expect(count(src, "<tr>")).toBe(rows.length + 1);
+    // the class table, then the semantic layer's: each a header row and a row per class or entity
+    const [classes, usl] = src.split("<h3>The semantic layer in Zetaris</h3>");
+    expect(count(classes, "<tr>")).toBe(rows.length + 1);
+    expect(count(usl, "<tr>")).toBe(USL_TABLES.length + 1);
     expect(src).toContain("<li>live state (<code>observation</code>): each setting as the live host answers it over SSH");
     expect(count(src, "<li>")).toBe(sourcesMarkdown().split("\n").filter((l) => l.startsWith("- ")).length);
     expect(src).toContain(markdownToHtml(sourcesMarkdown(), 1));
     expect(built.sources).toBe(rows.length);
   });
+
+  it("carries the Nemotron tab: every call of the newest eval run files, its total theirs and summary.md's calls column, linked from the header", () => {
+    const nm = panel("nemotron");
+    const dir = path.join(ROOT, built.nemotron.dir);
+    expect(path.resolve(dir)).toBe(path.resolve(newestResults(path.join(ROOT, "eval", "results"))!));
+    const files = readdirSync(dir).filter((f) => /^C\d+-run\d+\.json$/.test(f));
+    const runs = files.map((f) => JSON.parse(readFileSync(path.join(dir, f), "utf8")) as { counts: { calls: number }; calls: { signature_ok: boolean | null }[] });
+    const calls = runs.reduce((n, r) => n + r.counts.calls, 0);
+    expect(runs.reduce((n, r) => n + r.calls.length, 0)).toBe(calls);
+    expect(summaryCalls(dir)).toBe(calls);
+    const t = built.index.totals.nemotron;
+    expect(t).toEqual(built.nemotron.totals);
+    expect(t.calls).toBe(calls);
+    expect(t.signatureVerified).toBe(runs.reduce((n, r) => n + r.calls.filter((c) => c.signature_ok === true).length, 0));
+    expect(built.nemotron.served.reduce((n, e) => n + e.calls, 0)).toBe(calls);
+    expect(nm).toContain(`<tr><td><b>all</b></td><td></td><td></td><td></td><td></td><td></td><td><b>${calls}</b></td><td><b>${t.signatureVerified}</b></td>`);
+    expect(built.nemotron.runs).toHaveLength(files.length);
+    expect(nm).toContain(`from <code>${built.nemotron.dir}</code>, the <code>${t.set}</code> set`);
+    // the nav names the tab, and the header's two stats link to it: the calls, and the judge SELECTs re-run
+    const html = built.files.get("index.html")!;
+    expect(html).toContain('<a href="#nemotron">Nemotron</a>');
+    expect(html).toContain('h("a", { href: "#nemotron" }, String(t.nemotron.calls))');
+    expect(html).toContain('h("a", { href: "#nemotron" }, t.nemotron.rerunEqual + " / " + t.nemotron.judgeSelects)');
+    expect(html).not.toContain("judge model in these runs");
+  });
+
+  it("re-runs every judge SELECT recorded with a row count over the recording: equal, or its recorded text counted apart when it does not run; every SELECT in the tab", () => {
+    const nm = panel("nemotron");
+    const t = built.nemotron.totals;
+    const all = judgesOf(built.nemotron);
+    const tried = all.filter((j) => j.rerun !== "not_run");
+    expect(t.judgeSelects).toBe(tried.length);
+    expect(t.rerunEqual + t.notRunnable).toBe(t.judgeSelects);
+    for (const j of tried) {
+      expect(j.sql).not.toBeNull();
+      expect(j.rowsRecorded).not.toBeNull();
+      if (j.rerun === "equal") expect(j.rowsAtBuild).toBe(j.rowsRecorded);
+      else expect(j.why).toMatch(/^the (guard|engine) refuses it: /);
+    }
+    for (const j of all.filter((x) => x.rerun === "not_run")) expect(j.sql === null || j.rowsRecorded === null || ["invalid_output", "not_judged"].includes(j.status)).toBe(true);
+    for (const j of all) if (j.sql) expect(nm).toContain(`<pre>${text(j.sql)}</pre>`);
+  });
+
+  it("over the development run of 25 Oct 2026: 389 calls, 383 receipts verified, 0 substitutions; 162 judge SELECTs, 161 re-run equal, the recorded text of 1 does not run", async () => {
+    const v = built.nemotron.totals.stamp === path.basename(DEV) ? built.nemotron : await nemotronView(DEV);
+    expect(v.totals).toEqual({ stamp: "2026-10-25T09-25-44Z", set: "dev", calls: 389, signatureVerified: 383, cacheHits: 0, substitutions: 0, judgeSelects: 162, rerunEqual: 161, notRunnable: 1 });
+    expect(v.claims.map((c) => c.id)).toEqual(["P01", "P02", "P03", "P04", "P05", "P06", "P07", "P08", "P09", "P10"]);
+    const tried = judgesOf(v).filter((j) => j.rerun !== "not_run");
+    // 59 planted (60 claims, one reply held no JSON), 55 C3 item judges, 48 C2 item judges
+    expect([tried.filter((j) => j.claim).length, tried.filter((j) => j.item && j.config === "C3").length, tried.filter((j) => j.item && j.config === "C2").length]).toEqual([59, 55, 48]);
+    // the results hold the SELECT as the eval's redactor left it after the run: the alias bs2 of "bs2.host" reads as a
+    // host name to it; the recorded status and rows are what the SELECT returned, and the reason leaves the operand out
+    const off = judgesOf(v).filter((j) => j.rerun === "does_not_run");
+    expect(off).toHaveLength(1);
+    expect(off[0]).toMatchObject({ config: "C2", run: 2, claim: "P10", status: "refuted", rowsRecorded: 1, rowsAtBuild: null, why: "the engine refuses it: sqljs: no such column" });
+    expect(off[0].sql).toContain("host-b6a1ec.host = 'host-aa516a'");
+  });
+
+  it("a results copy with one recorded row count moved by one makes the build throw and write nothing, a planted claim's or an item judge's", async () => {
+    const results = path.join(tmp, "results-wrong", path.basename(DEV));
+    const copy = (): void => {
+      mkdirSync(results, { recursive: true });
+      for (const f of readdirSync(DEV).filter((x) => /^C\d+-run\d+\.json$|^planted\.json$/.test(x))) cpSync(path.join(DEV, f), path.join(results, f));
+    };
+    copy();
+    const plantedFile = path.join(results, "planted.json");
+    const planted = JSON.parse(readFileSync(plantedFile, "utf8")) as { claims: { config: string; run: number; id: string; rows: number }[] };
+    planted.claims.find((c) => c.config === "C3" && c.run === 1 && c.id === "P01")!.rows += 1;
+    writeFileSync(plantedFile, JSON.stringify(planted, null, 1));
+    const dir = brokenExamples("results-wrong-examples", () => {});
+    const out = path.join(tmp, "results-wrong-out");
+    const build = (): Promise<BuildResult> => buildSite({ examplesDir: dir, outDir: out, samplePath: null, resultsDir: results });
+    await expect(build()).rejects.toThrow(SiteError);
+    await expect(build()).rejects.toThrow(/2026-10-25T09-25-44Z\/planted\.json C3 run 1 claim P01: the judge's SELECT re-run over the recording returns 1 row\(s\), the record says 2/);
+    expect(existsSync(out)).toBe(false);
+
+    copy();
+    const runFile = path.join(results, "C3-run1.json");
+    const run = JSON.parse(readFileSync(runFile, "utf8")) as { items: { id: string; subjects: { finding_id: string; judge: { rows?: number | null } | null }[] }[] };
+    const item = run.items.find((i) => i.subjects.some((s) => typeof s.judge?.rows === "number"))!;
+    const subject = item.subjects.find((s) => typeof s.judge?.rows === "number")!;
+    const recorded = subject.judge!.rows as number;
+    subject.judge!.rows = recorded + 1;
+    writeFileSync(runFile, JSON.stringify(run, null, 1));
+    await expect(build()).rejects.toThrow(new RegExp(`C3-run1\\.json C3 run 1 item ${item.id} finding ${subject.finding_id}: the judge's SELECT re-run over the recording returns ${recorded} row\\(s\\), the record says ${recorded + 1}`));
+    expect(existsSync(out)).toBe(false);
+  }, 120_000);
 
   it("the markdown renderer writes its subset only: headings, paragraphs, lists, tables, inline code and bold, every other character escaped", () => {
     const md = [
@@ -179,12 +329,20 @@ describe("the replay page", () => {
     for (const [name, text] of built.files) expect(again.files.get(name), name).toBe(text);
   }, 120_000);
 
-  it("the output passes the deny-list scan (the leak test's labels, the ssh aliases, the redactor over every data string), the two tabs' markdown read as written", () => {
+  it("the output passes the deny-list scan (the leak test's labels, the ssh aliases, the redactor over every data string), the tabs' markdown and the Nemotron tab's strings read as written", () => {
     if (!WORDS.length) console.log("site: deny-list labels blank; the label half of the scan is empty, the redactor half runs");
     const report = scanOutput(built.files);
     expect(report.labels).toBe(WORDS.length);
     expect(report.leaves).toBeGreaterThan(1000);
-    expect(built.scan.shown).toBe(2);
+    // the document, sourcesMarkdown(), uslMarkdown() and the Nemotron tab's strings; the tab's strings through the redactor too
+    expect(built.scan.shown).toBe(4);
+    expect(built.scan.leaves).toBeGreaterThan(report.leaves);
+  });
+
+  it("the scan refuses a Nemotron tab string the redactor would still replace, by its path, never the value", () => {
+    const planted = [10, 11, 12, 13].join(".");
+    expect(() => scanOutput(new Map(), new Map(), new Map([["results (the Nemotron tab)", { items: [{ sql: `SELECT '${planted}'` }] }]])))
+      .toThrow(/results \(the Nemotron tab\) \$\.items\[0\]\.sql: the redactor still replaces 1 ip/);
   });
 
   it.skipIf(!WORDS.length)("the scan refuses a configured label in the markdown a tab renders, by the text's name and the label's position, never the label", () => {

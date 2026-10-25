@@ -1,0 +1,23 @@
+{
+ "tenant": "client-1",
+ "withheld": [
+  {
+   "receipt_id": "rcpt_req_prgpc30m",
+   "reasons": [
+    "redactor changes free text"
+   ]
+  },
+  {
+   "receipt_id": "rcpt_req_95hdvioc",
+   "reasons": [
+    "redactor changes free text"
+   ]
+  },
+  {
+   "receipt_id": "rcpt_req_rvm2nrc6",
+   "reasons": [
+    "redactor changes free text"
+   ]
+  }
+ ]
+}

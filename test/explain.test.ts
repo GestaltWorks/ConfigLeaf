@@ -1,7 +1,7 @@
 // The explainer (src/explain/): the window rule, the ledger match at 15 s and 90 s, every cause class over injected
 // rows with its sentence byte for byte, the restore clause, the diff, and explainPass over sql.js with
-// test/fixtures/policy-bundle.json and the Actor's fixture vault, written, read back and idempotent; the explain
-// step's row. Offline and deterministic: documentation names and addresses, pseudonyms only.
+// test/fixtures/policy-bundle.json and the Actor's fixture vault, written, read back and idempotent; the approval's
+// own commit in the diff header when a later commit holds the same bytes; the explain step's row. Offline and deterministic: documentation names and addresses, pseudonyms only.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DataLayer } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
@@ -11,13 +11,13 @@ import {
   AGENT_AUDIT_MS, AGENT_JOURNAL_MS, causeWindow, explainFinding, explains, journalHostOf, restoreClause, timelineLine, withRestore, type CauseInput,
 } from "../src/explain/cause.ts";
 import { DIFF_MAX_LINES, unifiedDiff, valueDiff } from "../src/explain/diff.ts";
-import { MemoryCauseSink, causeEvidence, causeSentence, causesByDisposition, explainPass } from "../src/explain/explain.ts";
+import { MemoryCauseSink, approvalCopy, causeEvidence, causeSentence, causesByDisposition, explainPass } from "../src/explain/explain.ts";
 import { MemoryLedger } from "../src/ledger.ts";
 import { dispositionIdOf, passStep, type PassStep } from "../src/loop/pass.ts";
 import { PLAIN, Table, explainView } from "../src/loop/present.ts";
 import { explainStep } from "../src/loop/steps.ts";
 import { Redactor } from "../src/redactor.ts";
-import { AT, HOST, TENANT, buildBase, type Base } from "./fixtures/actions/world.ts";
+import { ALIAS, AT, HOST, TENANT, buildBase, type Base } from "./fixtures/actions/world.ts";
 import { MemTracer } from "./fixtures/mem-tracer.ts";
 
 const redactor = new Redactor("explain-test-salt");
@@ -333,6 +333,41 @@ describe("explainPass over the policy fixture", () => {
     expect(failed.ok).toBe(true);
     expect(failed.summary).toBe("explain: tenant client-a, not explained (datasource unreachable); act runs as before");
     expect(new Table(PLAIN).row("explain", failed.view!, null)).toEqual(["  explain   0 causes      not explained · datasource unreachable"]);
+  });
+});
+
+describe("the approval's own copy in the diff header", () => {
+  it("is the latest copy taken at or before the approval, the earliest when every copy is later", () => {
+    const copies = [{ taken_at: "2026-10-20T02:01:00.000Z", c: "a" }, { taken_at: "2026-10-21T02:01:00.000Z", c: "b" }, { taken_at: "2026-10-23T02:30:00.000Z", c: "c" }];
+    expect(approvalCopy(copies, "2026-10-22T09:00:00.000Z")?.c).toBe("b");
+    expect(approvalCopy(copies, "2026-10-21T02:01:00.000Z")?.c).toBe("b");
+    expect(approvalCopy(copies, "2026-10-19T09:00:00.000Z")?.c).toBe("a");
+    expect(approvalCopy([], "2026-10-19T09:00:00.000Z")).toBeUndefined();
+  });
+
+  it("names the commit the approval was signed off from, not a later vault commit that holds the same bytes", async () => {
+    const base = buildBase();
+    try {
+      // a later collection (the one after a restore) commits the approved files again under a new commit
+      const later = { ...base.bundle.collection_run.find((r) => r.run_id === "run-nginx-7f1c-1020")!, run_id: "run-nginx-7f1c-1023b", started_at: "2026-10-23T02:30:00.000Z", finished_at: "2026-10-23T02:31:00.000Z" };
+      const files = base.bundle.observation.filter((o) => o.run_id === "run-nginx-7f1c-1020" && o.setting_path === "file").map((o) => ({ path: o.object_id, objectId: o.object_id, bytes: Buffer.from(o.value_redacted!, "utf8") }));
+      const again = base.vault.commitRun({ tenantId: TENANT, repo: ALIAS, run: later as Parameters<Base["vault"]["commitRun"]>[0]["run"], files });
+      expect(again.commit).not.toBe(base.commits["run-nginx-7f1c-1020"]);
+      const engine = await SqlJsEngine.create();
+      try {
+        engine.loadBundle(structuredClone(base.bundle));
+        engine.insertRows("vault_copy", again.copies);
+        const layer = new DataLayer(engine);
+        const pass = await passStep(layer, { tenant: TENANT, ledger: new MemoryLedger(engine), decidedAt: AT, world: new DriftWorld("explain_test") });
+        const r = await explainPass(pass, { layer, vault: base.vault, redactor: base.redactor, sink: null });
+        const app = r.causes.find((c) => c.verb === "ROLLBACK" && c.cause.diff?.includes("client_max_body_size"))!;
+        expect(app.cause.diff!.split("\n").slice(0, 2)).toEqual([`--- approved ${base.commits["run-nginx-7f1c-1020"].slice(0, 8)}`, `+++ live ${base.commits["run-nginx-7f1c-1023"].slice(0, 8)}`]);
+      } finally {
+        engine.close();
+      }
+    } finally {
+      base.cleanup();
+    }
   });
 });
 

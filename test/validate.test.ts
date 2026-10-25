@@ -499,12 +499,12 @@ describe("the vault (git)", () => {
     const files = new Map<string, Uint8Array | string>([...FIXTURE_FILES])
       .set("etc/nginx/sites-available/host-cccccc.tld", site)
       .set(".drift/links.json", JSON.stringify({ "/etc/nginx/sites-enabled/host-cccccc.tld": "/etc/nginx/sites-available/host-cccccc.tld" }));
-    const sha = commit(path.join(vault, T, "host-redacted"), files, "run run-validate-1 linux.nginx 2026-10-24T08:00:00.000Z");
+    const sha = commit(path.join(vault, T, "web-01"), files, "run run-validate-1 linux.nginx 2026-10-24T08:00:00.000Z");
     const missing = `/etc/letsencrypt/live/${SYNTH}/fullchain.pem`;
     const { runner, seen } = scripted([emerg(`cannot load certificate "${missing}": BIO_new_file() failed ${fopen(missing)}`), OK]);
-    const v = await validateVaultCommit({ vaultDir: vault, tenant: T, alias: "host-redacted", commit: sha.slice(0, 10), redactor: RED, runner, pair: counted().pair });
+    const v = await validateVaultCommit({ vaultDir: vault, tenant: T, alias: "web-01", commit: sha.slice(0, 10), redactor: RED, runner, pair: counted().pair });
     expect(seen[0].files).toEqual(["conf.d/host-aaaaaa.tld.conf", "conf.d/host-bbbbbb.tld.conf", "mime.types", "nginx.conf", "sites-available/host-cccccc.tld", "sites-enabled/host-cccccc.tld"]);
-    expect(v).toMatchObject({ repository: `${T}/host-redacted`, commit: sha, run_id: "run-validate-1", files: 5, links: 1, result: "ok_with_gaps", rounds: 2 });
+    expect(v).toMatchObject({ repository: `${T}/web-01`, commit: sha, run_id: "run-validate-1", files: 5, links: 1, result: "ok_with_gaps", rounds: 2 });
     // the three the tree names, seeded before round 1, and the one round 1 named
     expect(v.missing_dependencies).toEqual([...SEEDED, RED.text(missing)].sort());
     expect(v.missing_dependencies.filter((p) => !SEEDED.includes(p))[0]).toMatch(/^\/etc\/letsencrypt\/live\/host-[0-9a-f]{6}\.com\/fullchain\.pem$/);
@@ -513,8 +513,8 @@ describe("the vault (git)", () => {
 
   it("refuses a commit argument that is not hex, and one the repository lacks", async () => {
     const vault = scratch();
-    commit(path.join(vault, T, "host-redacted"), new Map([...FIXTURE_FILES]), "run run-validate-2 linux.nginx 2026-10-24T08:00:00.000Z");
-    const base = { vaultDir: vault, tenant: T, alias: "host-redacted", redactor: RED, runner: scripted([OK]).runner };
+    commit(path.join(vault, T, "web-01"), new Map([...FIXTURE_FILES]), "run run-validate-2 linux.nginx 2026-10-24T08:00:00.000Z");
+    const base = { vaultDir: vault, tenant: T, alias: "web-01", redactor: RED, runner: scripted([OK]).runner };
     await expect(validateVaultCommit({ ...base, commit: "HEAD~1" })).rejects.toThrow(/hex/);
     await expect(validateVaultCommit({ ...base, commit: "deadbeef" })).rejects.toThrow(/no commit deadbeef/);
     await expect(validateVaultCommit({ ...base, alias: "../x", commit: "deadbeef" })).rejects.toThrow(/plain id/);
@@ -550,7 +550,7 @@ describe("the vault (git)", () => {
   });
 });
 
-const copy = (run: string, objectId: string, sha: string, surface = "linux.nginx", host: string | null = "host-redacted"): VaultCopy => ({
+const copy = (run: string, objectId: string, sha: string, surface = "linux.nginx", host: string | null = "web-01"): VaultCopy => ({
   copy_id: copyId(run, objectId), tenant_id: T, surface, host, object_id: objectId, run_id: run, git_commit: sha,
   blob_sha256: `sha256:${"0".repeat(64)}`, taken_at: "2026-10-24T08:00:00.000Z", source: "collector",
 });
@@ -590,7 +590,7 @@ describe("validateCopies (what npm run validate:copies runs)", () => {
 
   function estate() {
     const vault = scratch();
-    const hostSha = commit(path.join(vault, T, "host-redacted"), new Map([...FIXTURE_FILES]), "run run-nginx-1 linux.nginx 2026-10-24T08:00:00.000Z");
+    const hostSha = commit(path.join(vault, T, "web-01"), new Map([...FIXTURE_FILES]), "run run-nginx-1 linux.nginx 2026-10-24T08:00:00.000Z");
     const rec = (id: string, name: string, type: string, content: string) => JSON.stringify({ id, name, type, content, ttl: 1, proxied: false });
     const cfSha = commit(path.join(vault, T, "cloudflare"), new Map([
       ["host-aaaaaa.tld/a1.json", rec("a1", "host-aaaaaa.tld", "A", "192.0.2.10")],
@@ -612,7 +612,7 @@ describe("validateCopies (what npm run validate:copies runs)", () => {
     const res = await validateCopies({ vaultDir: vault, tenant: T, dryRun: false, store, redactor: RED, runner, pair: counted().pair, validatedAt: at });
     expect(res.errors).toBe(0);
     expect(res.lines).toEqual([
-      `host host-redacted @${hostSha.slice(0, 8)} (run run-nginx-1, 4 files, 0 links): nginx-t ok_with_gaps, 1 round, 3 gaps: ${CERT}, ${KEY}, ${INCLUDE}; 4 vault copies of 4 matched`,
+      `host web-01 @${hostSha.slice(0, 8)} (run run-nginx-1, 4 files, 0 links): nginx-t ok_with_gaps, 1 round, 3 gaps: ${CERT}, ${KEY}, ${INCLUDE}; 4 vault copies of 4 matched`,
       `cloudflare @${cfSha.slice(0, 8)} (run run-dns-1, 1 zone): cf-schema ok_with_gaps, 2 records (ok 1, ok_with_gaps 1, fail 0), 1 gap: host-cccccc.tld; 2 vault copies of 2 matched`,
     ]);
     expect(res.rows).toHaveLength(6);
@@ -625,7 +625,7 @@ describe("validateCopies (what npm run validate:copies runs)", () => {
   it("--host alone, a dry run: one line, rows built and nothing written; no store: copies unknown", async () => {
     const { vault, copies } = estate();
     const { store, written } = fakeStore(copies, []);
-    const dry = await validateCopies({ vaultDir: vault, tenant: T, host: "host-redacted", dryRun: true, store, redactor: RED, runner: scripted([OK]).runner, pair: counted().pair, validatedAt: at });
+    const dry = await validateCopies({ vaultDir: vault, tenant: T, host: "web-01", dryRun: true, store, redactor: RED, runner: scripted([OK]).runner, pair: counted().pair, validatedAt: at });
     expect(dry.lines).toHaveLength(1);
     expect(dry.lines[0]).toContain(`nginx-t ok_with_gaps, 1 round, 3 gaps: ${CERT}, ${KEY}, ${INCLUDE}; 4 vault copies of 4 matched`);
     expect(dry.rows).toHaveLength(4);
@@ -640,13 +640,13 @@ describe("validateCopies (what npm run validate:copies runs)", () => {
 
   it("a failing tree prints its reason and last [emerg] line; nginx unavailable is an error line and no row", async () => {
     const { vault, copies } = estate();
-    const fail = await validateCopies({ vaultDir: vault, tenant: T, host: "host-redacted", dryRun: false, store: fakeStore(copies, []).store, redactor: RED, runner: scripted([emerg(`getpwnam("deploy") failed in /etc/nginx/nginx.conf:2`)]).runner, pair: counted().pair, validatedAt: at });
+    const fail = await validateCopies({ vaultDir: vault, tenant: T, host: "web-01", dryRun: false, store: fakeStore(copies, []).store, redactor: RED, runner: scripted([emerg(`getpwnam("deploy") failed in /etc/nginx/nginx.conf:2`)]).runner, pair: counted().pair, validatedAt: at });
     expect(fail.lines[0]).toContain(`nginx-t fail, 1 round, 3 gaps: ${CERT}, ${KEY}, ${INCLUDE}; 4 vault copies of 4 matched | nginx refused the configuration: [emerg] getpwnam("deploy") failed in /etc/nginx/nginx.conf:2`);
     expect(fail.rows.map((r) => r.result)).toEqual(["fail", "fail", "fail", "fail"]);
     const down: NginxRunner = async () => ({ exitCode: 1, output: "docker: Cannot connect to the Docker daemon" });
-    const res = await validateCopies({ vaultDir: vault, tenant: T, host: "host-redacted", dryRun: false, store: fakeStore(copies, []).store, redactor: RED, runner: down, pair: counted().pair, validatedAt: at });
+    const res = await validateCopies({ vaultDir: vault, tenant: T, host: "web-01", dryRun: false, store: fakeStore(copies, []).store, redactor: RED, runner: down, pair: counted().pair, validatedAt: at });
     expect(res.errors).toBe(1);
-    expect(res.lines[0]).toMatch(/^host host-redacted: validation stopped: the container runtime stopped before nginx: docker: Cannot connect/);
+    expect(res.lines[0]).toMatch(/^host web-01: validation stopped: the container runtime stopped before nginx: docker: Cannot connect/);
     expect(res.rows).toEqual([]);
     expect(res.written).toBe(0);
   });
@@ -654,10 +654,10 @@ describe("validateCopies (what npm run validate:copies runs)", () => {
   it("--commit needs one repository; an unknown host is an error line", async () => {
     const { vault, hostSha } = estate();
     await expect(validateCopies({ vaultDir: vault, tenant: T, commit: hostSha, dryRun: true, store: null, redactor: RED })).rejects.toThrow(/one commit of one repository/);
-    const one = await validateCopies({ vaultDir: vault, tenant: T, host: "host-redacted", commit: hostSha.slice(0, 7), dryRun: true, store: null, redactor: RED, runner: scripted([OK]).runner, pair: counted().pair });
+    const one = await validateCopies({ vaultDir: vault, tenant: T, host: "web-01", commit: hostSha.slice(0, 7), dryRun: true, store: null, redactor: RED, runner: scripted([OK]).runner, pair: counted().pair });
     expect(one.lines[0]).toContain(`@${hostSha.slice(0, 8)}`);
-    const none = await validateCopies({ vaultDir: vault, tenant: T, host: "host-redacted", dryRun: true, store: null, redactor: RED });
-    expect(none).toMatchObject({ errors: 1, lines: [`host host-redacted: no vault repository for tenant ${T}`] });
+    const none = await validateCopies({ vaultDir: vault, tenant: T, host: "web-02", dryRun: true, store: null, redactor: RED });
+    expect(none).toMatchObject({ errors: 1, lines: [`host web-02: no vault repository for tenant ${T}`] });
     const empty = await validateCopies({ vaultDir: vault, tenant: "client-none", dryRun: true, store: null, redactor: RED });
     expect(empty.lines).toEqual(["no vault repository for tenant client-none"]);
   });

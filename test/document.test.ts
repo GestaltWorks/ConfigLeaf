@@ -2,7 +2,9 @@
 // sample/bundle.json, whose numbers are recomputed here from the bundle's own rows and whose committed copy
 // (examples/document.md) is held to the render; and the page over test/fixtures/policy-bundle.json with actions and
 // tickets added, so every section has rows, and with the explain step's causes under Why; and "Where each answer comes
-// from", read off the SQL, which the README carries as npm run sources prints it. Offline; nothing is written.
+// from", read off the SQL, which the README carries as npm run sources prints it, and "The semantic layer"
+// (src/zetaris/setup.ts uslMarkdown), which the README carries as npm run sources -- --usl prints it. Offline; nothing
+// is written.
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -19,11 +21,13 @@ import { TABLE_NAMES } from "../src/data/schema.ts";
 import { renderDocument, sourceOf, sourceRows, sourcesMarkdown, tablesOf } from "../src/document/render.ts";
 import { TechnicianMemory } from "../src/engine/memory.ts";
 import { DriftWorld } from "../src/engine/world.ts";
-import { MemoryCauseSink, explainPass } from "../src/explain/explain.ts";
+import { span } from "../src/explain/cause.ts";
+import { BUNDLE_REDACTOR, MemoryCauseSink, explainPass, explainTenants } from "../src/explain/explain.ts";
 import { MemoryLedger } from "../src/ledger.ts";
 import { dispositionIdOf } from "../src/loop/pass.ts";
 import { runPass } from "../src/pipeline.ts";
 import { Redactor } from "../src/redactor.ts";
+import { uslMarkdown } from "../src/zetaris/setup.ts";
 import sample from "../sample/bundle.json" with { type: "json" };
 import policyBundle from "./fixtures/policy-bundle.json" with { type: "json" };
 import { BLOG } from "../scripts/fixtures/policy-bundle.ts";
@@ -43,16 +47,18 @@ const COMMITTED_STORE = fileURLToPath(new URL("../examples/memory", import.meta.
 const committedLessons = (): TechnicianMemory => new TechnicianMemory({ storage: "read", directory: COMMITTED_STORE });
 
 /**
- * The pass over the bundle into its own ledger, then the page: what scripts/document.ts does in sample mode. With a memory
- * the pass consults its lessons and decides at the bundle's instant or the latest lesson's, whichever is later.
+ * The pass over the bundle into its own ledger, then the page. With a memory the pass consults its lessons and decides at
+ * the bundle's instant or the latest lesson's, whichever is later. With `explain`, the explain step runs over the pass
+ * before the render, as scripts/document.ts and scripts/sample.ts run it in sample mode (no vault, BUNDLE_REDACTOR).
  */
-async function documentOf(b: B, tenant: string, decidedAt?: string, source?: string, memory?: TechnicianMemory) {
+async function documentOf(b: B, tenant: string, decidedAt?: string, source?: string, memory?: TechnicianMemory, explain = false) {
   const { engine, layer } = await engineOf(b);
-  const at = decidedAt ?? (memory ? decisionInstantWith(b, memory.lessons().map((l) => l.recordedAt)) : decisionInstant(b));
+  const at = new Date(decidedAt ?? (memory ? decisionInstantWith(b, memory.lessons().map((l) => l.recordedAt)) : decisionInstant(b)) ?? Date.now()).toISOString();
   const pass = await runPass(layer, { world: new DriftWorld("test_document"), ledger: new MemoryLedger(engine), memory, decidedAt: at });
   const classes = new Map(pass.findings.map((f) => [f.id, f.finding.class as string]));
+  const explained = explain ? await explainTenants({ decidedAt: at, findings: pass.findings }, { layer, vault: null, redactor: BUNDLE_REDACTOR, sink: new MemoryCauseSink(engine) }) : [];
   const doc = await renderDocument(layer, { tenant, classes, source });
-  return { pass, doc, layer };
+  return { pass, doc, layer, explained };
 }
 
 const section = (md: string, title: string): string => {
@@ -164,15 +170,15 @@ function withWork(): Record<string, unknown> {
 
 describe("the page over sample/bundle.json", () => {
   it("is examples/document.md, byte for byte, under the committed lessons, and two renders give the same page", { timeout: 60_000 }, async () => {
-    const { doc } = await documentOf(sample, T, undefined, "sql.js over sample/bundle.json", committedLessons());
+    const { doc } = await documentOf(sample, T, undefined, "sql.js over sample/bundle.json", committedLessons(), true);
     const committed = readFileSync(new URL("../examples/document.md", import.meta.url), "utf8").replace(/\r\n/g, "\n");
     expect(doc.markdown, "examples/document.md is stale: run SAMPLE_MODE=true npm run document -- --tenant client-1 with DRIFT_MEMORY_DIR=examples/memory").toBe(committed);
-    expect((await documentOf(sample, T, undefined, "sql.js over sample/bundle.json", committedLessons())).doc.markdown).toBe(doc.markdown);
+    expect((await documentOf(sample, T, undefined, "sql.js over sample/bundle.json", committedLessons(), true)).doc.markdown).toBe(doc.markdown);
   });
 
   it("every number on it is the bundle's: runs, the latest runs' shapes, zones, copies, approvals, findings, probes and the decision instant", { timeout: 60_000 }, async () => {
     const memory = committedLessons();
-    const { doc, pass } = await documentOf(sample, T, undefined, undefined, memory);
+    const { doc, pass, explained } = await documentOf(sample, T, undefined, undefined, memory, true);
     const md = doc.markdown;
     const runs = sample.collection_run.filter((r) => r.tenant_id === T);
     expect(md).toContain(`${runs.length} collection runs on record, ${runs.length} passing the DQ gate.`);
@@ -234,13 +240,29 @@ describe("the page over sample/bundle.json", () => {
       const older = assets.filter((a) => a.observed_at < started).length;
       expect(md).toContain(`- inventory addresses on ${host}: ${assets.length - older} in the latest run, ${older} older row${older === 1 ? "" : "s"} kept`);
     }
-    // the Queries section is the queries it ran; the bundle holds no cause, so the Why reads no action
+    // the explain step over the pass: one cause per finding it explains, the ESCALATE, from the bundle's own rows. The
+    // window opens at the record's approval, and every audit_event row on the record is older, so the cause is unknown
+    // with the window stated
+    const causes = explained.flatMap((r) => r.causes).filter((c) => c.cause.tenant_id === T);
+    expect(causes.map((c) => [c.verb, c.finding_class, c.cause.class])).toEqual([["ESCALATE", "proxy_split", "unknown"]]);
+    const esc = pass.findings.find((f) => f.verb === "ESCALATE")!;
+    const approvedAt = sample.approved_setting.filter((a) => a.tenant_id === T && a.object_id === esc.finding.object_id && a.setting_path === esc.finding.setting_path).map((a) => a.approved_at).sort().at(-1)!;
+    expect([causes[0].finding_id, causes[0].cause.window_from, causes[0].cause.window_to]).toEqual([esc.id, approvedAt, at]);
+    expect(sample.audit_event.filter((e) => e.resource_id === esc.finding.object_id).every((e) => e.occurred_at < approvedAt)).toBe(true);
+    expect(causes[0].cause.summary).toBe(`No record of who changed it: the audit log window of ${span({ from: approvedAt, to: at })} holds 0 events for the record.`);
+    expect(section(md, "Findings open")).toContain(`### Why\n\nWho or what changed each setting, from the hosts' journal, the provider's audit log and the agent's own actions (1 finding):\n\n- ${esc.id} ESCALATE proxy_split: ${causes[0].cause.summary}\n`);
+    // the Queries section is the queries it ran; a cause is listed, so the Why reads the actions too
     expect(doc.queries.map((c) => c.name)).toEqual([
       "RUNS_SQL", "RUN_COMPLETE_SQL", "DOC_ZONES_SQL", "DOC_RUN_SHAPE_SQL", "DOC_INVENTORY_SQL", "DOC_COPIES_SQL", "LATEST_APPROVALS_SQL", "POLICY_RULES_SQL", "DOC_UNAPPROVED_SQL",
-      "DOC_DISPOSITIONS_OF_RUN_SQL", "CAUSES_SQL", "DOC_ACTIONS_SQL", "DOC_TICKETS_SQL", "DOC_PROBES_SQL", "DOC_PROBE_FAILURES_SQL",
+      "DOC_DISPOSITIONS_OF_RUN_SQL", "CAUSES_SQL", "ACTIONS_SQL", "DOC_ACTIONS_SQL", "DOC_TICKETS_SQL", "DOC_PROBES_SQL", "DOC_PROBE_FAILURES_SQL",
     ]);
     for (const c of doc.queries) expect(md).toContain(`- ${c.name}: ${c.runs} run${c.runs === 1 ? "" : "s"}, ${c.rows} row${c.rows === 1 ? "" : "s"}`);
-    expect(section(md, "Findings open")).toContain("### Why\n\nNo open finding carries a cause: the explain step of a cycle records one for each finding it explains.\n");
+  });
+
+  it("without the explain step the page's Why says no open finding carries a cause", { timeout: 60_000 }, async () => {
+    const { doc } = await documentOf(sample, T, undefined, undefined, committedLessons());
+    expect(section(doc.markdown, "Findings open")).toContain("### Why\n\nNo open finding carries a cause: the explain step of a cycle records one for each finding it explains.\n");
+    expect(doc.queries.map((c) => c.name)).not.toContain("ACTIONS_SQL");
   });
 
   it("the sample pass raises no approved_missing finding: every approved object of the 19:56 UTC runs is in the latest runs", { timeout: 60_000 }, async () => {
@@ -349,7 +371,7 @@ describe("the page over test/fixtures/policy-bundle.json with work recorded", ()
 describe("where each answer comes from", () => {
   const ROOT = fileURLToPath(new URL("..", import.meta.url));
   const read = (name: string): string => readFileSync(new URL(`../${name}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
-  /** The block between a heading and the next heading of the same level, trimmed. */
+  /** The block between a heading and the next ## heading, trimmed. */
   const block = (md: string, heading: string): string => {
     const start = md.indexOf(`\n${heading}\n`);
     expect(start, `${heading} is missing`).toBeGreaterThanOrEqual(0);
@@ -393,6 +415,16 @@ describe("where each answer comes from", () => {
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout.replace(/\r\n/g, "\n")).toBe(sourcesMarkdown());
     expect(block(read("README.md"), "## Where each answer comes from"), "README.md is stale: paste the output of npm run sources").toBe(sourcesMarkdown().trim());
+  });
+
+  it("the README carries the semantic layer, the last block of section Zetaris, exactly as npm run sources -- --usl prints it", { timeout: 60_000 }, () => {
+    const r = spawnSync(process.execPath, ["--import", "tsx", "scripts/sources-table.ts", "--usl"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout.replace(/\r\n/g, "\n")).toBe(uslMarkdown());
+    const readme = read("README.md");
+    const zetaris = readme.slice(readme.indexOf("\n## Zetaris\n"), readme.indexOf("\n## Meterless\n"));
+    expect(zetaris, "### The semantic layer sits in section Zetaris").toContain("\n### The semantic layer\n");
+    expect(block(readme, "### The semantic layer"), "README.md is stale: paste the output of npm run sources -- --usl").toBe(uslMarkdown().trim());
   });
 
   it("the owner's document carries the same section, for a tenant with rows and for one with none", async () => {

@@ -21,6 +21,9 @@ What we changed, per Apache-2.0 section 4(b):
   working in this repo do not read it as instructions for this repo). Content unmodified.
 - Did not copy `reference/scripts/` (browser bundle build, live app) or `reference/package-lock.json`. Not needed.
 - No source file under `vendor/world-model/src` is modified. Our code wraps it from `src/engine/world.ts`.
+- `npm test` checks each of the 14 files under `vendor/world-model/` against its git blob id at the upstream commit
+  (`vendor/UPSTREAM.json`, `test/vendor.test.ts`); `gh api repos/Meterless/Meterless/git/trees/1742dec56a66e58eef9dda2d2b865823758ca8cd?recursive=1`
+  lists the same ids.
 
 ## Vendored: Meterless H-MEM reference implementation
 
@@ -45,6 +48,9 @@ What we changed, per Apache-2.0 section 4(b):
   `reference/package-lock.json`, `HOW_TO_USE_H-MEM.md`, `docs/`, `examples/`, `workshops/`, `content/`, `demos/`, `evals/`
   or `images/`. Not needed by the runner or by our module.
 - No source file under `vendor/hmem/src` is modified. Our code wraps it from `src/engine/memory.ts`.
+- `npm test` checks each of the 19 files under `vendor/hmem/` against its git blob id at the upstream commit
+  (`vendor/UPSTREAM.json`, `test/vendor.test.ts`); `gh api repos/Meterless/Meterless/git/trees/1742dec56a66e58eef9dda2d2b865823758ca8cd?recursive=1`
+  lists the same ids.
 
 ## Libraries
 
