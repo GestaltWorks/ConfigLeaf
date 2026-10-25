@@ -205,3 +205,22 @@ CREATE TABLE IF NOT EXISTS referent_fingerprint (
   resolved_at    TEXT NOT NULL,
   PRIMARY KEY (obs_id, dns_run_id)
 );
+-- Who or what changed a setting the pass moves on, from the evidence the agent holds (src/explain/): one row per
+-- explained disposition, written by the explain step between the pass and act, read by act and the tickets. No model.
+CREATE TABLE IF NOT EXISTS finding_cause (
+  cause_id       TEXT PRIMARY KEY,   -- stableId("cause", tenant_id, disposition_id)
+  tenant_id      TEXT NOT NULL,
+  finding_id     TEXT NOT NULL,
+  disposition_id TEXT NOT NULL,      -- the disposition the cause explains; the pass's decided_at is in its id
+  class          TEXT NOT NULL,      -- agent | operator_edit | automation | account_change | token_change | unknown
+  actor          TEXT,               -- user-XXXXXX, root, a tool, mail-XXXXXX@domain-XXXXXX, drift-agent; null for a token and unknown
+  mechanism      TEXT,               -- sudo tee | renewal | dashboard or API | API token | rollback_file | revert_record; null when unknown
+  occurred_at    TEXT,               -- the change's instant; null when unknown
+  source_host    TEXT,               -- where the change came from: the ssh login's source address (ip-XXXXXX); null when none is known
+  evidence_ids   TEXT NOT NULL,      -- JSON array of audit_event and action ids, oldest first; '[]' when none
+  diff           TEXT,               -- approved against live: a unified diff of the file, at most 40 lines, or the value pair; redacted; null when none
+  summary        TEXT NOT NULL,      -- one sentence, redacted
+  window_from    TEXT NOT NULL,      -- the evidence window, ISO 8601 UTC milliseconds: the approval, else the earlier of the last match and 24 h back
+  window_to      TEXT NOT NULL,      -- the pass's decided_at
+  decided_at     TEXT NOT NULL       -- the pass's decided_at
+);

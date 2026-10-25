@@ -20,7 +20,10 @@
 //                  expiries, then one line per finding with its reason.
 //                  The ledger row carries the finding id; its class is the class the pass raises it under at render
 //                  time (`classes`, from src/pipeline.ts runPass over the same layer), and a disposition whose
-//                  finding that pass leaves unraised is counted apart.
+//                  finding that pass leaves unraised is counted apart. Then "Why": one line per open finding whose
+//                  disposition the explain step explained (CAUSES_SQL, src/explain/), its cause's sentence, with ", N
+//                  minutes before the agent restored it" once the disposition's rollback or revert wrote (ACTIONS_SQL,
+//                  read when a cause is listed); a cause read that fails is one line saying so.
 //   Where each answer comes from
 //                  one row per finding class: its question, the tables its detector SQL and its default checks name
 //                  as {{t:...}}, and the source each table comes from (sourceRows, below). Read off the SQL text,
@@ -46,7 +49,12 @@
 // inventory addresses 2 in the latest run and 0 older rows on host-4b4dc1, 5 and 3 on host-aa516a; 112 copies at the
 // heads; 27 findings open, HOLD 26 and ESCALATE 1; probe runs 4 of surface probe, the latest, run-e839e796556a54c3, with
 // 20 failing probes; decided at 2026-10-25T03:25:35.412Z; 46 queries; 181 lines. On 24 Oct 2026 through Zetaris over the DRIFT datasource: the same Estate,
-// Copies, Approvals and Probes sections, line for line, as the render over the bundle of that day.
+// Copies, Approvals and Probes sections, line for line, as the render over the bundle of that day. Measured 25 Oct
+// 2026 at 19:53 UTC through Zetaris for the lab (tenant lab-1, npm run document -- --tenant lab-1 --out
+// logs/document-lab-1.md), after the 19:50 UTC cycle and its rollback: 146 lines, 2 findings open, 41 queries, the Why
+// one line, "The file was changed at 19:48 UTC by user-212a17 over ssh from 198.51.100.7 (sudo tee), 4 minutes before
+// the agent restored it.", CAUSES_SQL 2 rows, ACTIONS_SQL 12 rows. Over sample/bundle.json (no cause recorded) the
+// page gains the Why line saying so and CAUSES_SQL with 0 rows: 186 lines.
 
 import { defaultSelection, defaultSelectionFor } from "../catalogue/select.ts";
 import { templateById, type FindingClass } from "../catalogue/templates.ts";
@@ -55,9 +63,11 @@ import {
   APPROVED_MISSING_SQL, CHANGED_SINCE_BACKUP_SQL, DRIFT_VS_APPROVED_SQL, HERO_SQL, ORPHAN_RECORD_SQL, ORPHAN_VHOST_SQL, PROXIED_WITHOUT_REAL_IP_SQL, PROXY_SPLIT_SQL,
   RESOLUTIONS_SQL, WILDCARD_WITHOUT_REAL_IP_SQL,
   DOC_ACTIONS_SQL, DOC_COPIES_SQL, DOC_DISPOSITIONS_OF_RUN_SQL, DOC_INVENTORY_SQL, DOC_PROBES_SQL, DOC_PROBE_FAILURES_SQL, DOC_RUN_SHAPE_SQL, DOC_TICKETS_SQL, DOC_UNAPPROVED_SQL, DOC_ZONES_SQL,
-  LATEST_APPROVALS_SQL, POLICY_RULES_SQL, RUNS_SQL, RUN_COMPLETE_SQL, objects,
+  ACTIONS_SQL, LATEST_APPROVALS_SQL, POLICY_RULES_SQL, RUNS_SQL, RUN_COMPLETE_SQL, objects,
 } from "../data/queries.ts";
-import type { PolicyRule } from "../data/rows.ts";
+import type { Action, PolicyRule } from "../data/rows.ts";
+import { withRestore } from "../explain/cause.ts";
+import { CAUSES_SQL, causeOf } from "../explain/explain.ts";
 import { TABLE_NAMES } from "../data/schema.ts";
 import { ruleOf, VERBS } from "../pipeline.ts";
 import { resolvePolicy } from "../policy/resolve.ts";
@@ -122,7 +132,7 @@ const SOURCES: readonly { name: string; tables: readonly string[]; holds: string
   { name: "export", tables: ["backup_snapshot", "backup_item"], holds: "the nightly export tarball of each host and every regular member of the newest" },
   { name: "documentation of record", tables: ["approved_setting"], holds: "the values a technician approved; IT Glue and Hudu map here" },
   { name: "DNS", tables: ["dns_record"], holds: "the DNS provider's records, Cloudflare's in this slice" },
-  { name: "audit log", tables: ["audit_event"], holds: "the provider's audit log, who changed which resource and when" },
+  { name: "audit log", tables: ["audit_event"], holds: "the provider's audit log, who changed which resource and when; and each host's journal of the last 24 h, the sudo commands that touch nginx and the logins, every login name pseudonymised" },
   { name: "inventory", tables: ["inventory_asset"], holds: "the hosts' addresses" },
   { name: "probes", tables: ["probe"], holds: "what the sites answer from outside" },
   { name: "vault", tables: ["vault_copy", "copy_validation"], holds: "the agent's copy of each object and its validations" },
@@ -313,6 +323,25 @@ export async function renderDocument(layer: DataLayer, opts: DocumentOptions): P
   const unraised = dispositions.length - open.length;
   const classOf = (d: Row): string => classes?.get(d.finding_id) ?? "-";
   const decidedAt = open.map((d) => d.decided_at).sort(cmp).at(-1) ?? null;
+  /** "Why": each open finding's cause, in the order the findings are listed. */
+  const whyLines = async (listed: readonly Row[]): Promise<string[]> => {
+    const head = ["### Why", ""];
+    let causes;
+    try {
+      causes = new Map((await q("CAUSES_SQL", CAUSES_SQL, { tenant_id: tenant })).map(causeOf).map((c) => [c.disposition_id, c]));
+    } catch (e) {
+      return [...head, `The causes are not read: ${(e instanceof Error ? e.message : String(e)).split("\n")[0]}.`];
+    }
+    const shown = listed.flatMap((d) => (causes.has(d.disposition_id) ? [{ d, c: causes.get(d.disposition_id)! }] : []));
+    if (!shown.length) return [...head, "No open finding carries a cause: the explain step of a cycle records one for each finding it explains."];
+    const wrote = (await q("ACTIONS_SQL", ACTIONS_SQL, { tenant_id: tenant })).map((a) => ({ disposition_id: a.disposition_id, kind: a.kind as Action["kind"], status: a.status as Action["status"], started_at: a.started_at }));
+    return [
+      ...head,
+      `Who or what changed each setting, from the hosts' journal, the provider's audit log and the agent's own actions (${plural(shown.length, "finding", "findings")}):`,
+      "",
+      ...shown.map(({ d, c }) => `- ${d.finding_id} ${d.verb} ${classOf(d)}: ${withRestore(c, wrote)}`),
+    ];
+  };
   line("## Findings open", "");
   if (!open.length) line(`The latest passing runs carry no open finding for ${tenant}.`, "");
   else {
@@ -333,6 +362,7 @@ export async function renderDocument(layer: DataLayer, opts: DocumentOptions): P
       line(`- ${d.finding_id} ${d.verb} ${classOf(d)}: ${d.setting_path} in ${d.object_id}${where} (${d.surface}, run ${d.run_id})${d.expires_at ? `, until ${d.expires_at}` : ""}. ${d.reason}.`);
     }
     line("");
+    line(...await whyLines(ordered), "");
   }
   if (unraised) line(`${plural(unraised, "disposition", "dispositions")} on these runs concern a finding the pass leaves unraised at render time.`, "");
 

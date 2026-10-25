@@ -10,6 +10,10 @@
 //     nearest its run within PASS_WINDOW_MS (PROBES_OF_RUN_SQL; the names are a record's own, or an nginx object's
 //     server_name rows in OBSERVATIONS_SQL, the pass's rule), and the zone of each record finding
 //     (TICKET_ZONES_SQL). A read the row limit cuts throws; nothing is planned from part of a table.
+//   - The causes (src/explain/explain.ts causesByDisposition over CAUSES_SQL, causeEvidence over CAUSE_EVENTS_SQL and
+//     ACTIONS_SQL): the finding_cause row of each current finding's latest disposition and its timeline, for the Why
+//     of its body or comment. A cause read that fails is one trace line and plans every ticket without its Why, so
+//     a ticket never waits on a cause.
 //   - A setting is covered when the tenant's latest DNS run and, for a setting on a host, the host's latest nginx
 //     run passed the pass's gate: only then does a pass without the finding resolve it.
 //   - applyTickets, dry run: one "would" line per operation, a create's title, labels and body indented below
@@ -36,7 +40,8 @@ import { PASS_WINDOW_MS, type PassResult } from "../pipeline.ts";
 import { PolicyRuleRow } from "../policy/schema.ts";
 import type { Redactor } from "../redactor.ts";
 import type { Tracer } from "../trace.ts";
-import type { ProbeEvidence, ProbeRow } from "./body.ts";
+import { causeEvidence, causesByDisposition } from "../explain/explain.ts";
+import type { ProbeEvidence, ProbeRow, TicketCause } from "./body.ts";
 import {
   PsaError, opLine, outgoing, planTickets, screenDraft,
   type ActionView, type TicketAdapter, type TicketFinding, type TicketInput, type TicketOp,
@@ -109,6 +114,24 @@ function rule(r: Row): PolicyRule | null {
 
 export interface ReadOptions { tenant: string; psa: Ticket["psa"]; now: string; tracer?: Tracer }
 
+const byDecision = (a: Disposition, b: Disposition): number =>
+  a.decided_at === b.decided_at ? (a.disposition_id < b.disposition_id ? -1 : a.disposition_id > b.disposition_id ? 1 : 0) : a.decided_at < b.decided_at ? -1 : 1;
+
+/** The causes of the dispositions planTickets reads for these findings (each finding's latest in its run), with their timelines; empty when finding_cause cannot be read. */
+export async function readCauses(layer: DataLayer, findings: readonly TicketFinding[], dispositions: readonly Disposition[], tenant: string, run: RunOptions): Promise<Map<string, TicketCause>> {
+  const ids = findings.flatMap((f) => dispositions.filter((d) => d.finding_id === f.id && d.run_id === f.finding.run_id).sort(byDecision).at(-1)?.disposition_id ?? []);
+  if (!ids.length) return new Map();
+  try {
+    const causes = await causesByDisposition(layer, tenant, ids, run);
+    const timelines = await causeEvidence(layer, tenant, [...causes.values()], run);
+    return new Map([...causes].map(([id, cause]) => [id, { cause, evidence: timelines.get(cause.cause_id) ?? [] }]));
+  } catch (e) {
+    const why = (e instanceof Error ? e.message : String(e)).split("\n")[0].slice(0, 300);
+    run.tracer?.emit({ agent: "psa", action: "triage", status: "needs_revision", input_summary: `causes ${tenant}`, output_summary: `finding_cause not read (${why}); the tickets go out without their Why`, detail: "model: none" });
+    return new Map();
+  }
+}
+
 /** Everything planTickets reads, for one tenant and the pass that just ran. */
 export async function readTicketInput(layer: DataLayer, pass: Pick<PassResult, "findings" | "gatedOut">, opts: ReadOptions): Promise<TicketInput> {
   const { tenant } = opts;
@@ -161,8 +184,9 @@ export async function readTicketInput(layer: DataLayer, pass: Pick<PassResult, "
   }
 
   const passRuns = [...latest.values()].filter((r) => !gated.has(r.run_id)).map((r) => r.run_id).sort();
+  const causes = await readCauses(layer, findings, dispositions, tenant, run);
   return {
-    tenant, psa: opts.psa, now: opts.now, findings, dispositions, actions, tickets, rules, probes, zones, passRuns,
+    tenant, psa: opts.psa, now: opts.now, findings, dispositions, actions, tickets, rules, probes, zones, passRuns, causes,
     covered: (d) => passing("cloudflare.dns|") && (d.host === null || passing(`linux.nginx|${d.host}`)),
   };
 }

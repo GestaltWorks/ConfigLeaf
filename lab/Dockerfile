@@ -1,7 +1,8 @@
 # drift-lab: a throwaway host that stands in for a client host, reached as the ssh alias drift-lab
 # (lab/ssh_config). Debian bookworm, nginx with two sites in sites-available linked from sites-enabled,
-# the login "drift" with a sudo drop-in for what the write session runs, a systemctl stand-in, a
-# server-config export in /var/backups/export and one certbot renewal config. lab/up.sh builds and runs it.
+# the login "drift" with a sudo drop-in for what the write session runs and the read session's journal read,
+# systemctl and journalctl stand-ins, a server-config export in /var/backups/export and one certbot renewal
+# config. lab/up.sh builds and runs it.
 FROM debian:bookworm-slim
 
 # procps carries pgrep (the systemctl stand-in), iproute2 carries ip (the read script's address sections),
@@ -20,6 +21,11 @@ RUN chmod 0440 /etc/sudoers.d/drift-lab && visudo -c -q
 # (the read script's PATH, /usr/sbin:/usr/bin:/sbin:/bin).
 COPY systemctl /usr/local/bin/systemctl
 RUN chmod 0755 /usr/local/bin/systemctl && ln -s /usr/local/bin/systemctl /usr/bin/systemctl
+
+# journald's place, the same way: the stand-in prints canned journal lines (lab/journalctl), which the read script
+# reads through sudo -n.
+COPY journalctl /usr/local/bin/journalctl
+RUN chmod 0755 /usr/local/bin/journalctl && ln -sf /usr/local/bin/journalctl /usr/bin/journalctl
 
 # nginx: Debian's nginx.conf and mime.types, the two lab sites, their web roots, the upstream's page.
 COPY nginx/lab.example nginx/www.lab.test /etc/nginx/sites-available/

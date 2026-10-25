@@ -1,8 +1,8 @@
 // The owner's document (src/document/render.ts): every read it runs, through sql.js with asserted rows; the page over
 // sample/bundle.json, whose numbers are recomputed here from the bundle's own rows and whose committed copy
 // (examples/document.md) is held to the render; and the page over test/fixtures/policy-bundle.json with actions and
-// tickets added, so every section has rows; and "Where each answer comes from", read off the SQL, which the README
-// carries as npm run sources prints it. Offline; nothing is written.
+// tickets added, so every section has rows, and with the explain step's causes under Why; and "Where each answer comes
+// from", read off the SQL, which the README carries as npm run sources prints it. Offline; nothing is written.
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -19,9 +19,11 @@ import { TABLE_NAMES } from "../src/data/schema.ts";
 import { renderDocument, sourceOf, sourceRows, sourcesMarkdown, tablesOf } from "../src/document/render.ts";
 import { TechnicianMemory } from "../src/engine/memory.ts";
 import { DriftWorld } from "../src/engine/world.ts";
+import { MemoryCauseSink, explainPass } from "../src/explain/explain.ts";
 import { MemoryLedger } from "../src/ledger.ts";
 import { dispositionIdOf } from "../src/loop/pass.ts";
 import { runPass } from "../src/pipeline.ts";
+import { Redactor } from "../src/redactor.ts";
 import sample from "../sample/bundle.json" with { type: "json" };
 import policyBundle from "./fixtures/policy-bundle.json" with { type: "json" };
 import { BLOG } from "../scripts/fixtures/policy-bundle.ts";
@@ -232,12 +234,13 @@ describe("the page over sample/bundle.json", () => {
       const older = assets.filter((a) => a.observed_at < started).length;
       expect(md).toContain(`- inventory addresses on ${host}: ${assets.length - older} in the latest run, ${older} older row${older === 1 ? "" : "s"} kept`);
     }
-    // the Queries section is the queries it ran, and every one of them is in the portable subset the parity test covers
+    // the Queries section is the queries it ran; the bundle holds no cause, so the Why reads no action
     expect(doc.queries.map((c) => c.name)).toEqual([
       "RUNS_SQL", "RUN_COMPLETE_SQL", "DOC_ZONES_SQL", "DOC_RUN_SHAPE_SQL", "DOC_INVENTORY_SQL", "DOC_COPIES_SQL", "LATEST_APPROVALS_SQL", "POLICY_RULES_SQL", "DOC_UNAPPROVED_SQL",
-      "DOC_DISPOSITIONS_OF_RUN_SQL", "DOC_ACTIONS_SQL", "DOC_TICKETS_SQL", "DOC_PROBES_SQL", "DOC_PROBE_FAILURES_SQL",
+      "DOC_DISPOSITIONS_OF_RUN_SQL", "CAUSES_SQL", "DOC_ACTIONS_SQL", "DOC_TICKETS_SQL", "DOC_PROBES_SQL", "DOC_PROBE_FAILURES_SQL",
     ]);
     for (const c of doc.queries) expect(md).toContain(`- ${c.name}: ${c.runs} run${c.runs === 1 ? "" : "s"}, ${c.rows} row${c.rows === 1 ? "" : "s"}`);
+    expect(section(md, "Findings open")).toContain("### Why\n\nNo open finding carries a cause: the explain step of a cycle records one for each finding it explains.\n");
   });
 
   it("the sample pass raises no approved_missing finding: every approved object of the 19:56 UTC runs is in the latest runs", { timeout: 60_000 }, async () => {
@@ -276,6 +279,32 @@ describe("the page over test/fixtures/policy-bundle.json with work recorded", ()
     expect(section(md, "Copies")).toContain("| records, zone example.invalid | 88d297bf | 1 | 1 | 0 | 0 | 0 |");
     expect(section(md, "Copies")).toContain("| host-7f1c (linux.nginx) | e4ad517b | 4 | 1 | 0 | 0 | 3 |");
     expect(md.trimEnd().split("\n").at(-1)).toBe(`Decided at ${AT}.`);
+  });
+
+  it("lists under Why each open finding's cause, the explain step's sentence, with the time to the restore once the agent's rollback wrote", async () => {
+    const { engine, layer } = await engineOf(policyBundle);
+    const pass = await runPass(layer, { world: new DriftWorld("test_document_why"), ledger: new MemoryLedger(engine), decidedAt: AT });
+    const app = pass.findings.find((f) => f.verb === "ROLLBACK" && f.finding.object_id === "/etc/nginx/conf.d/app.conf")!;
+    // the host's journal: a login, then a sudo tee of the file eight minutes before the pass
+    engine.insertRows("audit_event", [
+      { event_id: "evt-login-0000001", tenant_id: A, source: "journal", actor: "user-3f2a1c", action: "ssh_login", resource_type: "session", resource_id: null, old_value: "ip-7c1d2e", new_value: "publickey on host-7f1c", occurred_at: "2026-10-23T02:40:00.000Z" },
+      { event_id: "evt-tee-00000001", tenant_id: A, source: "journal", actor: "user-3f2a1c", action: "tee", resource_type: "file", resource_id: app.finding.object_id, old_value: null, new_value: `/usr/bin/tee -- ${app.finding.object_id} on host-7f1c`, occurred_at: "2026-10-23T02:52:07.000Z" },
+    ]);
+    const explained = await explainPass({ tenant: A, decidedAt: AT, findings: pass.findings }, { layer, vault: null, redactor: new Redactor("document-test-salt", []), sink: new MemoryCauseSink(engine) });
+    const own = dispositionIdOf(app, AT);
+    expect(explained.causes.find((c) => c.disposition_id === own)?.cause.class).toBe("operator_edit");
+    engine.insertRows("action", [{
+      action_id: "act-why-0000000001", tenant_id: A, kind: "rollback_file", target: `linux.nginx host-7f1c ${app.finding.object_id} file`, before_hash: null, after_hash: null, vault_commit: null,
+      verification: "probe-1", receipts: "", status: "done", reason: "restored", record: "", started_at: "2026-10-23T03:05:00.000Z", finished_at: "2026-10-23T03:05:04.000Z", disposition_id: own,
+    }]);
+    const doc = await renderDocument(layer, { tenant: A, classes: new Map(pass.findings.map((f) => [f.id, f.finding.class])) });
+    const why = section(doc.markdown, "Findings open").split("### Why\n")[1];
+    expect(why).toContain(`Who or what changed each setting, from the hosts' journal, the provider's audit log and the agent's own actions (${explained.causes.length} findings):`);
+    expect(why).toContain(`- ${app.id} ROLLBACK drift_vs_approved: The file was changed at 02:52 UTC by user-3f2a1c over ssh from ip-7c1d2e (sudo tee), 13 minutes before the agent restored it.\n`);
+    for (const c of explained.causes.filter((x) => x.disposition_id !== own)) expect(why).toContain(`- ${c.finding_id} ${c.verb} ${c.finding_class}: ${c.cause.summary}\n`);
+    expect(doc.queries.map((q) => q.name)).toEqual(expect.arrayContaining(["CAUSES_SQL", "ACTIONS_SQL"]));
+    expect(doc.markdown).toContain(`- CAUSES_SQL: 1 run, ${explained.causes.length} rows`);
+    engine.close();
   });
 
   it("counts the skipped probes of the probe run beside ok and fail, and a skipped probe is no failing name", async () => {

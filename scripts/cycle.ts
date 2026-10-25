@@ -2,12 +2,15 @@
 //
 // One cycle of the loop for one tenant (src/loop/cycle.ts over src/loop/steps.ts liveSteps), in order:
 // collect:cloudflare, collect:linux for every LINUX_HOSTS alias, probe, validate:copies for the new vault commits,
-// the pass (with the PgLedger), act (dry run unless --apply), tickets, document (document.md at the repository root,
-// gitignored). Each step runs the module its own command runs, in this process; the first failing step stops the
-// cycle with its reason. The screen is one table (src/loop/present.ts): a header, a row per step as it ends with its
-// time, a line under the pass for each ROLLBACK, FIX and ESCALATE and under act for each action, the "what happened"
-// block in a few plain sentences, and a done line naming the trace. --verbose adds each step's full line after its
-// row; --quiet prints the header and the done line.
+// the pass (with the PgLedger), explain (who or what changed each setting the pass moves on, from the hosts' journal,
+// the Cloudflare audit log and the action ledger, src/explain/; a dry run explains too), act (dry run unless --apply),
+// tickets, document (document.md at the repository root, gitignored). Each step runs the module its own command runs,
+// in this process; the first failing step stops the cycle with its reason, and explain never fails it. The screen is
+// one table (src/loop/present.ts): a header, a row per step as it ends with its time (the explain row counts the
+// causes by class: "explain   4 causes   operator 1 · agent 1 · unknown 2"), a line under the pass for each ROLLBACK,
+// FIX and ESCALATE and under act for each action, the "what happened" block in a few plain sentences, each action's
+// sentence followed on its line by who or what changed the setting, and a done line naming the trace. --verbose adds
+// each step's full line after its row; --quiet prints the header and the done line.
 // The cycle's trace, every step's lines included, goes to logs/cycle_<base36 ms>.jsonl. --skip takes a comma list or
 // repeats. --tickets-dry-run plans the tickets and sends nothing. --apply carries out the Actor's plan on the hosts
 // and the zones.
@@ -30,6 +33,11 @@
 // act nothing to do, tickets nothing to send (1 open), document 191 lines, then the what-happened block in three
 // sentences (nothing changed on the estate, 1 finding with a technician, 23 adopted and 3 held); the table in 19
 // lines, done in 119.4 s, the trace logs/cycle_mvo37iao.jsonl.
+// Measured 25 Oct 2026 at 19:50 UTC on the lab (tenant lab-1, --skip collect,validate --tickets-dry-run, a sudo tee
+// break to 8097 collected first): pass 2 findings (ROLLBACK 1, HOLD 1) in 84.3 s, "explain   1 cause   operator 1" in
+// 1.5 s, act 1 action planned, and the what-happened line "A vhost file drifted from its approved copy; a run with
+// --apply restores it from vault copy 5dde7698 and reloads nginx. The file was changed at 19:48 UTC by user-212a17
+// over ssh from 198.51.100.7 (sudo tee)."; done in 96.5 s, the trace logs/cycle_mvo8sz1i.jsonl.
 
 import { parseArgs } from "node:util";
 import { redact } from "../src/config.ts";
@@ -58,7 +66,7 @@ try {
 }
 if (args.help) {
   console.log(USAGE);
-  console.log("Runs one cycle: collect, probe, validate, pass, act (dry run unless --apply), tickets, document; one row per step, --verbose adds each step's full line, --quiet prints the header and the done line.");
+  console.log("Runs one cycle: collect, probe, validate, pass, explain (who or what changed each setting the pass moves on), act (dry run unless --apply), tickets, document; one row per step, --verbose adds each step's full line, --quiet prints the header and the done line.");
   process.exit(0);
 }
 if (!args.tenant || !TENANT.test(args.tenant) || args.tenant === "*") usage("--tenant is required: a tenant id ([A-Za-z0-9._-], up to 64)");

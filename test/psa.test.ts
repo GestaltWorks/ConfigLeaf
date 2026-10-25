@@ -1,7 +1,8 @@
 // The ticket adapter (src/psa/): the opening rules, the GitHub backend over a fake fetch (label bootstrap, create,
 // comment, close, status, the token read once, the deny-list refusal before any request), the plan and its
-// application (idempotency on the ticket row, the closing rules, a ticket closed in the PSA), the body, the
-// ticket step over the policy fixture through sql.js, the field map, the Store's updateTicket (with DATABASE_URL)
+// application (idempotency on the ticket row, the closing rules, a ticket closed in the PSA), the body and its Why
+// section, the ticket step over the policy fixture through sql.js (with the explain step's causes read back), the
+// field map, the Store's updateTicket (with DATABASE_URL)
 // and, with TICKETS_LIVE=true, one smoke issue created, commented on and closed in DRIFT_TICKETS_REPO. The step's
 // three queries have their parity cases in test/parity.test.ts.
 import { randomBytes } from "node:crypto";
@@ -16,8 +17,9 @@ import { dispositionId, type Action, type Alert, type Disposition, type Disposit
 import { Store } from "../src/data/store.ts";
 import { DriftWorld } from "../src/engine/world.ts";
 import { MemoryLedger } from "../src/ledger.ts";
+import { MemoryCauseSink, explainPass } from "../src/explain/explain.ts";
 import { runPass } from "../src/pipeline.ts";
-import { BODY_MAX, ticketBody, ticketTitle } from "../src/psa/body.ts";
+import { BODY_MAX, commentBody, ticketBody, ticketTitle, type TicketCause } from "../src/psa/body.ts";
 import { GithubIssues, labelColor } from "../src/psa/github.ts";
 import {
   FIXED_LABELS, PsaError, outgoing, planTickets, ticketCall, ticketId,
@@ -421,6 +423,77 @@ describe("the body", () => {
     expect(long.length).toBeLessThanOrEqual(BODY_MAX + 60);
     expect(long.endsWith(`(body cut at ${BODY_MAX} characters)`)).toBe(true);
   });
+
+  describe("Why, the cause the explain step recorded", () => {
+    const f = finding("fnd-roll", "drift_vs_approved");
+    const d = disposition(f, "ROLLBACK", ON_FIX);
+    const probes = { run_id: null, rows: [] };
+    const DIFF = "--- approved 5a14a89d\n+++ live 9c0ffee1\n@@ -1,3 +1,3 @@\n server {\n-    listen 443 ssl;\n+    listen 8443 ssl;\n }";
+    const why: TicketCause = {
+      cause: {
+        cause_id: "cause-0000000000000001", tenant_id: T, finding_id: f.id, disposition_id: d.disposition_id, class: "operator_edit", actor: "user-3f2a1c", mechanism: "sudo tee",
+        occurred_at: "2026-10-24T19:52:07.000Z", source_host: "ip-7c1d2e", evidence_ids: JSON.stringify(["evt-login", "evt-tee"]), diff: DIFF,
+        summary: "The file was changed at 19:52 UTC by user-3f2a1c over ssh from ip-7c1d2e (sudo tee).", window_from: "2026-10-23T20:00:00.000Z", window_to: DECIDED1, decided_at: DECIDED1,
+      },
+      evidence: [
+        { id: "evt-login", at: "2026-10-24T19:40:12.000Z", source: "journal", actor: "user-3f2a1c", action: "ssh_login", resource: "from ip-7c1d2e" },
+        { id: "evt-tee", at: "2026-10-24T19:52:07.000Z", source: "journal", actor: "user-3f2a1c", action: "tee", resource: APP },
+      ],
+    };
+    const WHY = [
+      "### Why",
+      "The file was changed at 19:52 UTC by user-3f2a1c over ssh from ip-7c1d2e (sudo tee), 9 minutes before the agent restored it.",
+      "",
+      "- 2026-10-24 19:40:12 UTC · journal · user-3f2a1c · ssh_login · from ip-7c1d2e",
+      `- 2026-10-24 19:52:07 UTC · journal · user-3f2a1c · tee · ${APP}`,
+      "",
+      "```diff", DIFF, "```",
+    ].join("\n");
+    const headings = (body: string): string[] => body.split("\n").filter((l) => l.startsWith("### "));
+
+    it("a body's Why follows Evidence: the sentence with the time to the restore, one timeline line per evidence row, the diff fenced", () => {
+      const done = act(d, "rollback_file", "done");
+      const body = ticketBody({ finding: f, disposition: d, rule: ON_FIX, actions: [done], probes, why, ticketId: "tkt-0000000000000002", type: "change", priority: "P2" });
+      expect(headings(body)).toEqual(["### What", "### Evidence", "### Why", "### Decision", "### Work done", "### Receipts", "### Ledger"]);
+      expect(body).toContain(`${WHY}\n\n### Decision\n`);
+      // before the restore wrote, the sentence is the stored one; an unknown cause is the sentence alone
+      expect(ticketBody({ finding: f, disposition: d, rule: ON_FIX, actions: [act(d, "rollback_file", "failed")], probes, why, ticketId: "t", type: "change", priority: "P2" }))
+        .toContain(`### Why\n${why.cause.summary}\n\n- 2026-10-24 19:40:12 UTC`);
+      const unknown: TicketCause = { cause: { ...why.cause, class: "unknown", occurred_at: null, diff: null, evidence_ids: "[]", summary: "No record of who changed it: the journal window of 24 h holds 0 writes to the file." }, evidence: [] };
+      expect(ticketBody({ finding: f, disposition: d, rule: ON_FIX, actions: [done], probes, why: unknown, ticketId: "t", type: "change", priority: "P2" }))
+        .toContain("### Why\nNo record of who changed it: the journal window of 24 h holds 0 writes to the file.\n\n### Decision\n");
+      expect(headings(ticketBody({ finding: f, disposition: d, rule: ON_FIX, actions: [done], probes, why: null, ticketId: "t", type: "change", priority: "P2" }))).not.toContain("### Why");
+    });
+
+    it("a comment carries it too: after a new action's Evidence, after a new verb's Decision", () => {
+      const done = act(d, "rollback_file", "done", { record: "after: the copy's bytes; nginx -t passed and nginx reloaded" });
+      const onAction = commentBody({ finding: f, disposition: d, rule: ON_FIX, actions: [done], probes, why, ticketId: "t", previousVerb: null, action: done });
+      expect(headings(onAction)).toEqual(["### Work done", "### Evidence", "### Why", "### Receipts", "### Ledger"]);
+      expect(onAction).toContain(`${WHY}\n\n### Receipts\n`);
+      const onVerb = commentBody({ finding: f, disposition: d, rule: ON_FIX, actions: [], probes, why, ticketId: "t", previousVerb: "HOLD", action: null });
+      expect(headings(onVerb)).toEqual(["### Decision", "### Why", "### Ledger"]);
+      expect(onVerb).toContain(`### Why\n${why.cause.summary}\n`);
+    });
+
+    it("planTickets gives each create and comment the cause of its own disposition, and none to a disposition without one", async () => {
+      const done = act(d, "rollback_file", "done");
+      const other = finding("fnd-other", "drift_vs_approved");
+      const fix = disposition(other, "FIX", ON_FIX);
+      const ops = planTickets(input({ findings: [f, other], dispositions: [d, fix], actions: [done], causes: new Map([[d.disposition_id, why]]) }));
+      const creates = ops.filter((o): o is Extract<TicketOp, { op: "create" }> => o.op === "create");
+      expect(creates.map((o) => o.ticket.finding_id)).toEqual(["fnd-roll", "fnd-other"]);
+      expect(creates[0].draft.body).toContain(WHY);
+      expect(creates[1].draft.body).not.toContain("### Why");
+      // an open ticket of the finding takes the new action as one comment, with the cause
+      const open: Ticket = { ...creates[0].ticket, ticket_id: "tkt-open", external_id: "77", action_id: null, created_at: NOW1, updated_at: NOW1 };
+      const [comment] = planTickets(input({ findings: [f], dispositions: [d], actions: [done], tickets: [open], causes: new Map([[d.disposition_id, why]]) }));
+      expect(comment.op).toBe("close");
+      const unverified = act(d, "rollback_file", "unverified");
+      const [next] = planTickets(input({ findings: [f], dispositions: [d], actions: [unverified], tickets: [open], causes: new Map([[d.disposition_id, why]]) }));
+      expect(next.op).toBe("comment");
+      expect((next as Extract<TicketOp, { op: "comment" }>).body).toContain(`### Why\n${why.cause.summary.slice(0, -1)}, 9 minutes before the agent restored it.\n`);
+    });
+  });
 });
 
 describe("ticketStep over the policy fixture (sql.js, a MemoryLedger, fake GitHub)", () => {
@@ -487,6 +560,39 @@ describe("ticketStep over the policy fixture (sql.js, a MemoryLedger, fake GitHu
     const three = await stepOver({ actions, tickets: two.rows.rows }, fake, "2026-10-23T06:00:00.000Z");
     expect(three.result.ops.map((o) => o.op)).toEqual(Array(three.pass.findings.length).fill("skip"));
     expect(fake.calls.length).toBe(before);
+  });
+
+  it("reads the explain step's causes back through the DataLayer: every issue opened for an explained disposition carries its Why after Evidence, the others none", async () => {
+    const engine = await SqlJsEngine.create();
+    engine.loadBundle(policyBundle);
+    const layer = new DataLayer(engine);
+    const pass = await runPass(layer, { world: new DriftWorld("test_psa_why"), ledger: new MemoryLedger(engine), at: AT, decidedAt: AT });
+    const explained = await explainPass({ tenant: "client-a", decidedAt: AT, findings: pass.findings }, { layer, vault: null, redactor, sink: new MemoryCauseSink(engine) });
+    expect(explained.written).toBe(explained.causes.length);
+    const fake = fakeGithub();
+    const { gh } = github(fake);
+    const r = await ticketStep(layer, pass, gh, new MemoryTicketRows(), { tenant: "client-a", dryRun: false, redactor, deny, now: () => "2026-10-23T04:00:00.000Z", print: quiet });
+    engine.close();
+    const byFinding = new Map(explained.causes.map((c) => [c.finding_id, c]));
+    const created = r.outcomes.filter((o) => o.op === "create");
+    expect(created.length).toBeGreaterThan(0);
+    let withWhy = 0;
+    for (const o of created) {
+      const issue = fake.issues.get(Number(o.external_id))!;
+      const finding = r.ops.find((op) => op.op === "create" && op.ticket.ticket_id === o.ticket_id) as Extract<TicketOp, { op: "create" }>;
+      const c = byFinding.get(finding.ticket.finding_id);
+      const heads = issue.body.split("\n").filter((l) => l.startsWith("### "));
+      if (!c) { expect(heads, finding.ticket.finding_id).not.toContain("### Why"); continue; }
+      withWhy++;
+      expect(heads.slice(0, 4), finding.ticket.finding_id).toEqual(["### What", "### Evidence", "### Why", "### Decision"]);
+      expect(issue.body).toContain(`### Why\n${c.cause.summary}\n`);
+      // the timeline is the cause's evidence, read back from audit_event and the ledger
+      for (const e of c.evidence) expect(issue.body).toContain(`- ${e.at.slice(0, 19).replace("T", " ")} UTC · ${e.source} · ${e.actor ?? "-"} · ${e.action} · ${e.resource ?? "-"}`);
+    }
+    // every FIX and ESCALATE is explained, so each of their incidents carries its Why
+    const moving = r.ops.filter((op): op is Extract<TicketOp, { op: "create" }> => op.op === "create" && /^(FIX|ESCALATE) /.test(op.draft.title));
+    expect(moving.length).toBeGreaterThan(0);
+    expect(withWhy).toBeGreaterThanOrEqual(moving.length);
   });
 });
 

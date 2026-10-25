@@ -72,7 +72,7 @@ row's natural parts, so a re-run inserts nothing twice; every collected-text col
 | `backup_snapshot` | one backup artefact of one host: the nightly export tarball | the Linux collector |
 | `backup_item` | one file hash a snapshot holds | the Linux collector |
 | `dns_record` | one Cloudflare record as seen in one DNS run | the Cloudflare collector |
-| `audit_event` | one event of the Cloudflare account audit log | the Cloudflare collector |
+| `audit_event` | one event of the Cloudflare account audit log (source `cloudflare`), or one kept line of a host's journal: a sudo command on nginx, a login, a certbot or dpkg line (source `journal`) | the Cloudflare collector; the Linux collector |
 | `inventory_asset` | one global address of a client host; membership is every address ever observed, temporary and deprecated IPv6 addresses excluded, `observed_at` the last time a run saw it | the Linux collector |
 | `policy_rule` | one version of one rule of the MSP's policy | `npm run policy:load` |
 | `vault_copy` | one object of one complete run, committed to the vault | the collectors' vault hook |
@@ -162,7 +162,7 @@ row's natural parts, so a re-run inserts nothing twice; every collected-text col
 8. **Document and repeat.** The owner's document (`src/document/render.ts`) is one markdown page per tenant from 14
    named queries: estate, copies, approvals, open findings, where each answer comes from (read off the SQL text),
    work, probes (ok, fail and skipped by kind) and the queries it ran. `npm run cycle`
-   runs collect, probe, validate, pass, act, tickets and document once, the first failing step stopping it; `npm run
+   runs collect, probe, validate, pass, explain, act, tickets and document once, the first failing step stopping it; `npm run
    watch` runs the cycle every N minutes until SIGINT.
 
 | verb | decided when | what follows |

@@ -6,6 +6,7 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { JOURNAL_SHELL } from "../src/collectors/journal.ts";
 
 const spawned: { command: string; args: string[]; stdin: string }[] = [];
 
@@ -63,13 +64,14 @@ describe("LINUX_SSH_CONFIG on every ssh session", () => {
     expect(spawned[1].stdin).toBe("echo write\n");
   });
 
-  it("with LINUX_SSH_CONFIG, both sessions add -F <file> before the alias, and the read script still names no sudo", async () => {
+  it("with LINUX_SSH_CONFIG, both sessions add -F <file> before the alias, and the read script names sudo only in its journal section", async () => {
     const { linux, ssh } = await load(LAB_CONFIG);
     expect(linux.SSH_CONFIG).toBe(LAB_CONFIG);
     await linux.fetchHost("lab-a");
     await ssh.runWriteSession("lab-a", "echo write\n");
     for (const s of spawned) expect(s.args).toEqual([...FIXED, "-F", LAB_CONFIG, "lab-a", "bash", "-s"]);
-    expect(spawned[0].stdin).not.toMatch(/\bsudo\b/);
+    expect(spawned[0].stdin).toContain(JOURNAL_SHELL);
+    expect(spawned[0].stdin.replace(JOURNAL_SHELL, "")).not.toMatch(/\bsudo\b/);
   });
 
   it("an alias LINUX_HOSTS does not list starts no session, whatever ssh_config is named", async () => {

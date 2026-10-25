@@ -1,0 +1,23 @@
+#!/bin/sh
+# Stands in for systemd's journalctl inside the drift-lab container, where no journald runs: the one call the
+# drift-agent read session makes (journalctl --utc -o short-iso --no-pager --since <time> <matches>, through sudo -n).
+# It prints eight lines in the shape a host's journal gives them, timed back from the moment of the call, so they
+# always fall inside the collector's 24-hour window: certbot's reload after a renewal at T-9 h; three sudo lines the
+# collector's filter drops (a tee to /etc/other/app.env, an apt install, a cat of /etc/hosts); the login labtech from
+# 198.51.100.7 at T-3 min; then, at T-2 min, labtech's sudo tee of /etc/nginx/sites-available/lab.example, sudo
+# nginx -t and sudo systemctl reload nginx. The host name field is the container's own, drift-lab.
+case "$1 $2 $3 $4 $5" in
+  "--utc -o short-iso --no-pager --since") ;;
+  *) echo "journalctl stand-in: the lab maps --utc -o short-iso --no-pager --since <time> <matches>; asked: $*" >&2; exit 1 ;;
+esac
+now=$(date -u +%s)
+at() { date -u -d "@$((now - $1))" +%Y-%m-%dT%H:%M:%S+00:00; }
+printf '%s\n' \
+  "$(at 32400) drift-lab certbot[811]: Reloading nginx server after certificate renewal" \
+  "$(at 3000) drift-lab sudo[2061]:  labtech : TTY=pts/1 ; PWD=/home/labtech ; USER=root ; COMMAND=/usr/bin/tee /etc/other/app.env" \
+  "$(at 2400) drift-lab sudo[2077]:  labtech : TTY=pts/1 ; PWD=/home/labtech ; USER=root ; COMMAND=/usr/bin/apt install -y jq" \
+  "$(at 1800) drift-lab sudo[2090]:  labtech : TTY=pts/1 ; PWD=/home/labtech ; USER=root ; COMMAND=/usr/bin/cat /etc/hosts" \
+  "$(at 180) drift-lab sshd[2101]: Accepted publickey for labtech from 198.51.100.7 port 51522 ssh2: ED25519 SHA256:bGFiLWtleS1ub3QtYS1yZWFsLWZpbmdlcnByaW50" \
+  "$(at 126) drift-lab sudo[2140]:  labtech : TTY=pts/0 ; PWD=/home/labtech ; USER=root ; COMMAND=/usr/bin/tee /etc/nginx/sites-available/lab.example" \
+  "$(at 123) drift-lab sudo[2143]:  labtech : TTY=pts/0 ; PWD=/home/labtech ; USER=root ; COMMAND=/usr/sbin/nginx -t" \
+  "$(at 120) drift-lab sudo[2145]:  labtech : TTY=pts/0 ; PWD=/home/labtech ; USER=root ; COMMAND=/usr/bin/systemctl reload nginx"

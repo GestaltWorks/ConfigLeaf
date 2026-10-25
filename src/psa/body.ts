@@ -7,18 +7,27 @@
 // of each action's record, under the action's id), Decision (verb, who decided, the rule and its terms, the reason,
 // the expiry), Work done (each action: kind, status, hashes before and after, vault commit, verification probe ids,
 // then the Actor's sentence for it), Receipts (the model receipts of those actions) and Ledger (disposition,
-// finding, run and ticket ids). A comment on a new action carries its Work done, its record as Evidence and its
-// Receipts; on an unverified write, it first states that the write completed and the verification it lacks
-// (unverifiedComment, the same lines, follows the create of a change ticket). Hashes are 12 hex, commits 8. Every string here is
+// finding, run and ticket ids). A disposition the explain step explained (src/explain/) adds a seventh, Why, right
+// after Evidence: who or what changed the setting in one sentence (the stored summary, with ", N minutes before the
+// agent restored it" once the disposition's rollback_file or revert_record wrote), then its timeline, one line per
+// evidence row ("<time> UTC · <source> · <actor> · <action> · <resource>", src/explain/cause.ts timelineLine), then
+// the diff in a fenced block when the cause holds one. A comment on a new action carries its Work done, its record as
+// Evidence, its Why and its Receipts; a comment on a new verb its Decision and its Why; on an unverified write, it
+// first states that the write completed and the verification it lacks (unverifiedComment, the same lines, follows the
+// create of a change ticket). Hashes are 12 hex, commits 8. Every string here is
 // redacted text from the ledger and the pass; outgoing() in src/psa/index.ts runs the redactor and the deny-list
 // probe over the result before it leaves the process. A body is cut at BODY_MAX characters with a line saying so.
 // Measured 24 Oct 2026: the six sections in order on the first issue the step creates over the policy fixture
 // (test/psa.test.ts), and on the proxy_split body of SAMPLE_MODE=true npm run tickets -- --tenant client-1: three
 // checks hold, referent_unchanged fails with 3 rows, the exposure dates from 2026-04-16, the dns, tls and http probes
-// of its name are ok.
+// of its name are ok. Measured 25 Oct 2026 at 19:53 UTC on the lab, npm run tickets -- --tenant lab-1 --dry-run
+// through Zetaris after the rollback of 19:52 UTC: the change ticket's Why reads "The file was changed at 19:48 UTC by
+// user-212a17 over ssh from 198.51.100.7 (sudo tee), 4 minutes before the agent restored it.", 16 timeline lines and
+// the 11-line diff (8081 to 8097).
 
 import type { FindingSummary } from "../catalogue/select.ts";
-import type { Disposition, DispositionVerb, PolicyRule, PsaPriority } from "../data/rows.ts";
+import type { Action, Disposition, DispositionVerb, FindingCause, PolicyRule, PsaPriority } from "../data/rows.ts";
+import { timelineLine, withRestore, type Evidence } from "../explain/cause.ts";
 import type { ActionView, TicketFinding, TicketType } from "./index.ts";
 
 /** GitHub refuses a body over 65,536 characters; the step stays under it. */
@@ -98,6 +107,18 @@ function decisionLines(d: Disposition, rule: PolicyRule | null, ticket?: { type:
   ];
 }
 
+/** A disposition's cause as the ticket step reads it back (src/explain/explain.ts causesByDisposition, causeEvidence): the row and its timeline, oldest first. */
+export interface TicketCause { cause: FindingCause; evidence: readonly Evidence[] }
+
+/** Why: the cause's sentence, with the restore clause once one of `actions` restored the setting; the timeline; the diff, fenced. */
+export function whyLines(why: TicketCause, actions: readonly ActionView[]): string[] {
+  const wrote = actions.map((a) => ({ disposition_id: a.disposition_id, kind: a.kind, status: a.status as Action["status"], started_at: a.started_at }));
+  const out = ["### Why", withRestore(why.cause, wrote)];
+  if (why.evidence.length) out.push("", ...why.evidence.map((e) => `- ${timelineLine(e)}`));
+  if (why.cause.diff) out.push("", "```diff", why.cause.diff.replace(/\n+$/, ""), "```");
+  return out;
+}
+
 /** One action as one line: kind, status, times, hashes, commit, verification. */
 export function actionLine(a: ActionView): string {
   return `- action ${a.action_id}: ${a.kind} ${a.status}, started ${a.started_at}, finished ${a.finished_at ?? "running"}; before ${h12(a.before_hash)}, after ${h12(a.after_hash)}; vault commit ${c8(a.vault_commit)}; verification ${a.verification.trim() || "none"}; target ${a.target}`;
@@ -122,13 +143,16 @@ export interface BodyParts {
   rule: PolicyRule | null;
   actions: readonly ActionView[];
   probes: ProbeEvidence;
+  /** The disposition's cause; absent or null when the explain step left none. */
+  why?: TicketCause | null;
 }
 
-/** The body of a new ticket: the six sections. */
+/** The body of a new ticket: the six sections, with Why after Evidence when the disposition has a cause. */
 export function ticketBody(p: BodyParts & { ticketId: string; type: TicketType; priority: PsaPriority }): string {
   return cut([
     ...whatLines(p.finding), "",
     ...evidenceLines(p.finding, p.probes, p.actions), "",
+    ...(p.why ? [...whyLines(p.why, p.actions), ""] : []),
     ...decisionLines(p.disposition, p.rule, { type: p.type, priority: p.priority }), "",
     ...workLines(p.disposition, p.actions), "",
     ...receiptLines(p.actions), "",
@@ -150,15 +174,16 @@ export function unverifiedComment(p: { disposition: Disposition; action: ActionV
   return cut([...unverifiedLines(p.action), "", ...ledgerLines(p.disposition, p.ticketId)].join("\n"));
 }
 
-/** A comment on an open ticket: the new verb with its decision, the new action with its receipts (an unverified write saying so), the ledger. */
+/** A comment on an open ticket: the new verb with its decision, the new action with its receipts (an unverified write saying so), the cause, the ledger. */
 export function commentBody(p: BodyParts & { ticketId: string; previousVerb: string | null; action: ActionView | null }): string {
   const lines = [`Update from the pass decided ${p.disposition.decided_at}.`];
+  const why = p.why ? ["", ...whyLines(p.why, p.actions)] : [];
   if (p.previousVerb) lines.push("", `The decision moved from ${p.previousVerb} to ${p.disposition.verb}.`, "", ...decisionLines(p.disposition, p.rule));
   if (p.action && p.action.status === "unverified") lines.push("", ...unverifiedLines(p.action));
   if (p.action) {
     const evidence = recordLines([p.action]);
-    lines.push("", ...workLines(p.disposition, [p.action]), ...(evidence.length ? ["", "### Evidence", ...evidence] : []), "", ...receiptLines([p.action]));
-  }
+    lines.push("", ...workLines(p.disposition, [p.action]), ...(evidence.length ? ["", "### Evidence", ...evidence] : []), ...why, "", ...receiptLines([p.action]));
+  } else lines.push(...why);
   lines.push("", ...ledgerLines(p.disposition, p.ticketId));
   return cut(lines.join("\n"));
 }

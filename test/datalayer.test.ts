@@ -33,10 +33,10 @@ async function layerOf(b: Readonly<Record<string, unknown>>): Promise<DataLayer>
 }
 
 describe("schema", () => {
-  it("parses the sixteen tables of sql/schema.sql in DDL order; a table constraint line declares no column", () => {
+  it("parses the seventeen tables of sql/schema.sql in DDL order; a table constraint line declares no column", () => {
     expect(TABLE_NAMES).toEqual([
       "collection_run", "observation", "approved_setting", "backup_snapshot", "backup_item", "dns_record", "audit_event", "inventory_asset",
-      "policy_rule", "vault_copy", "copy_validation", "probe", "disposition", "action", "ticket", "referent_fingerprint",
+      "policy_rule", "vault_copy", "copy_validation", "probe", "disposition", "action", "ticket", "referent_fingerprint", "finding_cause",
     ]);
     expect(SCHEMA_TABLES.find((t) => t.name === "backup_item")?.columns).toEqual(["snapshot_id", "object_id", "setting_path", "value_hash"]);
     expect(SCHEMA_TABLES.find((t) => t.name === "observation")?.columns).toHaveLength(14);
@@ -44,7 +44,7 @@ describe("schema", () => {
     expect(SCHEMA_TABLES.find((t) => t.name === "policy_rule")?.columns).toEqual([
       "rule_id", "tenant_id", "surface", "object_glob", "setting_glob", "criticality", "lock", "on_drift", "on_no_copy", "hold_max_hours", "alert", "psa_priority", "version", "author", "since", "note",
     ]);
-    expect(SCHEMA_TABLES.map((t) => t.columns.length)).toEqual([9, 14, 10, 6, 4, 10, 10, 7, 16, 10, 8, 10, 15, 15, 12, 4]);
+    expect(SCHEMA_TABLES.map((t) => t.columns.length)).toEqual([9, 14, 10, 6, 4, 10, 10, 7, 16, 10, 8, 10, 15, 15, 12, 4, 15]);
     expect(SCHEMA_TABLES.flatMap((t) => t.columns).filter((c) => /^[A-Z]/.test(c))).toEqual([]);
   });
 });

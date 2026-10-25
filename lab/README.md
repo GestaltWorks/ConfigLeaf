@@ -2,7 +2,7 @@
 
 A throwaway container, `drift-lab`, stands in for a client host: Debian bookworm, nginx with `lab.example` (plain
 http, `location /` proxied to 127.0.0.1:8081) and `www.lab.test` (static) in `sites-available`, linked from
-`sites-enabled`; the login `drift` with sudo for `tee`, `nginx`, `systemctl` and `rm`; a server-config tarball in
+`sites-enabled`; the login `drift` with sudo for `tee`, `nginx`, `systemctl`, `rm` and `journalctl`; a server-config tarball in
 `/var/backups/export`; one certbot renewal config. Its ssh alias lives in `lab/ssh_config.local`, so the write path
 runs for real against it, under tenant `lab-1`, with the app Postgres and the vault of `.env`. Its nginx answers on
 `127.0.0.1:18080` of this machine, so the probes reach both names.
@@ -177,6 +177,17 @@ next collection (run run-71776a91583187d1, vault commit 5d780b42) and pass: 0 fi
 
 - `systemctl` is `lab/systemctl`, a stand-in for systemd: `reload nginx` runs `nginx -s reload`, `status nginx` asks
   pgrep, `list-timers --all --no-pager` prints a fixed two-line table.
+- `journalctl` is `lab/journalctl`, a stand-in for journald, which the sudo drop-in allows: the read session's call
+  prints eight lines in a host journal's shape, timed back from the call. The collector's host-side filter keeps five
+  (certbot's reload after a renewal at T-9 h; the login `labtech` from 198.51.100.7 at T-3 min; `labtech`'s sudo
+  `tee` of `/etc/nginx/sites-available/lab.example`, `nginx -t` and `systemctl reload nginx` at T-2 min) and drops
+  three (a `tee` to `/etc/other/app.env`, an `apt install`, a `cat` of `/etc/hosts`). Every collection adds five new
+  `audit_event` rows, since the times move with the call.
+
+Measured 25 Oct 2026, 19:13 UTC, after `lab/up.sh` rebuilt the image: `collect:linux` against drift-lab under `lab-1`,
+run run-ba8424ca531d91b2 complete at 2 of 2 files, vault commit 7f01336d, the journal read through sudo -n: 5 lines
+kept, 5 `audit_event` rows written, source `journal`, actor `user-212a17` on the four `labtech` rows and none on
+certbot's, the login's old_value `198.51.100.7` (a documentation range, which the redactor keeps).
 - The sudo drop-in covers `tee`, so the break goes in through `sudo -n tee`; the operator's login runs `sudo sed -i`.
 - The lab has no DNS provider: `lab-1` holds no `cloudflare.dns` run, and the classes that pair a host run with one
   (`orphan_vhost`, `orphan_record`, `proxied_without_real_ip`) stay silent.

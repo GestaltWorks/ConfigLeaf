@@ -6,10 +6,13 @@ can. What the agent has instead, in two stages:
 1. **Today (the measured runs, 24 Oct 2026).** `src/collectors/linux.ts` opens one session per host
    through the operator's own `ssh_config` aliases, `ssh -o BatchMode=yes -o ConnectTimeout=15 <alias>
    bash -s`, and streams a fixed script of reads on stdin (`readScript()`; `test/nginx.test.ts` asserts it
-   calls only `id -un`, `hostname`, `date`, `ip`, `ls`, `base64`, `systemctl list-timers`, `find` and a
-   `tar -tz`/`tar -xO` + `sha256sum` function, never `sudo`, never anything that writes, and that every
+   calls only `id -un`, `hostname`, `date`, `ip`, `ls`, `base64`, `systemctl list-timers`, `find`, a
+   `tar -tz`/`tar -xO` + `sha256sum` function and the journal read, never anything that writes, and that every
    `tar` extraction goes to stdout). Whatever the login user cannot read comes back as a section with a
-   non-zero exit status and is recorded as not readable; nothing is escalated. The honesty cost: the key
+   non-zero exit status and is recorded as not readable. The one escalation is the journal read
+   (`src/collectors/journal.ts`): `journalctl --utc -o short-iso --no-pager` over the last 24 h, run directly
+   when the login is in `adm`, `systemd-journal` or `wheel`, else as `sudo -n journalctl` once `sudo -n -l
+   journalctl` allows it, its lines filtered on the host; a refusal is a note and no lines. The honesty cost: the key
    is the operator's, so the read-only property is the script's, not the host's. The run records which
    login it used (`login_user` in the summary, pseudonymised unless it is root).
 2. **Designed, not installed.** A dedicated user `drift-collector` whose key is bound to a forced
@@ -31,8 +34,10 @@ is never "the latest backup". The earlier etckeeper and restic requests are gone
 that reason.
 
 Nothing here is executed by the tests. Review it by eye; `sh -n` both scripts and `visudo -c -f` the
-fragment on a Linux host before installing. `ops/` is the only place `sudo` is invoked in this repository
-(`test/nginx.test.ts` asserts the streamed script never names it); nothing the agent runs today calls it.
+fragment on a Linux host before installing. The forced command does not read the journal yet; the streamed
+script's journal section is the one read it lacks. `test/nginx.test.ts` asserts the streamed script runs `sudo`
+twice, both for `journalctl`; the write session (`src/actions/ssh.ts`) runs `sudo -n tee`, `nginx -t` and the
+reload.
 
 | File | Installs to | Owner, mode |
 |---|---|---|

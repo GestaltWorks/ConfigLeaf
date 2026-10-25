@@ -22,10 +22,10 @@
 //   - beginRun refuses a run_id that exists and finishRun one that is not running: a collector never
 //     silently reopens a finished run.
 //   - One insert method per table of the design's eight additions (policy_rule, vault_copy,
-//     copy_validation, probe, disposition, action, ticket, referent_fingerprint), each ON CONFLICT DO
-//     NOTHING on its key. Reads: latestPassingRun (the gate's definition of passing), observationsOf,
-//     dnsRecordsOf, policyRules (the tenant's and every "*" rule), and rowsOf for any table by column
-//     equality; every read is one READ ONLY transaction and returns rows in natural-key order. One
+//     copy_validation, probe, disposition, action, ticket, referent_fingerprint) and of finding_cause
+//     (the explain step, src/explain/), each ON CONFLICT DO NOTHING on its key. Reads: latestPassingRun
+//     (the gate's definition of passing), observationsOf, dnsRecordsOf, policyRules (the tenant's and
+//     every "*" rule), and rowsOf for any table by column equality; every read is one READ ONLY transaction and returns rows in natural-key order. One
 //     update: updateTicket, a ticket row's external_id, url, status and action_id by ticket_id with
 //     updated_at, the url redacted (the PSA step, src/psa/step.ts); ticketsOf reads one tenant's tickets; actionsOf the
 //     actions that carry out a list of dispositions (src/actions/). An action row's target, reason and record go
@@ -49,7 +49,7 @@ import { SCHEMA_SQL } from "./schema.ts";
 import {
   ACTION_RECORD_MAX, COLUMNS, KEYS, REDACT, isTimestampColumn,
   type Action, type ApprovedSetting, type AuditEvent, type BackupItem, type BackupSnapshot, type CollectionRun, type CopyValidation,
-  type Disposition, type DnsRecord, type InventoryAsset, type Observation, type PolicyRule, type Probe, type ReferentFingerprint,
+  type Disposition, type DnsRecord, type FindingCause, type InventoryAsset, type Observation, type PolicyRule, type Probe, type ReferentFingerprint,
   type Rows, type RunStatus, type TableName, type Ticket, type VaultCopy,
 } from "./rows.ts";
 
@@ -97,6 +97,7 @@ const CONFLICT: { [K in TableName]: string | null } = {
   action: "ON CONFLICT (action_id) DO NOTHING",
   ticket: "ON CONFLICT (ticket_id) DO NOTHING",
   referent_fingerprint: "ON CONFLICT (obs_id, dns_run_id) DO NOTHING",
+  finding_cause: "ON CONFLICT (cause_id) DO NOTHING",
 };
 
 type Row = Record<string, string | number | null>;
@@ -203,6 +204,7 @@ export class Store {
   }
   insertTickets(rows: readonly Ticket[]): Promise<number> { return this.write("ticket", rows); }
   insertReferentFingerprints(rows: readonly ReferentFingerprint[]): Promise<number> { return this.write("referent_fingerprint", rows); }
+  insertFindingCauses(rows: readonly FindingCause[]): Promise<number> { return this.write("finding_cause", rows); }
 
   /**
    * One ticket row's mutable columns by ticket_id: external_id, url, status and action_id as the patch names

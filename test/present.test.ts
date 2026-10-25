@@ -1,7 +1,8 @@
 // The terminal view (src/loop/present.ts) over fixed step results: the columns and the time at the width, thousands,
 // colour on a TTY and off under NO_COLOR, the classes in plain words and the tally wrapped at the width, the finding
 // lines for each verb, the action lines for each status, the ticket lines, a failing row and the done lines, the
-// redactor over every text, the "what happened" sentences for each case, and --verbose and --quiet through runCycle.
+// redactor over every text, the "what happened" sentences for each case with the causes the explain step found on
+// their lines, the explain row, and --verbose and --quiet through runCycle.
 // Offline and deterministic: every result is built here, with fixture names only.
 import { describe, expect, it } from "vitest";
 import type { ActionOutcome, PlanItem } from "../src/actions/plan.ts";
@@ -9,9 +10,9 @@ import { FINDING_CLASSES } from "../src/catalogue/templates.ts";
 import type { Action, ActionKind, ActionStatus, Ticket } from "../src/data/rows.ts";
 import { runCycle, type CycleSteps, type StepReport } from "../src/loop/cycle.ts";
 import {
-  CLASS_LABEL, FINDING_LINES, MODE, PLAIN, STORY_MAX, Table, actView, classLabel, clause, cloudflareView, count, documentView, findingLine, hex8, linuxView,
+  CLASS_LABEL, FINDING_LINES, MODE, PLAIN, STORY_MAX, Table, actView, classLabel, clause, cloudflareView, count, documentView, explainView, findingLine, hex8, linuxView,
   passView, presentOptions, probeView, seconds, shortUtc, thousands, ticketsView, utcMinute, validateView, whatHappened, withoutRunIds, type PresentOptions,
-  type StoryInput, type TicketFacts,
+  type CauseFacts, type StoryInput, type TicketFacts,
 } from "../src/loop/present.ts";
 import { dispositionIdOf, type PassStep } from "../src/loop/pass.ts";
 import type { Finding, Verb } from "../src/pipeline.ts";
@@ -116,6 +117,7 @@ describe("the table over a clean dry run", () => {
       ...t.row("probe", probeView({ names: 37, rows: probes }), 9815),
       ...t.row("validate", validateView({ heads: 3, nginx: ["ok_with_gaps", "ok_with_gaps"], rows: validation, errors: 0 }), 3497),
       ...t.row("pass", passView(cleanPass), 68593),
+      ...t.row("explain", explainView({ causes: [{ class: "unknown" }, { class: "agent" }, { class: "operator_edit" }, { class: "unknown" }] }), 412),
       ...t.row("act", actView({ apply: false, plan: [], outcomes: [], acted: [] }), 374),
       ...t.row("tickets", ticketsView({ ops: [{ op: "skip", finding_id: "fnd-1", reason: "HOLD" }], outcomes: [{ op: "skip", ticket_id: null, external_id: null, status: "skipped", line: "skip" }], open: 1 }, false), 1137),
       ...t.row("document", documentView({ file: "document.md", lines: 181 }), 16896),
@@ -132,6 +134,7 @@ describe("the table over a clean dry run", () => {
       "            DNS record with no site behind it 3 · site with no DNS record 3",
       "            name and its www treated differently by the proxy 1",
       "            ESCALATE  name and its www treated differently by the proxy · www.example.invalid · the hold ran out at 25 Oct 03:21 UTC, a technician owns it",
+      at("  explain   4 causes      operator 1 · agent 1 · unknown 2", "0.4 s"),
       at("  act       nothing to do", "0.4 s"),
       at("  tickets   nothing to send · 1 open", "1.1 s"),
       at("  document  document.md · 181 lines", "16.9 s"),
@@ -140,8 +143,18 @@ describe("the table over a clean dry run", () => {
     // every row ends at column 90; the columns start at 2, 12 and 26
     for (const l of screen.filter((x) => /^  \S/.test(x))) {
       expect(l).toHaveLength(90);
-      expect(l.slice(2, 12).trimEnd()).toMatch(/^(collect|probe|validate|pass|act|tickets|document)$/);
+      expect(l.slice(2, 12).trimEnd()).toMatch(/^(collect|probe|validate|pass|explain|act|tickets|document)$/);
     }
+  });
+
+  it("the explain row: the causes by class, people and tools first, then the agent, then unknown; nothing to explain; not explained with its reason", () => {
+    const all = ["token_change", "automation", "unknown", "account_change", "agent", "operator_edit", "operator_edit"].map((c) => ({ class: c }));
+    expect(t.row("explain", explainView({ causes: all }), 1400)[0]).toBe(at("  explain   7 causes      operator 2 · automation 1 · account 1 · token 1 · agent 1 · unknown 1", "1.4 s"));
+    expect(t.row("explain", explainView({ causes: [{ class: "account_change" }] }), 50)[0]).toBe(at("  explain   1 cause       account 1", "0.1 s"));
+    expect(t.row("explain", explainView({ causes: [] }), 0)[0]).toBe(at("  explain   0 causes      nothing to explain", "0.0 s"));
+    expect(t.row("explain", explainView({ causes: [], stopped: "relation finding_cause does not exist; the step reads it back" }), 30)[0])
+      .toBe(at("  explain   0 causes      not explained · relation finding_cause does not exist", "0.0 s"));
+    expect(new Table({ ...PLAIN, color: true }).row("explain", explainView({ causes: [], stopped: "x" }), 0)[0]).toContain(`${ESC}[33mnot explained${ESC}[0m`);
   });
 
   it("widens the subject column to the longest subject it is given, and puts the time right after a row past the width", () => {
@@ -589,6 +602,84 @@ describe("the what-happened block", () => {
   });
 });
 
+describe("the causes in the what-happened block", () => {
+  const story = (o: Pick<StoryInput, "pass"> & Partial<StoryInput>): string[] => whatHappened({ act: null, actSettled: true, tickets: null, ...o });
+  const applied = (...outcomes: ActionOutcome[]): StoryInput["act"] => ({ apply: true, plan: [], outcomes });
+  const decidedAt = "2026-10-25T15:53:30.000Z";
+  const file = as(finding("ROLLBACK", "drift_vs_approved", "live value drifted from approved 3f565467a831; vault commit 5dde7698 holds the approved copy, validated ok with 0 gaps, so rule rule-1 rolls it back to that copy", NGINX), "fnd-0000000000000004");
+  const record = as(finding("ROLLBACK", "drift_vs_approved", "live value drifted from approved 9291bd74aaaa; vault commit 5ef406fc holds the approved copy, validated ok with 0 gaps, so rule rule-1 rolls it back to that copy", { setting_path: "content", dns_name: "mail.example.invalid" }), "fnd-0000000000000002");
+  const esc = as(escalate, "fnd-0000000000000003");
+  const pass = { findings: [file, record, esc], decidedAt };
+  const cause = (f: Finding, cls: CauseFacts["class"], summary: string, occurredAt: string | null, dispositionId = dispositionIdOf(f, decidedAt)): CauseFacts =>
+    ({ disposition_id: dispositionId, finding_id: f.id, class: cls, summary, occurred_at: occurredAt });
+  const EDIT = "The file was changed at 15:52 UTC by user-3f2a1c over ssh from ip-7c1d2e (sudo tee).";
+  const ACCOUNT = "The record was changed at 16:48 UTC by a named account (mail-97a420@domain-503b27), from ip-6b6bba to 203.0.113.9.";
+  const TOKEN = "The record was changed at 16:50 UTC through an API token.";
+  const AGENT = "The last change to the file is the agent's own rollback at 15:54 UTC.";
+  const UNKNOWN = "No record of who changed it: the journal window of 24 h holds 0 writes to the file and the audit log holds 0 events for the record.";
+  const rollback = (status: ActionStatus, reason: string): ActionOutcome =>
+    outcome("rollback_file", status, reason, { action_id: "act-file", disposition_id: dispositionIdOf(file, decidedAt), verification: status === "done" ? "probe-1,probe-2,probe-3" : "" });
+  const revert = outcome("revert_record", "done", "reverted to the approved copy at vault commit 5ef406fc; the record read back equals the copy field by field", {
+    action_id: "act-revert", target: "cloudflare.dns rec-0001 content", disposition_id: dispositionIdOf(record, decidedAt), verification: "probe-4", started_at: "2026-10-25T16:49:02.000Z",
+  });
+  const DONE = "A vhost file drifted from its approved copy; the agent restored it, nginx reloaded, 3 probes passed.";
+
+  it("an applied restore carries who changed the setting on the same line, with the time from the change to the restore", () => {
+    expect(story({ pass, act: applied(rollback("done", "restored")), causes: [cause(file, "operator_edit", EDIT, "2026-10-25T15:52:07.000Z")] })).toEqual([
+      `${DONE} The file was changed at 15:52 UTC by user-3f2a1c over ssh from ip-7c1d2e (sudo tee), 2 minutes before the agent restored it.`,
+      "1 finding is with a technician: name and its www treated differently by the proxy at www.example.invalid.",
+    ]);
+    expect(story({ pass: { findings: [record], decidedAt }, act: applied(revert), causes: [cause(record, "account_change", ACCOUNT, "2026-10-25T16:48:10.000Z")] })).toEqual([
+      "A DNS record drifted from its approved value; the agent restored it from the vault copy, the provider confirmed it. The record was changed at 16:48 UTC by a named account (mail-97a420@domain-503b27), from ip-6b6bba to 203.0.113.9, under a minute before the agent restored it.",
+    ]);
+    // a restore that wrote nothing gives no restore clause; the agent's own change and an unknown one never carry one
+    expect(story({ pass: { findings: [file], decidedAt }, act: applied(rollback("refused", "the live file changed since the decision")), causes: [cause(file, "operator_edit", EDIT, "2026-10-25T15:52:07.000Z")] })).toEqual([
+      `A vhost file drifted from its approved copy; the agent left it as it is (changed since the decision). ${EDIT}`,
+    ]);
+    expect(story({ pass: { findings: [file], decidedAt }, act: applied(rollback("done", "restored")), causes: [cause(file, "agent", AGENT, "2026-10-25T15:54:03.000Z")] })).toEqual([`${DONE} ${AGENT}`]);
+    expect(story({ pass: { findings: [file], decidedAt }, act: applied(rollback("done", "restored")), causes: [cause(file, "unknown", UNKNOWN, null)] })).toEqual([`${DONE} ${UNKNOWN}`]);
+    // the block prints the action and its cause as one line
+    const t = new Table(PLAIN);
+    expect(t.story([`${DONE} ${UNKNOWN}`])).toEqual(["what happened", `  ${DONE} ${UNKNOWN}`]);
+  });
+
+  it("a dry run's planned actions carry their causes and no restore clause", () => {
+    const plan: PlanItem[] = [
+      { action_id: "act-1", kind: "rollback_file", disposition_id: dispositionIdOf(file, decidedAt), lines: ["target /etc/nginx/conf.d/word-aaaaaa.conf on host-aaaaaa (ssh alias fixture-host), ROLLBACK under rule-1", "write 2,807 bytes (sha256 3f565467a831) from vault commit 5dde7698 (copy cpy-1) over the live file"] },
+      { action_id: "act-2", kind: "revert_record", disposition_id: dispositionIdOf(record, decidedAt), lines: ["target record rec-0001 (mail.example.invalid, A) in zone example.invalid, ROLLBACK under rule-1", "PATCH the record to the approved copy at vault commit 0a1b2c3d (copy cpy-2)"] },
+    ];
+    const causes = [cause(file, "operator_edit", EDIT, "2026-10-25T15:52:07.000Z"), cause(record, "token_change", TOKEN, "2026-10-25T16:50:00.000Z")];
+    expect(story({ pass: { findings: [file, record], decidedAt }, act: { apply: false, plan, outcomes: [] }, causes })).toEqual([
+      `A vhost file drifted from its approved copy; a run with --apply restores it from vault copy 5dde7698 and reloads nginx. ${EDIT}`,
+      `A DNS record drifted from its approved value; a run with --apply restores it from vault copy 0a1b2c3d. ${TOKEN}`,
+    ]);
+  });
+
+  it("an escalation no action names carries its cause on the technician's line; one an investigation names carries it there, told once", () => {
+    const token = cause(esc, "token_change", TOKEN, "2026-10-25T16:50:00.000Z");
+    expect(story({ pass, causes: [token], actSettled: false })).toEqual([`1 finding is with a technician: name and its www treated differently by the proxy at www.example.invalid. ${TOKEN}`]);
+    const inv = outcome("investigate", "not_judged", "no model is configured, so no verdict was asked for", { disposition_id: dispositionIdOf(esc, decidedAt) });
+    expect(story({ pass: { findings: [esc], decidedAt }, act: applied(inv), causes: [token] })).toEqual([
+      `A finding (name and its www treated differently by the proxy) needs a technician; the agent ran its checks (no model is configured, so no verdict was asked for). ${TOKEN}`,
+      "1 finding is with a technician: name and its www treated differently by the proxy at www.example.invalid.",
+    ]);
+    // two escalations with the same sentence: it is said once
+    const twin = as(escalate, "fnd-0000000000000009");
+    expect(story({ pass: { findings: [esc, twin], decidedAt }, causes: [cause(esc, "unknown", UNKNOWN, null), cause(twin, "unknown", UNKNOWN, null)], actSettled: false })).toEqual([
+      `2 findings are with a technician: name and its www treated differently by the proxy (2). ${UNKNOWN}`,
+    ]);
+  });
+
+  it("a cause counts as part of its action's sentence: the cap stays at five and the last action sentence counts the rest", () => {
+    const refused = (i: number): ActionOutcome => outcome("rollback_file", "refused", "it changed since the decision", { action_id: `act-${i}`, disposition_id: `dsp-${i}` });
+    const causes = Array.from({ length: 6 }, (_, i) => cause(file, "operator_edit", EDIT, "2026-10-25T15:52:07.000Z", `dsp-${i}`));
+    const sentences = story({ pass: { findings: [finding("ADOPT", "orphan_vhost", "", NGINX)] }, act: applied(...Array.from({ length: 6 }, (_, i) => refused(i))), causes });
+    expect(sentences).toHaveLength(STORY_MAX);
+    expect(sentences.slice(0, 3)).toEqual(Array(3).fill(`A vhost file drifted from its approved copy; the agent left it as it is (changed since the decision). ${EDIT}`));
+    expect(sentences.slice(3)).toEqual(["3 more actions are listed under act.", "1 finding is adopted under policy rules."]);
+  });
+});
+
 // ---- --verbose through the cycle ----------------------------------------------------------------------------------
 
 describe("--verbose and --quiet through runCycle", () => {
@@ -600,6 +691,7 @@ describe("--verbose and --quiet through runCycle", () => {
       probe: async () => ok("probe: fine"),
       validate: async () => ok("validate: fine"),
       pass: async () => ({ ...ok("PASS: tenant t1"), pass: { ...cleanPass, tenant: "t1" } as PassStep }),
+      explain: async () => ok("explain: tenant t1, 1 cause(s) (unknown 1)", explainView({ causes: [{ class: "unknown" }] })),
       act: async () => ok("act: dry run: 0 actions planned"),
       tickets: async () => ok("TICKETS: fine"),
       document: async () => ok("document: fine"),
@@ -611,34 +703,36 @@ describe("--verbose and --quiet through runCycle", () => {
     expect(printed.slice(0, 4)).toEqual([
       "drift-agent · cycle · tenant t1 · 1970-01-01 00:00 UTC · dry run, nothing changed",
       at("  collect   cloudflare    1,036 records in 6 zones · audit 12 rows · vault abcdef01", "0.5 s"),
-      "cycle: [1/7] collect:cloudflare ok in 0.5 s: collect:cloudflare: dns 58/58 complete",
+      "cycle: [1/8] collect:cloudflare ok in 0.5 s: collect:cloudflare: dns 58/58 complete",
       "  probe     skipped",
     ]);
-    expect(printed[4]).toBe("cycle: [2/7] probe skipped in 0.0 s: skipped (--skip probe)");
+    expect(printed[4]).toBe("cycle: [2/8] probe skipped in 0.0 s: skipped (--skip probe)");
     const pass = printed.findIndex((l) => l.startsWith("  pass "));
-    expect(printed.slice(pass, pass + 6)).toEqual([
+    expect(printed.slice(pass, pass + 8)).toEqual([
       at("  pass      27 findings   ADOPT 23 · HOLD 3 · ESCALATE 1", "0.5 s"),
       "            proxied name, origin trusts no Cloudflare range 20",
       "            DNS record with no site behind it 3 · site with no DNS record 3",
       "            name and its www treated differently by the proxy 1",
       "            ESCALATE  name and its www treated differently by the proxy · www.example.invalid · the hold ran out at 25 Oct 03:21 UTC, a technician owns it",
-      "cycle: [4/7] pass ok in 0.5 s: PASS: tenant t1",
+      "cycle: [4/8] pass ok in 0.5 s: PASS: tenant t1",
+      at("  explain   1 cause       unknown 1", "0.5 s"),
+      "cycle: [5/8] explain ok in 0.5 s: explain: tenant t1, 1 cause(s) (unknown 1)",
     ]);
     // act skipped: nothing changed; the block sits between the last row and the done line
     expect(printed.slice(-7, -2)).toEqual([
-      "cycle: [7/7] document skipped in 0.0 s: skipped (--skip document)",
+      "cycle: [8/8] document skipped in 0.0 s: skipped (--skip document)",
       "what happened",
       "  Nothing changed on the estate; every finding stands as before.",
       "  1 finding is with a technician: name and its www treated differently by the proxy at www.example.invalid.",
       "  23 findings are adopted, 20 under the technician's exceptions and 3 under policy rules; 3 are held with an expiry.",
     ]);
-    expect(printed.at(-2)).toMatch(/^done · 7 steps · 5 skipped · \d+\.\d s$/);
+    expect(printed.at(-2)).toMatch(/^done · 8 steps · 5 skipped · \d+\.\d s$/);
     expect(printed.at(-1)).toBe(res.summary);
     // --quiet: the header and the done line only
     const quiet: string[] = [];
     await runCycle({ tenant: "t1", apply: true, aliases: [], skip: new Set(["probe", "validate", "act", "tickets", "document"] as const) }, steps, { print: (l) => quiet.push(l), clock: () => (ms += 500), present: { ...PLAIN, quiet: true } });
     expect(quiet).toHaveLength(2);
     expect(quiet[0]).toBe("drift-agent · cycle · tenant t1 · 1970-01-01 00:00 UTC · applying changes");
-    expect(quiet[1]).toMatch(/^done · 7 steps · 5 skipped · /);
+    expect(quiet[1]).toMatch(/^done · 8 steps · 5 skipped · /);
   });
 });

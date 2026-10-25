@@ -12,10 +12,13 @@
 //     the class's words, then the object. An action line names its kind as the ledger does (rollback_file,
 //     revert_record), then the object in plain words ("DNS record <name>", "<dir>/<file> on <host>").
 //   - What happened (whatHappened, a cycle's screen only): between the last row and the done line, at most STORY_MAX
-//     sentences of one line each, built from the pass's findings, the act step's outcomes or plan and the tickets
-//     step's operations: one per action, one for the tickets closed as resolved, one for the findings with a
-//     technician, one for the findings adopted and held; "Nothing changed on the estate" when act ran or was skipped
-//     and nothing moved. Omitted under --quiet.
+//     sentences of one line each, built from the pass's findings, the explain step's causes, the act step's outcomes
+//     or plan and the tickets step's operations: one per action, one for the tickets closed as resolved, one for the
+//     findings with a technician, one for the findings adopted and held; "Nothing changed on the estate" when act ran
+//     or was skipped and nothing moved. An action's sentence, and the technician's for an escalation no action
+//     sentence names, carries its finding's cause on the same line, joined by a space (src/explain/ withRestore: the
+//     stored sentence, with ", N minutes before the agent restored it" once the agent's rollback or revert wrote), so a
+//     cause counts as part of its sentence under STORY_MAX. Omitted under --quiet.
 //   - Row: two spaces, the step name in 9 columns, a space, the subject in 13 columns (wider when a subject the table
 //     is given up front is longer: a redacted host alias), a space, the detail as phrases joined by " · ", and the
 //     duration to one decimal, right-aligned to the width: the terminal's columns less one, up to 120, when stdout is
@@ -39,7 +42,8 @@
 import type { ActResult } from "../actions/act.ts";
 import type { ActionOutcome, PlanItem } from "../actions/plan.ts";
 import type { FindingClass } from "../catalogue/templates.ts";
-import type { Action } from "../data/rows.ts";
+import type { Action, FindingCause } from "../data/rows.ts";
+import { withRestore } from "../explain/cause.ts";
 import type { Finding, Verb } from "../pipeline.ts";
 import type { TicketOp } from "../psa/index.ts";
 import type { TicketOutcome } from "../psa/step.ts";
@@ -530,6 +534,17 @@ export function ticketsView(r: { ops: readonly TicketOp[]; outcomes: readonly Ti
 
 export const documentView = (o: { file: string; lines: number }): StepView => ({ parts: [o.file, count(o.lines, "line")] });
 
+/** Each cause class in a word, in the order the explain row lists them: people and tools, then the agent, then unknown. */
+export const CAUSE_WORD: Readonly<Record<string, string>> = { operator_edit: "operator", automation: "automation", account_change: "account", token_change: "token", agent: "agent", unknown: "unknown" };
+
+/** explain: the causes by class, "2 causes · operator 1 · unknown 1"; "nothing to explain" when the pass moved on nothing; the reason when it stopped. */
+export function explainView(o: { causes: readonly { class: string }[]; stopped?: string }): StepView {
+  if (o.stopped) return { subject: count(o.causes.length, "cause"), parts: [[{ text: "not explained", tone: "yellow" }], clause(o.stopped)] };
+  if (!o.causes.length) return { subject: count(0, "cause"), parts: ["nothing to explain"] };
+  const parts = Object.keys(CAUSE_WORD).map((k) => [CAUSE_WORD[k], o.causes.filter((c) => c.class === k).length] as const).filter(([, n]) => n > 0).map(([w, n]) => `${w} ${thousands(n)}`);
+  return { subject: count(o.causes.length, "cause"), parts };
+}
+
 /** A step's row when it gives no view: its summary less its "<step>: " lead ("collect:linux <alias>: ", "PASS: ", "validate:copies: "). */
 export function summaryView(step: string, summary: string, subject?: string, alias = false): StepView {
   const m = summary.match(/^([A-Za-z]+)(?::\S+(?: \S+)?)?: /);
@@ -543,6 +558,8 @@ export function summaryView(step: string, summary: string, subject?: string, ali
 export type ActFacts = Pick<ActResult, "apply" | "plan" | "outcomes">;
 /** What the tickets step did or planned: its operations and their outcomes, index for index. */
 export interface TicketFacts { ops: readonly TicketOp[]; outcomes: readonly TicketOutcome[] }
+/** One cause the explain step found (src/explain/), the fields the block reads: whose it is, and its stored sentence. */
+export type CauseFacts = Pick<FindingCause, "disposition_id" | "finding_id" | "class" | "summary" | "occurred_at">;
 
 export interface StoryInput {
   pass: PassFindings;
@@ -552,6 +569,8 @@ export interface StoryInput {
   actSettled: boolean;
   /** The tickets step's result; null when tickets gave none. */
   tickets: TicketFacts | null;
+  /** The explain step's causes, one per explained disposition; none when explain gave none. */
+  causes?: readonly CauseFacts[];
 }
 
 /** The most sentences the block holds. */
@@ -639,10 +658,22 @@ function planSentence(p: PlanItem, all: readonly PlanItem[], f: Finding | undefi
   return `${subject}; a run with --apply restores it from ${from ? `vault copy ${from}` : "the vault copy"}${p.kind === "rollback_file" ? " and reloads nginx" : ""}.`;
 }
 
-/** One sentence per action (an investigation and its fix are one), or per planned action in a dry run; the ticket moves they account for. */
-function actionSentences(act: ActFacts, pass: PassFindings, moves: readonly Move[]): { sentences: string[]; used: Set<Move> } {
+/** A sentence with its finding's cause after it on the same line, when the explain step found one. */
+type WithCause = (sentence: string, dispositionId: string, f: Finding | undefined) => string;
+
+/** One sentence per action (an investigation and its fix are one), or per planned action in a dry run, each with its cause; the ticket moves they account for. */
+function actionSentences(act: ActFacts, pass: PassFindings, moves: readonly Move[], because: WithCause): { sentences: string[]; used: Set<Move> } {
   const used = new Set<Move>();
-  if (!act.apply) return { sentences: act.plan.flatMap((p) => planSentence(p, act.plan, findingFor(pass, p.disposition_id)) ?? []), used };
+  if (!act.apply) {
+    return {
+      sentences: act.plan.flatMap((p) => {
+        const f = findingFor(pass, p.disposition_id);
+        const s = planSentence(p, act.plan, f);
+        return s === null ? [] : [because(s, p.disposition_id, f)];
+      }),
+      used,
+    };
+  }
   const sentences: string[] = [];
   for (const o of act.outcomes) {
     const a = o.action;
@@ -652,9 +683,10 @@ function actionSentences(act: ActFacts, pass: PassFindings, moves: readonly Move
     const ids = group.map((x) => x.action.action_id);
     const m = moves.find((x) => (x.op.ticket.action_id !== null && ids.includes(x.op.ticket.action_id)) || (f !== undefined && x.op.ticket.finding_id === f.id));
     if (m) used.add(m);
-    if (ROLLBACK_KINDS.includes(a.kind)) sentences.push(rollbackSentence(o, f, m));
-    else if (a.kind === "investigate") sentences.push(investigateSentence(o, group.some((x) => x.action.kind === "fix"), f, m));
-    else sentences.push(`The agent's ${a.kind} is ${a.status.replace(/_/g, " ")} (${clause(o.reason)}).`);
+    const s = ROLLBACK_KINDS.includes(a.kind) ? rollbackSentence(o, f, m)
+      : a.kind === "investigate" ? investigateSentence(o, group.some((x) => x.action.kind === "fix"), f, m)
+      : `The agent's ${a.kind} is ${a.status.replace(/_/g, " ")} (${clause(o.reason)}).`;
+    sentences.push(because(s, a.disposition_id, f));
   }
   return { sentences, used };
 }
@@ -698,14 +730,32 @@ function standingSentence(fs: readonly Finding[]): string | null {
 /**
  * The cycle's "what happened" block, sentence by sentence, from the step results and nothing else: the actions (or
  * "Nothing changed on the estate" when act settled and neither act nor tickets moved), the tickets closed as
- * resolved, the findings with a technician, the findings adopted and held. At most STORY_MAX sentences: past it, the
- * last action sentence counts the rest.
+ * resolved, the findings with a technician, the findings adopted and held. An action's sentence carries its
+ * finding's cause, and the technician's sentence the causes of the escalations no action sentence told, each on the
+ * same line. At most STORY_MAX sentences: past it, the last action sentence counts the rest.
  */
 export function whatHappened(i: StoryInput): string[] {
   const fs = i.pass.findings;
   const moves = movesOf(i.tickets);
-  const acted = i.act ? actionSentences(i.act, i.pass, moves) : { sentences: [], used: new Set<Move>() };
-  const rest = [resolvedSentence(moves.filter((m) => !acted.used.has(m))), escalationSentence(fs), standingSentence(fs)].filter((s): s is string => s !== null);
+  const causes = i.causes ?? [];
+  // the actions that can have restored a setting: the applied ones (a dry run restores nothing)
+  const wrote = i.act?.apply ? i.act.outcomes.map((o) => o.action) : [];
+  const told = new Set<CauseFacts>();
+  const causeOf = (dispositionId: string, f: Finding | undefined): CauseFacts | undefined =>
+    causes.find((c) => c.disposition_id === dispositionId) ?? (f ? causes.find((c) => c.finding_id === f.id) : undefined);
+  const because: WithCause = (s, dispositionId, f) => {
+    const c = causeOf(dispositionId, f);
+    if (!c) return s;
+    told.add(c);
+    return `${s} ${withRestore(c, wrote)}`;
+  };
+  const acted = i.act ? actionSentences(i.act, i.pass, moves, because) : { sentences: [], used: new Set<Move>() };
+  const escalated = escalationSentence(fs);
+  const untold = fs.filter((f) => f.verb === "ESCALATE")
+    .map((f) => causeOf(i.pass.decidedAt ? dispositionIdOf(f, i.pass.decidedAt) : "", f))
+    .filter((c): c is CauseFacts => c !== undefined && !told.has(c));
+  const escalation = escalated && untold.length ? [escalated, ...new Set(untold.map((c) => withRestore(c, wrote)))].join(" ") : escalated;
+  const rest = [resolvedSentence(moves.filter((m) => !acted.used.has(m))), escalation, standingSentence(fs)].filter((s): s is string => s !== null);
   const nothing = fs.length ? "Nothing changed on the estate; every finding stands as before." : "Nothing changed on the estate; the pass found every setting in order.";
   const lead = acted.sentences.length || moves.length || !i.actSettled ? acted.sentences : [nothing];
   const room = STORY_MAX - rest.length;

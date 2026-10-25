@@ -250,6 +250,28 @@ export interface ReferentFingerprint {
   resolved_at: string;
 }
 
+/** Who or what changed a setting (src/explain/), first match wins in this order. */
+export type CauseClass = "agent" | "operator_edit" | "automation" | "account_change" | "token_change" | "unknown";
+
+/** One explained disposition (src/explain/): the cause class, who, how and when, the evidence ids and the sentence. */
+export interface FindingCause {
+  cause_id: string;
+  tenant_id: string;
+  finding_id: string;
+  disposition_id: string;
+  class: CauseClass;
+  actor: string | null;
+  mechanism: string | null;
+  occurred_at: string | null;
+  source_host: string | null; // the ssh login's source address, redacted; null when none is known
+  evidence_ids: string; // JSON array of audit_event and action ids, oldest first; "[]" when none
+  diff: string | null; // at most 40 lines, redacted
+  summary: string; // one sentence, redacted
+  window_from: string;
+  window_to: string;
+  decided_at: string;
+}
+
 export interface Rows {
   collection_run: CollectionRun;
   observation: Observation;
@@ -267,6 +289,7 @@ export interface Rows {
   action: Action;
   ticket: Ticket;
   referent_fingerprint: ReferentFingerprint;
+  finding_cause: FindingCause;
 }
 
 export type TableName = keyof Rows;
@@ -288,6 +311,7 @@ export const COLUMNS = {
   action: ["action_id", "tenant_id", "kind", "target", "before_hash", "after_hash", "vault_commit", "verification", "receipts", "status", "reason", "record", "started_at", "finished_at", "disposition_id"],
   ticket: ["ticket_id", "tenant_id", "psa", "external_id", "url", "type", "priority", "status", "action_id", "finding_id", "created_at", "updated_at"],
   referent_fingerprint: ["obs_id", "dns_run_id", "fingerprint", "resolved_at"],
+  finding_cause: ["cause_id", "tenant_id", "finding_id", "disposition_id", "class", "actor", "mechanism", "occurred_at", "source_host", "evidence_ids", "diff", "summary", "window_from", "window_to", "decided_at"],
 } as const satisfies { [K in TableName]: readonly (keyof Rows[K])[] };
 
 /** Compile-time: an interface column missing from COLUMNS makes this `never` and the line below a type error. */
@@ -317,6 +341,7 @@ export const KEYS = {
   action: ["action_id"],
   ticket: ["ticket_id"],
   referent_fingerprint: ["obs_id", "dns_run_id"],
+  finding_cause: ["cause_id"],
 } as const satisfies { [K in TableName]: readonly (keyof Rows[K])[] };
 
 /** A timestamp column: every *_at, and policy_rule.since. Both loaders hold these to the canonical millisecond form. */
@@ -346,6 +371,7 @@ export const REDACT = {
   action: { target: "text", reason: "text", record: "text" },
   ticket: { url: "text" },
   referent_fingerprint: {},
+  finding_cause: { actor: "text", mechanism: "text", source_host: "text", diff: "text", summary: "text" },
 } as const satisfies { [K in TableName]: Partial<Record<keyof Rows[K], "text" | "value">> };
 
 export const AUTHORITY = { live: 100, backup: 40, approved: 20 } as const;
@@ -384,6 +410,9 @@ export const probeId = (runId: string, kind: string, target: string): string => 
 
 /** One action of one kind on one disposition: the Actor acts once per (disposition, kind). */
 export const actionId = (tenantId: string, dispositionIdValue: string, kind: ActionKind): string => stableId("act", tenantId, dispositionIdValue, kind);
+
+/** The cause of one disposition: the explain step explains each disposition once, and a re-run over the same pass writes none. */
+export const causeId = (tenantId: string, dispositionIdValue: string): string => stableId("cause", tenantId, dispositionIdValue);
 
 /**
  * One decision about one live value of one setting, for one finding, in one run, at one instant: every pass writes its

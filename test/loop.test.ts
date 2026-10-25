@@ -14,14 +14,17 @@ import { EMPTY_ROWS } from "../src/collectors/types.ts";
 import { DataLayer } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { DISPOSITIONS_SQL, objects, tenantActions } from "../src/data/queries.ts";
-import type { CollectionRun, Disposition, ReferentFingerprint } from "../src/data/rows.ts";
+import type { ActionOutcome } from "../src/actions/plan.ts";
+import type { CauseClass, CollectionRun, Disposition, FindingCause, ReferentFingerprint } from "../src/data/rows.ts";
 import type { Store } from "../src/data/store.ts";
 import { DriftWorld } from "../src/engine/world.ts";
 import { MemoryLedger, type Ledger } from "../src/ledger.ts";
 import { SKIPPABLE, parseSkip, runCycle, stepNames, type CycleSteps, type StepReport } from "../src/loop/cycle.ts";
 import { LoopError, TenantLedger, dispositionIdOf, passStep, type PassStep } from "../src/loop/pass.ts";
-import { actStep, collectCloudflareStep, collectLinuxStep, documentStep, labelledRows, probeStep, ticketsStep, validateStep } from "../src/loop/steps.ts";
-import { PLAIN } from "../src/loop/present.ts";
+import { actStep, collectCloudflareStep, collectLinuxStep, documentStep, explainStep, labelledRows, probeStep, ticketsStep, validateStep } from "../src/loop/steps.ts";
+import { CAUSE_CLASSES } from "../src/explain/cause.ts";
+import { MemoryCauseSink, causesByDisposition, type ExplainResult } from "../src/explain/explain.ts";
+import { PLAIN, Table, explainView } from "../src/loop/present.ts";
 import { LabelTracer } from "../src/loop/trace.ts";
 import { sleep, watch } from "../src/loop/watch.ts";
 import { MemoryTicketRows } from "../src/psa/step.ts";
@@ -44,6 +47,7 @@ function fakeSteps(calls: string[], over: Partial<CycleSteps> = {}): CycleSteps 
     probe: async () => { calls.push("probe"); return ok("probe"); },
     validate: async (commits) => { calls.push(`validate ${commits.map((c) => c.repo).join(",")}`); return ok("validate"); },
     pass: async () => { calls.push("pass"); return { ...ok("PASS"), pass: passOf() }; },
+    explain: async (p) => { calls.push(`explain ${p.tenant}`); return ok("explain"); },
     act: async (p) => { calls.push(`act ${p.tenant}`); return ok("act"); },
     tickets: async (p) => { calls.push(`tickets ${p.tenant}`); return ok("TICKETS"); },
     document: async (p) => { calls.push(`document ${p.tenant}`); return ok("document"); },
@@ -63,44 +67,46 @@ describe("parseSkip", () => {
 });
 
 describe("runCycle over fake steps", () => {
-  it("runs every step in order, hands the collect steps' commits to validate and the pass to act, tickets and document", async () => {
+  it("runs every step in order, hands the collect steps' commits to validate and the pass to explain, act, tickets and document", async () => {
     const calls: string[] = [];
     const printed: string[] = [];
     const tracer = new MemTracer("loop_test", { model: "none" });
     const res = await runCycle({ tenant: "t1", apply: false, aliases: ["a1", "a2"], skip: new Set() }, fakeSteps(calls), { tracer, print: (l) => printed.push(l), clock: ticking() });
-    expect(calls).toEqual(["collect:cloudflare", "collect:linux a1", "collect:linux a2", "probe", "validate t1/cloudflare,t1/a1,t1/a2", "pass", "act t1", "tickets t1", "document t1"]);
+    expect(calls).toEqual(["collect:cloudflare", "collect:linux a1", "collect:linux a2", "probe", "validate t1/cloudflare,t1/a1,t1/a2", "pass", "explain t1", "act t1", "tickets t1", "document t1"]);
     expect(res.steps.map((s) => `${s.step} ${s.status}`)).toEqual(stepNames(["a1", "a2"]).map((s) => `${s} ok`));
+    expect(stepNames([]).slice(-5)).toEqual(["pass", "explain", "act", "tickets", "document"]);
     expect(res.stopped).toBeNull();
     // the table: the header, one row per step from its summary (the pass's from its result), each time at column 90
     expect(printed[0]).toBe("drift-agent · cycle · tenant t1 · 1970-01-01 00:00 UTC · dry run, nothing changed");
     expect(printed[1]).toBe(`${"  collect   cloudflare    fine".padEnd(85)}0.1 s`);
     expect(printed[2]).toBe(`${"  collect   a1            fine".padEnd(85)}0.1 s`);
     expect(printed[6]).toBe(`${"  pass      0 findings".padEnd(85)}0.1 s`);
-    expect(printed[9]).toBe(`${"  document  fine".padEnd(85)}0.1 s`);
-    expect(printed.slice(1, 10).every((l) => l.length === 90)).toBe(true);
+    expect(printed[7]).toBe(`${"  explain   fine".padEnd(85)}0.1 s`);
+    expect(printed[10]).toBe(`${"  document  fine".padEnd(85)}0.1 s`);
+    expect(printed.slice(1, 11).every((l) => l.length === 90)).toBe(true);
     // the what-happened block between the last row and the done line
-    expect(printed.slice(10, -1)).toEqual(["what happened", "  Nothing changed on the estate; the pass found every setting in order."]);
-    expect(printed.at(-1)).toMatch(/^done · 9 steps · \d+\.\d s$/);
+    expect(printed.slice(11, -1)).toEqual(["what happened", "  Nothing changed on the estate; the pass found every setting in order."]);
+    expect(printed.at(-1)).toMatch(/^done · 10 steps · \d+\.\d s$/);
     expect(printed.join("\n")).not.toMatch(/cycle: \[|CYCLE:/);
-    expect(res.summary).toMatch(/^CYCLE: tenant t1, dry run \(act plans and writes nothing to a host or a zone; --apply performs it\): 9 step\(s\): ok 9, skipped 0, failed 0, not run 0; completed; \d+\.\d s$/);
+    expect(res.summary).toMatch(/^CYCLE: tenant t1, dry run \(act plans and writes nothing to a host or a zone; --apply performs it\): 10 step\(s\): ok 10, skipped 0, failed 0, not run 0; completed; \d+\.\d s$/);
     // one trace line per step and one for the cycle, agent cycle, the step's time as latency
-    expect(tracer.events.length).toBe(10);
+    expect(tracer.events.length).toBe(11);
     expect(tracer.events.every((e) => e.agent === "cycle" && e.action === "triage" && e.model_requested === "none")).toBe(true);
-    expect(tracer.events[3]).toMatchObject({ input_summary: "cycle t1 [4/9] probe", status: "ok", latency_ms: 100 });
+    expect(tracer.events[3]).toMatchObject({ input_summary: "cycle t1 [4/10] probe", status: "ok", latency_ms: 100 });
   });
 
   it("skips the named groups, runs the pass in every cycle, and gives validate no commit when collect is skipped", async () => {
     const calls: string[] = [];
     const printed: string[] = [];
     const res = await runCycle({ tenant: "t1", apply: true, aliases: ["a1"], skip: parseSkip(["collect,probe", "tickets"]) }, fakeSteps(calls), { print: (l) => printed.push(l), clock: ticking() });
-    expect(calls).toEqual(["validate ", "pass", "act t1", "document t1"]);
-    expect(res.steps.map((s) => s.status)).toEqual(["skipped", "skipped", "skipped", "ok", "ok", "ok", "skipped", "ok"]);
+    expect(calls).toEqual(["validate ", "pass", "explain t1", "act t1", "document t1"]);
+    expect(res.steps.map((s) => s.status)).toEqual(["skipped", "skipped", "skipped", "ok", "ok", "ok", "ok", "skipped", "ok"]);
     expect(res.steps[0].summary).toBe("skipped (--skip collect)");
-    expect(res.summary).toMatch(/^CYCLE: tenant t1, applied \(act carries out its plan\): 8 step\(s\): ok 4, skipped 4, failed 0, not run 0; completed;/);
+    expect(res.summary).toMatch(/^CYCLE: tenant t1, applied \(act carries out its plan\): 9 step\(s\): ok 5, skipped 4, failed 0, not run 0; completed;/);
     expect(printed[0]).toMatch(/ · applying changes$/);
     expect(printed.slice(1, 4)).toEqual(["  collect   cloudflare    skipped", "  collect   a1            skipped", "  probe     skipped"]);
-    expect(printed[7]).toBe("  tickets   skipped");
-    expect(printed.at(-1)).toMatch(/^done · 8 steps · 4 skipped · \d+\.\d s$/);
+    expect(printed[8]).toBe("  tickets   skipped");
+    expect(printed.at(-1)).toMatch(/^done · 9 steps · 4 skipped · \d+\.\d s$/);
   });
 
   it("stops at the first failing step with its reason; every later step is not run", async () => {
@@ -110,13 +116,66 @@ describe("runCycle over fake steps", () => {
     const res = await runCycle({ tenant: "t1", apply: false, aliases: [], skip: new Set() }, steps, { print: (l) => printed.push(l), clock: ticking(), trace: "logs/cycle_test.jsonl" });
     expect(calls).toEqual(["collect:cloudflare", "probe"]);
     expect(res.stopped).toEqual({ step: "probe", reason: "probe run r1 is partial" });
-    expect(res.steps.map((s) => s.status)).toEqual(["ok", "failed", "not_run", "not_run", "not_run", "not_run", "not_run"]);
+    expect(res.steps.map((s) => s.status)).toEqual(["ok", "failed", "not_run", "not_run", "not_run", "not_run", "not_run", "not_run"]);
     expect(res.steps[2].summary).toBe("the cycle stopped at probe");
-    expect(res.summary).toContain("ok 1, skipped 0, failed 1, not run 5; stopped at probe: probe run r1 is partial;");
+    expect(res.summary).toContain("ok 1, skipped 0, failed 1, not run 6; stopped at probe: probe run r1 is partial;");
     // the failing step's row carries its reason; a step not run has no row
     expect(printed).toHaveLength(4);
     expect(printed[2]).toBe(`${"  probe     failed        probe run r1 is partial".padEnd(85)}0.1 s`);
-    expect(printed[3]).toMatch(/^stopped at probe · 2 of 7 · \d+\.\d s · trace logs\/cycle_test\.jsonl$/);
+    expect(printed[3]).toMatch(/^stopped at probe · 2 of 8 · \d+\.\d s · trace logs\/cycle_test\.jsonl$/);
+  });
+
+  it("the explain row counts the causes by class, and each cause reaches the what-happened block on its action's line", async () => {
+    const at = "2026-10-24T00:00:00.000Z";
+    const cause = (n: string, cls: CauseClass, summary: string, occurredAt: string | null): FindingCause => ({
+      cause_id: `cause-${n}`, tenant_id: "t1", finding_id: `fnd-${n}`, disposition_id: `dsp-${n}`, class: cls, actor: null, mechanism: null, occurred_at: occurredAt, source_host: null,
+      evidence_ids: "[]", diff: null, summary, window_from: "2026-10-23T00:00:00.000Z", window_to: at, decided_at: at,
+    });
+    const EDIT = "The file was changed at 23:52 UTC on 23 Oct by user-3f2a1c over ssh from ip-7c1d2e (sudo tee).";
+    const UNKNOWN = "No record of who changed it: the journal window of 24 h holds 0 writes to the file.";
+    const causes = [
+      cause("1", "operator_edit", EDIT, "2026-10-23T23:52:00.000Z"), cause("2", "agent", "The last change to the file is the agent's own rollback at 23:30 UTC on 23 Oct.", "2026-10-23T23:30:00.000Z"),
+      cause("3", "unknown", UNKNOWN, null), cause("4", "unknown", UNKNOWN, null),
+    ];
+    const explain: ExplainResult = {
+      tenant: "t1", decidedAt: at, causes: causes.map((c) => ({ finding_id: c.finding_id, disposition_id: c.disposition_id, verb: "ROLLBACK", finding_class: "drift_vs_approved", cause: c, evidence: [] })),
+      counts: Object.fromEntries(CAUSE_CLASSES.map((k) => [k, causes.filter((c) => c.class === k).length])) as ExplainResult["counts"],
+      searched: { journal: 10, cloudflare: 1, actions: 2 }, written: 4, errors: [],
+    };
+    const restored: ActionOutcome = {
+      action: {
+        action_id: "act-1", tenant_id: "t1", kind: "rollback_file", target: "linux.nginx host-aaaaaa /etc/nginx/conf.d/app.conf file", before_hash: "sha256:aa", after_hash: "sha256:bb", vault_commit: "5dde7698",
+        verification: "probe-1", receipts: "", status: "done", reason: "restored", record: "", started_at: "2026-10-24T00:01:00.000Z", finished_at: "2026-10-24T00:01:04.000Z", disposition_id: "dsp-1",
+      },
+      reason: "restored", record: [],
+    };
+    const printed: string[] = [];
+    const steps = fakeSteps([], {
+      explain: async () => ({ ok: true, summary: "explain: tenant t1, 4 cause(s)", view: explainView({ causes }), explain }),
+      act: async () => ({ ok: true, summary: "act: applied", act: { apply: true, plan: [], outcomes: [restored] } }),
+    });
+    const res = await runCycle({ tenant: "t1", apply: true, aliases: [], skip: parseSkip(["collect,probe,validate"]) }, steps, { print: (l) => printed.push(l), clock: ticking() });
+    expect(res.explain).toBe(explain);
+    expect(printed).toContain(`${"  explain   4 causes      operator 1 · agent 1 · unknown 2".padEnd(85)}0.1 s`);
+    expect(printed.slice(printed.indexOf("what happened"), -1)).toEqual([
+      "what happened",
+      `  A vhost file drifted from its approved copy; the agent restored it, nginx reloaded, 1 probe passed. ${EDIT.slice(0, -1)}, 9 minutes before the agent restored it.`,
+    ]);
+  });
+
+  it("the explain step never stops the cycle: a read that fails reads not explained on its row, with the reason, and traces the failure", async () => {
+    const broken = { run: async () => { throw new Error("relation finding_cause does not exist; the setup registers it"); } } as unknown as DataLayer;
+    const rollback = { id: "fnd-1", verb: "ROLLBACK", finding: { tenant_id: "t1", class: "drift_vs_approved" } } as unknown as PassStep["findings"][number];
+    const tracer = new MemTracer("loop_test", { model: "none" });
+    const r = await explainStep(broken, { ...passOf(), findings: [rollback] }, { sink: null, vault: null, redactor: new Redactor("loop-test-salt", []), tracer });
+    expect(r.ok).toBe(true);
+    expect(r.summary).toBe("explain: tenant t1, not explained (relation finding_cause does not exist; the setup registers it); act runs as before");
+    expect(r.explain).toBeUndefined();
+    expect(new Table(PLAIN).row("explain", r.view!, 120)[0]).toBe(`${"  explain   0 causes      not explained · relation finding_cause does not exist".padEnd(85)}0.1 s`);
+    expect(tracer.events.filter((e) => e.agent === "explainer").map((e) => e.status)).toEqual(["failed"]);
+    // a pass that moves on nothing has nothing to explain and reads nothing
+    const none = await explainStep(broken, passOf(), { sink: null, vault: null, redactor: new Redactor("loop-test-salt", []) });
+    expect(new Table(PLAIN).row("explain", none.view!, 0)[0]).toBe(`${"  explain   0 causes      nothing to explain".padEnd(85)}0.0 s`);
   });
 
   it("shows each collect:linux row's alias as the cycle was given it; the row's detail passes the redactor", async () => {
@@ -135,14 +194,14 @@ describe("runCycle over fake steps", () => {
     await runCycle({ tenant: "t1", apply: false, aliases: [], skip: new Set() }, fakeSteps([]), { print: (l) => quiet.push(l), clock: ticking(), present: { ...PLAIN, quiet: true } });
     expect(quiet).toHaveLength(2);
     expect(quiet[0]).toMatch(/^drift-agent · cycle · tenant t1 · /);
-    expect(quiet[1]).toMatch(/^done · 7 steps · /);
+    expect(quiet[1]).toMatch(/^done · 8 steps · /);
     const verbose: string[] = [];
     const res = await runCycle({ tenant: "t1", apply: false, aliases: [], skip: new Set() }, fakeSteps([]), { print: (l) => verbose.push(l), clock: ticking(), present: { ...PLAIN, verbose: true } });
     expect(verbose[1]).toMatch(/^  collect   cloudflare    fine +0\.1 s$/);
-    expect(verbose[2]).toBe("cycle: [1/7] collect:cloudflare ok in 0.1 s: collect:cloudflare: fine");
+    expect(verbose[2]).toBe("cycle: [1/8] collect:cloudflare ok in 0.1 s: collect:cloudflare: fine");
     expect(verbose[3]).toMatch(/^  probe     fine +0\.1 s$/);
-    expect(verbose[4]).toBe("cycle: [2/7] probe ok in 0.1 s: probe: fine");
-    expect(verbose.at(-2)).toMatch(/^done · 7 steps · /);
+    expect(verbose[4]).toBe("cycle: [2/8] probe ok in 0.1 s: probe: fine");
+    expect(verbose.at(-2)).toMatch(/^done · 8 steps · /);
     expect(verbose.at(-1)).toBe(res.summary);
   });
 
@@ -400,6 +459,7 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
         const r = await passStep(layer, { tenant: TENANT, ledger: new MemoryLedger(engine), decidedAt: AT, world: new DriftWorld("loop_test"), tracer });
         return { ok: true, summary: r.summary, pass: r };
       },
+      explain: (p) => explainStep(layer, p, { sink: new MemoryCauseSink(engine), vault: base.vault, redactor: base.redactor, tracer }),
       act: (p) => actStep(p, { apply: false, redactor: base.redactor, deps: { ...deps, findingOf: async (d) => p.findings.find((f) => f.id === d.finding_id) ?? null } }),
       tickets: (p) => ticketsStep(layer, p, { adapter: () => { throw new Error("a dry run builds no adapter"); }, rows: null, dryRun: true, redactor: base.redactor, labels: base.redactor, deny: [], tracer, now: () => AT }),
       document: (p) => documentStep(layer, p, { out, root: dir, deny: ["zz-label-absent"], source: "sql.js over test/fixtures/policy-bundle.json", tracer }),
@@ -407,9 +467,15 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
     const res = await runCycle({ tenant: TENANT, apply: false, aliases: ["fixture-host"], skip: parseSkip(["collect,probe,validate"]) }, steps, { tracer, print: (l) => printed.push(l) });
     expect(res.stopped).toBeNull();
     expect(res.steps.map((s) => `${s.step} ${s.status}`)).toEqual([
-      "collect:cloudflare skipped", "collect:linux fixture-host skipped", "probe skipped", "validate skipped", "pass ok", "act ok", "tickets ok", "document ok",
+      "collect:cloudflare skipped", "collect:linux fixture-host skipped", "probe skipped", "validate skipped", "pass ok", "explain ok", "act ok", "tickets ok", "document ok",
     ]);
     const pass = res.pass!;
+    // explain: one cause per ROLLBACK, FIX, ESCALATE and explained HOLD, stored where act and the tickets read them, by disposition
+    expect(res.steps[5].summary).toBe("explain: tenant client-a, 8 cause(s) (account_change 2, unknown 6); searched 0 journal and 1 cloudflare row(s) and 0 ledger action(s); finding_cause 8 row(s) written");
+    expect(res.explain?.causes).toHaveLength(8);
+    const causes = await causesByDisposition(layer, TENANT);
+    expect([...causes.keys()].sort()).toEqual(pass.findings.filter((f) => f.verb !== "ADOPT" && f.finding.class !== "changed_since_backup").map((f) => dispositionIdOf(f, AT)).sort());
+    expect(tracer.events.filter((e) => e.agent === "explainer" && e.action === "explain")).toHaveLength(9);
     // every finding of the pass is in the ledger under the id the pass gave it, decided at the given instant
     const ledger = new Map(objects(await layer.run(DISPOSITIONS_SQL)).map((d) => [d.disposition_id, d]));
     for (const f of pass.findings) expect(ledger.get(dispositionIdOf(f, AT))?.decided_at).toBe(AT);
@@ -418,12 +484,12 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
     // the fixture world's bundle: the policy fixture plus the server_name rows of app.conf and blog.conf
     expect(pass.summary).toContain(`${pass.findings.length} finding(s) (approved_missing 1, changed_since_backup 3, drift_vs_approved 5, found_but_different 2, proxy_split 1); verbs: ADOPT 2, HOLD 5, ESCALATE 1, ROLLBACK 3, FIX 1; decided by policy 12;`);
     // the dry run plans the fixture's five actions and writes no action row
-    expect(res.steps[5].summary).toMatch(/^act: dry run: 5 actions planned \(rollback_file 2, revert_record 1, investigate 1, fix 1\), 1 of them refused on --apply; 0 already recorded; 0 action rows written; scope \d+ disposition\(s\) of \d+ run\(s\)/);
+    expect(res.steps[6].summary).toMatch(/^act: dry run: 5 actions planned \(rollback_file 2, revert_record 1, investigate 1, fix 1\), 1 of them refused on --apply; 0 already recorded; 0 action rows written; scope \d+ disposition\(s\) of \d+ run\(s\)/);
     expect(objects(await tenantActions(layer, TENANT)).length).toBe(0);
-    expect(res.steps[6].summary).toMatch(new RegExp(`^TICKETS: tenant client-a, ${pass.findings.length} finding\\(s\\), .*; dry run, nothing sent or written$`));
-    expect(res.steps[7].summary).toMatch(/^document: document\.md written for client-a, \d+ lines, \d+ finding\(s\) open, \d+ queries; deny-list probe 0 of 1 label\(s\); decided at 2026-10-23T03:00:00\.000Z$/);
+    expect(res.steps[7].summary).toMatch(new RegExp(`^TICKETS: tenant client-a, ${pass.findings.length} finding\\(s\\), .*; dry run, nothing sent or written$`));
+    expect(res.steps[8].summary).toMatch(/^document: document\.md written for client-a, \d+ lines, \d+ finding\(s\) open, \d+ queries; deny-list probe 0 of 1 label\(s\); decided at 2026-10-23T03:00:00\.000Z$/);
     expect(readFileSync(out, "utf8")).toContain(TENANT);
-    expect(res.summary).toMatch(/^CYCLE: tenant client-a, dry run .*: 8 step\(s\): ok 4, skipped 4, failed 0, not run 0; completed;/);
+    expect(res.summary).toMatch(/^CYCLE: tenant client-a, dry run .*: 9 step\(s\): ok 5, skipped 4, failed 0, not run 0; completed;/);
     // the screen: the pass row with its verbs, the classes in plain words and a line per ROLLBACK, FIX and ESCALATE; act's five planned actions
     const screen = printed.map((l) => l.replace(/ +\d+\.\d s$/, ""));
     const at = screen.findIndex((l) => l.startsWith("  pass "));
@@ -438,7 +504,8 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
       "            FIX       drifted from the approved value · conf.d/shop.conf on host-7f1c · no valid copy · production affected, 1 failing probe",
       "            ESCALATE  name and its www treated differently by the proxy · www.example.invalid · the hold ran out at 23 Oct 00:00 UTC, a technician owns it",
     ]);
-    expect(screen.slice(at + 9, at + 15)).toEqual([
+    expect(screen.slice(at + 9, at + 16)).toEqual([
+      "  explain   8 causes      account 2 · unknown 6",
       "  act       5 actions planned",
       expect.stringMatching(/^            rollback_file  conf\.d\/app\.conf on host-7f1c · from vault [0-9a-f]{8} · then nginx -t, reload, 1 probe$/),
       expect.stringMatching(/^            rollback_file  conf\.d\/blog\.conf on host-7f1c · from vault [0-9a-f]{8} · then nginx -t, reload, 1 probe$/),
@@ -446,17 +513,25 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
       "            investigate    FIX · conf.d/shop.conf on host-7f1c · checks, then the judge",
       "            fix            refused on --apply · no fix is allowed without a valid copy",
     ]);
-    // the what-happened block after the document row: what --apply does for the planned actions, at most five sentences
+    // the what-happened block after the document row: what --apply does for the planned actions, each with its cause on
+    // the same line, the escalation with its own, at most five sentences
     const doc = screen.findIndex((l) => /^  document  document\.md · \d+ lines$/.test(l));
+    const noWrite = "No record of who changed it: the journal window of 90 h holds 0 writes to the file.";
     expect(screen.slice(doc + 1, -1)).toEqual([
       "what happened",
-      expect.stringMatching(/^  A vhost file drifted from its approved copy; a run with --apply restores it from vault copy [0-9a-f]{8} and reloads nginx\.$/),
-      expect.stringMatching(/^  An approved vhost file went missing; a run with --apply restores it from vault copy [0-9a-f]{8} and reloads nginx\.$/),
+      expect.stringMatching(new RegExp(`^  A vhost file drifted from its approved copy; a run with --apply restores it from vault copy [0-9a-f]{8} and reloads nginx\\. ${noWrite.replace(/\./g, "\\.")}$`)),
+      expect.stringMatching(new RegExp(`^  An approved vhost file went missing; a run with --apply restores it from vault copy [0-9a-f]{8} and reloads nginx\\. ${noWrite.replace(/\./g, "\\.")}$`)),
       "  2 more actions are listed under act.",
-      "  1 finding is with a technician: name and its www treated differently by the proxy at www.example.invalid.",
+      "  1 finding is with a technician: name and its www treated differently by the proxy at www.example.invalid. No record of who changed it: the audit log window of 24 h holds 0 events for the record.",
       "  2 findings are adopted under policy rules; 5 are held with an expiry.",
     ]);
-    expect(printed.at(-1)).toMatch(/^done · 8 steps · 4 skipped · \d+\.\d s$/);
+    // the document's Why: one line per explained finding, in the order the page lists them, its cause's sentence
+    const page = readFileSync(out, "utf8");
+    const why = page.slice(page.indexOf("### Why\n"), page.indexOf("\n## ", page.indexOf("### Why\n")));
+    expect(why).toContain("Who or what changed each setting, from the hosts' journal, the provider's audit log and the agent's own actions (8 findings):");
+    expect(why.split("\n").filter((l) => l.startsWith("- "))).toHaveLength(8);
+    for (const c of res.explain!.causes) expect(why).toContain(`- ${c.finding_id} ${c.verb} ${c.finding_class}: ${c.cause.summary}\n`);
+    expect(printed.at(-1)).toMatch(/^done · 9 steps · 4 skipped · \d+\.\d s$/);
   });
 
   it("a second pass over the same runs at a later instant writes a row per finding of its own; one more at that instant writes none and counts them kept", async () => {

@@ -36,14 +36,15 @@ document is rendered from SQL; `npm run cycle` runs every step once, `npm run wa
 
 ## What it does
 
-1. **Collect and vault.** The Linux collector streams a fixed script of reads over one SSH session per host; the Cloudflare collector reads the zones, the records and the account audit log with a read token. Each asserts its population before its first row, redacts every row on its way into the app Postgres and commits a complete run to the vault, where `validate:copies` checks that each copy restores and `probe` asks every served name from outside.
+1. **Collect and vault.** The Linux collector streams a fixed script of reads over one SSH session per host, the journal's sudo commands and ssh logins of the last 24 h among them; the Cloudflare collector reads the zones, the records and the account audit log with a read token. Each asserts its population before its first row, redacts every row on its way into the app Postgres and commits a complete run to the vault, where `validate:copies` checks that each copy restores and `probe` asks every served name from outside.
 2. **Gate.** The DQ rule `run_complete` fails a run that observed fewer objects than it asserted, finished other than complete or never asserted a population, and a failing run feeds nothing below, so a short read is never taken for a clean one.
 3. **Verify through Zetaris.** The hero query (a byte-identical setting pointing at a name that now resolves outside the inventory), the estate survey and the three detectors (`drift_vs_approved`, `changed_since_backup`, `approved_missing`) run as SQL through one DataLayer over the `DRIFT` datasource, then the precondition catalogue checks each finding. In sample mode the same SQL runs on sql.js over the exported bundle.
 4. **Triage and judge with Nemotron, under a receipt gate.** Each finding gets the precondition checks for its class; under investigation, Nemotron Lightning picks the checks and Nemotron Ultra judges the claim with one SELECT that returns rows only when it is false. A verdict counts only when its signed receipt verifies, names the tier requested and passes custody.
 5. **Decide under the policy.** The Decider applies the technician's exception first, then the policy rule that governs the setting, then the default, and gives one of five verbs with a one-sentence reason. A HOLD carries the rule's expiry, and past it the finding is ESCALATE.
 6. **Record.** One `disposition` row per finding per pass goes to the ledger, keyed on the live value, the run and the instant decided. A finding that rests on a DNS record also gets its exposure line: since when the record has been in that state, read from the audit log.
-7. **Act behind `--apply`.** The Actor turns a ROLLBACK into `rollback_file` or `revert_record` and a FIX into `investigate`, then `fix`, and verifies every write with probes. Without `--apply` it prints the plan and writes nothing.
-8. **Ticket and document.** The ticket step opens, comments on and closes GitHub issues by verb and by the rule's `alert`. The owner's document renders one markdown page per tenant from 14 named queries.
+7. **Explain.** For every ROLLBACK, FIX and ESCALATE, and every HOLD of a drifted, missing or moved setting, the explainer states who or what changed it, when and how, from rows the agent already holds and no model: the vault's approved copy against the live one, each host's journal, the Cloudflare audit log and the agent's own actions. Each cause is one `finding_cause` row with its class, its evidence, the diff and one sentence ([Why it changed](#why-it-changed)); a cause changes no disposition, and a dry run explains too.
+8. **Act behind `--apply`.** The Actor turns a ROLLBACK into `rollback_file` or `revert_record` and a FIX into `investigate`, then `fix`, and verifies every write with probes. Without `--apply` it prints the plan and writes nothing.
+9. **Ticket and document.** The ticket step opens, comments on and closes GitHub issues by verb and by the rule's `alert`, each with the finding's Why. The owner's document renders one markdown page per tenant from 15 named queries, 16 when it lists a cause.
 
 ## Run it
 
@@ -85,7 +86,7 @@ npm run pass -- --tenant <id>                           # the pass through Zetar
 npm run act -- --tenant <id>                            # the Actor's plan, a dry run; --apply carries it out
 npm run tickets -- --tenant <id>                        # GitHub issues by the ticket rules; --dry-run prints the plan
 npm run document -- --tenant <id>                       # the owner's document -> document.md
-npm run cycle -- --tenant <id>                          # collect, probe, validate, pass, act (dry run), tickets, document, once
+npm run cycle -- --tenant <id>                          # collect, probe, validate, pass, explain, act (dry run), tickets, document, once
 npm run watch -- --tenant <id> --every 60               # the cycle every 60 minutes until SIGINT
 ```
 
@@ -139,7 +140,7 @@ The sources:
 - export (`backup_snapshot`, `backup_item`): the nightly export tarball of each host and every regular member of the newest.
 - documentation of record (`approved_setting`): the values a technician approved; IT Glue and Hudu map here.
 - DNS (`dns_record`): the DNS provider's records, Cloudflare's in this slice.
-- audit log (`audit_event`): the provider's audit log, who changed which resource and when.
+- audit log (`audit_event`): the provider's audit log, who changed which resource and when; and each host's journal of the last 24 h, the sudo commands that touch nginx and the logins, every login name pseudonymised.
 - inventory (`inventory_asset`): the hosts' addresses.
 - populations (`collection_run`): each source's own population, asserted before a row is read, and each run's status.
 
@@ -219,7 +220,39 @@ Tickets go to GitHub Issues: ESCALATE and FIX open an incident, ROLLBACK a chang
 an incident under `alert` always; a change closes once its action is verified, and an unverified one stays open with
 a comment until a pass finds the setting at its approved value; `src/psa/mapping.json` maps the columns onto HaloPSA,
 ConnectWise and Autotask. On 24 Oct 2026 the policy fixture's ROLLBACK 3 and FIX 1 gave five
-actions against a fake host, probe and fetch, and a second run wrote 0.
+actions against a fake host, probe and fetch, and a second run wrote 0. A ticket opened or commented on for an
+explained disposition carries a Why section right after its Evidence: the cause's sentence, one timeline line per
+evidence row (`2026-10-25 15:52:07 UTC · journal · user-3f2a1c · tee · /etc/nginx/conf.d/app.conf`) and the diff in
+a fenced block.
+
+## Why it changed
+
+The explain step runs after the pass and before act, as agent `explainer` in the trace, and reads only rows the agent
+already holds (`src/explain/`). For each finding it explains it searches one window, from the setting's current
+approval (with none, the earlier of its last matching observation and 24 h back) to the pass:
+
+- the diff: the approved copy's bytes in the vault against the live copy's, at most 40 lines, each through the redactor; for a record, the approved value against the observed one;
+- the host's journal (`audit_event`, source `journal`): the sudo commands that write the file (tee, sed, cp, mv, an editor), each with the same user's nearest ssh login in the two hours before it, and the certbot and dpkg runs that touch nginx;
+- the Cloudflare audit log (`audit_event`, source `cloudflare`): the changes to the record, by a named account or through an API token;
+- the action ledger: a journal write of the file within 15 s of the agent's `rollback_file` on that host, or a token change within 90 s of its `revert_record` on that record, is the agent's own.
+
+The first class that matches names the cause: `agent`, `operator_edit`, `automation`, `account_change`,
+`token_change`, else `unknown`, whose sentence states the window and the rows it holds. A person's or a tool's change
+ends with how long before the agent restored it, once its rollback or revert wrote:
+
+- The file was changed at 15:52 UTC by user-3f2a1c over ssh from ip-7c1d2e (sudo tee), 2 minutes before the agent restored it.
+- The file was changed at 03:12 UTC by certbot (renewal).
+- The record was changed at 16:50 UTC through an API token.
+- No record of who changed it: the journal window of 24 h holds 0 writes to the file and the audit log holds 0 events for the record.
+
+Each cause is one `finding_cause` row (class, actor, mechanism, time, source address, evidence ids, diff, sentence,
+window) and shows in four places: the explain row of the cycle's table (`explain   4 causes   operator 1 · agent 1 ·
+unknown 2`), after its action's sentence in the "what happened" block, as the ticket's Why, and in the Why list of the
+owner's document. A login name reaches the row as the redactor's `user-XXXXXX` pseudonym, a source address as
+`ip-XXXXXX`, and a command keeps its program, flags and paths only. Over the policy fixture the dry-run cycle explains
+8 findings (account_change 2, unknown 6) and writes 8 rows (test/loop.test.ts); on 25 Oct 2026 on the lab estate a
+`sudo tee` break read back as operator_edit at 19:17 UTC by user-212a17 over ssh, with 11 evidence rows and an 11-line
+diff, the step in 1.4 s, and after the rollback its sentence ends ", 4 minutes before the agent restored it."
 
 ## Pre-flight
 
@@ -313,6 +346,7 @@ refuting SELECT returned no rows on receipt `rcpt_req_iehg9gmt`, both receipts v
 - The 23 accepted exceptions in `examples/memory` hold until 2026-11-30T00:00:00Z, and recall runs at the clock: from that instant the sample pass, the examples and the replay page give those 23 findings ESCALATE (exception lapsed), and `npm run examples`, `npm run document` and `npm run site` regenerate the committed outputs the tests hold to the store. The 23 lessons sit on 15 names: a name served by a :443 and a :80 block raises two findings, one lesson was taught per finding, and the Decider applies the earlier lesson on a name, so withdrawing one of a pair leaves its twin in force (25 Oct 2026).
 - `verifyReceipt` trusts the public key each receipt carries; pinning the runtime's key in config would close a receipt forged with a fresh key.
 - Probes run from one machine through two public resolvers; a name resolves through its A and AAAA records, a CNAME followed one level.
+- The journal window covers the sudo commands and ssh logins of the last 24 h on the hosts the agent reaches; a change made as root in a shell the journal does not record reads `unknown`.
 - The collector reads with the operator's own SSH key, so its read-only property lives in the fixed script it streams. [ops/](ops/) holds the designed second stage, not yet installed: a dedicated user whose key is bound to a forced command running the same reads, and one sudoers line for the two root-only reads.
 - Source discovery (new hosts, new accounts, new tools) is the discovery agent's, in the larger product; this agent discovers within the hosts `LINUX_HOSTS` lists and one Cloudflare account.
 

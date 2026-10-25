@@ -302,7 +302,7 @@ describe("apply()", () => {
     expect(out).toContain("     run_complete | collection | Custom Data Quality | 4 | 4 | 0");
     expect(out.find((l) => l.includes("01 show datasources"))).toMatch(/^ok\s+01 show datasources\s+1 row, DRIFT listed {2}\(\d+ ms\)$/);
     expect(out.find((l) => l.includes("02 create datasource DRIFT"))).toMatch(/^skipped 02 create datasource DRIFT\s+DRIFT exists$/);
-    expect(out.find((l) => l.includes("03 list datasource tables"))).toMatch(/^ok\s+03 list datasource tables\s+16 rows, all 16 schema tables registered {2}\(\d+ ms\)$/);
+    expect(out.find((l) => l.includes("03 list datasource tables"))).toMatch(new RegExp(`^ok\\s+03 list datasource tables\\s+${TABLE_NAMES.length} rows, all ${TABLE_NAMES.length} schema tables registered {2}\\(\\d+ ms\\)$`));
     expect(out.find((l) => l.includes("09 load usl drift_usl"))).toMatch(/^ok\s+09 load usl drift_usl\s+10 tables as compiled {2}\(\d+ ms\)$/);
     expect(out.find((l) => l.includes("10 remove usl"))).toMatch(/^skipped 10 remove usl drift_usl\s+drift_usl holds the 10 tables as compiled$/);
     expect(out.find((l) => l.includes("22 list dq rules"))).toMatch(/^ok\s+22 list dq rules\s+6 rows, run_complete listed, copy_validated listed, action_verified listed {2}\(\d+ ms\)$/);
@@ -327,7 +327,7 @@ describe("apply()", () => {
       "load usl drift_usl": "ok", "remove usl drift_usl": "ok", "compile usl drift_usl": "ok",
       "register dq run_complete": "ok", "update dq run_complete": "skipped", "register dq copy_validated": "ok", "register dq action_verified": "ok",
     });
-    expect(out.find((l) => l.includes("03 list datasource tables"))).toContain(`8 of 16 schema tables unregistered: ${TABLE_NAMES.slice(8).join(", ")}`);
+    expect(out.find((l) => l.includes("03 list datasource tables"))).toContain(`${TABLE_NAMES.length - 8} of ${TABLE_NAMES.length} schema tables unregistered: ${TABLE_NAMES.slice(8).join(", ")}`);
     expect(out.find((l) => l.includes("09 load usl drift_usl"))).toContain("stale: 4 table(s); lacks policy, copy, probe, disposition, action, ticket");
     const order = client.calls.map((c) => c.sql.split(/\s+/).slice(0, 2).join(" "));
     expect(order.indexOf("REMOVE USL")).toBeLessThan(order.indexOf("COMPILE USL"));

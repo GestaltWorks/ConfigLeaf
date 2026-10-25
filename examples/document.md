@@ -105,6 +105,10 @@ Each open finding, by verb and class, with the reason its disposition records:
 - fnd-d62857e241af66e2 HOLD orphan_record: name in c8b1963847dafe3548b1a4b93f520c0a on host-aa516a (cloudflare.dns, run run-9d48791b00433777), until 2026-10-27T23:21:06.870Z. rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T13:54:08.785Z under rule rule-b8d9962485c3ced4.
 - fnd-b4a40091cdb4f906 ESCALATE proxy_split: proxied in bce1ca2bb7caa2de9b6823d5f6ecd3f2 (cloudflare.dns, run run-9d48791b00433777). hold under rule rule-8e75e1d767980665 expired 2026-10-25T03:21:06.870Z; the finding stands.
 
+### Why
+
+No open finding carries a cause: the explain step of a cycle records one for each finding it explains.
+
 ## Where each answer comes from
 
 Each finding class answers its question by joining the tables its detector query and its default checks name, and each table holds the rows of one source. The rows are read off the SQL in `src/data/queries.ts` and `src/catalogue/templates.ts` and the default checks in `src/catalogue/select.ts`.
@@ -127,7 +131,7 @@ The sources:
 - export (`backup_snapshot`, `backup_item`): the nightly export tarball of each host and every regular member of the newest.
 - documentation of record (`approved_setting`): the values a technician approved; IT Glue and Hudu map here.
 - DNS (`dns_record`): the DNS provider's records, Cloudflare's in this slice.
-- audit log (`audit_event`): the provider's audit log, who changed which resource and when.
+- audit log (`audit_event`): the provider's audit log, who changed which resource and when; and each host's journal of the last 24 h, the sudo commands that touch nginx and the logins, every login name pseudonymised.
 - inventory (`inventory_asset`): the hosts' addresses.
 - populations (`collection_run`): each source's own population, asserted before a row is read, and each run's status.
 
@@ -173,6 +177,7 @@ The failing names:
 - POLICY_RULES_SQL: 1 run, 26 rows
 - DOC_UNAPPROVED_SQL: 3 runs, 1019 rows
 - DOC_DISPOSITIONS_OF_RUN_SQL: 3 runs, 27 rows
+- CAUSES_SQL: 1 run, 0 rows
 - DOC_ACTIONS_SQL: 1 run, 0 rows
 - DOC_TICKETS_SQL: 1 run, 1 row
 - DOC_PROBES_SQL: 1 run, 6 rows

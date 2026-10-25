@@ -11,6 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { CREDENTIAL_SHAPED, EMPTY_SHA256, LIVE_PREFIXES, MARK, SSH_ARGS, backupMemberId, exportCopyToObjectId, fullIsoToIso, ipv6Line, parseLs, parseStream, pseudonymHost, pseudonymUser, readScript, redactText, tarMemberToObjectId, tarRoot, tarballStem, toRows, type Fetched } from "../src/collectors/linux.ts";
+import { JOURNAL_MATCHES, JOURNAL_SHELL } from "../src/collectors/journal.ts";
 import { analyse, classifyTarget, isDnsName, listenPort, parse, type Malformed } from "../src/collectors/nginx.ts";
 import type { ObservationRow } from "../src/collectors/types.ts";
 import { parseLinuxHosts } from "../src/config.ts";
@@ -341,7 +342,7 @@ describe("rows: conf.d layout (conf.d layout)", () => {
     expect(summary.unresolved_includes).toEqual([]);
     expect(summary.malformed).toEqual([]);
     expect(summary.standalone).toEqual(["/etc/nginx/conf.d/app.invalid.conf.2026-04-01.bak"]);
-    expect(summary.counts).toEqual({ collection_run: 1, observation: obs.length, inventory_asset: 3, backup_snapshot: 0, backup_item: 0 });
+    expect(summary.counts).toEqual({ collection_run: 1, observation: obs.length, inventory_asset: 3, backup_snapshot: 0, backup_item: 0, audit_event: 0 });
     expect(summary.ip6_left_out).toEqual([]);
   });
 
@@ -692,16 +693,24 @@ describe("the read script and the SSH contract", () => {
     expect([...SSH_ARGS]).toEqual(["-o", "BatchMode=yes", "-o", "ConnectTimeout=15"]);
   });
 
-  it("runs only the enumerated read commands, never sudo, never anything that writes", () => {
+  it("runs only the enumerated read commands, never anything that writes; its one sudo is the journal read", () => {
     const commands = [...script.matchAll(/\bsection \S+ (?:'[^']*'|"[^"]*"|\S+) (\S+)/g)].map((m) => m[1]);
-    expect(new Set(commands)).toEqual(new Set(["id", "hostname", "date", "ip", "ls", "base64", "systemctl", "find", "member_hashes"]));
+    expect(new Set(commands)).toEqual(new Set(["id", "hostname", "date", "ip", "ls", "base64", "systemctl", "find", "member_hashes", "journal_lines"]));
     expect(script).toMatch(/section timers '' systemctl list-timers --all --no-pager$/m);
     expect(script).toMatch(/ip -4 -o addr show scope global$/m);
     expect(script).toMatch(/ip -6 -o addr show scope global$/m);
     expect(script).toMatch(/section whoami '' id -un$/m);
-    expect(script).not.toMatch(/\bsudo\b|\bsu\b|\bdoas\b/);
-    expect(script).not.toMatch(/\b(rm|mv|cp|tee|dd|chmod|chown|chgrp|touch|mkdir|ln|truncate|sed -i|apt|apt-get|dnf|yum|pip|npm|curl|wget|nginx -s|certbot|reboot|shutdown|kill)\b/);
-    expect(script).not.toMatch(/systemctl (?!list-timers)/);
+    // The journal section's grep patterns name certbot and systemctl reload as text to match, not as commands, so the
+    // word checks read the script without it; the section has checks of its own below and in test/journal.test.ts.
+    expect(script).toContain(JOURNAL_SHELL);
+    const reads = script.replace(JOURNAL_SHELL, "");
+    expect(reads).not.toMatch(/\bsudo\b|\bsu\b|\bdoas\b/);
+    expect(reads).not.toMatch(/\b(rm|mv|cp|tee|dd|chmod|chown|chgrp|touch|mkdir|ln|truncate|sed -i|apt|apt-get|dnf|yum|pip|npm|curl|wget|nginx -s|certbot|reboot|shutdown|kill)\b/);
+    expect(reads).not.toMatch(/systemctl (?!list-timers)/);
+    expect(JOURNAL_SHELL).not.toMatch(/\b(rm|mv|cp|tee|dd|chmod|chown|chgrp|touch|mkdir|ln|truncate|sed|apt|apt-get|dnf|yum|pip|npm|curl|wget|reboot|shutdown|kill|su|doas)\b/);
+    // sudo runs twice, both for journalctl: the permission check and the read, non-interactive, with no pager
+    const sudoCalls = [...script.matchAll(/(?:^\s*|[;|&]\s*|\bthen\s+|\bif !\s*)sudo\b([^\n|;]*)/gm)].map((m) => m[1].trim());
+    expect(sudoCalls).toEqual(["-n -l journalctl >/dev/null 2>&1", `-n journalctl --utc -o short-iso --no-pager --since "$1" ${JOURNAL_MATCHES} 2>/dev/null`]);
     expect(script).not.toMatch(/tar -[a-z]*x(?![a-z]*O)/); // every tar extraction is to stdout, never to disk
     expect(script).toMatch(/tar -xOzf/);
     expect(script).toMatch(/tar -tvzf "\$1" \| grep '\^-'/); // regular-file members only: a symlink member would hash as the empty input
@@ -718,7 +727,7 @@ describe("the read script and the SSH contract", () => {
   });
 
   it("a Fetched with nothing in it is a failed run that the gate refuses", async () => {
-    const empty: Fetched = { complete: false, login_user: null, hostname: null, server_time: null, ip4: [], ip6: [], ip6_left_out: [], listings: {}, files: {}, timers: null, export_dir: null, renewals: null, sections: [] };
+    const empty: Fetched = { complete: false, login_user: null, hostname: null, server_time: null, ip4: [], ip6: [], ip6_left_out: [], listings: {}, files: {}, timers: null, export_dir: null, renewals: null, journal: null, sections: [] };
     const { rows } = toRows(empty, { tenantId: "client-a", redactor: r, alias: "vps-a", now: NOW });
     expect(rows.collection_run[0]).toMatchObject({ expected_count: null, observed_count: null, status: "failed" });
     expect(rows.observation).toEqual([]);

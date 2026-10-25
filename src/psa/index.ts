@@ -29,6 +29,9 @@
 //     disposition is ADOPT, or when a pass whose runs cover the setting raises no finding on it. On an open
 //     ticket, a new action or a verb other than the one in force at its last update is one comment; anything
 //     else leaves it as it is. A closed row stays closed.
+//   - Why: a create's body and a comment carry the cause of the disposition they are for when the explain step
+//     recorded one (TicketInput causes, by disposition_id; src/psa/body.ts whyLines); a disposition with none gets
+//     no Why section.
 //   - outgoing: every string bound for a PSA passes the tenant's redactor and then the deny-list probe
 //     (redactor.ts countLabels over REDACT_WORDS and EXPORT_DENY_WORDS); one label and nothing is sent. The
 //     error names the label's position in the list and the count, never the label.
@@ -47,7 +50,7 @@ import { stableId, type Action, type Disposition, type DispositionVerb, type Pol
 import type { TicketPatch } from "../data/store.ts";
 import { resolvePolicy } from "../policy/resolve.ts";
 import { countLabels, type Redactor } from "../redactor.ts";
-import { closeComment, commentBody, objectLabel, ticketBody, ticketTitle, unverifiedComment, type ProbeEvidence } from "./body.ts";
+import { closeComment, commentBody, objectLabel, ticketBody, ticketTitle, unverifiedComment, type ProbeEvidence, type TicketCause } from "./body.ts";
 
 export type TicketType = Ticket["type"];
 export type TicketStatus = "open" | "closed";
@@ -151,6 +154,8 @@ export interface TicketInput {
   probes: ReadonlyMap<string, ProbeEvidence>;
   /** Per finding id of a cloudflare.dns finding: the zone of its record. */
   zones: ReadonlyMap<string, string>;
+  /** Per disposition_id: the cause the explain step recorded and its timeline; absent, no ticket carries a Why. */
+  causes?: ReadonlyMap<string, TicketCause>;
   /** True when the current pass's latest runs for the disposition's setting passed the gate, so the setting's absence from the pass means it is resolved. */
   covered(d: Disposition): boolean;
   /** The current pass's latest passing run ids, named in a resolved comment. */
@@ -217,7 +222,7 @@ export function planTickets(input: TicketInput): TicketOp[] {
       : tickets.filter((t) => open(t) && (call.type === null || t.type === call.type)).sort((a, b) => (a.created_at < b.created_at ? -1 : 1)).at(-1);
     const probes = input.probes.get(f.id) ?? { run_id: null, rows: [] };
     const where = f.finding.host ?? input.zones.get(f.id) ?? "the account";
-    const parts = { finding: f, disposition: d, rule, actions: acts, probes };
+    const parts = { finding: f, disposition: d, rule, actions: acts, probes, why: input.causes?.get(d.disposition_id) ?? null };
 
     if (!current) {
       if (byId) {

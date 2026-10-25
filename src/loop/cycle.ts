@@ -1,20 +1,22 @@
-// One cycle of the loop as a function over injectable steps: collect, probe, validate, pass, act, tickets, document,
-// in that order. scripts/cycle.ts and scripts/watch.ts run it over the live steps (src/loop/steps.ts liveSteps); a
-// test runs it over fakes.
+// One cycle of the loop as a function over injectable steps: collect, probe, validate, pass, explain, act, tickets,
+// document, in that order. scripts/cycle.ts and scripts/watch.ts run it over the live steps (src/loop/steps.ts
+// liveSteps); a test runs it over fakes.
 //
 // Contract:
 //   - Steps, in order: collect:cloudflare, collect:linux <alias> for every alias given (LINUX_HOSTS live), probe,
-//     validate, pass, act, tickets, document. `skip` names groups: collect (every collect step), probe, validate, act,
-//     tickets, document; the pass runs in every cycle.
+//     validate, pass, explain, act, tickets, document. `skip` names groups: collect (every collect step), probe,
+//     validate, act, tickets, document; the pass and explain run in every cycle.
 //   - Each step returns a StepReport: ok, its one summary line, the reason when it fails, detail lines for the trace.
 //     A step that throws fails with its message. The first failing step stops the cycle: every later step is not run,
 //     and the result names the step and its reason.
-//   - The collect steps hand their new vault commits to validate; the pass step hands its result to act, tickets and
-//     document.
+//   - The collect steps hand their new vault commits to validate; the pass step hands its result to explain, act,
+//     tickets and document. Explain writes its causes where act and tickets read them (src/explain/explain.ts
+//     causesByDisposition) and hands them to the cycle as its StepReport's explain.
 //   - The screen is the table of src/loop/present.ts: the header, then as each step ends its row (and the lines under
 //     it) from the step's view, its summary when it gives none; a skipped step's row says so, a failing step's row is
 //     red with its reason and the rows end there; once the pass has run, the "what happened" block (present.ts
-//     whatHappened, from the pass's findings and the act and tickets steps' results) comes before the done line; the
+//     whatHappened, from the pass's findings, the explain step's causes and the act and tickets steps' results)
+//     comes before the done line; the
 //     done line names the trace. The header's mode is present.ts MODE's, applied or dry run. --verbose prints
 //     after each step's rows its full line, "cycle: [i/n] <step> <status> in <s> s: <summary>", and after the done
 //     line the CYCLE summary line; --quiet prints the header and the done line only. A collect:linux row's subject
@@ -27,6 +29,7 @@
 // has the live run.
 
 import { redact } from "../config.ts";
+import type { ExplainResult } from "../explain/explain.ts";
 import type { Tracer } from "../trace.ts";
 import type { PassStep } from "./pass.ts";
 import { MODE, PLAIN, Table, passView, summaryView, whatHappened, type ActFacts, type PresentOptions, type StepView, type TicketFacts } from "./present.ts";
@@ -57,6 +60,8 @@ export interface StepReport {
   act?: ActFacts;
   /** tickets: the ticket step's operations and outcomes, for the "what happened" block. */
   tickets?: TicketFacts;
+  /** explain: the causes of the pass's explained findings, by finding and disposition. */
+  explain?: ExplainResult;
 }
 
 /** One vault commit a collect step made this cycle. */
@@ -70,6 +75,7 @@ export interface CycleSteps {
   probe(): Promise<StepReport>;
   validate(commits: readonly NewCommit[]): Promise<StepReport>;
   pass(): Promise<PassReport>;
+  explain(pass: PassStep): Promise<StepReport>;
   act(pass: PassStep): Promise<StepReport>;
   tickets(pass: PassStep): Promise<StepReport>;
   document(pass: PassStep): Promise<StepReport>;
@@ -108,12 +114,14 @@ export interface CycleResult {
   stopped: { step: string; reason: string } | null;
   ms: number;
   pass: PassStep | null;
+  /** The explain step's causes; null when it gave none. */
+  explain: ExplainResult | null;
   summary: string;
 }
 
 /** The step names of a cycle over these aliases, in order. */
 export const stepNames = (aliases: readonly string[]): string[] =>
-  ["collect:cloudflare", ...aliases.map((a) => `collect:linux ${a}`), "probe", "validate", "pass", "act", "tickets", "document"];
+  ["collect:cloudflare", ...aliases.map((a) => `collect:linux ${a}`), "probe", "validate", "pass", "explain", "act", "tickets", "document"];
 
 const seconds = (ms: number): string => (ms / 1000).toFixed(1);
 const TRACE_STATUS = { ok: "ok", failed: "failed", skipped: "skipped", not_run: "skipped" } as const;
@@ -202,13 +210,16 @@ export async function runCycle(opts: CycleOptions, steps: CycleSteps, io: CycleI
     return r.ok && !r.pass ? { ...r, ok: false, reason: "the pass step returned no result" } : r;
   });
   const pass = passed?.pass ?? null;
+  const explained = await step("explain", null, () => steps.explain(pass!));
   const acted = await step("act", "act", () => steps.act(pass!));
   const ticketed = await step("tickets", "tickets", () => steps.tickets(pass!));
   await step("document", "document", () => steps.document(pass!));
 
   if (pass && !present.quiet) {
     const act = lines.find((l) => l.step === "act")?.status;
-    const story = whatHappened({ pass, act: acted?.act ?? null, actSettled: act === "ok" || act === "skipped", tickets: ticketed?.tickets ?? null });
+    const story = whatHappened({
+      pass, act: acted?.act ?? null, actSettled: act === "ok" || act === "skipped", tickets: ticketed?.tickets ?? null, causes: explained?.explain?.causes.map((c) => c.cause) ?? [],
+    });
     for (const l of table.story(story)) print(l);
   }
 
@@ -221,5 +232,5 @@ export async function runCycle(opts: CycleOptions, steps: CycleSteps, io: CycleI
   print(table.done({ ms, steps: names.length, skipped: count("skipped"), trace: io.trace, stopped: stopped ? { step: stopped.step, at, of: names.length } : undefined }));
   if (present.verbose) print(summary);
   io.tracer?.emit({ agent: "cycle", action: "triage", status: stopped ? "failed" : "ok", input_summary: `cycle ${opts.tenant}`, output_summary: summary.slice(0, 1000), latency_ms: ms });
-  return { tenant: opts.tenant, apply: opts.apply, steps: lines, stopped, ms, pass, summary };
+  return { tenant: opts.tenant, apply: opts.apply, steps: lines, stopped, ms, pass, explain: explained?.explain ?? null, summary };
 }

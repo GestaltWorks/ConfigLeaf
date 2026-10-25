@@ -17,7 +17,7 @@ import { hero } from "../src/data/queries.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { SCHEMA_TABLES, TABLE_NAMES } from "../src/data/schema.ts";
 import {
-  ACTION_RECORD_MAX, COLUMNS, KEYS, REDACT, assetId, copyId, dispositionId, eventId, isTimestampColumn, obsId, probeId, ruleId, runId, snapshotId, stableId, validationId,
+  ACTION_RECORD_MAX, COLUMNS, KEYS, REDACT, assetId, causeId, copyId, dispositionId, eventId, isTimestampColumn, obsId, probeId, ruleId, runId, snapshotId, stableId, validationId,
   type AuditEvent, type DnsRecord, type InventoryAsset, type Observation, type TableName,
 } from "../src/data/rows.ts";
 import { Store, TABLES, formatBundle, scrub, toBundle, writeBundle, type Tables } from "../src/data/store.ts";
@@ -69,13 +69,17 @@ describe("rows.ts", () => {
     expect(eventId("client-a", "cloudflare", "x")).not.toBe(eventId("client-b", "cloudflare", "x"));
   });
 
-  it("the eight tables of the design: keys, redacted columns, timestamp columns and id helpers", () => {
-    expect(TABLES.slice(8)).toEqual(["policy_rule", "vault_copy", "copy_validation", "probe", "disposition", "action", "ticket", "referent_fingerprint"]);
+  it("the eight tables of the design and finding_cause: keys, redacted columns, timestamp columns and id helpers", () => {
+    expect(TABLES.slice(8)).toEqual(["policy_rule", "vault_copy", "copy_validation", "probe", "disposition", "action", "ticket", "referent_fingerprint", "finding_cause"]);
     expect(KEYS.referent_fingerprint).toEqual(["obs_id", "dns_run_id"]);
+    expect(KEYS.finding_cause).toEqual(["cause_id"]);
     expect(Object.fromEntries(TABLES.slice(8).map((t) => [t, Object.keys(REDACT[t])]))).toEqual({
       policy_rule: ["object_glob", "setting_glob", "author", "note"], vault_copy: ["host", "object_id"], copy_validation: ["missing_dependencies", "output_redacted"],
       probe: ["target", "expected", "observed"], disposition: ["host", "object_id", "reason"], action: ["target", "reason", "record"], ticket: ["url"], referent_fingerprint: [],
+      finding_cause: ["actor", "mechanism", "source_host", "diff", "summary"],
     });
+    expect(COLUMNS.finding_cause.filter(isTimestampColumn)).toEqual(["occurred_at", "decided_at"]);
+    expect(causeId("client-a", "disp-1")).toBe(stableId("cause", "client-a", "disp-1"));
     expect(COLUMNS.policy_rule.filter(isTimestampColumn)).toEqual(["since"]);
     expect(COLUMNS.disposition.filter(isTimestampColumn)).toEqual(["expires_at", "decided_at"]);
     expect(ruleId("*", "linux.nginx", "/etc/nginx/conf.d/*.conf", "file", 1)).toBe(stableId("rule", "*", "linux.nginx", "/etc/nginx/conf.d/*.conf", "file", "1"));
@@ -157,11 +161,11 @@ describe.skipIf(!url)("Store, live drift-pg (throwaway schema)", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it("applySchema creates the sixteen tables in the throwaway schema, and a second apply changes nothing", async () => {
+  it("applySchema creates the seventeen tables in the throwaway schema, and a second apply changes nothing", async () => {
     await store.applySchema();
     const r = await admin.query("SELECT table_name FROM information_schema.tables WHERE table_schema = $1 ORDER BY table_name", [schema]);
     expect(r.rows.map((x) => x.table_name).sort()).toEqual([...TABLE_NAMES].sort());
-    expect(r.rows).toHaveLength(16);
+    expect(r.rows).toHaveLength(17);
   });
 
   it("loadBundle writes every sample row once; a second load writes nothing, raises nothing and duplicates nothing", async () => {

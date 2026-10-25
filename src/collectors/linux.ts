@@ -2,9 +2,11 @@
 // [-F <LINUX_SSH_CONFIG>] <alias> bash -s, sshArgv) with READ_SCRIPT on stdin: a fixed list of reads that
 // prints delimited sections. The aliases are the operator's own ssh_config entries, or those of the file
 // LINUX_SSH_CONFIG names (lab/ssh_config.local for the lab estate), configured with each host's export
-// folder in LINUX_HOSTS (HOSTS); nothing else is reachable. Nothing in the script writes, restarts,
-// installs or escalates: a path the login user cannot read comes back as a section with a non-zero exit
-// status and is recorded as not readable. The ops/ forced command runs the same reads.
+// folder in LINUX_HOSTS (HOSTS); nothing else is reachable. Nothing in the script writes, restarts or
+// installs: a path the login user cannot read comes back as a section with a non-zero exit status and is
+// recorded as not readable. Its one sudo is the journal read (src/collectors/journal.ts): `sudo -n journalctl`
+// with fixed arguments, only when the login's groups cannot read the system journal and `sudo -n -l
+// journalctl` allows it. The ops/ forced command runs the same reads, the journal section aside.
 //
 // Contract, in order:
 //   fetchHost     streams the script, collects stdout; ssh's own stderr is redacted before it is traced.
@@ -13,8 +15,9 @@
 //                 (base64 on the wire so sha256 of what we hold equals sha256sum on the host), systemd
 //                 timers, the backup export folder (listing, mtimes and sha256 of readable nginx copies,
 //                 and the sha256 of every regular-file member of the newest tarball that holds etc/nginx,
-//                 read through tar -xO), certbot renewal configs. A stream without the DONE marker is
-//                 incomplete: the run is partial.
+//                 read through tar -xO), certbot renewal configs, and the journal section: the last 24 h of
+//                 sudo, sshd, certbot and dpkg lines that touch nginx, filtered on the host. A stream without
+//                 the DONE marker is incomplete: the run is partial.
 //   toRows        Fetched -> rows (src/collectors/types.ts), everything through the Redactor first:
 //                 collection_run with expected_count asserted BEFORE parsing (regular files the ls of
 //                 conf.d and sites-available showed, minus credential-shaped names the script never
@@ -53,6 +56,9 @@
 //                 symlink, or a 0-byte file) is dropped and listed in the summary, because a backup_item
 //                 that equals no live file's bytes would make change_in_last_backup say a restore undoes
 //                 every enabled site.
+//                 audit_event rows (source journal) from the journal section's kept lines, one per line
+//                 (journal.ts journalEventRow): who ran what on which file, when, and logins with their source
+//                 address, every login name pseudonymised. The journal never changes the run's status.
 //                 approved_setting rows come from a technician's sign-off, scripts/approve.ts.
 //                 toRows also returns the raw half for the vault (src/vault/): `files`, the bytes of
 //                 every file that became a `file` row keyed by its real path, and `links`, the
@@ -80,6 +86,7 @@ import { AUTHORITY, assetId, obsId, runId as runIdOf, snapshotId } from "../data
 import type { Store } from "../data/store.ts";
 import type { Redactor } from "../redactor.ts";
 import type { Tracer } from "../trace.ts";
+import { JOURNAL_SHELL, journalRows, parseJournalSection, type JournalSection, type JournalSummary } from "./journal.ts";
 import { DEFAULT_ENTRY, analyse, classifyTarget, isDnsName, isVhostPath, listenPort, type Analysis, type RealIp } from "./nginx.ts";
 import { EMPTY_ROWS, type CollectedRows, type CollectionRunRow } from "./types.ts";
 
@@ -127,7 +134,8 @@ export const EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca49
  * alone is not enough) has every regular-file member (`tar -tv` lines starting with '-': not the
  * symlinks, which tar -xO prints as nothing), whatever directory it sits in, hashed through `tar -xO`
  * (stdout only, nothing lands on disk); a credential-shaped member name is skipped; a tarball over 256 MB
- * is not opened.
+ * is not opened. The journal section (journal.ts JOURNAL_SHELL) comes last: journalctl's lines of the last
+ * 24 h, filtered on the host, through sudo -n only when the login cannot read the journal itself.
  */
 export function readScript(exportDir: string): string {
   if (!/^\/[A-Za-z0-9._\/-]+$/.test(exportDir)) throw new CollectorError(`export dir must be an absolute path of [A-Za-z0-9._/-]: ${exportDir}`);
@@ -193,7 +201,7 @@ done
 if [ -n "$newest" ]; then section tarsha "$newest" member_hashes "$newest"; fi
 section renewals /etc/letsencrypt/renewal find /etc/letsencrypt/renewal -maxdepth 1 -name '*.conf' -readable
 for f in $(find /etc/letsencrypt/renewal -maxdepth 1 -name '*.conf' -readable 2>/dev/null); do emit_once "$f"; done
-printf '@@DRIFT@@ DONE\n'
+${JOURNAL_SHELL}printf '@@DRIFT@@ DONE\n'
 `;
 }
 
@@ -257,6 +265,8 @@ export interface Fetched {
     error: string | null;
   } | null;
   renewals: { rc: number; paths: string[]; error: string | null } | null;
+  /** The journal section: kept lines raw (they carry login names and addresses until toRows redacts them), the host's notes; null when the stream had none. */
+  journal: JournalSection | null;
   sections: Section[];
 }
 
@@ -343,7 +353,7 @@ export function parseStream(text: string): Fetched {
   }
   const one = (kind: string, arg?: string): Section | undefined => sections.find((s) => s.kind === kind && (arg === undefined || s.arg === arg));
   const firstLine = (s: Section | undefined): string | null => (s && s.rc === 0 && s.body.trim() ? s.body.trim().split("\n")[0].trim() : null);
-  const f: Fetched = { complete, login_user: firstLine(one("whoami")), hostname: firstLine(one("hostname")), server_time: null, ip4: [], ip6: [], ip6_left_out: [], listings: {}, files: {}, timers: null, export_dir: null, renewals: null, sections };
+  const f: Fetched = { complete, login_user: firstLine(one("whoami")), hostname: firstLine(one("hostname")), server_time: null, ip4: [], ip6: [], ip6_left_out: [], listings: {}, files: {}, timers: null, export_dir: null, renewals: null, journal: null, sections };
   const date = one("date");
   if (date && date.rc === 0) f.server_time = fullIsoToIso(date.body.trim().replace(/Z$/, "+0000"));
   const ip = one("ip4");
@@ -381,6 +391,8 @@ export function parseStream(text: string): Fetched {
   }
   const renewals = one("renewals");
   if (renewals) f.renewals = { rc: renewals.rc, paths: renewals.rc === 0 ? renewals.body.split("\n").map((l) => l.trim()).filter((l) => l.startsWith("/")) : [], error: renewals.rc === 0 ? null : trimNl(renewals.body) };
+  const journal = one("journal");
+  if (journal) f.journal = parseJournalSection(journal.rc, journal.arg, journal.body);
   return f;
 }
 
@@ -482,6 +494,8 @@ export interface Summary {
   ip6_left_out: string[];
   export: { dir: string; readable: boolean; mtime: string | null; top_level: string[]; tarballs: number; newest_tarball: string | null; /** backup_item rows: every regular-file member of the newest tarball and every plain nginx copy. */ backup_items: number; snapshots: number; /** tarball members hashed as the empty input (symlinks, 0-byte files), dropped from backup_item. */ empty_members: string[] } | null;
   renewals: { readable: boolean; count: number } | null;
+  /** The journal section: lines the host kept, rows stored, how it was read; null when the stream had no journal section. */
+  journal: JournalSummary | null;
 }
 
 const realIpValue = (r: RealIp): string =>
@@ -694,6 +708,10 @@ export function toRows(f: Fetched, opts: ToRowsOptions): { rows: CollectedRows; 
     if (tarEntries.length === 0 && roots.size === 0 && exp.mtime) snapshot(exp.dir, exp.mtime, []);
   }
 
+  // The host journal: one audit_event row per kept line, the login names pseudonymised, the host as this run's pseudonym.
+  const journal = journalRows(r, f.journal, { tenantId: opts.tenantId, host, redact: rtext });
+  rows.audit_event.push(...journal.rows);
+
   const observed = anyListed ? population.filter((p) => f.files[p]?.ok).length : null;
   const status: CollectionRunRow["status"] = f.hostname === null ? "failed" : expected !== null && observed === expected && f.complete && !entryMissing ? "complete" : "partial";
   const run: CollectionRunRow = { run_id: runId, tenant_id: opts.tenantId, surface: SURFACE, host, started_at: observedAt, finished_at: new Date().toISOString(), expected_count: expected, observed_count: observed, status };
@@ -733,6 +751,7 @@ export function toRows(f: Fetched, opts: ToRowsOptions): { rows: CollectedRows; 
       tarballs, newest_tarball: exp.tar ? rtext(exp.tar.path) : null, backup_items: copies, snapshots, empty_members: emptyMembers,
     } : null,
     renewals: f.renewals ? { readable: f.renewals.rc === 0, count: f.renewals.paths.length } : null,
+    journal: journal.summary,
   };
   const byPath = <T>(m: Map<string, T>): Record<string, T> => Object.fromEntries([...m].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
   return { rows, summary, analysis, files: byPath(bytesOf), links: byPath(links) };
@@ -744,8 +763,9 @@ export function toRows(f: Fetched, opts: ToRowsOptions): { rows: CollectedRows; 
  * closes with what it observed and its status. A run the Store already holds is refused by the Store,
  * never reopened. An observed_count the collector could not establish (no listing at all) is written as
  * 0: the gate fails that run on its NULL expected_count anyway. An insert that fails closes the run as
- * failed before the error goes up, so no run is left running (as collect-cloudflare.ts does). Returns
- * rows written per table.
+ * failed before the error goes up, so no run is left running (as collect-cloudflare.ts does). The journal's
+ * audit_event rows go in through insertAuditEvents, the Cloudflare collector's path, idempotent on event_id.
+ * Returns rows written per table.
  */
 export async function storeRows(store: Store, rows: CollectedRows): Promise<Record<string, number>> {
   const [run] = rows.collection_run;
@@ -758,6 +778,7 @@ export async function storeRows(store: Store, rows: CollectedRows): Promise<Reco
     written.backup_snapshot = 0;
     for (const s of rows.backup_snapshot) written.backup_snapshot += await store.insertBackupSnapshot(s);
     written.backup_item = await store.insertBackupItems(rows.backup_item);
+    written.audit_event = await store.insertAuditEvents(rows.audit_event);
   } catch (e) {
     await store.finishRun(run.run_id, 0, "failed").catch(() => undefined);
     throw e;
@@ -782,6 +803,10 @@ export function printable(res: CollectResult): { summary: Summary & { ssh: Colle
   return { summary: { ...res.summary, ssh: res.ssh }, rows: res.rows };
 }
 
+/** The journal's part of the trace line: rows stored of lines kept, and how the journal was read. */
+const journalText = (j: JournalSummary | null): string =>
+  j === null ? "no journal section" : `${j.rows} journal events of ${j.lines} lines kept${j.via ? ` (read ${j.via === "sudo" ? "through sudo -n" : j.via === "root" ? "as root" : "by group"})` : ""}`;
+
 /** Fetch, parse and build rows for one host; every logged string is redacted first. */
 export async function collectHost(alias: string, opts: { tenantId: string; redactor: Redactor; tracer?: Tracer; timeoutMs?: number }): Promise<CollectResult> {
   const t = opts.tracer;
@@ -796,10 +821,11 @@ export async function collectHost(alias: string, opts: { tenantId: string; redac
     summary.malformed.length ? `malformed: ${summary.malformed.join("; ")}` : "",
     summary.export?.empty_members.length ? `empty tarball members dropped: ${summary.export.empty_members.join(", ")}` : "",
     summary.ip6_left_out.length ? `IPv6 left out of the inventory: ${summary.ip6_left_out.join(", ")}` : "",
+    summary.journal?.notes.length ? `journal: ${summary.journal.notes.join("; ")}` : "",
   ].filter(Boolean);
   t?.emit({
     agent: "collector.linux", action: "observe", status: summary.run.status === "complete" ? "ok" : "failed",
-    output_summary: `${alias} -> ${summary.host}: ${summary.run.status}, expected ${summary.run.expected_count ?? "null"} observed ${summary.run.observed_count ?? "null"}, ${rows.observation.length} observations, ${summary.servers.length} server blocks, ${rows.inventory_asset.length} assets, ${rows.backup_snapshot.length} snapshots, ${rows.backup_item.length} backup items`,
+    output_summary: `${alias} -> ${summary.host}: ${summary.run.status}, expected ${summary.run.expected_count ?? "null"} observed ${summary.run.observed_count ?? "null"}, ${rows.observation.length} observations, ${summary.servers.length} server blocks, ${rows.inventory_asset.length} assets, ${rows.backup_snapshot.length} snapshots, ${rows.backup_item.length} backup items, ${journalText(summary.journal)}`,
     detail: notes.length ? notes.join(" | ") : undefined,
   });
   return { rows, summary, ssh: { code: res.code, latencyMs: res.latencyMs, stderr, bytes: res.stdout.length }, files, links };

@@ -111,7 +111,7 @@ footer p{max-width:86ch}
 <section class="panel" id="document"><div class="wrap md">
 <h2>Configuration document: client-1</h2>
 <p class="meta">Rendered from SQL over the recorded bundle at the decision instant it states, <code>2026-10-25T14:17:53.416Z</code>. <code>npm run document</code> in sample mode writes it to <code>examples/document.md</code>, and this tab is that markdown as HTML.</p>
-<div class="hashes">examples/document.md sha256:dcd8801700927a1a0ac76240bc5cd40bcb471d219c94813395052d1bb93149c9 (20604 bytes, LF)</div>
+<div class="hashes">examples/document.md sha256:3d8759764502ae9155b24033c39eb554daeff76aafbc7420d387320969220450 (20870 bytes, LF)</div>
 <p>What the agent holds for client-1, read through one data layer (sql.js over sample/bundle.json) when this page is rendered. Every number is a count of the rows, or a value of a row, that the queries listed at the end return.</p>
 <h3>Estate</h3>
 <p>61 collection runs on record, 61 passing the DQ gate. 2 hosts and 6 zones in the latest passing runs.</p>
@@ -217,6 +217,8 @@ footer p{max-width:86ch}
 <li>fnd-d62857e241af66e2 HOLD orphan_record: name in c8b1963847dafe3548b1a4b93f520c0a on host-aa516a (cloudflare.dns, run run-9d48791b00433777), until 2026-10-27T23:21:06.870Z. rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T23:21:06.870Z; held since 2026-10-25T13:54:08.785Z under rule rule-b8d9962485c3ced4.</li>
 <li>fnd-b4a40091cdb4f906 ESCALATE proxy_split: proxied in bce1ca2bb7caa2de9b6823d5f6ecd3f2 (cloudflare.dns, run run-9d48791b00433777). hold under rule rule-8e75e1d767980665 expired 2026-10-25T03:21:06.870Z; the finding stands.</li>
 </ul>
+<h4>Why</h4>
+<p>No open finding carries a cause: the explain step of a cycle records one for each finding it explains.</p>
 <h3>Where each answer comes from</h3>
 <p>Each finding class answers its question by joining the tables its detector query and its default checks name, and each table holds the rows of one source. The rows are read off the SQL in <code>src/data/queries.ts</code> and <code>src/catalogue/templates.ts</code> and the default checks in <code>src/catalogue/select.ts</code>.</p>
 <div class="scroll"><table>
@@ -239,7 +241,7 @@ footer p{max-width:86ch}
 <li>export (<code>backup_snapshot</code>, <code>backup_item</code>): the nightly export tarball of each host and every regular member of the newest.</li>
 <li>documentation of record (<code>approved_setting</code>): the values a technician approved; IT Glue and Hudu map here.</li>
 <li>DNS (<code>dns_record</code>): the DNS provider&#39;s records, Cloudflare&#39;s in this slice.</li>
-<li>audit log (<code>audit_event</code>): the provider&#39;s audit log, who changed which resource and when.</li>
+<li>audit log (<code>audit_event</code>): the provider&#39;s audit log, who changed which resource and when; and each host&#39;s journal of the last 24 h, the sudo commands that touch nginx and the logins, every login name pseudonymised.</li>
 <li>inventory (<code>inventory_asset</code>): the hosts&#39; addresses.</li>
 <li>populations (<code>collection_run</code>): each source&#39;s own population, asserted before a row is read, and each run&#39;s status.</li>
 </ul>
@@ -284,6 +286,7 @@ footer p{max-width:86ch}
 <li>POLICY_RULES_SQL: 1 run, 26 rows</li>
 <li>DOC_UNAPPROVED_SQL: 3 runs, 1019 rows</li>
 <li>DOC_DISPOSITIONS_OF_RUN_SQL: 3 runs, 27 rows</li>
+<li>CAUSES_SQL: 1 run, 0 rows</li>
 <li>DOC_ACTIONS_SQL: 1 run, 0 rows</li>
 <li>DOC_TICKETS_SQL: 1 run, 1 row</li>
 <li>DOC_PROBES_SQL: 1 run, 6 rows</li>
@@ -315,7 +318,7 @@ footer p{max-width:86ch}
 <li>export (<code>backup_snapshot</code>, <code>backup_item</code>): the nightly export tarball of each host and every regular member of the newest.</li>
 <li>documentation of record (<code>approved_setting</code>): the values a technician approved; IT Glue and Hudu map here.</li>
 <li>DNS (<code>dns_record</code>): the DNS provider&#39;s records, Cloudflare&#39;s in this slice.</li>
-<li>audit log (<code>audit_event</code>): the provider&#39;s audit log, who changed which resource and when.</li>
+<li>audit log (<code>audit_event</code>): the provider&#39;s audit log, who changed which resource and when; and each host&#39;s journal of the last 24 h, the sudo commands that touch nginx and the logins, every login name pseudonymised.</li>
 <li>inventory (<code>inventory_asset</code>): the hosts&#39; addresses.</li>
 <li>populations (<code>collection_run</code>): each source&#39;s own population, asserted before a row is read, and each run&#39;s status.</li>
 </ul>

@@ -24,6 +24,7 @@ import { formatPlan, namedCommit, targetOf, type ActionOutcome, type ProbeFn } f
 import { RELOAD_SETTLE_MS } from "../src/actions/rollback.ts";
 import { NGINX_PATH, WriteSessionError, parseSession, shQuote, writeScript } from "../src/actions/ssh.ts";
 import { dnsObservationRows, dnsRecordRow, type CfRecord, type CfZone, type FetchLike } from "../src/collectors/cloudflare.ts";
+import { JOURNAL_SHELL } from "../src/collectors/journal.ts";
 import { pseudonymHost, readScript } from "../src/collectors/linux.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { DataLayer } from "../src/data/layer.ts";
@@ -183,8 +184,10 @@ describe("the write script", () => {
     });
   });
 
-  it("the read collector's script stays free of sudo; the write script is the one place it appears", () => {
-    expect(readScript("/var/backups/export")).not.toMatch(/\bsudo\b/);
+  it("the read collector's script runs sudo only for journalctl (its journal section); the write script runs it for the write", () => {
+    const read = readScript("/var/backups/export");
+    expect(read.replace(JOURNAL_SHELL, "")).not.toMatch(/\bsudo\b/);
+    expect([...JOURNAL_SHELL.matchAll(/(?:^\s*|[;|&]\s*|\bif !\s*)sudo -n (\S+(?: \S+)?)/gm)].map((m) => m[1])).toEqual(["-l journalctl", "journalctl --utc"]);
     expect(writeScript(input)).toMatch(/\bsudo -n\b/);
   });
 

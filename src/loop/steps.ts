@@ -1,8 +1,8 @@
 // The steps of a cycle (src/loop/cycle.ts) as functions over the modules the other commands use: the collectors
 // (src/collectors/), their vault hook (src/vault/hook.ts), the probe run (src/probe/run.ts), copy validation
-// (src/validate/run.ts), the pass (src/loop/pass.ts), the Actor (src/actions/), the ticket step (src/psa/step.ts)
-// and the owner's document (src/document/render.ts). liveSteps wires them to the live estate; a test calls each one
-// with fakes or over sql.js.
+// (src/validate/run.ts), the pass (src/loop/pass.ts), the explainer (src/explain/), the Actor (src/actions/), the
+// ticket step (src/psa/step.ts) and the owner's document (src/document/render.ts). liveSteps wires them to the live
+// estate; a test calls each one with fakes or over sql.js.
 //
 // Contract, step by step (each returns a StepReport; a step fails when the command it mirrors exits non-zero, and
 // the collect steps also when a run they wrote finished other than complete, because the DQ gate holds such a run
@@ -20,6 +20,9 @@
 //                       off); ok when the run is complete.
 //   validate            validateCopies over every repository's head when the collect steps made a new commit, else
 //                       nothing; ok when every repository validated, whatever each result.
+//   explain             explainPass (src/explain/explain.ts) over the pass's findings: one finding_cause row per
+//                       ROLLBACK, FIX, ESCALATE and explained HOLD into the Store, a dry run included; ok always, an
+//                       error shown as "not explained" on its row, so act never waits on a cause.
 //   act                 act() over the dispositions of the runs the pass's findings came from, dry run unless apply;
 //                       a pass with no finding for the tenant gives an empty plan without a read. ok when act returns.
 //   tickets             ticketStep with the cycle's pass; a dry run has no adapter and no rows. The url stored on a
@@ -47,6 +50,8 @@ import type { DataLayer } from "../data/layer.ts";
 import type { Store } from "../data/store.ts";
 import { renderDocument } from "../document/render.ts";
 import type { TechnicianMemory } from "../engine/memory.ts";
+import { CAUSE_CLASSES } from "../explain/cause.ts";
+import { EXPLAINER, explainPass, type CauseSink } from "../explain/explain.ts";
 import { PgLedger } from "../ledger.ts";
 import { probePopulation, runProbes, vaultServedNames, type ProbeDeps, type ProbeSink } from "../probe/run.ts";
 import type { PopulationRecord } from "../probe/rules.ts";
@@ -62,7 +67,7 @@ import { vaultCloudflareRun, vaultLinuxRun, type HookResult } from "../vault/hoo
 import type { Vault } from "../vault/vault.ts";
 import type { CollectReport, CycleSteps, NewCommit, PassReport, StepReport } from "./cycle.ts";
 import { passStep, type PassStep } from "./pass.ts";
-import { actView, cloudflareView, documentView, linuxView, passView, probeView, ticketsView, validateView } from "./present.ts";
+import { actView, cloudflareView, documentView, explainView, linuxView, passView, probeView, ticketsView, validateView } from "./present.ts";
 import { LabelTracer } from "./trace.ts";
 
 const runLine = (r: Pick<CollectionRun, "run_id" | "observed_count" | "expected_count" | "status">): string => `${r.run_id} ${r.observed_count ?? 0}/${r.expected_count ?? "?"} ${r.status}`;
@@ -159,6 +164,25 @@ export async function validateStep(commits: readonly NewCommit[], o: { tenant: s
   return { ok: res.errors === 0, summary, reason: res.errors ? o.redactor.text(res.lines.filter((l) => /validation stopped|no vault repository/.test(l)).join("; ")) : undefined, detail: res.lines, view };
 }
 
+/**
+ * explain: who or what changed each setting the pass moves on, from the evidence the agent holds (src/explain/), one
+ * finding_cause row per explained disposition through `sink`; a dry run computes and stores them too. Never fails the
+ * cycle: an error reads "not explained" on the row and act runs as before, because a cause changes no disposition.
+ */
+export async function explainStep(layer: DataLayer, pass: PassStep, o: { sink: CauseSink | null; vault: Vault | null; redactor: Redactor; tracer?: Tracer }): Promise<StepReport> {
+  try {
+    const r = await explainPass(pass, { layer, vault: o.vault, redactor: o.redactor, sink: o.sink, tracer: o.tracer });
+    const classes = CAUSE_CLASSES.filter((k) => r.counts[k]).map((k) => `${k} ${r.counts[k]}`).join(", ") || "none";
+    const written = r.written === null ? "no sink, nothing written" : `finding_cause ${r.written} row(s) written`;
+    const summary = o.redactor.text(`explain: tenant ${pass.tenant}, ${r.causes.length} cause(s) (${classes}); searched ${r.searched.journal} journal and ${r.searched.cloudflare} cloudflare row(s) and ${r.searched.actions} ledger action(s); ${written}${r.errors.length ? `; ${r.errors.length} error(s): ${r.errors.join("; ")}` : ""}`);
+    return { ok: true, summary, detail: r.causes.map((c) => `${c.finding_id} ${c.verb} ${c.cause.class}: ${c.cause.summary}`), view: explainView({ causes: r.causes.map((c) => c.cause) }), explain: r };
+  } catch (e) {
+    const why = o.redactor.text(e instanceof Error ? e.message : String(e));
+    o.tracer?.emit({ agent: EXPLAINER, action: "explain", status: "failed", input_summary: `explain ${pass.tenant}`, output_summary: `explain: not explained: ${why}`, detail: "model: none" });
+    return { ok: true, summary: `explain: tenant ${pass.tenant}, not explained (${why}); act runs as before`, view: explainView({ causes: [], stopped: why }) };
+  }
+}
+
 /** act: the Actor over the dispositions of the pass's runs. */
 export async function actStep(pass: PassStep, o: { apply: boolean; deps: ActorDeps; redactor: Redactor }): Promise<StepReport> {
   const runIds = [...new Set(pass.findings.map((f) => f.finding.run_id))].sort();
@@ -249,6 +273,7 @@ export function liveSteps(ctx: LiveContext): CycleSteps {
       const r = await passStep(layer, { tenant, ledger: new PgLedger(store), memory: ctx.memory, tracer });
       return { ok: true, summary: redactor.text(r.summary), pass: r, view: passView(r) };
     },
+    explain: (pass) => explainStep(layer, pass, { sink: store, vault, redactor, tracer }),
     act: (pass) => {
       const deps = liveActorDeps({ tenantId: tenant, apply: ctx.apply, layer, store, vault, redactor, tracer });
       const byId = new Map(pass.findings.map((f) => [f.id, f]));
