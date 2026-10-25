@@ -4,13 +4,31 @@ A throwaway container, `drift-lab`, stands in for a client host: Debian bookworm
 http, `location /` proxied to 127.0.0.1:8081) and `www.lab.test` (static) in `sites-available`, linked from
 `sites-enabled`; the login `drift` with sudo for `tee`, `nginx`, `systemctl` and `rm`; a server-config tarball in
 `/var/backups/export`; one certbot renewal config. Its ssh alias lives in `lab/ssh_config.local`, so the write path
-runs for real against it, under tenant `lab-1`, with the app Postgres and the vault of `.env`.
+runs for real against it, under tenant `lab-1`, with the app Postgres and the vault of `.env`. Its nginx answers on
+`127.0.0.1:18080` of this machine, so the probes reach both names.
 
 ## Up and down, from the repository root in Git Bash, through WSL, where Docker Engine runs
 
 ```bash
 wsl.exe -d Ubuntu-24.04 -- bash lab/up.sh     # key pair in lab/.keys/, image and container, ssh_config.local; "lab up"
 wsl.exe -d Ubuntu-24.04 -- bash lab/down.sh   # removes the container; the image and the keys stay
+```
+
+## The two lab aids
+
+- The published port: `lab/up.sh` maps `127.0.0.1:18080` to the container's port 80, beside `127.0.0.1:2222` to 22.
+  Port 8080 of this machine belongs to another process (a Python listener on 25 Oct 2026), so the lab takes 18080.
+- `PROBE_TARGETS_OVERRIDE=<name>=<address>[:<port>],...` (`src/config.ts`, `.env.example`): set on the command line,
+  it is the probe population of every probe run (`npm run probe`, the cycle's probe step, the Actor's verification
+  after a write), and the Cloudflare read is skipped, one trace line saying so. Each name's http probe is `GET /` at
+  the address over plain http with the name as Host, recorded `over plain http at <address>:<port> (override)`; its
+  dns probe holds the override's address, `override [<address>]`; its tls probe is recorded `skipped: no TLS on this
+  target`, status `skipped`. A skipped probe counts neither way: the Decider reads production from the probes that
+  ran, and a rollback is done when every verification probe that ran is ok.
+
+```bash
+PROBE_TARGETS_OVERRIDE=lab.example=127.0.0.1:18080,www.lab.test=127.0.0.1:18080 npm run probe -- --tenant lab-1
+PROBE_TARGETS_OVERRIDE=lab.example=127.0.0.1:18080 npm run act -- --tenant lab-1 --apply --only rollback_file
 ```
 
 ## The loop against the lab
@@ -66,6 +84,95 @@ The action row holds status `unverified`, that reason, verification `''`, after_
 05:48:17 UTC the live file hashes to a811a0a5d0dc, the copy's bytes, and `nginx -T` shows `proxy_pass
 http://127.0.0.1:8081;`. The next collection, run run-f97423f25dc75884 (vault commit 090b6d61), and pass: 0 findings.
 
+## No valid copy: a FIX, investigated with Nemotron through Nightshift
+
+The runbook's act three on the lab: a change signed off before the validator has seen it, then broken.
+
+```bash
+ssh -F lab/ssh_config.local drift-lab "sed 's#root /var/www/lab-test;#root /var/www/lab;#' /etc/nginx/sites-available/www.lab.test > /tmp/x && sudo -n tee /etc/nginx/sites-available/www.lab.test < /tmp/x >/dev/null && sudo -n nginx -t && sudo -n systemctl reload nginx"
+npm run collect:linux -- --host drift-lab --tenant lab-1
+npm run approve -- --tenant lab-1 --host drift-lab --object /etc/nginx/sites-available/www.lab.test --note "lab: signed off before validation"
+ssh -F lab/ssh_config.local drift-lab "sed 's#    index index.html;#    index index.html;\n    return 503;#' /etc/nginx/sites-available/www.lab.test > /tmp/x && sudo -n tee /etc/nginx/sites-available/www.lab.test < /tmp/x >/dev/null && sudo -n nginx -t && sudo -n systemctl reload nginx"
+npm run collect:linux -- --host drift-lab --tenant lab-1
+PROBE_TARGETS_OVERRIDE=lab.example=127.0.0.1:18080,www.lab.test=127.0.0.1:18080 npm run probe -- --tenant lab-1
+npm run pass -- --tenant lab-1
+npm run act -- --tenant lab-1 --apply --only investigate
+npm run tickets -- --tenant lab-1
+```
+
+Measured 25 Oct 2026, 09:34 to 09:48 UTC. The changed file (root `/var/www/lab`) hashes to 0df3950bca45; its
+collection, run run-d1fcc061e5c34158, commits it at vault commit 4f208c94; `approve` prints `replaces` and writes 1
+row. The break (`return 503;`, file 2ea1f9b2bd14) answers 503; its collection is run run-2c3fc585f404b90f (vault
+commit be6c0996). A pass before any probe run decides ESCALATE: `live value drifted from approved 0df3950bca45 with no
+valid copy (1 copy in the vault, latest validation unvalidated) and no probe run in this pass, so production is
+unknown and rule rule-6c41a25a00c404c8 sends it to a technician`. The probe run under the override, run
+run-396c20fb165306ed, is complete at 6 of 6: http 1 ok (lab.example 200), 1 fail (www.lab.test 503), dns 2 ok, tls 2
+skipped. The next pass decides FIX: `... and production affected (1 failing probe in run-396c20fb165306ed: http
+www.lab.test), so rule rule-6c41a25a00c404c8 investigates, fixes where allowed, documents and opens a ticket`.
+
+The first apply, 09:37:40 to 09:39:43 UTC, sent Lightning's selection with max_tokens 1,024: four route attempts
+(openrouter/nvidia/nemotron-3.5-lightning twice, nvidia/nemotron-3.5-lightning-30b-a3b twice) each answered
+`empty_response`, the default checks ran, Ultra stood on receipt rcpt_req_88ch3rxi, and the rows are
+act-8e962ee34398e0e1 (investigate done) and act-190d06845d8ee1be (fix refused). The selection call now takes the eval's
+cap, SELECT_MAX_TOKENS (16,384), and a new pass gives a new FIX disposition. The second apply, 09:42:26 to 09:43:53 UTC:
+
+```text
+investigate act-45f088e61ed545f1 done: investigated: 4 checks ran (1 hold, 3 fail); the judge's verdict counted: stands
+  verification probe-2f2d50204c69ccbe,probe-5fb5e859aa7b4b32,probe-a20c634f2e8312dd; receipts rcpt_req_nn4ag0yu,rcpt_req_iehg9gmt
+  Lightning selection (receipt rcpt_req_nn4ag0yu, openrouter/nvidia/nemotron-3.5-lightning, cache miss, route openrouter/nvidia/nemotron-3.5-lightning): 4 valid checks: setting_matches_approved, change_in_last_backup, restore_would_regress, run_complete
+  judge stands (receipt rcpt_req_iehg9gmt, openrouter/nvidia/nemotron-3-ultra-550b-a55b:free, cache miss, route openrouter/nvidia/nemotron-3-ultra-550b-a55b:free): the refuting SELECT returned no rows, 0 rows
+  probe probe-2f2d50204c69ccbe: http www.lab.test fail (status 503 server=nginx/1.22.1 cf-ray absent; over plain http at 127.0.0.1:18080 (override))
+fix act-e201f12320296992 refused: no fix is allowed without a valid copy; investigated and ticketed
+act: applied: 2 actions (rollback_file 0, revert_record 0, investigate 1, fix 1): done 1, unverified 0, failed 0, refused 1, not_judged 0; 0 already recorded; 2 action rows written
+```
+
+Lightning answered on its first route attempt, 4,094 tokens out in 27.5 s; Ultra on its first, 1,001 tokens out in
+14.9 s; both receipts verify, custody holds under app drift-agent-lab-1. The ticket step opens issue #3 in the tickets
+repository, `FIX drift_vs_approved: /etc/nginx/sites-available/www.lab.test on host-951abf`, labels `type:incident`,
+`P1`, `verb:FIX`, the selection, the checks, the verdict and the probes under Evidence, both actions under Work done,
+both receipts under Receipts. Restored by hand to 0df3950bca45, the next collection (run run-0f5afdbf81b5b05a) and
+pass give 1 finding, `changed_since_backup` HOLD 24 h, since the export holds the image's bytes. With the image's bytes
+back (e646212adb59) and approved again (`superseded`), the pass at 09:48:18 UTC gives 0 findings. Issue #3 stays open
+for the technician.
+
+## Verification to done
+
+```bash
+ssh -F lab/ssh_config.local drift-lab "sed 's#127.0.0.1:8081;#127.0.0.1:8094;#' /etc/nginx/sites-available/lab.example > /tmp/x && sudo -n tee /etc/nginx/sites-available/lab.example < /tmp/x >/dev/null && sudo -n nginx -t && sudo -n systemctl reload nginx"
+npm run collect:linux -- --host drift-lab --tenant lab-1 && npm run pass -- --tenant lab-1
+PROBE_TARGETS_OVERRIDE=lab.example=127.0.0.1:18080 npm run act -- --tenant lab-1 --apply --only rollback_file
+npm run tickets -- --tenant lab-1
+npm run collect:linux -- --host drift-lab --tenant lab-1 && npm run pass -- --tenant lab-1
+```
+
+Measured 25 Oct 2026, 09:49 to 09:55 UTC. A first break to 8093 (file b8f9896dcb0f) gives ROLLBACK under
+rule-6c41a25a00c404c8 from vault commit 5dde7698, validated ok with 0 gaps; its apply, act-3892888a4e7bd1e5, writes the
+copy and reloads, the whole action runs in 0.31 s, and its http probe reads 502: `failed: written and reloaded; 1 of 1
+probe fail: http lab.example; 1 skipped (tls lab.example: no TLS on this target)`. Inside the container lab.example
+answers from the old configuration for 0.13 s after `systemctl reload nginx` returns (measured with a 20 ms poll), so
+the live Actor waits RELOAD_SETTLE_MS (2 s) before its verification probes. The break to 8094 (file 463997de96ba), its
+collection (run run-b78229c438b759eb, vault commit 15b60353) and pass give the same ROLLBACK; the apply, 09:53:34 to
+09:53:39 UTC:
+
+```text
+rollback_file act-649588b7e1625711 done: restored to the approved copy at vault commit 5dde7698; nginx -t passed, nginx reloaded, 1 probe of lab.example ok; 1 skipped (tls lab.example: no TLS on this target)
+  before 463997de96ba, after a811a0a5d0dc; vault commit 5dde7698; verification probe-36eb2c1bba298a2a
+  write: exit 0
+  nginx-t: exit 0, nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+  reload: exit 0, 2026/10/25 09:53:37 [notice] 1735#1735: signal process started
+  live file before: 463997de96ba
+  after: a811a0a5d0dc, the copy's bytes; nginx -t passed and nginx reloaded
+  probes asked 2000 ms after the reload returned, once the new workers answer
+  probe probe-36eb2c1bba298a2a: http lab.example ok (status 200 server=nginx/1.22.1 cf-ray absent; over plain http at 127.0.0.1:18080 (override))
+  probe probe-e9a352d65b4dd8a0: tls lab.example skipped (skipped: no TLS on this target)
+act: applied: 1 action (rollback_file 1, revert_record 0, investigate 0, fix 0): done 1, unverified 0, failed 0, refused 0, not_judged 0; 0 already recorded; 1 action rows written
+```
+
+The action row holds status `done`, verification `probe-36eb2c1bba298a2a`. The ticket step creates and closes issue
+#4, `ROLLBACK drift_vs_approved: /etc/nginx/sites-available/lab.example on host-951abf`, labels `type:change`, `P1`,
+`verb:ROLLBACK`, closing comment `The rollback is done and verified by probes probe-36eb2c1bba298a2a; closing.` The
+next collection (run run-71776a91583187d1, vault commit 5d780b42) and pass: 0 findings.
+
 ## How it differs from a real host
 
 - `systemctl` is `lab/systemctl`, a stand-in for systemd: `reload nginx` runs `nginx -s reload`, `status nginx` asks
@@ -74,7 +181,6 @@ http://127.0.0.1:8081;`. The next collection, run run-f97423f25dc75884 (vault co
 - The lab has no DNS provider: `lab-1` holds no `cloudflare.dns` run, and the classes that pair a host run with one
   (`orphan_vhost`, `orphan_record`, `proxied_without_real_ip`) stay silent.
 - Verification: the Actor probes http and tls of the names the file serves, read from the Cloudflare account's
-  records (src/actions/act.ts probeNames). The lab names resolve nowhere and sit in no zone, so every completed
-  rollback on the lab ends `unverified`: the lab proves the write path, and verification is measured on hosts whose
-  names resolve. Verification against a lab needs a resolvable name with a certificate the probe trusts, or a probe
-  override that supplies the lab's names, address and certificate authority.
+  records (src/actions/act.ts probeNames). The lab names sit in no zone, so on the lab the population comes from
+  `PROBE_TARGETS_OVERRIDE`: http over plain http at 127.0.0.1:18080 with the name as Host, dns through the override,
+  tls skipped. A completed rollback without the override ends `unverified` (05:47 above); with it, `done` (09:53).

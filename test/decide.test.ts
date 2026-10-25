@@ -315,4 +315,12 @@ describe("the Decider's helpers", () => {
     const many: ProbeView = { run_id: "run-probe", rows: ["a", "b", "c", "d"].map((n) => ({ kind: "http", target: `${n}.example.invalid`, status: "fail" })) };
     expect(productionText(production(many, ["a", "b", "c", "d"].map((n) => `${n}.example.invalid`)))).toBe("production affected (4 failing probes in run-probe: http a.example.invalid, http b.example.invalid, http c.example.invalid, ...)");
   });
+
+  it("production: a skipped probe (the tls of a PROBE_TARGETS_OVERRIDE target) counts neither way", () => {
+    const view = (rows: ProbeView["rows"]): ProbeView => ({ run_id: "run-probe", rows });
+    const tlsSkipped = { kind: "tls", target: NAME, status: "skipped" };
+    expect(production(view([{ kind: "http", target: NAME, status: "ok" }, tlsSkipped]), [NAME])).toEqual({ state: "answering", run_id: "run-probe", ok: 1 });
+    expect(production(view([{ kind: "http", target: NAME, status: "fail" }, tlsSkipped]), [NAME])).toEqual({ state: "affected", run_id: "run-probe", failing: [`http ${NAME}`] });
+    expect(production(view([tlsSkipped]), [NAME])).toEqual({ state: "unknown", run_id: "run-probe", why: "no probe in run-probe targets a name it serves" });
+  });
 });

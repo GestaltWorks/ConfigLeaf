@@ -6,6 +6,8 @@
 // through the Store (DATABASE_URL; --schema for another search_path): beginRun with expected_count = kinds
 // x names before the first probe, the probe rows, finishRun with the rows written. --only asks one kind,
 // and expected_count is the names. --dry-run prints every row as one JSON line and writes nothing.
+// PROBE_TARGETS_OVERRIDE (a lab aid, .env.example) replaces the population with its names at its addresses:
+// the Cloudflare read is skipped (a line and the trace say so) and CLOUDFLARE_API_TOKEN may be blank.
 //
 // Everything printed is redacted: targets are the names' pseudonyms under REDACT_SALT, addresses ip-XXXXXX.
 // The write path refuses a blank REDACT_SALT, because a per-process salt gives targets no server_name row
@@ -20,7 +22,7 @@ import { Cloudflare } from "../src/collectors/cloudflare.ts";
 import type { Probe, ProbeKind } from "../src/data/rows.ts";
 import { Store } from "../src/data/store.ts";
 import { PROBE_KINDS } from "../src/probe/rules.ts";
-import { readPopulation, runProbes } from "../src/probe/run.ts";
+import { probePopulation, runProbes } from "../src/probe/run.ts";
 import { Redactor } from "../src/redactor.ts";
 import { Tracer } from "../src/trace.ts";
 
@@ -52,7 +54,8 @@ if (!TENANT.test(tenant)) die(`--tenant must be lowercase letters, digits and da
 if (args.only !== undefined && !(PROBE_KINDS as readonly string[]).includes(args.only)) die(`--only must be one of ${PROBE_KINDS.join(", ")}, got ${args.only}`);
 const kinds: readonly ProbeKind[] = args.only ? [args.only as ProbeKind] : PROBE_KINDS;
 const dry = args["dry-run"] === true;
-if (!config.cloudflare.token) die("CLOUDFLARE_API_TOKEN is blank: the population is read live from the Cloudflare API (set it in .env)");
+const override = config.probeOverride;
+if (!config.cloudflare.token && !override.length) die("CLOUDFLARE_API_TOKEN is blank: the population is read live from the Cloudflare API (set it in .env)");
 if (!config.redactSalt) {
   if (!dry) die("REDACT_SALT is blank: the write path needs the tenant's salt so probe targets join the server_name rows (set it in .env, or run with --dry-run)");
   process.stderr.write("warning: REDACT_SALT is blank; targets below are this process's pseudonyms only and match no stored row\n");
@@ -66,13 +69,18 @@ const line = (p: Probe): string =>
 let store: Store | undefined;
 try {
   store = dry ? undefined : Store.fromEnv({ schema: args.schema });
-  const result = await runProbes({ tenantId: tenant, population: () => readPopulation(new Cloudflare()), redactor, kinds, sink: store ?? null });
+  const population = probePopulation({ source: () => new Cloudflare(), tracer, agent: "probe" });
+  const result = await runProbes({ tenantId: tenant, population, redactor, kinds, sink: store ?? null });
   const { run, rows } = result;
-  console.log(`probe: tenant ${tenant}, ${result.names} name(s) (A, AAAA, CNAME; wildcards left out), kinds ${kinds.join(", ")}, expected_count ${run.expected_count ?? "?"}`);
+  if (override.length) {
+    console.log(redactor.text(`probe: PROBE_TARGETS_OVERRIDE names ${override.length} target(s) (${override.map((e) => `${e.name} at ${e.host}:${e.port}`).join(", ")}): plain http with the name as Host, dns through the override, tls skipped; the Cloudflare read is skipped`));
+  }
+  console.log(`probe: tenant ${tenant}, ${result.names} name(s) (${override.length ? "PROBE_TARGETS_OVERRIDE" : "A, AAAA, CNAME; wildcards left out"}), kinds ${kinds.join(", ")}, expected_count ${run.expected_count ?? "?"}`);
   for (const p of rows) console.log(dry ? JSON.stringify(p) : line(p));
   const tally = kinds.map((k) => {
     const of = rows.filter((r) => r.kind === k);
-    return `${k} ${of.filter((r) => r.status === "ok").length} ok, ${of.filter((r) => r.status === "fail").length} fail`;
+    const skipped = of.filter((r) => r.status === "skipped").length;
+    return `${k} ${of.filter((r) => r.status === "ok").length} ok, ${of.filter((r) => r.status === "fail").length} fail${skipped ? `, ${skipped} skipped` : ""}`;
   }).join("; ");
   console.log(`probe: run ${run.run_id} ${run.observed_count ?? 0}/${run.expected_count ?? "?"} ${run.status}; ${tally}`);
   for (const e of result.errors) console.log(`probe: error: ${e}`);

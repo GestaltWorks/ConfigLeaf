@@ -60,6 +60,10 @@ const Schema = z.object({
   // The command that runs nginx -t over a vault commit materialised in a temp directory, with {dir} for that
   // directory. Blank = the platform default (NGINX_T_DEFAULT below: docker, through WSL on Windows).
   DRIFT_NGINX_T: z.string().default(""),
+  // A lab aid (lab/README.md): the probe population as <name>=<address>[:<port>], comma-separated, in place of the
+  // Cloudflare account's records. Each name is asked at its address over plain http with the name as Host, its dns
+  // probe holds the override's address, and its tls probe is recorded skipped. Blank = the account's records.
+  PROBE_TARGETS_OVERRIDE: z.string().default(""),
   LOG_DIR: z.string().default("logs"),
 });
 
@@ -78,6 +82,28 @@ export function parseLinuxHosts(s: string): Record<string, { exportDir: string }
     if (!ALIAS.test(alias)) throw new Error(`LINUX_HOSTS: alias must be a plain ssh_config alias, got ${JSON.stringify(alias)}`);
     if (!EXPORT_DIR.test(exportDir)) throw new Error(`LINUX_HOSTS: ${alias}: export dir must be an absolute path of [A-Za-z0-9._/-], got ${JSON.stringify(exportDir)}`);
     out[alias] = { exportDir };
+  }
+  return out;
+}
+
+/** One PROBE_TARGETS_OVERRIDE entry: a served name, and the address and port its plain-http probe connects to. */
+export interface ProbeOverride { name: string; host: string; port: number }
+
+const OVERRIDE_ENTRY = /^([^=\s]+)=(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+)(?::(\d{1,5}))?$/;
+const OVERRIDE_NAME = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$/;
+
+/** "lab.example=127.0.0.1:8080,www.lab.test=127.0.0.1" -> the entries, port 80 when absent, names lower-cased. Throws on any other shape or a name given twice. */
+export function parseProbeOverride(s: string): ProbeOverride[] {
+  const out: ProbeOverride[] = [];
+  for (const entry of s.split(",").map((e) => e.trim()).filter(Boolean)) {
+    const m = OVERRIDE_ENTRY.exec(entry);
+    if (!m) throw new Error(`PROBE_TARGETS_OVERRIDE: an entry is <name>=<address>[:<port>], got ${JSON.stringify(entry)}`);
+    const name = m[1].toLowerCase().replace(/\.$/, "");
+    if (!OVERRIDE_NAME.test(name)) throw new Error(`PROBE_TARGETS_OVERRIDE: ${JSON.stringify(m[1])} is a name of letters, digits, dashes and dots, without a wildcard`);
+    const port = m[3] === undefined ? 80 : Number(m[3]);
+    if (port < 1 || port > 65535) throw new Error(`PROBE_TARGETS_OVERRIDE: ${name}: the port is 1 to 65535, got ${m[3]}`);
+    if (out.some((o) => o.name === name)) throw new Error(`PROBE_TARGETS_OVERRIDE: ${name} is named twice`);
+    out.push({ name, host: m[2].replace(/^\[|\]$/g, ""), port });
   }
   return out;
 }
@@ -139,6 +165,8 @@ export const config = {
   policyFile: raw.DRIFT_POLICY_FILE.trim() || "policy/hackathon.json",
   /** DRIFT_NGINX_T as configured; "" = the platform default (nginxTCommand). */
   nginxT: raw.DRIFT_NGINX_T.trim(),
+  /** PROBE_TARGETS_OVERRIDE, parsed; [] = the probe population is the Cloudflare account's records. */
+  probeOverride: parseProbeOverride(raw.PROBE_TARGETS_OVERRIDE),
   logDir: raw.LOG_DIR,
 } as const;
 

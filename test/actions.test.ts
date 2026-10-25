@@ -11,6 +11,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import http from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import pg from "pg";
@@ -19,6 +20,7 @@ import "../src/config.ts"; // loads .env into process.env
 import { aliasFromHosts, act, actLines, kindsFor, latestRuns, probeNames, type ActResult } from "../src/actions/act.ts";
 import { FIX_REFUSED } from "../src/actions/investigate.ts";
 import { formatPlan, namedCommit, targetOf, type ActionOutcome, type ProbeFn } from "../src/actions/plan.ts";
+import { RELOAD_SETTLE_MS } from "../src/actions/rollback.ts";
 import { NGINX_PATH, WriteSessionError, parseSession, shQuote, writeScript } from "../src/actions/ssh.ts";
 import { dnsObservationRows, dnsRecordRow, type FetchLike } from "../src/collectors/cloudflare.ts";
 import { pseudonymHost, readScript } from "../src/collectors/linux.ts";
@@ -29,6 +31,7 @@ import { actionId, dispositionId, obsId, probeId, type Action, type ActionKind, 
 import { DriftWorld } from "../src/engine/world.ts";
 import { MemoryLedger } from "../src/ledger.ts";
 import { runPass, type PassResult } from "../src/pipeline.ts";
+import { probePopulation } from "../src/probe/run.ts";
 import { Store } from "../src/data/store.ts";
 import { tenantAppId } from "../src/gate.ts";
 import { GithubIssues } from "../src/psa/github.ts";
@@ -324,6 +327,60 @@ describe("the Actor over the policy fixture", () => {
     expect(o.reason).toBe("written and reloaded; 2 of 2 probes fail: http app.example.invalid, tls app.example.invalid");
     expect(o.action.verification.split(",")).toHaveLength(2);
     expect(w.host.files.get(APP)!.toString("utf8")).toBe(APPROVED_APP);
+  });
+
+  it("a skipped probe (the tls of a PROBE_TARGETS_OVERRIDE target) counts neither way: http ok is done, http failing is failed, nothing but skipped is unverified", async () => {
+    const lab = (http: "ok" | "fail" | "none"): ProbeFn => async (names, kinds) => names.flatMap((name) => kinds.filter((k) => k !== "http" || http !== "none").map((kind): Probe => ({
+      probe_id: probeId("run-verify-lab", kind, name), run_id: "run-verify-lab", tenant_id: TENANT, kind, target: name,
+      expected: "answers", observed: kind === "tls" ? "skipped: no TLS on this target" : http === "ok" ? "status 200 server=nginx cf-ray absent" : "status 502 server=nginx cf-ray absent",
+      status: kind === "tls" ? "skipped" : http === "ok" ? "ok" : "fail", latency_ms: 3, observed_at: "2026-10-23T03:05:00.000Z",
+    })));
+    const commit = w.commits["run-nginx-7f1c-1020"].slice(0, 8);
+    const o = pick(await run(w, { only: ["rollback_file"] }, { probe: lab("ok") }), of(w, "ROLLBACK", APP), "rollback_file");
+    expect([o.action.status, o.reason]).toEqual(["done", `restored to the approved copy at vault commit ${commit}; nginx -t passed, nginx reloaded, 1 probe of app.example.invalid ok; 1 skipped (tls app.example.invalid: no TLS on this target)`]);
+    expect(o.action.verification).toBe(probeId("run-verify-lab", "http", "app.example.invalid"));
+    expect(o.record).toContain(`probe ${probeId("run-verify-lab", "tls", "app.example.invalid")}: tls app.example.invalid skipped (skipped: no TLS on this target)`);
+    for (const [http, status, reason] of [
+      ["fail", "failed", "written and reloaded; 1 of 1 probe fail: http app.example.invalid; 1 skipped (tls app.example.invalid: no TLS on this target)"],
+      ["none", "unverified", "written and reloaded; no probe of app.example.invalid ran (1 skipped: tls app.example.invalid: no TLS on this target)"],
+    ] as const) {
+      const other = await buildWorld(base);
+      try {
+        const x = pick(await run(other, { only: ["rollback_file"] }, { probe: lab(http) }), of(other, "ROLLBACK", APP), "rollback_file");
+        expect([x.action.status, x.reason], http).toEqual([status, reason]);
+      } finally {
+        other.cleanup();
+      }
+    }
+  });
+
+  it("the verification probes wait settleMs after the reload, and the record says so; the live Actor waits RELOAD_SETTLE_MS", async () => {
+    let probedAt = 0;
+    const t0 = Date.now();
+    const probe: ProbeFn = async (names, kinds) => { probedAt ||= Date.now(); return w.deps().probe(names, kinds); };
+    const o = pick(await run(w, { only: ["rollback_file"] }, { probe, settleMs: 60 }), of(w, "ROLLBACK", APP), "rollback_file");
+    expect(o.action.status).toBe("done");
+    expect(probedAt - t0).toBeGreaterThanOrEqual(55);
+    expect(o.record).toContain("probes asked 60 ms after the reload returned, once the new workers answer");
+    expect(RELOAD_SETTLE_MS).toBe(2_000);
+  });
+
+  it("verification through the live wiring under PROBE_TARGETS_OVERRIDE: probeNames over probePopulation asks a plain-http listener with the name as Host; done with the http probe's id", async () => {
+    const hosts: string[] = [];
+    const server = http.createServer((req, res) => { hosts.push(String(req.headers.host)); res.writeHead(req.headers.host === "app.example.invalid" ? 200 : 404, { server: "nginx" }).end(); });
+    await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
+    try {
+      const port = (server.address() as { port: number }).port;
+      const population = probePopulation({ source: () => { throw new Error("the Cloudflare read is skipped under the override"); }, override: [{ name: "app.example.invalid", host: "127.0.0.1", port }], agent: "actor" });
+      const o = pick(await run(w, { only: ["rollback_file"] }, { probe: probeNames({ tenantId: TENANT, redactor: w.redactor, population, sink: null }) }), of(w, "ROLLBACK", APP), "rollback_file");
+      expect(o.action.status).toBe("done");
+      expect(o.reason).toMatch(/; nginx -t passed, nginx reloaded, 1 probe of app\.example\.invalid ok; 1 skipped \(tls app\.example\.invalid: no TLS on this target\)$/);
+      expect(o.action.verification.split(",")).toHaveLength(1);
+      expect(o.record.some((l) => / http app\.example\.invalid ok \(status 200 server=nginx cf-ray absent; over plain http at \S+ \(override\)\)$/.test(l))).toBe(true);
+      expect(hosts).toEqual(["app.example.invalid"]);
+    } finally {
+      await new Promise((ok) => server.close(ok));
+    }
   });
 
   it("the live file changed since the run: refused, nothing written; the session dying: failed with ssh's line", async () => {

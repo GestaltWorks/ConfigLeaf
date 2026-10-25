@@ -10,8 +10,9 @@
 // Contract:
 //   - The finding is the pass's (findingOf, by the disposition's finding id); a finding no pass over the current rows
 //     raises is a refusal.
-//   - Lightning: one call with a request nonce first in the user message, gated for the lightning tier with custody
-//     (gateWithCustody: one retry on a receipt that is not ours). A gated selection keeps its valid checks, at most
+//   - Lightning: one call with a request nonce first in the user message, max_tokens SELECT_MAX_TOKENS (the eval's
+//     selection cap: Lightning's reasoning counts against max_tokens and stays out of the content), gated for the
+//     lightning tier with custody (gateWithCustody: one retry on a receipt that is not ours). A gated selection keeps its valid checks, at most
 //     four. A selection the gate refuses, a model that does not answer, or no valid check: the class's default checks
 //     (defaultChecks) run, and the record says why.
 //   - Ultra: judgeClaim with the tenant id, the finding's summary as the claim and the finding's fields as the one
@@ -23,7 +24,11 @@
 //     one), so the Actor records kind fix, status refused, FIX_REFUSED, after the investigation.
 //
 // Measured 24 Oct 2026: exercised with a stub model and receipts signed by a throwaway key (test/actions.test.ts), two
-// model calls per investigation; Nightshift had received 0 calls from it.
+// model calls per investigation; Nightshift had received 0 calls from it. Measured 25 Oct 2026 live on the lab
+// (lab/README.md), a FIX on www.lab.test: at max_tokens 1,024 all four Lightning route attempts answered
+// empty_response (act-8e962ee34398e0e1, the default checks ran); at SELECT_MAX_TOKENS, act-45f088e61ed545f1: Lightning
+// selected 4 valid checks on receipt rcpt_req_nn4ag0yu (4,094 tokens out, 27.5 s), Ultra stood on rcpt_req_iehg9gmt
+// (14.9 s), both receipts verified with custody, done in 87 s, then the fix refused.
 
 import type { ChatMessage, ChatResult } from "../adapters/nightshift.ts";
 import { judgeClaim, type JudgeModel } from "../agents/judge.ts";
@@ -32,6 +37,7 @@ import { CatalogueError, runCheck } from "../catalogue/templates.ts";
 import { DataLayerError, type DataLayer } from "../data/layer.ts";
 import { listRuns, objects, probesOfRun, runComplete } from "../data/queries.ts";
 import type { Disposition } from "../data/rows.ts";
+import { SELECT_MAX_TOKENS } from "../eval/models.ts";
 import { gateWithCustody, tenantAppId, type ReceiptFinder } from "../gate.ts";
 import { PASS_WINDOW_MS, type Finding } from "../pipeline.ts";
 import type { Redactor } from "../redactor.ts";
@@ -133,7 +139,7 @@ export async function investigate(d: Disposition, deps: InvestigateDeps): Promis
     const call = async ({ nonce }: { nonce: string }): Promise<{ chat: ChatResult; prompt: string[] }> => {
       const [system, user] = selectionPrompt(f);
       const messages: ChatMessage[] = [system, { ...user, content: `[request ${nonce}]\n${user.content}` }];
-      const chat = await model.chatWithFallback({ models: [...deps.lightning], messages, maxTokens: 1024, temperature: 0, appId, agent: "actor", tracer: deps.tracer });
+      const chat = await model.chatWithFallback({ models: [...deps.lightning], messages, maxTokens: SELECT_MAX_TOKENS, temperature: 0, appId, agent: "actor", tracer: deps.tracer });
       return { chat, prompt: messages.map((m) => m.content) };
     };
     try {

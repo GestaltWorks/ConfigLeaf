@@ -141,7 +141,7 @@ CREATE TABLE IF NOT EXISTS probe (
   target         TEXT NOT NULL,      -- the redacted name
   expected       TEXT NOT NULL,
   observed       TEXT NOT NULL,      -- redacted
-  status         TEXT NOT NULL,      -- ok | fail
+  status         TEXT NOT NULL,      -- ok | fail | skipped (skipped: did not run, the tls of a PROBE_TARGETS_OVERRIDE target)
   latency_ms     INTEGER,
   observed_at    TEXT NOT NULL
 );

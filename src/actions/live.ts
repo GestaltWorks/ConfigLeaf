@@ -7,7 +7,8 @@
 // Contract: a dry run gets no Cloudflare client, no model, no sink and a probe function that probes nothing: it
 // prints its plan from the ledger, the policy, the approvals, the copies and the vault alone. An apply gets all of
 // them; the probe rows of a verification go into the Store as one probe run of surface probe.verify per action, and the
-// Store is the sink of the action rows and of the approvals a re-created record carries.
+// Store is the sink of the action rows and of the approvals a re-created record carries. The verification's population
+// is src/probe/run.ts probePopulation: PROBE_TARGETS_OVERRIDE's names when it is set (a lab aid), else the account's.
 
 import { Nightshift } from "../adapters/nightshift.ts";
 import { Cloudflare } from "../collectors/cloudflare.ts";
@@ -17,11 +18,12 @@ import type { DataLayer } from "../data/layer.ts";
 import type { Store } from "../data/store.ts";
 import { ReceiptStore } from "../gate.ts";
 import { runPass, type Finding } from "../pipeline.ts";
-import { readPopulation } from "../probe/run.ts";
+import { probePopulation } from "../probe/run.ts";
 import type { Redactor } from "../redactor.ts";
 import type { Tracer } from "../trace.ts";
 import type { Vault } from "../vault/vault.ts";
 import { aliasFromHosts, probeNames, type ActorDeps } from "./act.ts";
+import { RELOAD_SETTLE_MS } from "./rollback.ts";
 import { runWriteSession } from "./ssh.ts";
 
 export interface LiveOptions {
@@ -47,7 +49,7 @@ export function liveActorDeps(o: LiveOptions): ActorDeps {
     aliasOf: aliasFromHosts(Object.keys(HOSTS), o.redactor),
     ssh: runWriteSession,
     records: cf,
-    probe: cf ? probeNames({ tenantId: o.tenantId, redactor: o.redactor, population: () => readPopulation(cf), sink: o.store }) : async () => [],
+    probe: cf ? probeNames({ tenantId: o.tenantId, redactor: o.redactor, population: probePopulation({ source: () => cf, tracer: o.tracer, agent: "actor" }), sink: o.store }) : async () => [],
     model: nightshift,
     receipts: nightshift ? new ReceiptStore(nightshift) : { find: async () => null },
     findingOf: async (d) => {
@@ -57,5 +59,6 @@ export function liveActorDeps(o: LiveOptions): ActorDeps {
     lightning: [config.nightshift.modelFast, ...config.nightshift.fallbackFast],
     ultra: [config.nightshift.modelJudge, ...config.nightshift.fallbackJudge],
     tracer: o.tracer,
+    settleMs: RELOAD_SETTLE_MS,
   };
 }

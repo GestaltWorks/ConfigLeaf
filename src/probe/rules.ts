@@ -19,6 +19,11 @@
 //   - The ok rules: http answers with a status below 500 and its cf-ray header matches the edge
 //     ("any" takes either); dns holds the address expectation on both resolvers; tls is authorized for
 //     the name with more than 7 whole days left. An unreachable name fails every kind.
+//   - PROBE_TARGETS_OVERRIDE (src/config.ts, a lab aid): each entry is a direct A or AAAA record of its
+//     address with `via` set (overridePopulation). Its http probe asks the address and port over plain
+//     http with the name as Host, under the same ok rule, and both strings say so; its dns probe asks no
+//     resolver and holds the override's address, "override" in both strings; its tls probe is recorded
+//     skipped (TLS_SKIPPED), the one status besides ok and fail, and a skipped probe counts neither way.
 //   - The strings stored in probe.expected and probe.observed are built here from real values and a
 //     redaction function the caller supplies (src/probe/run.ts passes Redactor.text); the caller
 //     redacts the whole string once more before it is stored or printed.
@@ -26,6 +31,7 @@
 // Measured 24 Oct 2026 on the operator's account (PROBE_LIVE=true, test/probe.test.ts): 37 targets after
 // wildcards, so a full run asserts expected_count 111.
 
+import type { ProbeOverride } from "../config.ts";
 import type { ProbeKind } from "../data/rows.ts";
 
 export const PROBE_KINDS = ["http", "dns", "tls"] as const satisfies readonly ProbeKind[];
@@ -53,7 +59,12 @@ export interface PopulationRecord {
   type: string;
   content: string;
   proxied: number | null;
+  /** Set for a PROBE_TARGETS_OVERRIDE entry: the address and port the name is asked at over plain http. */
+  via?: Via;
 }
+
+/** Where an override target is asked: the address and port of its plain-http listener. */
+export interface Via { host: string; port: number }
 
 /** Whether a name's http answer carries cf-ray. */
 export type Edge = "present" | "absent" | "any";
@@ -69,6 +80,13 @@ export interface ProbeTarget {
   name: string;
   edge: Edge;
   dns: DnsExpectation;
+  /** Present for a PROBE_TARGETS_OVERRIDE target. */
+  via?: Via;
+}
+
+/** PROBE_TARGETS_OVERRIDE's entries as population records: a direct A (AAAA for an IPv6 address) record of the address, `via` set. */
+export function overridePopulation(entries: readonly ProbeOverride[]): PopulationRecord[] {
+  return entries.map((e) => ({ name: e.name, type: e.host.includes(":") ? "AAAA" : "A", content: e.host, proxied: 0, via: { host: e.host, port: e.port } }));
 }
 
 export const normName = (s: string): string => s.trim().toLowerCase().replace(/\.$/, "");
@@ -127,10 +145,12 @@ export function buildTargets(records: readonly PopulationRecord[]): ProbeTarget[
   return [...byName.keys()].filter((n) => !isWildcard(n)).sort().map((name) => {
     const own = byName.get(name)!;
     const dns = own.map((r) => recordAddresses(r, byName));
+    const via = own.find((r) => r.via)?.via;
     return {
       name,
       edge: combine(own.map((r) => recordEdge(r, byName))),
       dns: { contain: uniqSorted(dns.flatMap((d) => d.contain)), omit: uniqSorted(dns.flatMap((d) => d.omit)) },
+      ...(via ? { via: { host: via.host, port: via.port } } : {}),
     };
   });
 }
@@ -176,12 +196,24 @@ export function tlsOk(o: TlsObservation, now: Date): boolean {
 type Red = (s: string) => string;
 const list = (xs: readonly string[], red: Red): string => xs.map(red).sort().join(", ");
 
-export const httpExpected = (edge: Edge): string => `answers (status below ${HTTP_FAIL_STATUS}); cf-ray ${edge}`;
+/** "plain http at <address>:<port> (override)": where an override target's http probe asked. */
+const viaText = (via: Via, red: Red): string => `plain http at ${red(via.host.includes(":") ? `[${via.host}]` : via.host)}:${via.port} (override)`;
 
-export function httpObserved(o: HttpObservation, red: Red): string {
-  if (o.kind === "unreachable") return `unreachable: ${o.code}`;
-  return `status ${o.status} server=${o.server ? red(o.server) : "-"} cf-ray ${o.cfRay ? "present" : "absent"}`;
+export const httpExpected = (edge: Edge, via?: Via, red: Red = (s) => s): string =>
+  `answers (status below ${HTTP_FAIL_STATUS})${via ? ` over ${viaText(via, red)}` : ""}; cf-ray ${edge}`;
+
+export function httpObserved(o: HttpObservation, red: Red, via?: Via): string {
+  const over = via ? `; over ${viaText(via, red)}` : "";
+  if (o.kind === "unreachable") return `unreachable: ${o.code}${over}`;
+  return `status ${o.status} server=${o.server ? red(o.server) : "-"} cf-ray ${o.cfRay ? "present" : "absent"}${over}`;
 }
+
+/** An override target's dns strings: the override is the resolution, and no resolver is asked. */
+export const dnsOverrideExpected = (via: Via, red: Red): string => `resolves to ${red(via.host)} through the override (PROBE_TARGETS_OVERRIDE); no resolver asked`;
+export const dnsOverrideObserved = (via: Via, red: Red): string => `override [${red(via.host)}]`;
+
+/** An override target's tls observation: the lab serves plain http, so no handshake is made. */
+export const TLS_SKIPPED = "skipped: no TLS on this target";
 
 export function dnsExpected(e: DnsExpectation, red: Red): string {
   const parts = ["each resolver answers with an address"];

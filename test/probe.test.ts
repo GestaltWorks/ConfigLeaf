@@ -4,17 +4,18 @@
 // injected, through a fake sink in Store's shape. PROBE_LIVE=true adds one http probe against one name read
 // from the live API (CLOUDFLARE_API_TOKEN) and asserts the row's shape; skipped otherwise, with one line.
 import { randomBytes } from "node:crypto";
+import http from "node:http";
 import { describe, expect, it } from "vitest";
-import { config } from "../src/config.ts";
+import { config, parseProbeOverride, type ProbeOverride } from "../src/config.ts";
 import { Cloudflare, dnsRecordRow, type CfRecord, type CfZone } from "../src/collectors/cloudflare.ts";
 import { probeId, runId, type Probe } from "../src/data/rows.ts";
 import type { RunStart } from "../src/data/store.ts";
 import {
-  PROBE_CONCURRENCY, RESOLVERS, TLS_EXPECTED, buildTargets, dnsExpected, dnsObserved, dnsOk, errorCode, httpExpected, httpObserved, httpOk,
-  normAddress, tlsDaysLeft, tlsObserved, tlsOk, type PopulationRecord, type ProbeTarget, type ResolverAnswer,
+  PROBE_CONCURRENCY, RESOLVERS, TLS_EXPECTED, TLS_SKIPPED, buildTargets, dnsExpected, dnsObserved, dnsOk, errorCode, httpExpected, httpObserved, httpOk,
+  normAddress, overridePopulation, tlsDaysLeft, tlsObserved, tlsOk, type PopulationRecord, type ProbeTarget, type ResolverAnswer,
 } from "../src/probe/rules.ts";
 import {
-  defaultDeps, observeHttp, observeResolver, observeTls, pool, probeOne, readPopulation, runProbes,
+  defaultDeps, nodePlainHttp, observeHttp, observeResolver, observeTls, pool, probeOne, probePopulation, readPopulation, runProbes,
   type DnsResolver, type ProbeDeps, type ProbeSink,
 } from "../src/probe/run.ts";
 import { Redactor } from "../src/redactor.ts";
@@ -54,6 +55,8 @@ interface World {
   dnsBy?: Record<string, Record<string, string[]>>;
   dnsError?: Record<string, string>;
   tls: Record<string, { authorized: boolean; days: number; issuer?: string }>;
+  /** "<host>:<port> <name>" -> the plain-http answer at that address for that Host. */
+  plain?: Record<string, HttpWorld>;
 }
 
 /** Network and clock as data. Every call is logged as "<kind> <name>"; `active` tracks probes in flight by kind and name. */
@@ -106,6 +109,17 @@ function fakeDeps(world: World, log: string[] = [], opts: { delayMs?: number; ac
         const w = world.tls[name];
         if (!w) throw Object.assign(new Error(`connect ECONNREFUSED ${name}:443`), { code: "ECONNREFUSED" });
         return { authorized: w.authorized, issuer: w.issuer ?? "Example CA", valid_to: notAfter(w.days) };
+      } finally {
+        done();
+      }
+    },
+    plainHttp: async ({ host, port, name }) => {
+      const key = `${host}:${port} ${name}`;
+      const done = await enter(`plain ${key}`);
+      try {
+        const w = world.plain?.[key];
+        if (!w || "error" in w) throw Object.assign(new Error(`connect ${w ? w.error : "ECONNREFUSED"} ${host}:${port}`), { code: w ? w.error : "ECONNREFUSED" });
+        return { status: w.status, server: w.server ?? "nginx", cfRay: w.cfRay };
       } finally {
         done();
       }
@@ -463,6 +477,85 @@ describe("a probe run over the fixture account, offline", () => {
     const deps = { ...fakeDeps(HEALTHY), now: () => new Date((t += 7)) };
     const row = await probeOne({ runId: RUN, tenantId: T, redactor: r, deps, resolvers: [] }, target([rec("shop.example", "A", "203.0.113.10", 0)], "shop.example"), "http");
     expect(row).toMatchObject({ kind: "http", target: "shop.example", status: "ok", latency_ms: 7, observed_at: new Date(NOW.getTime() + 14).toISOString() });
+  });
+});
+
+describe("PROBE_TARGETS_OVERRIDE, the lab aid", () => {
+  const LAB = "127.0.0.1";
+  const OVERRIDE: ProbeOverride[] = [{ name: "lab.example", host: LAB, port: 8080 }, { name: "www.lab.test", host: LAB, port: 8080 }];
+  const RUN = runId(T, "probe", null, NOW.toISOString());
+  const LAB_WORLD: World = {
+    http: {}, dns: {}, tls: {},
+    plain: { [`${LAB}:8080 lab.example`]: { status: 200, cfRay: false, server: "nginx/1.22.1" }, [`${LAB}:8080 www.lab.test`]: { status: 503, cfRay: false } },
+  };
+
+  it("parses <name>=<address>[:<port>], comma-separated: port 80 when absent, names lower-cased, IPv6 in brackets; any other shape throws", () => {
+    expect(parseProbeOverride("")).toEqual([]);
+    expect(parseProbeOverride(" lab.example=127.0.0.1:8080, WWW.Lab.Test.=127.0.0.1 ,v6.lab.test=[::1]:8443")).toEqual([
+      { name: "lab.example", host: "127.0.0.1", port: 8080 }, { name: "www.lab.test", host: "127.0.0.1", port: 80 }, { name: "v6.lab.test", host: "::1", port: 8443 },
+    ]);
+    for (const bad of ["lab.example", "lab.example=", "=127.0.0.1", "*.lab.example=127.0.0.1", "lab.example=127.0.0.1:0", "lab.example=127.0.0.1:99999", "lab.example=127.0.0.1:80:1", "lab example=127.0.0.1", "a.test=127.0.0.1,A.test=127.0.0.2"]) {
+      expect(() => parseProbeOverride(bad), bad).toThrow(/^PROBE_TARGETS_OVERRIDE: /);
+    }
+  });
+
+  it("an entry is a direct A record of its address with via set: cf-ray absent, the address expected, plain http at the address", () => {
+    const pop = overridePopulation(OVERRIDE);
+    expect(pop[0]).toEqual({ name: "lab.example", type: "A", content: LAB, proxied: 0, via: { host: LAB, port: 8080 } });
+    expect(overridePopulation([{ name: "v6.lab.test", host: "::1", port: 80 }])[0].type).toBe("AAAA");
+    expect(buildTargets(pop)).toEqual([
+      { name: "lab.example", edge: "absent", dns: { contain: [LAB], omit: [] }, via: { host: LAB, port: 8080 } },
+      { name: "www.lab.test", edge: "absent", dns: { contain: [LAB], omit: [] }, via: { host: LAB, port: 8080 } },
+    ]);
+    expect(buildTargets([rec("shop.example", "A", "203.0.113.10", 0)])[0]).not.toHaveProperty("via");
+  });
+
+  it("http asks the address over plain http with the name as Host, under the same ok rule; dns asks no resolver and holds the override; tls is recorded skipped", async () => {
+    const log: string[] = [];
+    const { sink, calls } = fakeSink(log);
+    const res = await runProbes({ tenantId: T, population: async () => overridePopulation(OVERRIDE), redactor: r, deps: fakeDeps(LAB_WORLD, log), sink });
+    expect(log.filter((l) => /^(http|dns|tls|plain) /.test(l)).sort()).toEqual([`plain ${LAB}:8080 lab.example`, `plain ${LAB}:8080 www.lab.test`]);
+    expect(calls.begin[0].expected_count).toBe(6);
+    expect(res.run).toMatchObject({ run_id: RUN, expected_count: 6, observed_count: 6, status: "complete" });
+    const row = (kind: string, name: string): Probe => res.rows.find((p) => p.kind === kind && p.target === red(name))!;
+    const at = `plain http at ${red(LAB)}:8080 (override)`;
+    expect(row("http", "lab.example")).toMatchObject({ status: "ok", expected: `answers (status below 500) over ${at}; cf-ray absent`, observed: `status 200 server=nginx/1.22.1 cf-ray absent; over ${at}` });
+    expect(row("http", "www.lab.test")).toMatchObject({ status: "fail", observed: `status 503 server=nginx cf-ray absent; over ${at}` });
+    expect(row("dns", "lab.example")).toMatchObject({ status: "ok", expected: `resolves to ${red(LAB)} through the override (PROBE_TARGETS_OVERRIDE); no resolver asked`, observed: `override [${red(LAB)}]` });
+    expect(row("tls", "lab.example")).toMatchObject({ status: "skipped", expected: TLS_EXPECTED, observed: TLS_SKIPPED });
+    expect(TLS_SKIPPED).toBe("skipped: no TLS on this target");
+    expect(res.rows.map((p) => p.status).sort()).toEqual(["fail", "ok", "ok", "ok", "skipped", "skipped"]);
+  });
+
+  it("an address that refuses the connection is an unreachable http fail, the override named", async () => {
+    const res = await runProbes({ tenantId: T, population: async () => overridePopulation([{ name: "lab.example", host: LAB, port: 8099 }]), redactor: r, deps: fakeDeps(LAB_WORLD), kinds: ["http"] });
+    expect(res.rows[0]).toMatchObject({ status: "fail", observed: `unreachable: ECONNREFUSED; over plain http at ${red(LAB)}:8099 (override)` });
+  });
+
+  it("probePopulation: the override's entries when set, the Cloudflare read skipped and one trace line saying so; the account's records otherwise", async () => {
+    const events: { output_summary?: string; status: string; agent: string }[] = [];
+    const tracer = { emit: (e: { output_summary?: string; status: string; agent: string }) => events.push(e) };
+    let reads = 0;
+    const source = () => { reads++; return fixtureCloudflare(); };
+    expect(await probePopulation({ source, override: OVERRIDE, tracer, agent: "actor" })()).toEqual(overridePopulation(OVERRIDE));
+    expect(reads).toBe(0);
+    expect(events).toEqual([expect.objectContaining({ agent: "actor", status: "skipped", output_summary: "PROBE_TARGETS_OVERRIDE names 2 target(s); the Cloudflare read is skipped" })]);
+    expect((await probePopulation({ source, override: [], tracer, agent: "probe" })()).length).toBe(7);
+    expect([reads, events.length]).toEqual([1, 1]);
+  });
+
+  it("nodePlainHttp sends GET / to the address with the name as Host and reads the status and the server header", async () => {
+    const seen: string[] = [];
+    const server = http.createServer((req, res) => { seen.push(`${req.method} ${req.url} ${req.headers.host}`); res.writeHead(req.headers.host === "lab.example" ? 200 : 404, { server: "lab-nginx" }).end("x"); });
+    await new Promise<void>((ok) => server.listen(0, LAB, ok));
+    try {
+      const port = (server.address() as { port: number }).port;
+      expect(await nodePlainHttp({ host: LAB, port, name: "lab.example", timeoutMs: 5_000 })).toEqual({ status: 200, server: "lab-nginx", cfRay: false });
+      expect((await nodePlainHttp({ host: LAB, port, name: "other.test", timeoutMs: 5_000 })).status).toBe(404);
+      expect(seen).toEqual(["GET / lab.example", "GET / other.test"]);
+    } finally {
+      await new Promise((ok) => server.close(ok));
+    }
   });
 });
 

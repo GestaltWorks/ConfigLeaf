@@ -169,7 +169,8 @@ export interface Probe {
   target: string;
   expected: string;
   observed: string;
-  status: "ok" | "fail";
+  /** skipped: the probe did not run (the tls of a PROBE_TARGETS_OVERRIDE target, src/probe/rules.ts); it counts neither way. */
+  status: "ok" | "fail" | "skipped";
   latency_ms: number | null;
   observed_at: string;
 }

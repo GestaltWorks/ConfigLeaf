@@ -96,6 +96,8 @@ export interface ActorDeps {
   ultra: readonly string[];
   now?: () => Date;
   tracer?: Tracer;
+  /** The wait between a rollback's reload and its verification probes (src/actions/rollback.ts RELOAD_SETTLE_MS live); absent, none. */
+  settleMs?: number;
 }
 
 export interface ActOptions {
@@ -215,7 +217,7 @@ export async function act(opts: ActOptions, deps: ActorDeps): Promise<ActResult>
     },
     actionsOn: (target) => recorded.filter((a) => a.target === target).sort((a, b) => (a.started_at < b.started_at ? -1 : a.started_at > b.started_at ? 1 : 0)),
   };
-  const kindDeps = { reads, vault: deps.vault, aliasOf: deps.aliasOf, ssh: deps.ssh, records: deps.records, probe: deps.probe, approvals: opts.apply ? deps.sink : null, redactor, now, tracer };
+  const kindDeps = { reads, vault: deps.vault, aliasOf: deps.aliasOf, ssh: deps.ssh, records: deps.records, probe: deps.probe, approvals: opts.apply ? deps.sink : null, redactor, now, tracer, settleMs: deps.settleMs };
   const invDeps = { layer, reads, findingOf: deps.findingOf, model: deps.model, receipts: deps.receipts, lightning: deps.lightning, ultra: deps.ultra, redactor, now, tracer };
 
   const plan: PlanItem[] = [];

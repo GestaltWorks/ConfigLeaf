@@ -23,25 +23,34 @@
 //     and the finish: observed_count is the rows the sink wrote, status complete when every name has a
 //     row of every kind asked and the sink wrote them all, partial otherwise, failed when the
 //     population or the write failed. probe_id is stableId("probe", run_id, kind, target).
-//   - fetch, the resolver factory, the tls connector and the clock are injectable (ProbeDeps), so the
-//     whole run is tested offline; latency_ms and observed_at come from the injected clock.
+//   - fetch, the resolver factory, the tls connector, the plain-http client and the clock are injectable
+//     (ProbeDeps), so the whole run is tested offline; latency_ms and observed_at come from the injected clock.
+//   - PROBE_TARGETS_OVERRIDE (a lab aid, src/config.ts): probePopulation gives its entries as the population
+//     and skips the Cloudflare read, one trace line saying so. An override target's http probe is GET
+//     http://<address>:<port>/ with Host <name> through plainHttp (node:http: fetch sends its own Host); its
+//     dns probe asks no resolver; its tls probe is recorded skipped (src/probe/rules.ts).
 //
 // Measured 24 Oct 2026 (PROBE_LIVE=true, test/probe.test.ts): the population read from the live API
 // gave 37 names; one http probe through defaultDeps against the first of them by pseudonym answered ok
-// in 359 ms. The full run over the account is the Verify step's.
+// in 359 ms. The full run over the account is the Verify step's. Measured 25 Oct 2026 on the lab under
+// PROBE_TARGETS_OVERRIDE (lab/README.md): run-396c20fb165306ed, 2 names, 6 of 6 complete, http 1 ok and 1 fail
+// (503), dns 2 ok, tls 2 skipped, the Cloudflare read skipped.
 
 import dns from "node:dns";
+import http from "node:http";
 import tls from "node:tls";
 import type { CfRecord, CfZone, FetchLike } from "../collectors/cloudflare.ts";
 import { proxiedFlag } from "../collectors/cloudflare.ts";
 import { probeId, runId, type CollectionRun, type Probe, type ProbeKind } from "../data/rows.ts";
 import type { RunStart } from "../data/store.ts";
-import { redact } from "../config.ts";
+import { config, redact, type ProbeOverride } from "../config.ts";
 import type { Redactor } from "../redactor.ts";
+import type { TraceEvent } from "../trace.ts";
 import {
-  PROBED_TYPES, PROBE_CONCURRENCY, PROBE_KINDS, PROBE_TIMEOUT_MS, RESOLVERS, TLS_EXPECTED,
-  buildTargets, dnsExpected, dnsObserved, dnsOk, errorCode, httpExpected, httpObserved, httpOk, normAddress, tlsObserved, tlsOk,
-  type HttpObservation, type PopulationRecord, type ProbeTarget, type ResolverAnswer, type TlsObservation,
+  PROBED_TYPES, PROBE_CONCURRENCY, PROBE_KINDS, PROBE_TIMEOUT_MS, RESOLVERS, TLS_EXPECTED, TLS_SKIPPED,
+  buildTargets, dnsExpected, dnsObserved, dnsOk, dnsOverrideExpected, dnsOverrideObserved, errorCode, httpExpected, httpObserved, httpOk,
+  normAddress, overridePopulation, tlsObserved, tlsOk,
+  type HttpObservation, type PopulationRecord, type ProbeTarget, type ResolverAnswer, type TlsObservation, type Via,
 } from "./rules.ts";
 
 export interface DnsResolver {
@@ -59,10 +68,16 @@ export interface TlsPeer {
 }
 export type TlsConnector = (name: string, timeoutMs: number) => Promise<TlsPeer>;
 
+/** What a plain-http GET shows: the status, the server header, whether cf-ray came back. */
+export interface PlainAnswer { status: number; server: string | null; cfRay: boolean }
+/** GET http://<host>:<port>/ with Host <name>: an override target's http probe. */
+export type PlainHttp = (o: { host: string; port: number; name: string; timeoutMs: number }) => Promise<PlainAnswer>;
+
 export interface ProbeDeps {
   fetch: FetchLike;
   resolver: ResolverFactory;
   tls: TlsConnector;
+  plainHttp: PlainHttp;
   now: () => Date;
 }
 
@@ -103,7 +118,41 @@ export const nodeTls: TlsConnector = (name, timeoutMs) => new Promise<TlsPeer>((
   });
 });
 
-export const defaultDeps = (): ProbeDeps => ({ fetch: (u, i) => fetch(u, i), resolver: nodeResolver, tls: nodeTls, now: () => new Date() });
+/** node:http GET / at the address with the name as Host, the body discarded; a timeout destroys the request with code ETIMEDOUT. */
+export const nodePlainHttp: PlainHttp = ({ host, port, name, timeoutMs }) => new Promise<PlainAnswer>((resolve, reject) => {
+  const req = http.request({ host, port, path: "/", method: "GET", headers: { host: name, "user-agent": USER_AGENT }, timeout: timeoutMs }, (res) => {
+    res.resume();
+    const server = res.headers.server;
+    resolve({ status: res.statusCode ?? 0, server: typeof server === "string" ? server : null, cfRay: res.headers["cf-ray"] !== undefined });
+  });
+  req.on("timeout", () => req.destroy(Object.assign(new Error("plain http timed out"), { code: "ETIMEDOUT" })));
+  req.on("error", reject);
+  req.end();
+});
+
+export const defaultDeps = (): ProbeDeps => ({ fetch: (u, i) => fetch(u, i), resolver: nodeResolver, tls: nodeTls, plainHttp: nodePlainHttp, now: () => new Date() });
+
+/**
+ * The population a probe run reads: PROBE_TARGETS_OVERRIDE's entries when it is set (a lab aid: the Cloudflare read
+ * is skipped, and one trace line says so), else the account's A, AAAA and CNAME records through `source`.
+ */
+export function probePopulation(o: {
+  source: () => PopulationSource;
+  override?: readonly ProbeOverride[];
+  tracer?: { emit(e: Omit<TraceEvent, "ts" | "trace_id">): unknown };
+  agent: string;
+}): () => Promise<PopulationRecord[]> {
+  const override = o.override ?? config.probeOverride;
+  return async () => {
+    if (!override.length) return readPopulation(o.source());
+    o.tracer?.emit({
+      agent: o.agent, action: "observe", status: "skipped", input_summary: "probe population",
+      output_summary: `PROBE_TARGETS_OVERRIDE names ${override.length} target(s); the Cloudflare read is skipped`,
+      detail: override.map((e) => `${e.name} at ${e.host}:${e.port} over plain http`).join(", "),
+    });
+    return overridePopulation(override);
+  };
+}
 
 /** The account's A, AAAA and CNAME records, every zone the client sees, real values. */
 export async function readPopulation(cf: PopulationSource): Promise<PopulationRecord[]> {
@@ -131,6 +180,16 @@ export async function observeHttp(fetchFn: FetchLike, name: string, timeoutMs = 
     const res = await fetchFn(`https://${name}/`, { method: "GET", redirect: "manual", signal: AbortSignal.timeout(timeoutMs), headers: { "user-agent": USER_AGENT } });
     await res.body?.cancel().catch(() => undefined);
     return { kind: "answer", status: res.status, server: res.headers.get("server"), cfRay: res.headers.has("cf-ray") };
+  } catch (e) {
+    return { kind: "unreachable", code: errorCode(e) };
+  }
+}
+
+/** An override target's http probe: GET / at the address over plain http, the name as Host. */
+export async function observePlainHttp(plain: PlainHttp, name: string, via: Via, timeoutMs = PROBE_TIMEOUT_MS): Promise<HttpObservation> {
+  try {
+    const a = await deadline(plain({ host: via.host, port: via.port, name, timeoutMs }), timeoutMs + 1_000);
+    return { kind: "answer", status: a.status, server: a.server, cfRay: a.cfRay };
   } catch (e) {
     return { kind: "unreachable", code: errorCode(e) };
   }
@@ -176,19 +235,30 @@ export async function probeOne(ctx: ProbeContext, t: ProbeTarget, kind: ProbeKin
   const red = (s: string): string => ctx.redactor.text(s);
   const timeout = ctx.timeoutMs ?? PROBE_TIMEOUT_MS;
   const t0 = ctx.deps.now();
+  const via = t.via;
   let expected: string;
   let observed: string;
   let ok: boolean;
+  let skipped = false;
   if (kind === "http") {
-    const o = await observeHttp(ctx.deps.fetch, t.name, timeout);
-    expected = httpExpected(t.edge);
-    observed = httpObserved(o, red);
+    const o = via ? await observePlainHttp(ctx.deps.plainHttp, t.name, via, timeout) : await observeHttp(ctx.deps.fetch, t.name, timeout);
+    expected = httpExpected(t.edge, via, red);
+    observed = httpObserved(o, red, via);
     ok = httpOk(t.edge, o);
+  } else if (kind === "dns" && via) {
+    expected = dnsOverrideExpected(via, red);
+    observed = dnsOverrideObserved(via, red);
+    ok = true;
   } else if (kind === "dns") {
     const answers = await Promise.all(ctx.resolvers.map((r) => observeResolver(r, t.name, timeout)));
     expected = dnsExpected(t.dns, red);
     observed = dnsObserved(answers, red);
     ok = dnsOk(t.dns, answers);
+  } else if (via) {
+    expected = TLS_EXPECTED;
+    observed = TLS_SKIPPED;
+    ok = false;
+    skipped = true;
   } else {
     const o = await observeTls(ctx.deps.tls, t.name, timeout);
     const at = ctx.deps.now();
@@ -200,7 +270,7 @@ export async function probeOne(ctx: ProbeContext, t: ProbeTarget, kind: ProbeKin
   const target = red(t.name);
   return {
     probe_id: probeId(ctx.runId, kind, target), run_id: ctx.runId, tenant_id: ctx.tenantId, kind, target,
-    expected: red(expected), observed: red(observed), status: ok ? "ok" : "fail",
+    expected: red(expected), observed: red(observed), status: skipped ? "skipped" : ok ? "ok" : "fail",
     latency_ms: Math.max(0, Math.round(t1.getTime() - t0.getTime())), observed_at: t1.toISOString(),
   };
 }

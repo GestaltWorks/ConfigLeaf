@@ -14,7 +14,8 @@
 //   collect:linux       collectHost over the alias (one SSH session with the fixed read script), storeRows, the vault
 //                       hook; ok when the run is complete and the hook committed or is off. commits: the run's new
 //                       commit.
-//   probe               runProbes over the account's served names into the Store; ok when the run is complete.
+//   probe               runProbes over the account's served names (PROBE_TARGETS_OVERRIDE's when it is set, a lab
+//                       aid: src/probe/run.ts probePopulation) into the Store; ok when the run is complete.
 //   validate            validateCopies over every repository's head when the collect steps made a new commit, else
 //                       nothing; ok when every repository validated, whatever each result.
 //   act                 act() over the dispositions of the runs the pass's findings came from, dry run unless apply;
@@ -42,7 +43,7 @@ import type { Store } from "../data/store.ts";
 import { renderDocument } from "../document/render.ts";
 import type { TechnicianMemory } from "../engine/memory.ts";
 import { PgLedger } from "../ledger.ts";
-import { readPopulation, runProbes, type ProbeDeps, type ProbeSink } from "../probe/run.ts";
+import { probePopulation, runProbes, type ProbeDeps, type ProbeSink } from "../probe/run.ts";
 import type { PopulationRecord } from "../probe/rules.ts";
 import { GithubIssues } from "../psa/github.ts";
 import type { TicketAdapter } from "../psa/index.ts";
@@ -126,7 +127,8 @@ export async function probeStep(o: { tenant: string; redactor: Redactor; sink: P
   const r = await runProbes({ tenantId: o.tenant, population: o.population, redactor: o.redactor, sink: o.sink, deps: o.deps });
   const tally = (["http", "dns", "tls"] as const).map((k) => {
     const of = r.rows.filter((p) => p.kind === k);
-    return `${k} ${of.filter((p) => p.status === "ok").length} ok, ${of.filter((p) => p.status === "fail").length} fail`;
+    const skipped = of.filter((p) => p.status === "skipped").length;
+    return `${k} ${of.filter((p) => p.status === "ok").length} ok, ${of.filter((p) => p.status === "fail").length} fail${skipped ? `, ${skipped} skipped` : ""}`;
   }).join("; ");
   const summary = o.redactor.text(`probe: run ${runLine(r.run)}, ${r.names} name(s); ${tally}; ${r.written} probe row(s) written`);
   const ok = r.run.status === "complete";
@@ -223,7 +225,7 @@ export function liveSteps(ctx: LiveContext): CycleSteps {
     collectLinux: (alias) => collectLinuxStep(alias, { tenant, redactor, store, vault, tracer }),
     probe: () => {
       const cf = new Cloudflare();
-      return probeStep({ tenant, redactor, sink: store, population: () => readPopulation(cf) });
+      return probeStep({ tenant, redactor, sink: store, population: probePopulation({ source: () => cf, tracer, agent: "probe" }) });
     },
     validate: (commits) => validateStep(commits, { tenant, vaultDir: ctx.vaultDir, store: storeCopies(store), redactor }),
     pass: async (): Promise<PassReport> => {

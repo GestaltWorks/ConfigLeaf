@@ -34,7 +34,8 @@
 //   (an nginx object's redacted server_name values in the run, a record's redacted name); answering when
 //   probes of those names ran and none failed; unknown when the pass holds no probe run ("no probe run in
 //   this pass"), or its probe run holds no probe of those names ("no probe in <run> targets a name it
-//   serves"). Every reason says which.
+//   serves"). Every reason says which. A probe recorded skipped did not run (the tls of a
+//   PROBE_TARGETS_OVERRIDE target) and counts neither way.
 //   Every reason is one plain sentence over redacted text: hashes as 12 hex, commits as 8.
 //
 // Measured 24 Oct 2026 on test/fixtures/policy-bundle.json (test/pipeline.test.ts): the vhost file with a
@@ -145,7 +146,7 @@ export function validCopy(copies: readonly CopyCandidate[], approvedHash: string
 export function production(probes: ProbeView, serves: readonly string[]): Production {
   if (probes.run_id === null) return { state: "unknown", run_id: null, why: NO_PROBE_RUN };
   const names = new Set(serves);
-  const mine = probes.rows.filter((p) => names.has(p.target));
+  const mine = probes.rows.filter((p) => names.has(p.target) && p.status !== "skipped");
   const failing = mine.filter((p) => p.status !== "ok").map((p) => `${p.kind} ${p.target}`);
   if (failing.length) return { state: "affected", run_id: probes.run_id, failing };
   if (mine.length) return { state: "answering", run_id: probes.run_id, ok: mine.length };

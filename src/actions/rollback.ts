@@ -14,12 +14,14 @@
 //                    over the same live bytes is refused too: that write is left to a technician. An unverified one
 //                    completed its write, so the rollback goes ahead and its reason names that action.
 //   planRollback     the dry-run lines (plan.ts): what would be written where, from which commit, what follows.
-//   rollbackFile     the session and the probes. The write path completes when write, nginx -t and the reload
-//                    exit 0 and the file's sha256 after is the copy's. done: completed, and every probe of the
-//                    served names is ok. unverified: completed, and no probe verified it: the copy's run records no
-//                    name the object serves, the probe population is unreadable, the account holds no record of the
-//                    names, or a probe reached no address because its name resolves nowhere (no probe answering
-//                    fail). refused: the live file is a symlink, is unreadable, changed since the run, or sudo
+//   rollbackFile     the session and the probes, settleMs after the reload (RELOAD_SETTLE_MS live). The write path
+//                    completes when write, nginx -t and the reload exit 0 and the file's sha256 after is the copy's. done: completed, at least one probe of the
+//                    served names ran, and every probe that ran is ok; a probe recorded skipped (the tls of a
+//                    PROBE_TARGETS_OVERRIDE target) did not run, counts neither way, and the reason names it;
+//                    verification holds the ids of the probes that ran. unverified: completed, and no probe verified
+//                    it: the copy's run records no name the object serves, the probe population is unreadable, the
+//                    account holds no record of the names, every probe was skipped, or a probe reached no address
+//                    because its name resolves nowhere (no probe answering fail). refused: the live file is a symlink, is unreadable, changed since the run, or sudo
 //                    refused before the write ("sudo: a password is required"). failed: the write path did not
 //                    complete, with nginx's or systemd's output redacted and the write-back named, or a probe that
 //                    answered fails, the failing probes named.
@@ -33,6 +35,8 @@
 // act-b5d5e77f69ab6f17 wrote the copy over a break to 8091, write, nginx-t and reload at exit 0, after_hash the
 // copy's, 1.9 s, and ended unverified, "no probe of lab.example ran (the account holds no record of these names)";
 // the next collection and pass gave 0 findings. The unverified ends and the retry after one: test/actions.test.ts.
+// Under PROBE_TARGETS_OVERRIDE at 09:53 UTC: act-649588b7e1625711 wrote the copy over a break to 8094 and ended done,
+// http lab.example 200 over plain http 2 s after the reload, tls skipped, verification probe-36eb2c1bba298a2a.
 
 import { redactText } from "../collectors/linux.ts";
 import type { Action, Disposition, Probe } from "../data/rows.ts";
@@ -54,7 +58,17 @@ export interface RollbackDeps {
   redactor: Redactor;
   now: () => Date;
   tracer?: Emitter;
+  /** Milliseconds between the reload and the verification probes (the live Actor: RELOAD_SETTLE_MS); 0 or absent, none. */
+  settleMs?: number;
 }
+
+/**
+ * The live Actor's wait between the reload and its verification probes. systemctl reload nginx returns once the master
+ * has the signal, and the old workers answer new connections until the new ones take over. Measured 25 Oct 2026 on
+ * the lab: lab.example answered from the old configuration for 0.13 s after the reload returned, and a probe made
+ * straight after the session read the old configuration's 502 (act-3892888a4e7bd1e5). The wait leaves 15 times that.
+ */
+export const RELOAD_SETTLE_MS = 2_000;
 
 export interface PreparedRollback {
   alias: string;
@@ -217,6 +231,10 @@ export async function rollbackFile(d: Disposition, p: PreparedRollback, deps: Ro
   if (!p.names.length) {
     return end("unverified", `written and reloaded; run ${copy.run_id} records no name the object serves, so no probe ran`, after);
   }
+  if (deps.settleMs) {
+    await new Promise((resolve) => setTimeout(resolve, deps.settleMs));
+    record.push(`probes asked ${deps.settleMs} ms after the reload returned, once the new workers answer`);
+  }
   let rows: Probe[];
   try {
     rows = await deps.probe(p.names, ["http", "tls"]);
@@ -224,17 +242,23 @@ export async function rollbackFile(d: Disposition, p: PreparedRollback, deps: Ro
     return end("unverified", `written and reloaded; the probes of ${p.names.join(", ")} did not run: ${safe(r, e)}`, after);
   }
   for (const x of rows) record.push(probeSentence(x));
-  const ids = rows.map((x) => x.probe_id);
   if (!rows.length) return end("unverified", `written and reloaded; no probe of ${p.names.join(", ")} ran (the account holds no record of these names)`, after);
-  const notOk = rows.filter((x) => x.status !== "ok");
+  // A skipped probe did not run (the tls of a PROBE_TARGETS_OVERRIDE target): it is recorded and counts neither way.
+  const ran = rows.filter((x) => x.status !== "skipped");
+  const skipped = rows.filter((x) => x.status === "skipped");
+  const skipList = `${skipped.map((x) => `${x.kind} ${x.target}`).join(", ")}: ${[...new Set(skipped.map((x) => x.observed.replace(/^skipped: /, "")))].join(", ")}`;
+  const skipText = skipped.length ? `; ${skipped.length} skipped (${skipList})` : "";
+  const ids = ran.map((x) => x.probe_id);
+  if (!ran.length) return end("unverified", `written and reloaded; no probe of ${p.names.join(", ")} ran (${skipped.length} skipped: ${skipList})`, after);
+  const notOk = ran.filter((x) => x.status !== "ok");
   const unread = notOk.filter((x) => UNRESOLVED.test(x.observed));
   const failing = notOk.filter((x) => !UNRESOLVED.test(x.observed));
   if (failing.length) {
-    return end("failed", `written and reloaded; ${failing.length} of ${plural(rows.length, "probe")} fail: ${failing.map((x) => `${x.kind} ${x.target}`).join(", ")}`, { ...after, verification: ids });
+    return end("failed", `written and reloaded; ${failing.length} of ${plural(ran.length, "probe")} fail: ${failing.map((x) => `${x.kind} ${x.target}`).join(", ")}${skipText}`, { ...after, verification: ids });
   }
   if (unread.length) {
     const nowhere = [...new Set(unread.map((x) => x.target))].sort();
-    return end("unverified", `written and reloaded; ${unread.length} of ${plural(rows.length, "probe")} reached no address: ${nowhere.join(", ")} ${nowhere.length === 1 ? "resolves" : "resolve"} nowhere (${[...new Set(unread.map((x) => x.observed.replace(/^unreachable: /, "")))].join(", ")})`, { ...after, verification: ids });
+    return end("unverified", `written and reloaded; ${unread.length} of ${plural(ran.length, "probe")} reached no address: ${nowhere.join(", ")} ${nowhere.length === 1 ? "resolves" : "resolve"} nowhere (${[...new Set(unread.map((x) => x.observed.replace(/^unreachable: /, "")))].join(", ")})${skipText}`, { ...after, verification: ids });
   }
-  return end("done", `restored to the approved copy at vault commit ${c8(copy.git_commit)}; nginx -t passed, nginx reloaded, ${plural(rows.length, "probe")} of ${p.names.join(", ")} ok`, { ...after, verification: ids });
+  return end("done", `restored to the approved copy at vault commit ${c8(copy.git_commit)}; nginx -t passed, nginx reloaded, ${plural(ran.length, "probe")} of ${p.names.join(", ")} ok${skipText}`, { ...after, verification: ids });
 }
