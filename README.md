@@ -237,8 +237,13 @@ after the feature freeze, its results published whatever they say. Yes expects E
 or ROLLBACK. Every model call passes the receipt gate with a fresh nonce, a substitution invalidates its run, and the
 ten planted false claims of `eval/planted.json` go to every judge. Results, with Wilson 95% intervals, land in
 `eval/results/<UTC stamp>/`. C0 runs the pass as SAMPLE_MODE does with the technician's memory empty, under
-`policy/hackathon.json` version 2 loaded for the recording's tenant (the protocol's changelog, 25 Oct 2026): on the
-development set every finding is HOLD by policy and C0 agrees with 9 of the 9 items labelled yes or no.
+`policy/hackathon.json` version 2 loaded for the recording's tenant (the protocol's changelog, 25 Oct 2026). The
+development set, every configuration three times, 25 Oct 2026 (`eval/results/2026-10-25T09-25-44Z/`, 410 model
+calls, 0 cache hits, 0 substitutions): C0 to C3 read 0 of the 9 items labelled no as needing a human in every run
+(agreement 1.000 on every scored item; Wilson lower bounds 0.44 to 0.70); C4, Nemotron 3 Ultra alone with no SQL and
+no policy, reads 6 of 9 as needing one, the same 6 in all three runs. Ultra as judge struck 9 of the 10 planted false
+claims in every run, Lightning as judge 9 of 10 in two runs; what moved between runs was how many items went
+not judged when a route failed to answer (C1 3, 3, 0; C2 6, 2, 4; C3 1, 0, 3).
 
 ## Zetaris
 
