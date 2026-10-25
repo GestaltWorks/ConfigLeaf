@@ -77,8 +77,7 @@ const AT = /(?<![\w.+-])(?!Defaults@)([A-Za-z0-9._%+-]+)@((?:[A-Za-z0-9_-]+\.)*[
 // pass d: hostnames. The lookahead also refuses a match followed by "./" or ".word": a dotted key path, not a host.
 const HOST = /(?<![\w.-])((?:[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?\.)+)([A-Za-z]{2,24})(?![\w-]|\.[\/\w])/g;
 // A wildcard record name (*.zone.tld): HOST's lookbehind refuses a name preceded by "*.", so the name after
-// the star is redacted on its own and the star kept. Measured 24 Oct: "*.<zone>" from the audit log passed
-// through text() unredacted and reached a committed file before the leak test caught it.
+// the star is redacted on its own and the star kept (test/redactor.test.ts "wildcard hostnames").
 const WILDCARD = /(?<![\w.-])\*\.((?:[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?\.)+[A-Za-z]{2,24})(?![\w-]|\.[\/\w])/g;
 const PASS_TLD = new Set(["invalid", "example", "test", "localhost"]);
 /** A one- or two-character single label before the tail: a SQL alias reference (o.host, d.name, e2.actor) in trace text. */

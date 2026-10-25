@@ -4,7 +4,7 @@
 // other fact, run ids included.
 //
 // Contract:
-//   - Header: "drift-agent · <command> · tenant <id> · <YYYY-MM-DD HH:MM> UTC · <mode>", the mode one of MODE's
+//   - Header: "ConfigLeaf · <command> · tenant <id> · <YYYY-MM-DD HH:MM> UTC · <mode>", the mode one of MODE's
 //     "dry run, nothing changed" and "applying changes", "recorded" (a pass that writes the ledger) or "watch every
 //     <n> min".
 //   - Finding classes read in plain words (CLASS_LABEL, one map for the screen, the document and the replay page): the
@@ -40,8 +40,12 @@
 //   - A failing step is one red row, "<step> failed <reason, one line>"; the done line then reads "stopped at <step> ·
 //     <i> of <n>".
 //   - Zetaris: given the queries the pass sent (passView's second argument), the first line under the pass row reads
-//     "Zetaris Lightning SQL over <datasource> · <n> queries · <n> rows · <n> failed", the failures red above 0;
-//     given the cycle's tally, the done line names "<n> Zetaris queries, <n> failed" before the trace.
+//     "Zetaris Lightning SQL over <datasource> · <n> queries · <n> rows · <n> failed", the failures red above 0, then
+//     "file tables refreshed" when the pass put the lessons and the rules again (yellow "file tables not refreshed"
+//     when the put failed, nothing when the copy was current), then, when the pass read it (src/loop/pass.ts AdoptionCheck), "DQ exception_in_force <n> of <n> adoptions" (red when
+//     fewer hold than were read; " of the pass recorded at <YYYY-MM-DD HH:MM> UTC" after a pass with no ledger; yellow
+//     "not read" when the read failed); given the cycle's tally, the done line names "<n> Zetaris queries, <n> failed"
+//     before the trace.
 //   - The callers print the old full line after a step's rows under --verbose (the old formatters stay) and only the
 //     header and the done line under --quiet.
 //
@@ -57,7 +61,7 @@ import type { Finding, Verb } from "../pipeline.ts";
 import type { TicketOp } from "../psa/index.ts";
 import type { TicketOutcome } from "../psa/step.ts";
 import type { HookResult } from "../vault/hook.ts";
-import { dispositionIdOf, type PassStep } from "./pass.ts";
+import { dispositionIdOf, type AdoptionCheck, type PassStep } from "./pass.ts";
 
 export type Tone = "bold" | "strong" | "red" | "yellow" | "green" | "dim";
 export interface Span { text: string; tone: Tone }
@@ -213,7 +217,7 @@ export class Table {
   }
 
   header(h: HeaderInfo): string {
-    return paint(["drift-agent", h.command, `tenant ${h.tenant}`, utcMinute(h.at), h.mode].map(this.clean).join(" · "), "bold", this.o.color);
+    return paint(["ConfigLeaf", h.command, `tenant ${h.tenant}`, utcMinute(h.at), h.mode].map(this.clean).join(" · "), "bold", this.o.color);
   }
 
   /** The step's row and the lines under it. */
@@ -366,16 +370,32 @@ export function findingLine(f: Finding): SubLine {
   };
 }
 
+/** The pass's read of exception_in_force as one phrase: "DQ exception_in_force 23 of 23 adoptions", red when one fails, yellow when not read. */
+function adoptionSeg(a: AdoptionCheck): Seg {
+  if ("error" in a) return { text: `DQ ${a.rule} not read`, tone: "yellow" };
+  const of = a.of === "recorded" ? (a.decidedAt ? ` of the pass recorded at ${a.decidedAt.slice(0, 16).replace("T", " ")} UTC` : ", no pass recorded one") : "";
+  const text = `DQ ${a.rule} ${thousands(a.inForce)} of ${count(a.adoptions, "adoption")}${of}`;
+  return a.inForce < a.adoptions ? { text, tone: "red" } : text;
+}
+
+/** The file tables' refresh when it put the files or failed: "file tables refreshed", yellow "file tables not refreshed"; null when the copy was current. */
+function filesSeg(r: NonNullable<PassStep["files"]>): Seg | null {
+  if (r.status === "current") return null;
+  return r.status === "failed" ? { text: "file tables not refreshed", tone: "yellow" } : "file tables refreshed";
+}
+
 /**
- * pass: the findings by verb; under it, given `zetaris`, the queries the pass sent through Zetaris, then the classes in
- * plain words, then one line per ROLLBACK, FIX and ESCALATE.
+ * pass: the findings by verb; under it, given `zetaris`, the queries the pass sent through Zetaris (and, when the pass
+ * read it, the DQ rule exception_in_force over its adoptions), then the classes in plain words, then one line per
+ * ROLLBACK, FIX and ESCALATE.
  */
-export function passView(p: Pick<PassStep, "findings">, zetaris?: ZetarisFacts): StepView {
+export function passView(p: Pick<PassStep, "findings"> & Partial<Pick<PassStep, "adoptions" | "files">>, zetaris?: ZetarisFacts): StepView {
   const fs = p.findings;
   const parts: Phrase[] = VERB_ORDER.map((v) => [v, fs.filter((f) => f.verb === v).length] as const).filter(([, n]) => n > 0).map(([v, n]) => [verbSpan(v), ` ${thousands(n)}`]);
   const sub: SubLine[] = [];
   if (zetaris) {
-    sub.push({ parts: [`Zetaris Lightning SQL over ${zetaris.datasource}`, count(zetaris.queries, "query", "queries"), count(zetaris.rows, "row"), [failedSeg(zetaris.failed)]], wrap: true });
+    const files = p.files ? filesSeg(p.files) : null;
+    sub.push({ parts: [`Zetaris Lightning SQL over ${zetaris.datasource}`, count(zetaris.queries, "query", "queries"), count(zetaris.rows, "row"), [failedSeg(zetaris.failed)], ...(files ? [[files]] : []), ...(p.adoptions ? [[adoptionSeg(p.adoptions)]] : [])], wrap: true });
   }
   const classes = tallyDesc(fs.map((f) => f.finding.class));
   if (classes.length) sub.push({ parts: classes.map(([c, n]) => `${classLabel(c)} ${thousands(n)}`), wrap: true });

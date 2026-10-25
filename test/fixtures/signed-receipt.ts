@@ -16,6 +16,16 @@ export function signed(receipt: Record<string, unknown>): SignedReceipt {
   return { body, pubkey_b64: raw.toString("base64"), sig_b64: sig.toString("base64") };
 }
 
+/**
+ * A real receipt's body with Nightshift's injected memory cleared (hmem null, as the runtime writes it when it injected
+ * nothing), signed again here. The two real fixtures of 23 Oct carry hmem.injected 3, which the gate now refuses; this
+ * keeps every other field of the runtime's shape (request_id, app, prompt_preview, cache, phases) for the tests whose
+ * subject is the tier, the signature or custody.
+ */
+export function isolated(r: SignedReceipt): SignedReceipt {
+  return signed({ ...structuredClone(r.body.receipt), hmem: null });
+}
+
 /** An Ultra receipt for `requestId` under `app`, with the runtime's field names. */
 export function ultraReceipt(receiptId: string, requestId: string | null, app: string, extra: Record<string, unknown> = {}): SignedReceipt {
   return signed({

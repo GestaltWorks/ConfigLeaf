@@ -1,7 +1,15 @@
 # Pre-existing and third-party code
 
 Everything in this repository was written during the GenAI Works Open Agent Hackathon 2026 build window
-(from 22 Oct 2026 00:00 UTC), with one exception, declared here.
+(from 22 Oct 2026 00:00 UTC), with two exceptions, both declared here: the Meterless World Model reference
+implementation (`vendor/world-model/`) and the Meterless H-MEM reference implementation (`vendor/hmem/`), each
+vendored unmodified from https://github.com/Meterless/Meterless at commit `1742dec56a66e58eef9dda2d2b865823758ca8cd`.
+No other code predates the window; the repository's first commit, `07427fb`, is of 24 Oct 2026 02:43 UTC.
+
+## Input data
+
+The estate's configuration history (the Cloudflare audit log from 20 Mar 2026, the nightly tarballs, the dated vhost
+copies) predates the build window and is read as input data.
 
 ## Vendored: Meterless World Model reference implementation
 
@@ -13,14 +21,14 @@ Everything in this repository was written during the GenAI Works Open Agent Hack
 | Licence | Apache-2.0, copyright 2026 Meterless. Full text in `vendor/world-model/LICENSE` |
 | NOTICE | Upstream ships no NOTICE file at that commit, so there is none to carry |
 
-What we changed, per Apache-2.0 section 4(b):
+What this repository copied and changed, per Apache-2.0 section 4(b):
 
 - Copied `reference/src`, `reference/test`, `reference/package.json`, `reference/tsconfig.json`, `reference/README.md`.
 - Copied `conformance/runner.ts` and `conformance/README.md` into `vendor/world-model/conformance/`, unmodified.
 - Copied the engine contract `engines/world-model/AGENTS.md` as `vendor/world-model/CONTRACT.md` (renamed so coding agents
   working in this repo do not read it as instructions for this repo). Content unmodified.
 - Did not copy `reference/scripts/` (browser bundle build, live app) or `reference/package-lock.json`. Not needed.
-- No source file under `vendor/world-model/src` is modified. Our code wraps it from `src/engine/world.ts`.
+- No source file under `vendor/world-model/src` is modified. `src/engine/world.ts` wraps it.
 - `npm test` checks each of the 14 files under `vendor/world-model/` against its git blob id at the upstream commit
   (`vendor/UPSTREAM.json`, `test/vendor.test.ts`); `gh api repos/Meterless/Meterless/git/trees/1742dec56a66e58eef9dda2d2b865823758ca8cd?recursive=1`
   lists the same ids.
@@ -35,7 +43,7 @@ What we changed, per Apache-2.0 section 4(b):
 | Licence | Apache-2.0, copyright 2026 Meterless. Full text in `vendor/hmem/LICENSE` (byte-identical to `vendor/world-model/LICENSE`) |
 | NOTICE | Upstream ships no NOTICE file at that commit, neither at the repository root nor under `engines/hmem`, so there is none to carry |
 
-What we changed, per Apache-2.0 section 4(b):
+What this repository copied and changed, per Apache-2.0 section 4(b):
 
 - Copied `reference/src` (ten files), `reference/test/smoke.test.ts`, `reference/package.json`, `reference/tsconfig.json`,
   `reference/README.md`, flattened into `vendor/hmem/` the way `vendor/world-model/` is.
@@ -47,7 +55,7 @@ What we changed, per Apache-2.0 section 4(b):
 - Did not copy `engines/hmem/CLAUDE.md` (two lines pointing at AGENTS.md, written to be auto-loaded as instructions),
   `reference/package-lock.json`, `HOW_TO_USE_H-MEM.md`, `docs/`, `examples/`, `workshops/`, `content/`, `demos/`, `evals/`
   or `images/`. Not needed by the runner or by our module.
-- No source file under `vendor/hmem/src` is modified. Our code wraps it from `src/engine/memory.ts`.
+- No source file under `vendor/hmem/src` is modified. `src/engine/memory.ts` wraps it.
 - `npm test` checks each of the 19 files under `vendor/hmem/` against its git blob id at the upstream commit
   (`vendor/UPSTREAM.json`, `test/vendor.test.ts`); `gh api repos/Meterless/Meterless/git/trees/1742dec56a66e58eef9dda2d2b865823758ca8cd?recursive=1`
   lists the same ids.

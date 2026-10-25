@@ -74,8 +74,8 @@
 // sites-enabled -> sites-available with .bak, .pre-symlink and unlinked files; both export server
 // config nightly as server-config-<date>.tar.gz into a folder readable by the operator's login (one
 // under /var/backups, one under the login's home: hence LINUX_HOSTS); no etckeeper, no restic on either.
-// The tarballs list the sites-enabled symlinks as members: tar -xO prints nothing for a symlink, so an
-// unfiltered member list hashed every enabled site as the empty input (nine such rows in the first export).
+// The tarballs list the sites-enabled symlinks as members, and tar -xO prints nothing for a symlink, so the
+// read script hashes regular-file members only (readScript) and toRows drops a member hashed as the empty input.
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";

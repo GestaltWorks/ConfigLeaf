@@ -1,9 +1,12 @@
 // Zetaris engine: the live path. Wraps the measured REST adapter; the only engine-specific part is
 // naming: schema tables live in the registered datasource, so {{t:observation}} renders as
-// <ZETARIS_DATASOURCE>.observation. One SELECT per call, no bound parameters (layer.ts renders them).
+// <ZETARIS_DATASOURCE>.observation, and the file tables (src/data/files.ts) in their Lightning databases, so
+// {{t:lesson}} renders as LESSONS.lesson and {{t:rule}} as RULES.rule (npm run zetaris:setup registers both).
+// One SELECT per call, no bound parameters (layer.ts renders them).
 
 import { Zetaris, type QueryResult } from "../../adapters/zetaris.ts";
 import { config } from "../../config.ts";
+import { FILE_DATASOURCES } from "../files.ts";
 import type { Engine, RunOptions } from "../layer.ts";
 
 export class ZetarisEngine implements Engine {
@@ -12,7 +15,8 @@ export class ZetarisEngine implements Engine {
   constructor(private readonly client: Zetaris = new Zetaris()) {}
 
   qualify(table: string): string {
-    return `${config.zetaris.datasource}.${table}`;
+    const file = (FILE_DATASOURCES as Record<string, string>)[table];
+    return `${file ?? config.zetaris.datasource}.${table}`;
   }
 
   run(sql: string, opts: RunOptions = {}): Promise<QueryResult> {

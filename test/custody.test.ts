@@ -4,19 +4,23 @@
 // throwaway Ed25519 key, so a per-client app id ("drift-agent:client-a"), a foreign request_id, a missing
 // id and a replayed preview can be exercised while the signature still verifies. Identity is the
 // request_id alone; the preview can refute it, never establish it. Then the call-then-gate loop: discard,
-// one retry as a fresh request, fail closed on the second mismatch, and never a retry for any other failure.
+// one retry as a fresh request, fail closed on the second mismatch, and never a retry for any other failure,
+// injected memory included. The real receipts carry hmem.injected 3, which the gate refuses before custody; where
+// the gate must pass on them, their bodies run with hmem null, signed again here (fixtures/signed-receipt.ts isolated).
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Nightshift, type ChatResult, type SignedReceipt } from "../src/adapters/nightshift.ts";
 import { SYSTEM_PROMPT } from "../src/agents/judge.ts";
 import { config } from "../src/config.ts";
 import { checkCustody, gateChatResult, gateWithCustody, newNonce, tenantAppId, type CustodyAttempt } from "../src/gate.ts";
 import { MemTracer } from "./fixtures/mem-tracer.ts";
-import { signed, ultraReceipt } from "./fixtures/signed-receipt.ts";
+import { isolated, signed, ultraReceipt } from "./fixtures/signed-receipt.ts";
 import lightningJson from "./fixtures/receipt-lightning.json" with { type: "json" };
 import ultraJson from "./fixtures/receipt-ultra.json" with { type: "json" };
 
 const lightning = lightningJson as unknown as SignedReceipt;
 const ultra = ultraJson as unknown as SignedReceipt;
+/** The real Ultra receipt's body with hmem null, signed again: the gate can pass it. */
+const ultraClean = isolated(ultra);
 const ULTRA_ID = ultra.body.receipt.receipt_id as string;
 const ULTRA_REQ = ultra.body.receipt.request_id as string;
 const ULTRA_MODEL = ultra.body.receipt.routing.winner as string;
@@ -117,11 +121,11 @@ describe("checkCustody", () => {
 });
 
 describe("gateChatResult with custody", () => {
-  it("passes on the real Ultra receipt with its own request id and app, and traces the custody check before the gate", async () => {
+  it("passes on the real Ultra receipt's body (hmem null) with its own request id and app, and traces the custody check before the gate", async () => {
     const tracer = new MemTracer("test_custody");
-    const g = await gateChatResult(chat({ receiptId: ULTRA_ID, requestId: ULTRA_REQ, modelRequested: "req/ultra" }), "ultra", store(ultra), tracer, "judge", { appId: APP, prompt: ULTRA_PREVIEW });
+    const g = await gateChatResult(chat({ receiptId: ULTRA_ID, requestId: ULTRA_REQ, modelRequested: "req/ultra" }), "ultra", store(ultraClean), tracer, "judge", { appId: APP, prompt: ULTRA_PREVIEW });
     expect(g).toMatchObject({ ok: true, servedTier: "ultra", signatureOk: true, receiptId: ULTRA_ID, custody: { ok: true, requestId: "match", promptPreview: "match", app: "match" } });
-    expect(g.reason).toBe(`receipt ${ULTRA_ID} ${ULTRA_MODEL} (ultra), signature verified, custody holds`);
+    expect(g.reason).toBe(`receipt ${ULTRA_ID} ${ULTRA_MODEL} (ultra), signature verified, no memory injected, custody holds`);
     expect(tracer.events.map((e) => `${e.agent}:${e.action}:${e.status}`)).toEqual(["judge:check:ok", "judge:check:ok"]);
     expect(tracer.events[0]).toMatchObject({ receipt_id: ULTRA_ID, signature_ok: true, model_requested: "req/ultra", model_routed: ULTRA_MODEL, input_summary: `custody ${ULTRA_ID} under app ${APP}`, output_summary: "request_id match, prompt_preview match, app match" });
     expect(tracer.events[0].detail).toMatch(/^custody holds/);
@@ -131,7 +135,7 @@ describe("gateChatResult with custody", () => {
   it("fails closed on a custody mismatch: not_judged, reason starts with custody, the prompt text is in no trace line", async () => {
     const tracer = new MemTracer("test_custody");
     const secret = "Claim: host-7f1c proxies to app.example.invalid";
-    const g = await gateChatResult(chat({ receiptId: ULTRA_ID, requestId: "chatcmpl-not-this-one" }), "ultra", store(ultra), tracer, undefined, { appId: CLIENT_APP, prompt: secret });
+    const g = await gateChatResult(chat({ receiptId: ULTRA_ID, requestId: "chatcmpl-not-this-one" }), "ultra", store(ultraClean), tracer, undefined, { appId: CLIENT_APP, prompt: secret });
     expect(g).toMatchObject({ ok: false, servedTier: "ultra", signatureOk: true, custody: { ok: false, requestId: "mismatch", promptPreview: "mismatch", app: "mismatch" } });
     expect(g.reason).toMatch(/^custody: the receipt is not for this request and is filed under another app; request_id mismatch/);
     expect(tracer.events.map((e) => `${e.agent}:${e.action}:${e.status}`)).toEqual(["gate:check:not_judged", "gate:check:not_judged"]);
@@ -159,13 +163,19 @@ describe("gateChatResult with custody", () => {
     expect(g.reason).toMatch(/\(lightning\), ultra was requested$/);
   });
 
-  it("without a custody expectation the gate is exactly what it was: no custody field, one check event", async () => {
+  it("without a custody expectation the gate checks signature, tier and memory: no custody field, one check event", async () => {
     const tracer = new MemTracer("test_custody");
-    const g = await gateChatResult(chat({ receiptId: ULTRA_ID }), "ultra", store(ultra), tracer);
+    const g = await gateChatResult(chat({ receiptId: ULTRA_ID }), "ultra", store(ultraClean), tracer);
     expect(g.ok).toBe(true);
     expect(g.custody).toBeUndefined();
-    expect(g.reason).toBe(`receipt ${ULTRA_ID} ${ULTRA_MODEL} (ultra), signature verified`);
+    expect(g.reason).toBe(`receipt ${ULTRA_ID} ${ULTRA_MODEL} (ultra), signature verified, no memory injected`);
     expect(tracer.events).toHaveLength(1);
+  });
+
+  it("injected memory fails the gate before custody is read: the real Ultra receipt, its own request id and app, still refused for its 3 records", async () => {
+    const g = await gateChatResult(chat({ receiptId: ULTRA_ID, requestId: ULTRA_REQ, scope: "user" }), "ultra", store(ultra), undefined, "judge", { appId: APP, prompt: ULTRA_PREVIEW });
+    expect(g).toMatchObject({ ok: false, signatureOk: true, servedTier: "ultra", memoryInjected: 3, scope: "user", custody: { ok: true } });
+    expect(g.reason).toMatch(/^memory injected \(3 records\): receipt /);
   });
 });
 
@@ -248,6 +258,24 @@ describe("gateWithCustody: discard, retry once as a fresh request, fail closed",
     const u = await gateWithCustody(un.fn, "ultra", store(), APP);
     expect(u).toMatchObject({ attempts: 1, discarded: [], gate: { ok: false, signatureOk: null } });
     expect(u.gate.reason).toMatch(/unreceipted, not judged/);
+  });
+
+  it("injected memory is refused like a substitution, never retried: one call, even when custody fails too", async () => {
+    const memory = { hmem: { ids: ["mem_a", "mem_b"], injected: 2, reason: "retrieved 2 memories", strategy: "comprehensive", top_score: 0.52 } };
+    const ours = ultraReceipt("rcpt_mem", "chatcmpl-mem", CLIENT_APP, memory);
+    const a = attempts({ receipt: ours, requestId: "chatcmpl-mem" }, { receipt: ultraReceipt("rcpt_clean", "chatcmpl-clean", CLIENT_APP), requestId: "chatcmpl-clean" });
+    const tracer = new MemTracer("test_custody");
+    const out = await gateWithCustody(a.fn, "ultra", store(ours), CLIENT_APP, tracer, "judge");
+    expect(out).toMatchObject({ attempts: 1, discarded: [], gate: { ok: false, memoryInjected: 2, custody: { ok: true } } });
+    expect(out.gate.reason).toMatch(/^memory injected \(2 records\): receipt rcpt_mem /);
+    expect(a.nonces).toHaveLength(1);
+    expect(tracer.events.map((e) => `${e.action}:${e.status}`)).toEqual(["check:ok", "check:not_judged"]);
+    // filed under another app as well: still one call, memory named first
+    const foreign = ultraReceipt("rcpt_mem2", "chatcmpl-mem2", APP, memory);
+    const b = attempts({ receipt: foreign, requestId: "chatcmpl-mem2" }, { receipt: foreign, requestId: "chatcmpl-mem2" });
+    const both = await gateWithCustody(b.fn, "ultra", store(foreign), CLIENT_APP);
+    expect(both).toMatchObject({ attempts: 1, discarded: [], gate: { ok: false, memoryInjected: 2, custody: { ok: false, app: "mismatch" } } });
+    expect(both.gate.reason).toMatch(/^memory injected \(2 records\)/);
   });
 
   it("a thrown model error propagates to the caller, which files it not_judged as it does today", async () => {

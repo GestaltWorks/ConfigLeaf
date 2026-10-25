@@ -471,7 +471,7 @@ export function tenantActions(dl: DataLayer, tenantId: string, opts?: RunOptions
   return dl.run(ACTIONS_SQL, { tenant_id: tenantId }, opts);
 }
 
-// ---- build B, pipeline and the owner's document: approved_missing, the prior HOLD, src/document/ --------------
+// ---- approved_missing, the prior HOLD and the owner's document (src/document/) ----------------------------------
 //
 // The approved_missing detector and the Decider's prior-HOLD read (src/pipeline.ts), then the reads of the owner's
 // document (src/document/render.ts). Plain column comparisons in every top-level WHERE, COALESCE only inside a

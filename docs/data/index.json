@@ -1,5 +1,5 @@
 {
-  "title": "drift-agent replay",
+  "title": "ConfigLeaf replay",
   "examples": [
     {
       "dir": "proxy-split",
@@ -56,7 +56,7 @@
   },
   "sample": {
     "bundle": "sample/bundle.json",
-    "sha256": "sha256:4cd4e05555726502a39f9a7b32a5cff35106c127b4861ca6246f23ae9006249d",
+    "sha256": "sha256:2d8fa233ec88c728300897fa7b248bceb645d5e69d4508822ce51b8bcbf455f3",
     "runs": 80,
     "gatedOut": 0,
     "observed": 14174,

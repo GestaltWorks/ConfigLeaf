@@ -1,5 +1,5 @@
-// Measure Lightning's empty-response rate on identical plain prompts, so the retry policy
-// is based on a number rather than a guess. Also records whether Ultra fails at the same time.
+// Measure Lightning's empty-response rate on identical plain prompts, the number the retry policy
+// rests on. Also records whether Ultra fails at the same time.
 import { Nightshift } from "../src/adapters/nightshift.ts";
 import { config } from "../src/config.ts";
 

@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>drift-agent replay</title>
-<meta name="description" content="Every finding of the drift-agent pass over recorded, redacted real collections, with the SQL that ran, the rows it returned, the hashes and the judge step.">
+<title>ConfigLeaf replay</title>
+<meta name="description" content="Every finding of the ConfigLeaf pass over recorded, redacted real collections, with the SQL that ran, the rows it returned, the hashes and the judge step.">
 <style>
 :root{--bg:#f8f7f4;--fg:#1c1d1f;--muted:#5b5f65;--line:#dcd8cf;--card:#fff;--code:#f1efea;--accent:#1f55c0;--ok:#1b6a39;--ok-bg:#e1f1e6;--bad:#a12a1c;--bad-bg:#f7e2dd;--warn:#7f5300;--warn-bg:#f8ecd2;--chip:#ebe8e1;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
 @media (prefers-color-scheme:dark){:root{--bg:#131416;--fg:#e7e5e0;--muted:#a19f99;--line:#2e3034;--card:#1a1b1e;--code:#212327;--accent:#93b2ff;--ok:#82d49e;--ok-bg:#1b3124;--bad:#ff9d8c;--bad-bg:#3a1f1b;--warn:#f0c46e;--warn-bg:#382c13;--chip:#26282c}}
@@ -94,8 +94,8 @@ td pre{white-space:pre-wrap;word-break:break-word;margin:4px 0 0;min-width:36ch;
 </head>
 <body>
 <header><div class="wrap">
-<h1>drift-agent: every finding, with the SQL behind it</h1>
-<p class="lede">A config-drift assurance pass for MSP technicians, replayed from recorded collections. Open a finding to see the detector query that raised it, each precondition check with the SQL that ran, the rows it returned and the hashes, and the judge step. The Document tab holds the owner's document over the full recorded bundle, the Sources tab names the tables and the source behind each finding class, and the Nemotron tab holds the eval's Nemotron calls with every SELECT its judges wrote, re-run at build. In a live pass the same detector and check SQL runs as Zetaris Lightning SQL over the <code>DRIFT</code> datasource, with the <code>drift_usl</code> semantic layer and its four DQ rules over it; on this page it runs on sql.js over the recorded rows, and <code>test/parity.test.ts</code> holds the two engines to the same columns, rows and totals.</p>
+<h1>ConfigLeaf: every finding, with the SQL behind it</h1>
+<p class="lede">A config-drift assurance pass for MSP technicians, replayed from recorded collections. Open a finding to see the detector query that raised it, each precondition check with the SQL that ran, the rows it returned and the hashes, and the judge step. The Document tab holds the owner's document over the full recorded bundle, the Sources tab names the tables and the source behind each finding class, and the Nemotron tab holds the eval's Nemotron calls with every SELECT its judges wrote, re-run at build. In a live pass the same detector and check SQL runs as Zetaris Lightning SQL over the <code>DRIFT</code> datasource, beside the technician's memory store and the policy file, with the <code>drift_usl</code> semantic layer and its five DQ rules over the three; on this page it runs on sql.js over the recorded rows, and <code>test/parity.test.ts</code> holds the two engines to the same columns, rows and totals.</p>
 <ul class="stats" id="stats"></ul>
 <p class="report"><a href="../examples/report.html">Report</a><br><span class="meta">The owner's report, <code>examples/report.html</code>: one HTML file over the same recorded bundle as the Document tab, opened from a clone of the repository.</span></p>
 <nav class="tabs" aria-label="Page sections"><a href="#findings">Findings</a><a href="#document">Document</a><a href="#sources">Sources</a><a href="#nemotron">Nemotron</a></nav>
@@ -116,7 +116,7 @@ td pre{white-space:pre-wrap;word-break:break-word;margin:4px 0 0;min-width:36ch;
 <section class="panel" id="document"><div class="wrap md">
 <h2>Configuration document: client-1</h2>
 <p class="meta">Rendered from SQL over the recorded bundle at the decision instant it states, <code>2026-10-25T14:17:53.416Z</code>. <code>npm run document</code> in sample mode writes it to <code>examples/document.md</code>, and this tab is that markdown as HTML.</p>
-<div class="hashes">examples/document.md sha256:e15ac9c30f8ad60bfc2e88b92fc5b269df9c23c7b3d18330b8994acc1319675e (21055 bytes, LF)</div>
+<div class="hashes">examples/document.md sha256:5575d5aa2115fce3025acfe22c046e99111e6d16430768d4cbcd4ecd64c60a32 (22198 bytes, LF)</div>
 <p>What the agent holds for client-1, read through one data layer (sql.js over sample/bundle.json) when this page is rendered. Every number is a count of the rows, or a value of a row, that the queries listed at the end return.</p>
 <h3>Estate</h3>
 <p>61 collection runs on record, 61 passing the DQ gate. 2 hosts and 6 zones in the latest passing runs.</p>
@@ -253,6 +253,14 @@ td pre{white-space:pre-wrap;word-break:break-word;margin:4px 0 0;min-width:36ch;
 <li>inventory (<code>inventory_asset</code>): the hosts&#39; addresses.</li>
 <li>populations (<code>collection_run</code>): each source&#39;s own population, asserted before a row is read, and each run&#39;s status.</li>
 </ul>
+<p>Two more sources decide what happens to a finding: the technician&#39;s memory store, which the Decider recalls from, and the policy file, which <code>npm run policy:load</code> turns into the <code>policy_rule</code> rows. Zetaris reads both as files beside <code>DRIFT</code>: <code>npm run zetaris:setup</code> writes them into its filestore and registers them. The DQ rule <code>exception_in_force</code> on <code>drift_usl.adoption</code> joins every ADOPT the ledger holds under an accepted exception to its lesson, across the two datasources. The rows are those of the committed files:</p>
+<div class="scroll"><table>
+<thead><tr><th scope="col">source</th><th scope="col">Zetaris datasource</th><th scope="col">tables</th><th scope="col">rows</th><th scope="col">what it holds</th></tr></thead>
+<tbody>
+<tr><td>technician memory store (<code>examples/memory</code>)</td><td><code>LESSONS</code></td><td><code>LESSONS.lesson</code>, <code>LESSONS.ledger</code></td><td>23 lessons, 23 ledger entries</td><td>the lessons the technician taught, in the Meterless H-MEM store, each with its tenant, scope key, expiry and provenance; the Decider recalls them, and an accepted exception makes its finding ADOPT until it expires</td></tr>
+<tr><td>policy rules (<code>policy/hackathon.json</code>)</td><td><code>RULES</code></td><td><code>RULES.rule</code></td><td>15 rules, version 2</td><td>the MSP&#39;s policy, one row per rule under the rule id every disposition decided by policy names</td></tr>
+</tbody>
+</table></div>
 <h3>Work</h3>
 <p>No action is recorded for client-1.</p>
 <p>Tickets by type and status:</p>
@@ -306,7 +314,7 @@ td pre{white-space:pre-wrap;word-break:break-word;margin:4px 0 0;min-width:36ch;
 <section class="panel" id="sources"><div class="wrap md">
 <h2>Where each answer comes from</h2>
 <p class="meta">Read off the SQL at build time by <code>sourcesMarkdown()</code> in <code>src/document/render.ts</code>: the section the owner's document and the README carry under this heading, and the table <code>npm run sources</code> prints.</p>
-<p>In a live pass every detector and check query runs as Zetaris Lightning SQL over the <code>DRIFT</code> datasource, the app Postgres registered in Zetaris, each table named <code>DRIFT.&lt;table&gt;</code>. Over it, the <code>drift_usl</code> semantic layer holds eleven entities (<code>collection</code>, <code>setting</code>, <code>referent</code>, <code>backup_copy</code>, <code>policy</code>, <code>copy</code>, <code>probe</code>, <code>disposition</code>, <code>action</code>, <code>ticket</code>, <code>cause</code>) and four DQ rules (<code>run_complete</code> on <code>collection</code>, <code>copy_validated</code> on <code>copy</code>, <code>action_verified</code> on <code>action</code>, <code>cause_evidenced</code> on <code>cause</code>). On this page the same SQL runs on sql.js over the recorded rows, and each query on the Findings tab carries the text the live pass sends to Zetaris, rendered at build time. <code>test/parity.test.ts</code> holds the two engines to the same columns, rows and totals; the README's "What it proves" table gives its last measured count.</p>
+<p>In a live pass every detector and check query runs as Zetaris Lightning SQL over the <code>DRIFT</code> datasource, the app Postgres registered in Zetaris, each table named <code>DRIFT.&lt;table&gt;</code>. Beside it Zetaris reads the technician's memory store as <code>LESSONS</code> and the policy file as <code>RULES</code>, both files in its filestore. Over the three, the <code>drift_usl</code> semantic layer holds fourteen entities (<code>collection</code>, <code>setting</code>, <code>referent</code>, <code>backup_copy</code>, <code>policy</code>, <code>copy</code>, <code>probe</code>, <code>disposition</code>, <code>action</code>, <code>ticket</code>, <code>cause</code>, <code>lesson</code>, <code>rule</code>, <code>adoption</code>) and five DQ rules (<code>run_complete</code> on <code>collection</code>, <code>copy_validated</code> on <code>copy</code>, <code>action_verified</code> on <code>action</code>, <code>cause_evidenced</code> on <code>cause</code>, <code>exception_in_force</code> on <code>adoption</code>). On this page the same SQL runs on sql.js over the recorded rows, and each query on the Findings tab carries the text the live pass sends to Zetaris, rendered at build time. <code>test/parity.test.ts</code> holds the two engines to the same columns, rows and totals; the README's "What it proves" table gives its last measured count.</p>
 <p>Each finding class answers its question by joining the tables its detector query and its default checks name, and each table holds the rows of one source. The rows are read off the SQL in <code>src/data/queries.ts</code> and <code>src/catalogue/templates.ts</code> and the default checks in <code>src/catalogue/select.ts</code>.</p>
 <div class="scroll"><table>
 <thead><tr><th scope="col">class</th><th scope="col">question</th><th scope="col">tables</th><th scope="col">sources</th></tr></thead>
@@ -332,9 +340,17 @@ td pre{white-space:pre-wrap;word-break:break-word;margin:4px 0 0;min-width:36ch;
 <li>inventory (<code>inventory_asset</code>): the hosts&#39; addresses.</li>
 <li>populations (<code>collection_run</code>): each source&#39;s own population, asserted before a row is read, and each run&#39;s status.</li>
 </ul>
+<p>Two more sources decide what happens to a finding: the technician&#39;s memory store, which the Decider recalls from, and the policy file, which <code>npm run policy:load</code> turns into the <code>policy_rule</code> rows. Zetaris reads both as files beside <code>DRIFT</code>: <code>npm run zetaris:setup</code> writes them into its filestore and registers them. The DQ rule <code>exception_in_force</code> on <code>drift_usl.adoption</code> joins every ADOPT the ledger holds under an accepted exception to its lesson, across the two datasources. The rows are those of the committed files:</p>
+<div class="scroll"><table>
+<thead><tr><th scope="col">source</th><th scope="col">Zetaris datasource</th><th scope="col">tables</th><th scope="col">rows</th><th scope="col">what it holds</th></tr></thead>
+<tbody>
+<tr><td>technician memory store (<code>examples/memory</code>)</td><td><code>LESSONS</code></td><td><code>LESSONS.lesson</code>, <code>LESSONS.ledger</code></td><td>23 lessons, 23 ledger entries</td><td>the lessons the technician taught, in the Meterless H-MEM store, each with its tenant, scope key, expiry and provenance; the Decider recalls them, and an accepted exception makes its finding ADOPT until it expires</td></tr>
+<tr><td>policy rules (<code>policy/hackathon.json</code>)</td><td><code>RULES</code></td><td><code>RULES.rule</code></td><td>15 rules, version 2</td><td>the MSP&#39;s policy, one row per rule under the rule id every disposition decided by policy names</td></tr>
+</tbody>
+</table></div>
 <h3>The semantic layer in Zetaris</h3>
 <p class="meta">Read off the USL DDL, the activation SELECTs and the DQ rules at build time by <code>uslMarkdown()</code> in <code>src/zetaris/setup.ts</code>: the table the README carries under "The semantic layer" and <code>npm run sources -- --usl</code> prints.</p>
-<p><code>drift_usl</code> in <code>lightning.metastore.drift</code> is the semantic layer over the <code>DRIFT</code> datasource: 11 entities, each activated as one SELECT over the tables it is built from (<code>activation()</code> in <code>src/zetaris/setup.ts</code>), and 4 DQ rules, each an expression RUN DQ tests on every row of its entity.</p>
+<p><code>drift_usl</code> in <code>lightning.metastore.drift</code> is the semantic layer over three datasources: <code>DRIFT</code>, the app Postgres; <code>LESSONS</code>, the technician&#39;s memory store; <code>RULES</code>, the policy file. It holds 14 entities, each activated as one SELECT over the tables it is built from (<code>activation()</code> in <code>src/zetaris/setup.ts</code>), a table of <code>DRIFT</code> by its name and a file table as <code>&lt;datasource&gt;.&lt;table&gt;</code>, and 5 DQ rules, each an expression RUN DQ tests on every row of its entity.</p>
 <div class="scroll"><table>
 <thead><tr><th scope="col">entity</th><th scope="col">built from</th><th scope="col">key</th><th scope="col">DQ rule</th><th scope="col">expression</th></tr></thead>
 <tbody>
@@ -349,6 +365,9 @@ td pre{white-space:pre-wrap;word-break:break-word;margin:4px 0 0;min-width:36ch;
 <tr><td><code>action</code></td><td><code>action</code></td><td><code>action_id</code>; <code>disposition_id</code> references <code>disposition(disposition_id)</code></td><td><code>action_verified</code></td><td><code>kind NOT IN (&#39;rollback_file&#39;,&#39;revert_record&#39;) OR status IN (&#39;failed&#39;,&#39;refused&#39;,&#39;not_judged&#39;) OR verification &lt;&gt; &#39;&#39;</code></td></tr>
 <tr><td><code>ticket</code></td><td><code>ticket</code></td><td><code>ticket_id</code></td><td></td><td></td></tr>
 <tr><td><code>cause</code></td><td><code>finding_cause</code>: <code>class</code> as <code>cause_class</code></td><td><code>cause_id</code>; <code>disposition_id</code> references <code>disposition(disposition_id)</code></td><td><code>cause_evidenced</code></td><td><code>cause_class = &#39;unknown&#39; OR evidence_ids &lt;&gt; &#39;[]&#39;</code></td></tr>
+<tr><td><code>lesson</code></td><td><code>LESSONS.lesson</code>: one row per lesson of the technician&#39;s memory store, the Meterless H-MEM store the Decider recalls from, as <code>lessons.json</code> in the Zetaris filestore</td><td><code>lesson_id</code></td><td></td><td></td></tr>
+<tr><td><code>rule</code></td><td><code>RULES.rule</code>: one row per rule of the policy file, as <code>rules.json</code> in the Zetaris filestore; <code>lock</code> as <code>locked</code>, <code>hold_max_hours</code> as <code>hold_hours</code>, <code>note</code> as <code>description</code></td><td><code>rule_id</code></td><td></td><td></td></tr>
+<tr><td><code>adoption</code></td><td><code>disposition</code>, <code>LESSONS.lesson</code>: each <code>disposition</code> decided ADOPT by the operator, under an accepted exception, LEFT JOINed across the two datasources to the <code>LESSONS.lesson</code> row its reason names, on the tenant and the lesson id</td><td><code>disposition_id</code>; <code>lesson_id</code> references <code>lesson(lesson_id)</code></td><td><code>exception_in_force</code></td><td><code>lesson_id IS NOT NULL AND lesson_kind = &#39;exception&#39; AND lesson_recorded_at &lt;= decided_at AND decided_at &lt; lesson_expires_at</code></td></tr>
 </tbody>
 </table></div>
 </div></section>

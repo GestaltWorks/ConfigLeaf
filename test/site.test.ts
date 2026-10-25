@@ -20,7 +20,7 @@ import { templateById } from "../src/catalogue/templates.ts";
 import { config } from "../src/config.ts";
 import { DataLayer } from "../src/data/layer.ts";
 import { ZetarisEngine } from "../src/data/engines/zetaris.ts";
-import { sourceRows, sourcesMarkdown } from "../src/document/render.ts";
+import { fileSourceRows, sourceRows, sourcesMarkdown } from "../src/document/render.ts";
 import { DQ_RULES, USL_NAME, USL_TABLES } from "../src/zetaris/setup.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -85,6 +85,14 @@ describe("the replay page", () => {
     expect(built.index.examples.every((e) => e.reproduced)).toBe(true);
   });
 
+  it("names the product ConfigLeaf in the title, the description and the heading", () => {
+    const html = built.files.get("index.html")!;
+    expect(built.index.title).toBe("ConfigLeaf replay");
+    expect(html).toContain("<title>ConfigLeaf replay</title>");
+    expect(html).toContain('content="Every finding of the ConfigLeaf pass over recorded, redacted real collections');
+    expect(html).toContain("<h1>ConfigLeaf: every finding, with the SQL behind it</h1>");
+  });
+
   it("every check carries its rendered SQL, non-empty with no placeholder left, re-run over the slice to the recorded count and verdict", () => {
     let checks = 0;
     for (const e of built.index.examples) {
@@ -136,11 +144,12 @@ describe("the replay page", () => {
   it("names Zetaris where the page opens, in the Sources tab and in the footer: the datasource, the semantic layer and its DQ rules, the parity test", () => {
     const html = built.files.get("index.html")!;
     const lede = /<p class="lede">([\s\S]*?)<\/p>/.exec(html)![1];
-    for (const s of ["Zetaris Lightning SQL", `<code>${DS}</code> datasource`, `<code>${USL_NAME}</code> semantic layer`, "four DQ rules", "<code>test/parity.test.ts</code>"]) expect(lede).toContain(s);
+    for (const s of ["Zetaris Lightning SQL", `<code>${DS}</code> datasource`, "beside the technician's memory store and the policy file", `<code>${USL_NAME}</code> semantic layer`, "five DQ rules over the three", "<code>test/parity.test.ts</code>"]) expect(lede).toContain(s);
     const src = panel("sources");
     expect(src).toContain(`Zetaris Lightning SQL over the <code>${DS}</code> datasource`);
-    expect(src).toContain(`holds eleven entities (${USL_TABLES.map((t) => `<code>${t}</code>`).join(", ")})`);
-    expect(src).toContain(`four DQ rules (${DQ_RULES.map((r) => `<code>${r.name}</code> on <code>${r.table}</code>`).join(", ")})`);
+    expect(src).toContain("Beside it Zetaris reads the technician's memory store as <code>LESSONS</code> and the policy file as <code>RULES</code>, both files in its filestore.");
+    expect(src).toContain(`holds fourteen entities (${USL_TABLES.map((t) => `<code>${t}</code>`).join(", ")})`);
+    expect(src).toContain(`five DQ rules (${DQ_RULES.map((r) => `<code>${r.name}</code> on <code>${r.table}</code>`).join(", ")})`);
     expect(/<footer>[\s\S]*?<\/footer>/.exec(html)![0]).toContain(`<code>${DS}.&lt;table&gt;</code>`);
     expect(html).toContain('"as the live pass sends it to Zetaris"');
   });
@@ -208,9 +217,11 @@ describe("the replay page", () => {
     const rows = sourceRows();
     expect(rows.map((r) => r.cls)).toEqual(["proxy_split", "proxied_without_real_ip", "orphan_record", "orphan_vhost", "changed_since_backup", "drift_vs_approved", "approved_missing", "found_but_different", "dns_change"]);
     for (const r of rows) expect(src).toContain(`<tr><td>${code(r.cls)}</td><td>${escapeHtml(r.question)}</td><td>${r.tables.map(code).join(", ")}</td><td>${r.sources.join(", ")}</td></tr>`);
-    // the class table, then the semantic layer's: each a header row and a row per class or entity
+    // the class table and the file sources' table, then the semantic layer's: each a header row and a row per class, source or entity
     const [classes, usl] = src.split("<h3>The semantic layer in Zetaris</h3>");
-    expect(count(classes, "<tr>")).toBe(rows.length + 1);
+    expect(count(classes, "<tr>")).toBe(rows.length + 1 + fileSourceRows().length + 1);
+    for (const f of fileSourceRows()) expect(classes).toContain(`<td>${f.rows}</td>`);
+    expect(classes).toContain("<td><code>LESSONS.lesson</code>, <code>LESSONS.ledger</code></td>");
     expect(count(usl, "<tr>")).toBe(USL_TABLES.length + 1);
     expect(src).toContain("<li>live state (<code>observation</code>): each setting as the live host answers it over SSH");
     expect(count(src, "<li>")).toBe(sourcesMarkdown().split("\n").filter((l) => l.startsWith("- ")).length);

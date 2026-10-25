@@ -1,4 +1,5 @@
-// npm run smoke: the three sponsor paths, each as its own process so one failure does not hide another.
+// npm run smoke: the World Model conformance suite, the unit tests and the two live sponsor checks (Nightshift,
+// Zetaris), each as its own process, so every failure is reported.
 import { spawnSync } from "node:child_process";
 
 const steps: [string, string[]][] = [

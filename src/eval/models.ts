@@ -13,6 +13,14 @@
 // custody and asked again). A call whose verified receipt names a known tier other than the one requested is a
 // substitution, which invalidates the run.
 //
+// Memory isolation. Nightshift 1.2.7 puts up to three stored answers to similar earlier requests in front of a request
+// that shares their meterless-scope (src/adapters/nightshift.ts); in the development run of 25 Oct 2026, 281 of 380
+// receipts carried it (hmem.injected above 0). The Recorder pins a scope of its own on every call, from the runner's
+// generator ("<set>-<run id>-<seq>", src/eval/run.ts), else a fresh "<app id>-<16 hex>", and each CallRecord keeps the
+// scope it went out under and memory_injected, the receipt's hmem.injected (0 for hmem null; null when no receipt was
+// found). The gate files an answer with injected memory not judged, and any call with injected memory invalidates the
+// run, as a substitution does.
+//
 // Measured 24 Oct 2026 at 23:49 UTC, EVAL_LIVE=true over the development items E03, E07 and E13 (C1 and C3, one
 // run): 9 calls, each receipt signed and verified, cache miss, custody holding on the first attempt (request_id
 // match, prompt_preview match, app match under drift-agent-client-1); 6 selections served
@@ -34,12 +42,12 @@
 // runtime's 503 text>", kept raw; that text names two local paths under the operator's login. One call to the local
 // lane after the run, the same day, gave the same text: 2 matches raw, 0 through evalRedactor.
 
-import { Nightshift, verifyReceipt, type ChatMessage, type ChatResult, type SignedReceipt } from "../adapters/nightshift.ts";
+import { Nightshift, freshScope, verifyReceipt, type ChatMessage, type ChatResult, type SignedReceipt } from "../adapters/nightshift.ts";
 import { judgeClaim, MAX_EVIDENCE_ROWS, modelInputRedactor, redactEvidence, type Evidence, type JudgeInput, type JudgeModel, type JudgeVerdict } from "../agents/judge.ts";
 import { selectionPrompt, validateSelection, type FindingSummary, type ValidatedSelection } from "../catalogue/select.ts";
 import { config, redact } from "../config.ts";
 import type { DataLayer } from "../data/layer.ts";
-import { gateWithCustody, servedModelOf, tenantAppId, tierOf, type GateResult, type ReceiptFinder, type Tier } from "../gate.ts";
+import { gateWithCustody, memoryInjectedOf, servedModelOf, tenantAppId, tierOf, type GateResult, type ReceiptFinder, type Tier } from "../gate.ts";
 import type { Redactor } from "../redactor.ts";
 import type { Tracer } from "../trace.ts";
 import type { ModelTier } from "./protocol.ts";
@@ -82,16 +90,30 @@ export interface CallRecord {
   /** ok: the answer counted; refused: the gate filed it not judged; discarded: a custody failure, asked again. */
   gate: "ok" | "refused" | "discarded";
   reason: string;
+  /** The meterless-scope the call went out under, on every hop and attempt of its ladder. */
+  scope: string;
+  /** The records Nightshift's memory put in front of the call, from the receipt's hmem (0 for hmem null or absent); null when no receipt was found. */
+  memory_injected: number | null;
 }
 
 /** A served tier other than the one requested, on a receipt whose signature verifies. */
 export const isSubstitution = (c: Pick<CallRecord, "signature_ok" | "served_tier" | "requested_tier">): boolean =>
   c.signature_ok === true && c.served_tier !== "unknown" && c.served_tier !== c.requested_tier;
 
-/** A chat attempt that answered, or one whose every hop of the ladder failed. */
-type Attempt = (ChatResult & { hop?: number }) | { failed: string; modelRequested: string; latencyMs: number };
+/** A call whose receipt says Nightshift injected stored answers in front of it. */
+export const isMemoryInjected = (c: Pick<CallRecord, "memory_injected">): boolean => (c.memory_injected ?? 0) > 0;
 
-/** Records every chat attempt and every receipt the gate looked up, for one configuration run; every string a record keeps passes the redactor. */
+/** The meterless-scope of one call: the caller's app id is the default's base. */
+export type ScopeSource = (appId: string | undefined) => string;
+
+/** A chat attempt that answered, or one whose every hop of the ladder failed; each with the scope it went out under. */
+type Attempt = ((ChatResult & { hop?: number }) | { failed: string; modelRequested: string; latencyMs: number }) & { sentScope: string };
+
+/**
+ * Records every chat attempt and every receipt the gate looked up, for one configuration run; every string a record keeps
+ * passes the redactor. Every call goes out under a meterless-scope the Recorder pins: the caller's, else `scope` (the
+ * runner's "<set>-<run id>-<seq>"), else a fresh "<app id>-<16 hex>" (freshScope).
+ */
 export class Recorder {
   private readonly chats: Attempt[] = [];
   private readonly found = new Map<string, SignedReceipt>();
@@ -100,17 +122,18 @@ export class Recorder {
   readonly nightshift: JudgeModel;
   readonly receipts: ReceiptFinder;
 
-  constructor(inner: JudgeModel, finder: ReceiptFinder, redactor: Redactor = evalRedactor()) {
+  constructor(inner: JudgeModel, finder: ReceiptFinder, redactor: Redactor = evalRedactor(), scope: ScopeSource = (appId) => freshScope(appId)) {
     this.clean = scrubber(redactor);
     this.nightshift = {
       chatWithFallback: async (opts) => {
         const t0 = Date.now();
+        const sentScope = opts.scope ?? scope(opts.appId);
         try {
-          const r = await inner.chatWithFallback(opts);
-          this.chats.push(r);
+          const r = await inner.chatWithFallback({ ...opts, scope: sentScope });
+          this.chats.push({ ...r, sentScope });
           return r;
         } catch (err) {
-          this.chats.push({ failed: (err as Error).message, modelRequested: opts.models.join(" > "), latencyMs: Date.now() - t0 });
+          this.chats.push({ failed: (err as Error).message, modelRequested: opts.models.join(" > "), latencyMs: Date.now() - t0, sentScope });
           throw err;
         }
       },
@@ -138,7 +161,7 @@ export class Recorder {
         return {
           kind: meta.kind, item: meta.item, finding: meta.finding, attempt: i + 1, requested_tier: meta.tier, model_requested: this.clean(chat.modelRequested), hop: null, route_attempts: null,
           served_model: null, served_tier: "unknown", receipt_id: null, signature_ok: null, cache_status: null, latency_ms: chat.latencyMs, tokens_in: 0, tokens_out: 0,
-          gate: "refused", reason: this.clean(`every route of the ladder failed: ${chat.failed}`),
+          gate: "refused", reason: this.clean(`every route of the ladder failed: ${chat.failed}`), scope: this.clean(chat.sentScope), memory_injected: null,
         };
       }
       const receipt = chat.receiptId ? this.found.get(chat.receiptId) ?? null : null;
@@ -150,6 +173,7 @@ export class Recorder {
         receipt_id: chat.receiptId, signature_ok: receipt ? verifyReceipt(receipt) : null, cache_status: typeof cache === "string" ? cache : null,
         latency_ms: chat.latencyMs, tokens_in: chat.tokensIn, tokens_out: chat.tokensOut,
         gate: last ? (final.ok ? "ok" : "refused") : "discarded", reason: this.clean(last ? final.reason : "custody failed; answer discarded and the call made once more"),
+        scope: this.clean(chat.scope ?? chat.sentScope), memory_injected: receipt ? memoryInjectedOf(receipt) : null,
       };
     });
     this.calls.push(...out);

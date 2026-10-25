@@ -36,8 +36,7 @@
 //     redaction function the caller supplies (src/probe/run.ts passes Redactor.text); the caller
 //     redacts the whole string once more before it is stored or printed.
 //
-// Measured 24 Oct 2026 on the operator's account (PROBE_LIVE=true, test/probe.test.ts): 37 targets after
-// wildcards, so a full run asserts expected_count 111. Measured 25 Oct 2026 at 16:12 UTC (npm run probe,
+// Measured 25 Oct 2026 at 16:12 UTC (npm run probe,
 // run-e1e626eaa8ec20aa): of the 22 served names at the vault's host heads, 18 match records of their own, 2 a
 // proxied wildcard and 2 none; 39 targets, expected_count 117, the 6 probes of the 2 covered names ok.
 

@@ -2,7 +2,8 @@
 // tenant ledger; each live step with fakes in place of the hosts, Cloudflare, the probes and the Store; and the pass,
 // act (dry run), tickets (dry run) and document steps over sql.js with test/fixtures/policy-bundle.json and the
 // Actor's fixture vault (test/fixtures/actions/world.ts), run as one cycle with collect, probe and validate skipped;
-// and the CountingEngine the live cycle reads its Zetaris queries from, its tally against the pass's trace lines.
+// and the CountingEngine the live cycle reads its Zetaris queries from, its tally against the pass's trace lines; and
+// the live pass's refresh of the Zetaris copy of the lessons and the rules, over a fake putFiles.
 // Offline and deterministic: no host, no Cloudflare, no Nightshift, no GitHub, no Postgres.
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -22,7 +23,8 @@ import type { Store } from "../src/data/store.ts";
 import { DriftWorld } from "../src/engine/world.ts";
 import { MemoryLedger, type Ledger } from "../src/ledger.ts";
 import { SKIPPABLE, parseSkip, runCycle, stepNames, type CycleSteps, type StepReport } from "../src/loop/cycle.ts";
-import { LoopError, TenantLedger, dispositionIdOf, passStep, type PassStep } from "../src/loop/pass.ts";
+import { ADOPTION_ENTITY, LoopError, TenantLedger, adoptionCheckSql, dispositionIdOf, passStep, type PassStep } from "../src/loop/pass.ts";
+import { EXCEPTION_IN_FORCE } from "../src/data/files.ts";
 import { actStep, collectCloudflareStep, collectLinuxStep, documentStep, explainStep, labelledRows, probeStep, ticketsStep, validateStep } from "../src/loop/steps.ts";
 import { CAUSE_CLASSES } from "../src/explain/cause.ts";
 import { MemoryCauseSink, causesByDisposition, type ExplainResult } from "../src/explain/explain.ts";
@@ -32,6 +34,7 @@ import { sleep, watch } from "../src/loop/watch.ts";
 import { MemoryTicketRows } from "../src/psa/step.ts";
 import { Redactor, countLabels } from "../src/redactor.ts";
 import { AT, TENANT, buildBase, buildWorld, type Base, type World } from "./fixtures/actions/world.ts";
+import { readCopyState, refreshFiles } from "../src/zetaris/filestore.ts";
 import { MemTracer } from "./fixtures/mem-tracer.ts";
 
 const passOf = (tenant = "t1"): PassStep => ({
@@ -79,7 +82,7 @@ describe("runCycle over fake steps", () => {
     expect(stepNames([]).slice(-5)).toEqual(["pass", "explain", "act", "tickets", "document"]);
     expect(res.stopped).toBeNull();
     // the table: the header, one row per step from its summary (the pass's from its result), each time at column 90
-    expect(printed[0]).toBe("drift-agent · cycle · tenant t1 · 1970-01-01 00:00 UTC · dry run, nothing changed");
+    expect(printed[0]).toBe("ConfigLeaf · cycle · tenant t1 · 1970-01-01 00:00 UTC · dry run, nothing changed");
     expect(printed[1]).toBe(`${"  collect   cloudflare    fine".padEnd(85)}0.1 s`);
     expect(printed[2]).toBe(`${"  collect   a1            fine".padEnd(85)}0.1 s`);
     expect(printed[6]).toBe(`${"  pass      0 findings".padEnd(85)}0.1 s`);
@@ -210,7 +213,7 @@ describe("runCycle over fake steps", () => {
     const quiet: string[] = [];
     await runCycle({ tenant: "t1", apply: false, aliases: [], skip: new Set() }, fakeSteps([]), { print: (l) => quiet.push(l), clock: ticking(), present: { ...PLAIN, quiet: true } });
     expect(quiet).toHaveLength(2);
-    expect(quiet[0]).toMatch(/^drift-agent · cycle · tenant t1 · /);
+    expect(quiet[0]).toMatch(/^ConfigLeaf · cycle · tenant t1 · /);
     expect(quiet[1]).toMatch(/^done · 8 steps · /);
     const verbose: string[] = [];
     const res = await runCycle({ tenant: "t1", apply: false, aliases: [], skip: new Set() }, fakeSteps([]), { print: (l) => verbose.push(l), clock: ticking(), present: { ...PLAIN, verbose: true } });
@@ -470,6 +473,105 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
     expect(sent.failed).toBe(0);
     const line = new Table(PLAIN).row("pass", passView(r, { datasource: "DRIFT", ...sent }), null)[1];
     expect(line).toBe(`            Zetaris Lightning SQL over DRIFT · ${sent.queries} queries · ${thousands(sent.rows)} rows · 0 failed`);
+  });
+
+  it("on Zetaris the pass reads exception_in_force once, after the Decider, over drift_usl.adoption: this pass's instant with a ledger, the latest recorded pass without; a failed read is carried, never thrown; sql.js reads nothing", async () => {
+    const own = await SqlJsEngine.create();
+    own.loadBundle(structuredClone(base.bundle));
+    const reads: string[] = [];
+    let answer: () => Promise<{ queryId: string; columns: string[]; rows: string[][]; rowCount: number; total: number; latencyMs: number; raw: unknown }> = async () => ({ queryId: "q", columns: ["decided_at", "adoptions", "in_force"], rows: [["2026-10-25T21:12:42.005Z", "23", "22"]], rowCount: 1, total: 1, latencyMs: 1, raw: {} });
+    // sql.js answering under Zetaris's name, the USL read answered as Zetaris would
+    const live = { name: "zetaris" as const, qualify: (t: string) => own.qualify(t), run: async (sql: string, o?: Parameters<SqlJsEngine["run"]>[1]) => (sql.includes(ADOPTION_ENTITY) ? (reads.push(sql), answer()) : own.run(sql, o)) };
+    const dry = await passStep(new DataLayer(live), { tenant: TENANT, ledger: null, decidedAt: AT, world: new DriftWorld("loop_test") });
+    expect(reads).toEqual([adoptionCheckSql(TENANT, null)]);
+    expect(reads[0]).toBe(`SELECT decided_at, COUNT(*) AS adoptions, SUM(CASE WHEN ${EXCEPTION_IN_FORCE} THEN 1 ELSE 0 END) AS in_force FROM lightning.metastore.drift.drift_usl.adoption WHERE tenant_id = '${TENANT}' GROUP BY decided_at ORDER BY decided_at DESC LIMIT 1`);
+    expect(dry.adoptions).toEqual({ rule: "exception_in_force", of: "recorded", decidedAt: "2026-10-25T21:12:42.005Z", adoptions: 23, inForce: 22 });
+    expect(dry.summary.endsWith("; DQ exception_in_force 22 of 23 adoptions of the pass recorded at 2026-10-25T21:12:42.005Z")).toBe(true);
+    // with a ledger: the instant of this pass, after the ledger write
+    answer = async () => ({ queryId: "q", columns: ["decided_at", "adoptions", "in_force"], rows: [], rowCount: 0, total: 0, latencyMs: 1, raw: {} });
+    const recorded = await passStep(new DataLayer(live), { tenant: TENANT, ledger: new MemoryLedger(own), decidedAt: AT, world: new DriftWorld("loop_test") });
+    expect(reads[1]).toBe(adoptionCheckSql(TENANT, AT));
+    expect(reads[1]).toContain(` AND decided_at = '${AT}' GROUP BY`);
+    expect(recorded.adoptions).toEqual({ rule: "exception_in_force", of: "pass", decidedAt: AT, adoptions: 0, inForce: 0 });
+    // a failed read: the pass returns, the error on the check and in the summary
+    answer = async () => { throw new Error("Zetaris 400: Table or view not found: drift_usl.adoption"); };
+    const failed = await passStep(new DataLayer(live), { tenant: TENANT, ledger: null, decidedAt: AT, world: new DriftWorld("loop_test") });
+    expect(failed.adoptions).toEqual({ rule: "exception_in_force", error: "Zetaris 400: Table or view not found: drift_usl.adoption" });
+    expect(failed.findings.map((f) => f.verb)).toEqual(dry.findings.map((f) => f.verb));
+    expect(failed.summary).toContain("; DQ exception_in_force not read: Zetaris 400");
+    // on sql.js nothing is read and the summary is as before
+    const lite = await passStep(new DataLayer(own), { tenant: TENANT, ledger: null, decidedAt: AT, world: new DriftWorld("loop_test") });
+    expect(lite.adoptions).toBeUndefined();
+    expect(lite.summary).not.toContain("exception_in_force");
+    expect(reads).toHaveLength(3);
+    own.close();
+  });
+
+  it("live, the file tables' copy is refreshed first, before any query and the DQ read, through a fake putFiles: put when the store changed, nothing when current, a failed put carried", async () => {
+    const own = await SqlJsEngine.create();
+    own.loadBundle(structuredClone(base.bundle));
+    const order: string[] = [];
+    const dqRow = { queryId: "q", columns: ["decided_at", "adoptions", "in_force"], rows: [[AT, "1", "1"]], rowCount: 1, total: 1, latencyMs: 1, raw: {} };
+    const live = {
+      name: "zetaris" as const, qualify: (t: string) => own.qualify(t),
+      run: async (sql: string, o?: Parameters<SqlJsEngine["run"]>[1]) => (sql.includes(ADOPTION_ENTITY) ? (order.push("dq"), dqRow) : (order.push("query"), own.run(sql, o))),
+    };
+    const stateFile = path.join(dir, "filestore-copy.json");
+    const puts: Readonly<Record<string, string>>[] = [];
+    let lessons = '[{"lesson_id":"mem-1"}]';
+    let fail = false;
+    const put = (files: Readonly<Record<string, string>>) => {
+      order.push("put");
+      if (fail) throw new Error("docker could not start for /fs/lessons.json: spawn wsl.exe ENOENT");
+      puts.push(files);
+      return Object.entries(files).map(([n, t]) => ({ path: `/fs/${n}`, bytes: Buffer.byteLength(t) }));
+    };
+    const refresh = () => refreshFiles({ files: () => ({ "lessons.json": lessons, "rules.json": "[]" }), put, stateFile, target: { container: "zetaris-driver-1", distro: "Ubuntu-24.04" } });
+    const passOnce = async (tracer?: MemTracer) => {
+      order.length = 0;
+      return passStep(new DataLayer(live), { tenant: TENANT, ledger: null, decidedAt: AT, world: new DriftWorld("loop_test"), tracer, refreshFiles: refresh });
+    };
+    const zline = (r: PassStep) => new Table({ ...PLAIN, width: 200 }).row("pass", passView(r, { datasource: "DRIFT", queries: 2, rows: 3, failed: 0 }), null)[1];
+    const recordedAt = `${AT.slice(0, 16).replace("T", " ")} UTC`;
+
+    // the first pass after setup's copy of another store: the files go in, first, and the DQ read comes last
+    const tracer = new MemTracer("loop_test", { model: "none" });
+    const first = await passOnce(tracer);
+    expect(order[0]).toBe("put");
+    expect(order.filter((x) => x === "put")).toHaveLength(1);
+    expect(order.at(-1)).toBe("dq");
+    expect(first.files).toMatchObject({ status: "refreshed", previous: null });
+    expect(first.summary).toContain(`; file tables refreshed: lessons.json ${Buffer.byteLength(lessons)} bytes, rules.json 2 bytes; DQ exception_in_force 1 of 1 adoption`);
+    expect(tracer.events[0]).toMatchObject({ agent: "loop", action: "observe", status: "ok", input_summary: `file tables ${TENANT}` });
+    expect(tracer.events[0].engine).toBeUndefined();
+    expect(zline(first)).toBe(`            Zetaris Lightning SQL over DRIFT · 2 queries · 3 rows · 0 failed · file tables refreshed · DQ exception_in_force 1 of 1 adoption of the pass recorded at ${recordedAt}`);
+
+    // the same store: current, nothing put, the line as before
+    const second = await passOnce();
+    expect(second.files?.status).toBe("current");
+    expect(order).not.toContain("put");
+    expect(second.summary).toContain("; file tables current; DQ exception_in_force");
+    expect(zline(second)).toBe(`            Zetaris Lightning SQL over DRIFT · 2 queries · 3 rows · 0 failed · DQ exception_in_force 1 of 1 adoption of the pass recorded at ${recordedAt}`);
+
+    // npm run answer recorded a lesson: the next pass puts the new store before its DQ read
+    lessons = '[{"lesson_id":"mem-1"},{"lesson_id":"mem-2"}]';
+    const third = await passOnce();
+    expect(third.files).toMatchObject({ status: "refreshed", previous: first.files!.status === "refreshed" ? first.files!.hash : "" });
+    expect(puts.map((p) => p["lessons.json"])).toEqual(['[{"lesson_id":"mem-1"}]', lessons]);
+    expect(order.indexOf("put")).toBeLessThan(order.indexOf("dq"));
+
+    // a failed put: the pass completes with the same verbs, the failure in its summary and its line, the hash kept, so the next pass puts again
+    lessons = '[{"lesson_id":"mem-1"},{"lesson_id":"mem-2"},{"lesson_id":"mem-3"}]';
+    fail = true;
+    const failed = await passOnce();
+    expect(failed.files).toMatchObject({ status: "failed", error: "docker could not start for /fs/lessons.json: spawn wsl.exe ENOENT" });
+    expect(failed.findings.map((f) => f.verb)).toEqual(first.findings.map((f) => f.verb));
+    expect(failed.summary).toContain("; file tables not refreshed: docker could not start");
+    expect(zline(failed)).toContain(" · 0 failed · file tables not refreshed · DQ exception_in_force");
+    expect(readCopyState(stateFile)?.hash).toBe(third.files!.status === "refreshed" ? third.files!.hash : "");
+    fail = false;
+    expect((await passOnce()).files?.status).toBe("refreshed");
+    own.close();
   });
 
   it("a CountingEngine counts a run that throws as a failure and rethrows the same error", async () => {

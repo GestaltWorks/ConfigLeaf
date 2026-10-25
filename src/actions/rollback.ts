@@ -31,15 +31,11 @@
 //
 // Measured 24 Oct 2026: every end above exercised against a fake host and a fake probe (test/actions.test.ts); the
 // production hosts had received 0 writes from it. Measured 25 Oct 2026 on the lab estate (lab/README.md), tenant
-// lab-1: the first real rollbacks, act-a5f7774e2cb78881 at 05:22 UTC and act-6cc0c3178d96e317 at 05:28 UTC, each
-// written and reloaded with after_hash the copy's, 0.72 s and 0.49 s, and ended failed, unverified (a placeholder
-// Cloudflare token failed the verification read, so no probe ran); the same break again was refused as a retry of a
-// failed write (act-66ac170572034040). With the unverified status and the account's token, at 05:47 UTC:
-// act-b5d5e77f69ab6f17 wrote the copy over a break to 8091, write, nginx-t and reload at exit 0, after_hash the
-// copy's, 1.9 s, and ended unverified, "no probe of lab.example ran (the account holds no record of these names)";
-// the next collection and pass gave 0 findings. The unverified ends and the retry after one: test/actions.test.ts.
-// Under PROBE_TARGETS_OVERRIDE at 09:53 UTC: act-649588b7e1625711 wrote the copy over a break to 8094 and ended done,
-// http lab.example 200 over plain http 2 s after the reload, tls skipped, verification probe-36eb2c1bba298a2a.
+// lab-1: act-649588b7e1625711, under PROBE_TARGETS_OVERRIDE, wrote the copy over a break to 8094 and ended done, http
+// lab.example 200 over plain http 2 s after the reload, tls skipped, verification probe-36eb2c1bba298a2a;
+// act-b5d5e77f69ab6f17 wrote the copy over a break to 8091 (write, nginx -t and reload at exit 0, after_hash the
+// copy's, 1.9 s) and ended unverified, "no probe of lab.example ran (the account holds no record of these names)";
+// act-66ac170572034040, a retry of a failed write, was refused.
 
 import { redactText } from "../collectors/linux.ts";
 import { serverNames } from "../collectors/nginx.ts";

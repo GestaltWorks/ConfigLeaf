@@ -1,28 +1,62 @@
-# drift-agent
+# ConfigLeaf
+
+ConfigLeaf, package `drift-agent`, is a configuration assurance agent for an MSP. An MSP's knowledge of one setting
+lives in eight places, and whether that setting is right, backed up, restorable and still means what it meant takes
+several of them at once. ConfigLeaf reads the eight as one through one Zetaris layer and decides each finding under the
+MSP's policy: ROLLBACK, FIX, ESCALATE, HOLD with an expiry, or ADOPT.
+
+The eight places: the live host (over SSH), the nightly export (the backup tarball), the documentation of record
+(`approved_setting`, the rows an IT Glue or Hudu adapter would write), the DNS provider (Cloudflare), the provider's
+audit log and each host's journal, the asset inventory, what the site answers from outside (the probes), and the PSA
+(the tickets).
+
+The estate is the operator's own two production hosts and six zones, run as one MSP tenant named `client-1`, and the
+23 adoptions are his accepted exceptions for it.
+
+Three commands need no credentials, no model and no `.env` (Node 22 or later, after `npm install`); on 25 Oct 2026 the
+first gives 27 findings, ADOPT 23, HOLD 3 and ESCALATE 1:
+
+```bash
+SAMPLE_MODE=true npm run sample                         # the whole pass over the recorded rows
+npm run site                                            # the replay page in docs/, every check re-run to its recorded count
+SAMPLE_MODE=true npm run document -- --tenant client-1  # the owner's document and report: examples/document.md, examples/report.html
+```
+
+| Development set, `eval/results/2026-10-25T09-25-44Z`, 25 Oct 2026 | Measured |
+|---|---|
+| Nemotron 3 Ultra alone (C4) | agrees on 3 of 9; reads yes on 6 of the 9 labelled no |
+| The SQL checks with Ultra as the falsifier (C3) | agrees on 9 of 9, 9 of 9 and 8 of 8 over three runs; reads yes on 0 of 9 |
+| Planted false claims the falsifier strikes (C3) | 9 of 10 in each run |
+| Model calls | 389, 383 of them receipted, 380 receipts published and verified offline |
+
+- **Zetaris**: every query of a live pass runs through Lightning SQL over the `DRIFT` datasource, with the `drift_usl` semantic layer and its DQ rules over it ([Zetaris](#zetaris)).
+- **Meterless**: the World Model holds the observations and the fingerprints FOUND-BUT-DIFFERENT compares, H-MEM holds the technician's lessons, and Nightshift serves Nemotron and signs a receipt for every call ([Meterless](#meterless)).
+- **NVIDIA Nemotron**: 3.5 Lightning selects the checks and 3 Ultra writes the SELECT that refutes a false claim, each verdict counted through the receipt gate ([Nemotron](#nemotron)).
+
+## What it is
 
 A configuration assurance layer above the MSP tool stack that remembers. For every setting it can reach it asks:
 does a configuration exist for everything that should; is it fully configured; is it backed up; what exactly is in
-the copy, against what should be there for that device class; has it changed since the copy; can the copy be
-restored (it validates, its dependencies exist); would a restore regress, and of what kind; and is it
+the copy, against what the policy rule that governs it says should be there; has it changed since the copy; can the
+copy be restored (it validates, its dependencies exist); would a restore regress, and of what kind; and is it
 FOUND-BUT-DIFFERENT: a byte-identical setting whose referent now means something else. The agent acts under the
 MSP's policy: a critical setting that drifted from its approved value, with a valid copy, is rolled back to the copy,
 verified and documented; a drifted setting with no valid copy and production affected is investigated, fixed where
 allowed, documented and ticketed; everything else is adopted or held with a reason and an expiry. A config lock on a
 setting class means automatic rollback at the next cycle.
 
-An MSP's knowledge of one setting is fragmented across eight places: the live host (read over SSH), the nightly
-export (the backup tarball), the documentation of record (`approved_setting`; IT Glue and Hudu map here), the DNS
-provider (Cloudflare records), the provider's audit log, the asset inventory, what the site answers from outside (the
-probes) and the PSA (the tickets). Whether a setting is right, backed up, restorable and still means what it meant
-takes several of them at once. The agent reads them as one: every question it answers is a join across two or more of
-those sources through one Zetaris layer (the `DRIFT` datasource, with the USL and its DQ rules over it), and
-FOUND-BUT-DIFFERENT exists only in that join: unchanged bytes on the host, a changed answer from the DNS provider, an
-address the inventory lacks. Within the sources it is given, the agent discovers the population of each source before
-it reads a row (so a short read fails the DQ gate), every file a configuration pulls in, every regular member of the
-newest backup tarball, every dependency a restore needs that the vault holds no copy of (named by the validator),
-every name a zone serves, and what is absent: an approved setting with no observation (`approved_missing`). Discovery
-of sources themselves (new hosts, new accounts, new tools) belongs to a discovery agent in the larger product; this
-agent discovers within the sources it is configured with (`LINUX_HOSTS`, one Cloudflare account).
+The agent reads the eight places as one. The detector and check SQL joins the first six, with each source's asserted
+population; the probes decide whether production is affected, and the PSA carries the tickets. Every question it
+answers is a join across two or more of those sources through one Zetaris layer (the `DRIFT` datasource, with the USL
+and its DQ rules over it), and FOUND-BUT-DIFFERENT exists only in that join: unchanged bytes on the host, a changed
+answer from the DNS provider, an address the inventory lacks. Within the sources it is given, the agent discovers the
+population of each source before it reads a row (so a short read fails the DQ gate), every file a configuration
+pulls in, every regular member of the newest backup tarball, every dependency a restore needs that the vault holds no
+copy of (named by the validator), every name a zone serves, and what is absent: an approved setting with no
+observation (`approved_missing`). Its sources are configured: the hosts `LINUX_HOSTS` lists and one Cloudflare
+account. This agent is the assurance layer; a management surface above it, every setting with its live, approved and
+recommended state, a lock flag and a template, with unlock, change and lock as the technician's gesture, is the next
+layer, and the owner's report (`report.html`) is its first read-only pane.
 
 Entry for the GenAI Works Open Agent Hackathon 2026, Track 1 (Solving Fragmented Intelligence): "Demonstrate a
 clever ability to discover and work across fragmented data sources."
@@ -46,10 +80,13 @@ document is rendered from SQL; `npm run cycle` runs every step once, `npm run wa
 8. **Act behind `--apply`.** The Actor turns a ROLLBACK into `rollback_file` or `revert_record` and a FIX into `investigate`, then `fix`, and verifies every write with probes. Without `--apply` it prints the plan and writes nothing.
 9. **Ticket and document.** The ticket step opens, comments on and closes GitHub issues by verb and by the rule's `alert`, each with the finding's Why. The owner's document renders one markdown page per tenant from 15 named queries, 16 when it lists a cause. The owner's report, `report.html` beside it, renders the same rows as one HTML file an owner or a client opens with no install: what needs a person and who holds it, what is held and adopted, what the agent did, and the latest read of every source with its DQ gate result.
 
-### The agents
+### The pipeline and the three roles that check each other
 
-Every trace line names the agent that wrote it (`agent`, `src/trace.ts`), and a query line names the agent that sent
-the query. The agents of the committed traces, of `npm run sample` and of the eval:
+ConfigLeaf is one pipeline of named stages, and three roles inside it check each other: Nemotron 3.5 Lightning
+selects the checks, Nemotron 3 Ultra writes the SELECT that refutes a false claim, and the SQL guard, the receipt gate
+and the replay page's build re-run validate both. Every trace line names the stage that wrote it (`agent`,
+`src/trace.ts`), and a query line names the stage that sent the query. The stages of the committed traces, of
+`npm run sample` and of the eval:
 
 | agent | what it does | module |
 |---|---|---|
@@ -112,9 +149,11 @@ byte for byte alike.
 The committed inputs and their outputs sit under [examples/](examples/), each described in
 [examples/README.md](examples/README.md): the three cases `examples/<case>/` (`proxy-split`, `wildcard-no-real-ip`,
 `orphans`), each a `bundle.json` in and the `findings.json` the pass computed over it out; the four proposals in
-`examples/proposals/`, each a `*.json` in and its `*.verdict.json` out; and [examples/traces/](examples/traces/), three
-redacted traces, the lab's investigation with Nemotron, the act-three cycle on the production estate, 18:08 to
-18:16 UTC on 25 Oct 2026 with `--apply`, and the lab's explain cycle, 20:24 to 20:26 UTC with `--apply`.
+`examples/proposals/`, each a `*.json` in and its `*.verdict.json` out; and [examples/traces/](examples/traces/), four
+redacted traces of 25 Oct 2026: the lab's investigation with Nemotron; the operator's rehearsal cycles on the
+production estate with `--apply`, the one of 16:49 to 16:51 UTC that raised FOUND-BUT-DIFFERENT on real rows and
+reverted the record through the provider, and the one of 18:08 to 18:16 UTC that investigated a FIX; and the lab's
+explain cycle, 20:24 to 20:26 UTC with `--apply`.
 
 Live mode starts with `cp .env.example .env` and its keys filled in, each described in [.env.example](.env.example):
 `DATABASE_URL`, `ZETARIS_API_KEY`, `ZETARIS_PG_HOST`, `CLOUDFLARE_API_TOKEN`, `LINUX_HOSTS`, `DRIFT_VAULT_DIR`,
@@ -122,7 +161,7 @@ Live mode starts with `cp .env.example .env` and its keys filled in, each descri
 Nightshift and GitHub tokens are read at run time. In cycle order, after the one-time setup:
 
 ```bash
-npm run zetaris:setup                                   # once: the DRIFT datasource, the eleven-entity USL, four DQ rules
+npm run zetaris:setup                                   # once: the DRIFT, LESSONS and RULES datasources, the fourteen-entity USL, five DQ rules
 npm run policy:load -- --tenant <id>                    # once per policy version: the policy file -> policy_rule rows
 npm run collect:cloudflare -- --tenant <id>             # DNS records and the audit log -> Postgres and the vault
 npm run collect:linux -- --host <alias> --tenant <id>   # one SSH session of fixed reads, per LINUX_HOSTS alias
@@ -146,9 +185,9 @@ Measured on the operator's estate, tenant `client-1`, and the writes on the lab 
 
 | Command | Proves | Measured |
 |---|---|---|
-| `npm test` | Every module against fixtures, fakes and a throwaway Postgres schema; the live halves run behind their flags. | 1,023 tests in 40 files on the operator's machine: 910 pass and 113 wait for their live flags (107 for `PARITY_LIVE`, 3 for `VALIDATE_LIVE`, 1 each for `EVAL_LIVE`, `PROBE_LIVE` and `TICKETS_LIVE`), 25 Oct 2026. |
-| `PARITY_LIVE=true npx vitest run test/parity.test.ts` | Every query the agent runs returns the same columns, rows and totals on sql.js and on Zetaris over the same rows. | 107 of 107 cases equal over the export of the 13:53 UTC cycle, 17,364 observation rows read whole on both engines, 25 Oct 2026. |
-| `SAMPLE_MODE=true npm run sample` | The whole pass over `sample/bundle.json`, with no credentials, no model and no `.env`, deciding with the committed lessons in `examples/memory`. | 80 runs, 14,174 observations, 27 findings: ADOPT 23 under the operator's accepted exceptions, HOLD 3 and ESCALATE 1 by policy, decided at 2026-10-25T14:17:53.416Z; the explain step over the pass, 1 cause, the ESCALATE's, unknown with its 18 h window stated; two runs byte-identical, and the same lines with every `.env` value blanked, 25 Oct 2026. |
+| `npm test` | Every module against fixtures, fakes and a throwaway Postgres schema; the live halves run behind their flags. | 1,159 tests in 44 files on the operator's machine: 1,041 run and pass, 0 fail, and 118 wait for their live flags (112 for `PARITY_LIVE`, 3 for `VALIDATE_LIVE`, 1 each for `EVAL_LIVE`, `PROBE_LIVE` and `TICKETS_LIVE`), 25 Oct 2026 23:30 UTC. |
+| `PARITY_LIVE=true npx vitest run test/parity.test.ts` | Every query the agent runs returns the same columns, rows and totals on sql.js and on Zetaris over the same rows. | The suite holds 111 cases. On 25 Oct 2026, at the export instant of the 13:53 UTC cycle, 107 of 107 cases equal, 17,364 observation rows read whole on both engines. The live half compares the recording's rows, and `DRIFT` holds rows written since that export, so the live half runs against a fresh export (`npm run export:bundle`). |
+| `SAMPLE_MODE=true npm run sample` | The whole pass over `sample/bundle.json`, with no credentials, no model and no `.env`, deciding with the committed lessons in `examples/memory`. | 80 runs, 14,174 observations, 27 findings: ADOPT 23 under the operator's accepted exceptions, HOLD 3 and ESCALATE 1 by policy, decided at 2026-10-25T14:17:53.416Z; the explain step over the pass, 1 cause, the ESCALATE's, unknown with its 18 h window stated; the 58 lines outside the trace (27 findings, 27 `DISPOSITION`, 1 `CAUSE`, the `ADOPTIONS` line, the summary and the `REPORT` line) byte-identical over two runs, the `ADOPTIONS` line reading 23 ADOPT under an accepted exception, 23 joined to a lesson in force (`exception_in_force` over the ledger and the `lesson` table sql.js holds as Zetaris holds `LESSONS.lesson`), and with every `.env` value blanked the same finding, disposition, cause and summary lines, the `REPORT` line's deny-list probe counting 0 configured labels (49 with `.env`); each of the 791 trace lines carries its own `ts`, `latency_ms` and `trace_id`, 25 Oct 2026. |
 | `npm run collect:cloudflare`, `npm run collect:linux` | The collectors read the live estate in full, each population asserted before the first row. | 58 of 58 records in 6 zones, 1,014 of 1,014 audit rows, 24 of 24 and 14 of 14 vhost files, at 13:53 UTC, 25 Oct 2026. |
 | `npm run vault:status` | Every complete run is one commit in a per-host or per-account git repository. | 3 repositories of 11, 12 and 12 commits, 58, 32 and 22 files at the heads, 25 Oct 2026. |
 | `npm run validate:copies` | Each newest vault commit restores to a tree `nginx -t` accepts and each record copy passes its schema, every missing dependency named. | both nginx trees ok_with_gaps (16 and 13 gaps), records 42 ok and 16 ok_with_gaps, 0 fail, 24 Oct 2026. |
@@ -163,10 +202,10 @@ Measured on the operator's estate, tenant `client-1`, and the writes on the lab 
 | `npm run document` | The owner's document: one page per tenant from 15 named queries, 16 when it lists a cause, through the deny-list probe before it is written. | Under `SAMPLE_MODE=true`: 27 findings open, ADOPT 23, HOLD 3 and ESCALATE 1, decided at 2026-10-25T14:17:53.416Z, the Why one line, the ESCALATE's cause; `examples/document.md` byte-identical on a second render, 25 Oct 2026. |
 | `npm run eval -- --set dev --configs C0 --runs 2` | The pre-registered eval of [eval/PROTOCOL.md](eval/PROTOCOL.md). | C0 on the 15 development items under `policy/hackathon.json` version 2: 11 scored, 11 with a verdict, agreement 9 of 9 (Wilson 95% 0.701 to 1.000), 0 of 9 labelled no read yes, 0 differences between runs, 25 Oct 2026. |
 | `npm run receipts:verify -- eval/results/2026-10-25T09-25-44Z`, `npm run receipts:verify -- lab` | The runtime's signed receipt for each receipted model call, published beside the call record that names it and checked offline with no `.env` and no network: the Ed25519 signature, the served model and tier, `app` `drift-agent-<tenant>`, `request_id`, `cache.status` and the preview the gate read. | The development run: 383 of 389 call records carry a receipt, and the other 6, C2 judge calls, carry none, every route of the failover ladder failing (the last with a 502) and the gate refusing them; of the 383 receipts, 380 are published with 380 of 380 signatures verified and 3 are withheld by the export's probe and listed in `receipts-withheld.json`; 0 served model, tier, app or cache mismatches; 368 counted calls whose preview opens with the request line, and the 12 custody refusals of C4 as recorded. The lab: 3 of 3 verified under `drift-agent-lab-1`. One signing key throughout, the key of the 23 Oct probe receipts, 25 Oct 2026. CI runs it over every committed `receipts.json` on every push to main and every pull request ([ci.yml](.github/workflows/ci.yml)). |
-| `npm run site` | The replay page, built from [examples/](examples/), the committed lessons in `examples/memory`, the repository's SQL and the newest [eval/results/](eval/results/) (`--results` names another): every finding with every check re-run to its recorded count before anything is published, the owner's document as its Document tab, "Where each answer comes from" as its Sources tab, both rendered to HTML at build time, and the [Nemotron tab](docs/index.html#nemotron): the eval's calls, requested and served, and every judge SELECT recorded with a row count re-guarded and re-run over the recording, the build refused on any count that differs. | 9 findings (ADOPT 4, HOLD 3, ESCALATE 2), 33 checks re-run equal, the 181-line document decided at 2026-10-25T14:17:53.416Z, the 9 class rows; the Nemotron tab over `eval/results/2026-10-25T09-25-44Z` (dev): 389 calls, 383 receipts verified, 0 substitutions, 162 judge SELECTs, 161 re-run equal and the recorded text of 1 (C2 run 2, P10) refused by the engine; 277,673 bytes of the 300,000-byte budget, a rebuild byte-identical, 25 Oct 2026. |
+| `npm run site` | The replay page, built from [examples/](examples/), the committed lessons in `examples/memory`, the repository's SQL and the newest [eval/results/](eval/results/) (`--results` names another): every finding with every check re-run to its recorded count before anything is published, the owner's document as its Document tab, "Where each answer comes from" as its Sources tab, both rendered to HTML at build time, and the [Nemotron tab](docs/index.html#nemotron): the eval's calls, requested and served, and every judge SELECT recorded with a row count re-guarded and re-run over the recording, the build refused on any count that differs. | 9 findings over the three slices (ADOPT 4, HOLD 3, ESCALATE 2, the one `proxy_split` in two slices), 33 checks re-run equal, the 196-line document decided at 2026-10-25T14:17:53.416Z, the 9 class rows; the Nemotron tab over `eval/results/2026-10-25T09-25-44Z` (dev): 389 calls, 383 receipts verified at run time (380 published and verified offline, 3 withheld), 0 substitutions, 162 judge SELECTs, 161 re-run equal and the recorded text of 1 (C2 run 2, P10) refused by the engine; 282,559 bytes of the 300,000-byte budget, a rebuild byte-identical, 25 Oct 2026. |
 | `npm run conformance`, `npm run conformance:hmem` | The vendored Meterless suites pass: the World Model suite runs through `src/engine/world.ts`, and the H-MEM suite runs through the reference class that `src/engine/memory.ts` re-exports. | World Model 8 of 8; H-MEM 13 of 13 and the `TechnicianMemory` wrapper check, 25 Oct 2026; and in CI on every push to main and every pull request ([ci.yml](.github/workflows/ci.yml)). |
 | `npm run spike:nightshift` | Nightshift serves Lightning and Ultra by explicit id, signs a receipt for each call that verifies offline, and tracks the app as a job whose event stream replays its turns. | 9 of 9 PASS: 142 model ids listed, Lightning in 3,107 ms and Ultra in 1,625 ms on their OpenRouter routes, 100 of 100 listed receipts verified, this run's 2 receipts in the list, 65 turn events replayed, 25 Oct 2026. |
-| `npm run zetaris:setup` | The idempotent setup of the `DRIFT` datasource, the eleven-entity USL and its four DQ rules. | 47 statements, 0 failed; `run_complete` 135 of 135 runs valid, 25 Oct 2026 20:44 UTC. |
+| `npm run zetaris:setup` | The idempotent setup of the `DRIFT` datasource, the `LESSONS` and `RULES` file sources, the fourteen-entity USL and its five DQ rules. | 71 statements, 0 failed; `run_complete` 140 of 140 runs valid, `exception_in_force` 184 of 184 adoptions valid, 25 Oct 2026 22:57 UTC. |
 | `npm run zetaris:queries` | The hero query, the survey and the detectors run through Zetaris itself. | 0 hero rows, the 27 survey findings, 0 invalid runs, 24 Oct 2026. |
 
 ## Where each answer comes from
@@ -194,6 +233,13 @@ The sources:
 - audit log (`audit_event`): the provider's audit log, who changed which resource and when; and each host's journal of the last 24 h, the sudo commands that touch nginx and the logins, every login name pseudonymised.
 - inventory (`inventory_asset`): the hosts' addresses.
 - populations (`collection_run`): each source's own population, asserted before a row is read, and each run's status.
+
+Two more sources decide what happens to a finding: the technician's memory store, which the Decider recalls from, and the policy file, which `npm run policy:load` turns into the `policy_rule` rows. Zetaris reads both as files beside `DRIFT`: `npm run zetaris:setup` writes them into its filestore and registers them. The DQ rule `exception_in_force` on `drift_usl.adoption` joins every ADOPT the ledger holds under an accepted exception to its lesson, across the two datasources. The rows are those of the committed files:
+
+| source | Zetaris datasource | tables | rows | what it holds |
+|---|---|---|---|---|
+| technician memory store (`examples/memory`) | `LESSONS` | `LESSONS.lesson`, `LESSONS.ledger` | 23 lessons, 23 ledger entries | the lessons the technician taught, in the Meterless H-MEM store, each with its tenant, scope key, expiry and provenance; the Decider recalls them, and an accepted exception makes its finding ADOPT until it expires |
+| policy rules (`policy/hackathon.json`) | `RULES` | `RULES.rule` | 15 rules, version 2 | the MSP's policy, one row per rule under the rule id every disposition decided by policy names |
 
 ## Policy
 
@@ -250,9 +296,9 @@ A served name whose only match is a wildcard of its zone is probed under that wi
 `cf-ray` and dns expectations (`matchName` in `src/probe/rules.ts`, the rule the Actor's verification shares); on 25
 Oct 2026 that added 2 of the 22 names the vault's host heads serve to the 37, the file of ticket #5 among them, all 6
 probes ok. The tickets live in the PSA repository the operator configures (`DRIFT_TICKETS_REPO`), and the committed
-files carry their numbers where a trace or document line names them: #2 and #7 in the act-three trace in
-[examples/traces/](examples/traces/), #2 in [examples/document.md](examples/document.md); #5 is in the trace of the
-15:53 UTC cycle, kept in `logs/` on the operator's machine.
+files carry their numbers where a trace or document line names them: in [examples/traces/](examples/traces/), #2,
+#5 (closed) and #6 (opened and closed) in the 16:49 UTC rehearsal trace and #2 and #7 in the 18:08 UTC one; #2 in
+[examples/document.md](examples/document.md).
 
 Production is affected when a probe of the pass's probe run fails on a name the finding's object serves, answering
 when all of them pass, and unknown with none; after a write the Actor probes again (surface `probe.verify`). On 24 Oct
@@ -279,8 +325,8 @@ a comment until a pass finds the setting at its approved value; `src/psa/mapping
 ConnectWise and Autotask. On 24 Oct 2026 the policy fixture's ROLLBACK 3 and FIX 1 gave five
 actions against a fake host, probe and fetch, and a second run wrote 0. A ticket opened or commented on for an
 explained disposition carries a Why section right after its Evidence: the cause's sentence, one timeline line per
-evidence row (`2026-10-25 15:52:07 UTC · journal · user-3f2a1c · tee · /etc/nginx/conf.d/app.conf`) and the diff in
-a fenced block.
+evidence row (`2026-10-25 15:52:07 UTC · journal · user-3f2a1c · tee · /etc/nginx/conf.d/app.conf`, from
+`test/explain.test.ts`) and the diff in a fenced block.
 
 ## Why it changed
 
@@ -295,7 +341,8 @@ approval (with none, the earlier of its last matching observation and 24 h back)
 
 The first class that matches names the cause: `agent`, `operator_edit`, `automation`, `account_change`,
 `token_change`, else `unknown`, whose sentence states the window and the rows it holds. A person's or a tool's change
-ends with how long before the agent restored it, once its rollback or revert wrote:
+ends with how long before the agent restored it, once its rollback or revert wrote; the sentences below are outputs
+`test/explain.test.ts` holds:
 
 - The file was changed at 15:52 UTC by user-3f2a1c over ssh from ip-7c1d2e (sudo tee), 2 minutes before the agent restored it.
 - The file was changed at 03:12 UTC by certbot (renewal).
@@ -304,7 +351,7 @@ ends with how long before the agent restored it, once its rollback or revert wro
 
 Each cause is one `finding_cause` row (class, actor, mechanism, time, source address, evidence ids, diff, sentence,
 window) and shows in four places: the explain row of the cycle's table (`explain   4 causes   operator 1 · agent 1 ·
-unknown 2`), after its action's sentence in the "what happened" block, as the ticket's Why, and in the Why list of the
+unknown 2`, from `test/loop.test.ts`), after its action's sentence in the "what happened" block, as the ticket's Why, and in the Why list of the
 owner's document. A login name reaches the row as the redactor's `user-XXXXXX` pseudonym, a source address as
 `ip-XXXXXX`, and a command keeps its program, flags and paths only. Over the policy fixture the dry-run cycle explains
 8 findings (account_change 2, unknown 6) and writes 8 rows (test/loop.test.ts). On 25 Oct 2026 on the lab estate a
@@ -343,6 +390,13 @@ ten planted false claims of `eval/planted.json` go to every judge. Results, with
 the run files, and `test/eval-table.test.ts` holds the README to its output. A cell holds one value when every run
 gives it and each run's value, in run order, when they differ.
 
+The labels set the limit of every measure: the 38 items hold 36 no, 2 unsure and 0 yes, both unsure items in the
+development set, so the eval measures agreement on items labelled no and the false positives among them, and the 23
+held-out items are all labelled no. The development-set calls ran with Nightshift's own memory injected into 281 of
+the 380 published prompts (each receipt's `hmem` field); the adapter now sends every call under a fresh
+`meterless-scope`, and the development set re-runs under that isolation before the held-out run (the changelog of
+[eval/PROTOCOL.md](eval/PROTOCOL.md) carries the detail).
+
 ### Development set, `eval/results/2026-10-25T09-25-44Z`
 
 15 configuration runs (3 of each of C0, C1, C2, C3, C4): 389 call records, 383 with a verified receipt, 0 substitutions, 0 cache hits. Median output tokens per answered call: Lightning selecting 4,724, Lightning judging 2,953, Ultra judging 615, Ultra alone 358.
@@ -354,6 +408,12 @@ gives it and each run's value, in run order, when they differ.
 | C2 | C1 plus Nemotron 3.5 Lightning as the falsifier judge | 3/3, 8/8, 7/7 | policy 14, 18, 16 | 0/9 | 9/10, 9/10, 8/10 | 69/70, 70/71, 65/68 | 6, 2, 4 | 49, 49, 47 | 45, 48, 46 | 0 | 0 | Lightning selecting 4,805; Lightning judging 2,953 |
 | C3 | C1 plus Nemotron 3 Ultra as the falsifier judge | 9/9, 9/9, 8/8 | policy 19, 20, 16 | 0/9 | 9/10 | 72/73, 76/76, 62/66 | 1, 0, 3 | 49, 50, 46 | 49, 50, 46 | 0 | 0 | Lightning selecting 4,932; Ultra judging 615 |
 | C4 | Nemotron 3 Ultra alone: the verdict from the rows, no SQL checks, no catalogue (baseline) | 3/9 | the model | 6/9 | - | - | 2 | 13 | 13 | 0 | 0 | Ultra alone 358 |
+
+Nemotron 3 Ultra alone (C4) agrees on 3 of 9 items and reads yes on 6 of the 9 labelled no; with Ultra as the judge
+inside the system (C3) the runs agree on 9 of 9, 9 of 9 and 8 of 8 and read yes on 0 of 9. C4's Wilson interval,
+0.121 to 0.646, lies below every C0, C1 and C3 interval and C2 run 2's (lowest bound 0.676), touches C2 run 3's
+(from 0.646) and overlaps C2 run 1's (0.439 to 1.000); the C0 to C3 intervals overlap one another. The recording is
+`test/fixtures/recorded-bundle.json`, tenant `client-1`; its pass raises 38 findings (25 Oct 2026).
 
 On this set the policy file decides every C0 to C3 verdict (decided_by policy on every finding with a disposition), so
 Nemotron's measured work here is the checks Lightning chooses from the catalogue and the refuting SELECTs both judges
@@ -368,24 +428,44 @@ on `localhost:8888` (`ZETARIS_REST_URL`). The agent sends an API key created by 
 (Management > API tokens) and set as `ZETARIS_API_KEY`: `npm run zetaris:setup` needs a key of an admin role, and the
 agent's own query path is SELECT-only ([.env.example](.env.example)).
 
-The app Postgres is registered in Zetaris as the `DRIFT` datasource; the collectors and the ledger write to Postgres,
-and every query of a live pass runs through Zetaris Lightning SQL over REST. `npm run zetaris:setup` builds the
-`drift_usl` semantic layer of eleven entities (`collection`, `setting`, `referent`, `backup_copy`, `policy`, `copy`,
-`probe`, `disposition`, `action`, `ticket`, `cause`) and four DQ rules: `run_complete` on `collection`,
-`copy_validated` on `copy` (the copy's latest validation is ok or ok_with_gaps), `action_verified` on `action` (a done
-rollback or revert names the probes that verified it) and `cause_evidenced` on `cause` (a cause of any class but
-unknown names at least one evidence id). The `cause` entity names `finding_cause.class` as `cause_class`.
-`test/parity.test.ts` holds sql.js and Zetaris to the same columns, rows and totals over 107 cases. Measured on
-Zetaris 2.4.3.1: a function inside a top-level WHERE on a `DRIFT` table is dropped, every row coming back, and a
-correlated reference in a subquery's JOIN ON is refused, so the catalogue's top-level predicates compare plain columns
-and every correlation sits in a WHERE. At 20:44 UTC on 25 Oct 2026 RUN DQ measured `run_complete` valid on 135 of 135
-runs, `copy_validated` valid on 1,967 of 2,268 copies (every vault copy, the superseded ones included),
-`action_verified` valid on 16 of 18 actions, the 2 invalid each an `unverified` `rollback_file` that names no verifying
-probe, and `cause_evidenced` valid on 4 of 4 causes, all of tenant `lab-1`.
+Zetaris federates three datasources. `DRIFT` is the app Postgres: the collectors and the ledger write to it, and every
+query of a live pass runs through Zetaris Lightning SQL over REST. `LESSONS` is the technician's memory store, the
+Meterless H-MEM store the Decider recalls from: `LESSONS.lesson` holds one row per lesson and `LESSONS.ledger` the
+store's H-MEM ledger, entry for entry. `RULES` is the policy file: `RULES.rule` holds one row per rule, under the rule
+id every disposition decided by policy carries. The last two are Lightning databases over files in the Zetaris
+filestore: `npm run zetaris:setup` writes the three files from `DRIFT_MEMORY_DIR` and `DRIFT_POLICY_FILE` into the
+driver container with docker (through `wsl.exe -d Ubuntu-24.04` on Windows) and registers them. Each copy records the
+files' sha256 in `.world/filestore-copy.json`, gitignored, and a live pass (before the Decider's DQ read) and
+`npm run answer` (after it writes the store) put the files again when their hash differs, so `LESSONS.lesson` holds
+the store the Decider recalls from; the setup's copy of the three files took 511 ms on 25 Oct 2026 at 23:24 UTC. The
+setup then builds the `drift_usl` semantic layer of fourteen entities (`collection`, `setting`, `referent`,
+`backup_copy`, `policy`, `copy`, `probe`, `disposition`, `action`, `ticket`, `cause`, `lesson`, `rule`, `adoption`)
+and five DQ rules: `run_complete` on `collection`, `copy_validated` on `copy` (the copy's latest validation is ok or
+ok_with_gaps), `action_verified` on `action` (a done rollback or revert names the probes that verified it),
+`cause_evidenced` on `cause` (a cause of any class but unknown names at least one evidence id) and
+`exception_in_force` on `adoption`. The `adoption` entity is the cross-source join: every ADOPT decided under an
+accepted exception, a `DRIFT` row, joined to the `LESSONS` lesson its reason names; `exception_in_force` holds each
+one to a lesson that was in force at the decision instant. After the Decider, a live pass reads the same rule over its
+own adoptions with one SELECT on `drift_usl.adoption`, and the pass row's Zetaris line prints it; the dry pass measured
+on 25 Oct 2026 over the recording of 21:12 UTC printed "DQ exception_in_force 23 of 23 adoptions of the pass recorded
+at 2026-10-25 21:12 UTC". The `cause` entity names `finding_cause.class` as `cause_class`. `test/parity.test.ts` holds sql.js and Zetaris to the same columns, rows and
+totals over 111 cases, the two file tables and the adoption join among them. Measured on Zetaris 2.4.3.1: a function
+inside a top-level WHERE on a `DRIFT` table is dropped, every row coming back, and a correlated reference in a
+subquery's JOIN ON is refused, so the catalogue's top-level predicates compare plain columns and every correlation
+sits in a WHERE. FORMAT JSON reads a file as one JSON document, so a newline-delimited ledger gives its first entry
+alone, with or without `multiLine "false"`, and every file the setup writes is one JSON array; a file table re-reads
+its file on every query and keeps the columns it was created with, so the setup drops and creates a table whose columns
+differ (25 Oct 2026). At 22:27 UTC on 25 Oct 2026 the setup ran 71 steps, 58 ok, 13 skipped and 0 failed in 23.2 s,
+the eleven-entity USL stale, removed and compiled with fourteen; a second run gave 49 ok, 22 skipped, 0 failed in
+18.9 s. RUN DQ measured `run_complete` valid on 140 of 140 runs, `copy_validated` valid on 2,079 of 2,380 copies
+(every vault copy, the superseded ones included), `action_verified` valid on 16 of 18 actions, the 2 invalid each an
+`unverified` `rollback_file` that names no verifying probe, `cause_evidenced` valid on 5 of 5 causes, and
+`exception_in_force` valid on 184 of 184 adoptions: the 23 ADOPTs of client-1 in each of 8 recorded passes, each
+joined to one of the 23 lessons of `examples/memory` (`RULES.rule` 15 rows, `LESSONS.ledger` 23).
 
 ### The semantic layer
 
-`drift_usl` in `lightning.metastore.drift` is the semantic layer over the `DRIFT` datasource: 11 entities, each activated as one SELECT over the tables it is built from (`activation()` in `src/zetaris/setup.ts`), and 4 DQ rules, each an expression RUN DQ tests on every row of its entity.
+`drift_usl` in `lightning.metastore.drift` is the semantic layer over three datasources: `DRIFT`, the app Postgres; `LESSONS`, the technician's memory store; `RULES`, the policy file. It holds 14 entities, each activated as one SELECT over the tables it is built from (`activation()` in `src/zetaris/setup.ts`), a table of `DRIFT` by its name and a file table as `<datasource>.<table>`, and 5 DQ rules, each an expression RUN DQ tests on every row of its entity.
 
 | entity | built from | key | DQ rule | expression |
 |---|---|---|---|---|
@@ -400,6 +480,9 @@ probe, and `cause_evidenced` valid on 4 of 4 causes, all of tenant `lab-1`.
 | `action` | `action` | `action_id`; `disposition_id` references `disposition(disposition_id)` | `action_verified` | `kind NOT IN ('rollback_file','revert_record') OR status IN ('failed','refused','not_judged') OR verification <> ''` |
 | `ticket` | `ticket` | `ticket_id` |  |  |
 | `cause` | `finding_cause`: `class` as `cause_class` | `cause_id`; `disposition_id` references `disposition(disposition_id)` | `cause_evidenced` | `cause_class = 'unknown' OR evidence_ids <> '[]'` |
+| `lesson` | `LESSONS.lesson`: one row per lesson of the technician's memory store, the Meterless H-MEM store the Decider recalls from, as `lessons.json` in the Zetaris filestore | `lesson_id` |  |  |
+| `rule` | `RULES.rule`: one row per rule of the policy file, as `rules.json` in the Zetaris filestore; `lock` as `locked`, `hold_max_hours` as `hold_hours`, `note` as `description` | `rule_id` |  |  |
+| `adoption` | `disposition`, `LESSONS.lesson`: each `disposition` decided ADOPT by the operator, under an accepted exception, LEFT JOINed across the two datasources to the `LESSONS.lesson` row its reason names, on the tenant and the lesson id | `disposition_id`; `lesson_id` references `lesson(lesson_id)` | `exception_in_force` | `lesson_id IS NOT NULL AND lesson_kind = 'exception' AND lesson_recorded_at <= decided_at AND decided_at < lesson_expires_at` |
 
 ## Meterless
 
@@ -491,17 +574,17 @@ left it after the run and the redactor read the alias in `bs2.host` as a host na
 
 ## Limits
 
-- The write paths run behind `--apply` only, and on 25 Oct 2026 they ran for real on the lab estate (`lab/README.md`, tenant `lab-1`): `rollback_file` reached `done` at 09:53 UTC, verified by probe `probe-36eb2c1bba298a2a` with the probe population from `PROBE_TARGETS_OVERRIDE`, since the lab's names sit in no zone; a FIX ran `investigate` with Nemotron Lightning and Ultra and its `fix` was refused without a valid copy; the 05:47 UTC rollback, run without the override, found no record of the lab's names in the account and is `unverified`. On the operator's own estate the Actor has written four times, all on 25 Oct 2026 in the operator's rehearsal: a `rollback_file` on a vhost at 15:55 UTC, `unverified` by its own probe because the name rides a wildcard record (the next pass found the approved value live and closed its ticket); a `revert_record` through the provider at 16:50 UTC, `done` with the provider confirming the value; and an `investigate` with Nemotron Lightning and Ultra followed by a refused `fix` at 18:10 to 18:16 UTC on a setting with no valid copy, which opened incident #7. The trace of that cycle, 18:08 to 18:16 UTC, is committed redacted in [examples/traces/](examples/traces/) beside the lab's investigation: Lightning's selection on receipt `rcpt_req_9jmhddr1`, the checks, Ultra's verdict on receipt `rcpt_req_no31rwfn`, the refused `fix` and the incident.
+- The write paths run behind `--apply` only, and on 25 Oct 2026 they ran for real on the lab estate (`lab/README.md`, tenant `lab-1`): `rollback_file` reached `done` at 09:53 UTC, verified by probe `probe-36eb2c1bba298a2a` with the probe population from `PROBE_TARGETS_OVERRIDE`, since the lab's names sit in no zone; a FIX ran `investigate` with Nemotron Lightning and Ultra and its `fix` was refused without a valid copy; the 05:47 UTC rollback, run without the override, found no record of the lab's names in the account and is `unverified`. On the operator's own estate the Actor ran four actions, all on 25 Oct 2026 in the operator's rehearsal: two writes, a `rollback_file` on a vhost at 15:55 UTC, `unverified` by its own probe because the name rides a wildcard record (the next pass found the approved value live and closed its ticket, #5), and a `revert_record` through the provider at 16:50 UTC, `done` with the provider confirming the value; then an `investigate` with Nemotron Lightning and Ultra followed by a refused `fix` at 18:10 to 18:16 UTC on a setting with no valid copy, which opened incident #7. The traces of the revert's cycle, 16:49 to 16:51 UTC, and of the FIX's cycle, 18:08 to 18:16 UTC, are committed redacted in [examples/traces/](examples/traces/) beside the lab's investigation; the second holds Lightning's selection on receipt `rcpt_req_9jmhddr1`, the checks, Ultra's verdict on receipt `rcpt_req_no31rwfn`, the refused `fix` and the incident.
 - One tenant, two hosts, six zones, one policy file, one machine and one PSA backend, GitHub Issues (HaloPSA, ConnectWise and Autotask are a field map): `npm run watch` schedules cycles while its process lives, and a GitHub issue is the one notification.
-- The receipted model calls before the eval's three-run development pass are the 9 of the eval smoke and the 3 of the lab's two investigations, 25 Oct 2026; the held-out set runs once, on 26 October, after the feature freeze.
-- The hero classes find nothing on the recorded estate, where every name a vhost serves lands on an inventory host; pre-flight raises two hero findings in simulation, and `test/fixtures/authored-bundle.json` carries the full story for the tests.
-- `drift_vs_approved`, `changed_since_backup` and `approved_missing` find 0 on the operator's estate; ROLLBACK and FIX run on the lab estate and on `test/fixtures/policy-bundle.json`.
+- The held-out set, 23 items, runs once, on 26 October, after the feature freeze. The 38 labels are 36 no, 2 unsure and 0 yes, so agreement counts items labelled no that read no: the eval measures false positives, and the 23 held-out items are all labelled no.
+- FOUND-BUT-DIFFERENT on real rows: at 16:49 UTC on 25 Oct 2026 a staged record change raised it on production, 2 `found_but_different` findings on the :443 and :80 `server_name` of one vhost, byte-identical since the 16:32 UTC run while their name resolved to another address, each held 72 h under rule 15; the same cycle's `revert_record` put the record back through the provider, `done`. [examples/traces/cycle_mvo2bil0.jsonl](examples/traces/cycle_mvo2bil0.jsonl) holds that cycle. `sample/bundle.json`, exported after the 13:53 UTC cycle, holds no hero finding; pre-flight raises two in simulation, and `test/fixtures/authored-bundle.json` carries the full story for the tests.
+- `drift_vs_approved`, `changed_since_backup` and `approved_missing` find 0 in `sample/bundle.json` (exported after the 13:53 UTC cycle of 25 Oct 2026); in the operator's rehearsal that day the 16:49 UTC cycle raised `drift_vs_approved` 1 and the 18:08 UTC cycle raised `drift_vs_approved` 1 and `changed_since_backup` 1 on the estate (`examples/traces/cycle_mvo2bil0.jsonl`, `examples/traces/cycle_mvo5600q.jsonl`); ROLLBACK and FIX also run on the lab estate and on `test/fixtures/policy-bundle.json`.
 - The 23 accepted exceptions in `examples/memory` hold until 2026-11-30T00:00:00Z, and recall runs at the clock: from that instant the sample pass, the examples and the replay page give those 23 findings ESCALATE (exception lapsed), and `npm run examples`, `npm run document` and `npm run site` regenerate the committed outputs the tests hold to the store. The 23 lessons sit on 15 names: a name served by a :443 and a :80 block raises two findings, one lesson was taught per finding, and the Decider applies the earlier lesson on a name, so withdrawing one of a pair leaves its twin in force (25 Oct 2026).
 - `verifyReceipt` trusts the public key each receipt carries. The published set is signed by one key: the development run's 380 receipts and the lab's 3 verify under `sha256:6ee50b5d11fdd693e1ee80635ea1868bb1addefb5823768192849709928ff8c1` (the sha256 of the raw Ed25519 key), the key of the 23 Oct probe receipts in `test/fixtures/`, and `npm run receipts:verify` names every distinct key it finds, 25 Oct 2026. Pinning that key in config would close a receipt forged with a fresh key.
 - Probes run from one machine through two public resolvers; a name resolves through its A and AAAA records, a CNAME followed one level.
-- The journal window covers the sudo commands and ssh logins of the last 24 h on the hosts the agent reaches; a change made as root in a shell the journal does not record reads `unknown`.
-- The collector reads with the operator's own SSH key, so its read-only property lives in the fixed script it streams. [ops/](ops/) holds the designed second stage, not yet installed: a dedicated user whose key is bound to a forced command running the same reads, and one sudoers line for the two root-only reads.
-- Source discovery (new hosts, new accounts, new tools) is the discovery agent's, in the larger product; this agent discovers within the hosts `LINUX_HOSTS` lists and one Cloudflare account.
+- The journal window covers the sudo commands and ssh logins of the last 24 h on the hosts the agent reaches; a change made as root in a shell the journal does not record reads `unknown`. The host's journal is evidence for a person to weigh, as trustworthy as the host that keeps it, since root can edit a log.
+- The collector reads with the operator's own SSH key, so its read-only property lives in the fixed script it streams. [ops/](ops/) holds the second stage, for the operator to install: a dedicated user whose key is bound to a forced command running the same reads, and one sudoers line for the two root-only reads.
+- The sources are configured, the hosts `LINUX_HOSTS` lists and the one Cloudflare account `CLOUDFLARE_API_TOKEN` reads, and this agent is the assurance layer: the next layer is a management surface above it (every setting with its live, approved and recommended state, a lock flag, a template; unlock, change and lock as the technician's gesture), and the owner's report is its first read-only pane.
 
 ## Pre-existing components
 
@@ -515,29 +598,4 @@ lists the same ids.
 
 ## Decisions
 
-- 2026-10-23: TypeScript on Node 22+ ESM, run with tsx and tested with vitest; `.env` loads through Node's built-in `process.loadEnvFile`.
-- 2026-10-23: Nemotron is requested by explicit model id, since `meterless/fast`, `deep` and `judge` all route to the race lane first, and the receipt gate reads the served tier from that id, `requested_mode` being `meterless/auto` on every receipt; an empty Lightning response is retried once, then the agent falls back deterministically.
-- 2026-10-23: `fingerprintAt` reads the latest `fingerprint` fact at or before the time, because the World Model reference replays facts from a snapshot and keeps attrs in live state only; the vendored code is untouched.
-- 2026-10-23: Zetaris REST returns `{headers, data, total, timeUsed}` with every value a string, and both engines normalise to it; Nemotron's primary routes run through OpenRouter (12 of 12 at a 1 to 2 s median, against 4 of 6 at 7.5 s on NVIDIA's free endpoint) behind a receipted failover ladder.
-- 2026-10-23: One portable DDL for SQLite and Postgres, and catalogue SQL in a portable subset whose parameters render as escaped literals, because Zetaris REST takes one SQL string and binds nothing; sql.js runs SAMPLE_MODE over `sample/bundle.json`, so a clean clone and CI run the real pass with nothing installed, and the parity test holds it to Zetaris.
-- 2026-10-23: Zetaris denies access per object by default; `npm run smoke` runs the read-only half of Spike A (`SELECT 1`, `SHOW LIGHTNING DATABASES`), the registration probe sits behind `--register`, and the agent's own query path is SELECT-only.
-- 2026-10-23: A catalogue of typed templates for Lightning to choose from; the one model that writes SQL is the judge, and the agent guards and runs its SELECT.
-- 2026-10-23: `chat_template_kwargs.enable_thinking` has no observable effect through the OpenRouter routes (12 of 12 calls); the judge sends it anyway and sizes its token budget for a route that honours it.
-- 2026-10-23: The collector's read-only property lives in its fixed script; `ops/` holds the forced-command user and one sudoers line, reviewed and not installed, its scripts pinned to LF.
-- 2026-10-23: Redaction before persistence, 6-hex pseudonyms, the salt in `REDACT_SALT`, the trace's free text through the same redactor.
-- 2026-10-24: Address joins take A and AAAA records only; a host run pairs with a DNS run within six hours; the SQL guards strip literals before the semicolon check and refuse double quotes; every query has a total ORDER BY.
-- 2026-10-24: The app Postgres sits on the Zetaris Docker network (`DATABASE_URL` is how this machine reaches it, `ZETARIS_PG_HOST` how Zetaris does); Zetaris API keys are admin-generated and tenant-scoped, so what limits the agent is its SELECT-only query path, and `npm run zetaris:setup` is the one place DDL goes through the raw adapter.
-- 2026-10-24: The USL has a `source_kind` column and a `referent` table, because the DDL validator rejects `source` and `reference`; `COMPILE USL` is the one request that carries several statements, and the USL names join the redactor's dotted vocabulary so trace lines keep them.
-- 2026-10-24: A Cloudflare record's previous state is the latest earlier create or update on its id, because the audit log carries the request body and no old or new value.
-- 2026-10-24: A setting's `value_hash` is an HMAC-SHA256 under `REDACT_SALT`, so a guess built from a public zone name confirms nothing; `file` rows keep the plain sha256, which must equal the tarball copy's.
-- 2026-10-24: Top-level WHERE predicates on `DRIFT` tables are plain column comparisons and every correlation sits in a subquery's WHERE, after the two pushdown facts under Zetaris.
-- 2026-10-24: Pre-flight is a derived table in place of `{{t:table}}` for one call, the whole pass run in the simulated world through the same DataLayer, the loop bound three; the stop rule ships with every template marked as informing the next action, and a judge call whose verdict cannot move is withheld with its reason.
-- 2026-10-24: The exposure line is three SELECTs in the portable subset plus arithmetic in TypeScript, with no SQL date function; its earlier-body count is field-aware, a body counting when it names the field with another value or deletes the record.
-- 2026-10-24: H-MEM is vendored as the second Meterless engine, and the Decider recalls the technician's lessons before it decides.
-- 2026-10-24: Receipt custody: identity rests on `request_id`, with `prompt_preview` able to refute it, and `app` must equal the per-tenant id; an answer whose receipt belongs to another request is discarded, asked once more with a fresh nonce, then failed closed.
-- 2026-10-24: The replay page is built from the committed examples only and refuses to publish anything it cannot re-run to the recorded numbers; every finding carries a short stable id.
-- 2026-10-24: Each loop step is a module with its own command, and a cycle runs them in one process; dry run is the Actor's default and `--apply` its one switch; the write script is separate from the read collector's.
-- 2026-10-24: `approved_missing` counts an object absent only when the run holds neither an observation nor a `dns_record` row of it; every HOLD on a live value shares the first HOLD's expiry.
-- 2026-10-24: `tenantAppId` joins base and tenant with `-`, the form the runtime files under `receipt.app` (12 of 12 receipts).
-- 2026-10-25: Every pass writes its own ledger rows (`disposition_id` carries `decided_at`); a bundle's decision instant is the later of its runs' latest finish and its latest ledger row; the `action` row carries the Actor's `reason` and `record`; the judge takes the tier the gate expects.
-- 2026-10-25: The technician's lessons live where `DRIFT_MEMORY_DIR` says, committed under `examples/memory`; every pass opens the store read only, so a run leaves it as committed; a replay over a bundle decides at the later of the bundle's instant and the latest lesson's, so a lesson taught after the recorded pass writes rows of its own.
+The dated decisions log is section 10 of [DESIGN.md](DESIGN.md#10-decisions).

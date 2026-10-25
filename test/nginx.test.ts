@@ -130,7 +130,7 @@ describe("nginx grammar", () => {
   });
 });
 
-describe("analyse: conf.d layout (conf.d layout)", () => {
+describe("analyse: conf.d layout", () => {
   const files = new Map([...fixtureFiles("confd")].map(([p, b]) => [p, b.toString("utf8")]));
   const a = analyse(files);
 
@@ -173,7 +173,7 @@ describe("analyse: conf.d layout (conf.d layout)", () => {
   });
 });
 
-describe("analyse: sites-enabled layout (sites-enabled layout)", () => {
+describe("analyse: sites-enabled layout", () => {
   const files = new Map([...fixtureFiles("sites")].map(([p, b]) => [p, b.toString("utf8")]));
   const links = new Map<string, string>();
   for (const e of parseLs(parseStream(stream("sites")).sections.find((s) => s.kind === "ls" && s.arg === "/etc/nginx/sites-enabled")!.body)) {
@@ -262,7 +262,7 @@ describe("stream protocol", () => {
   });
 });
 
-describe("rows: conf.d layout (conf.d layout)", () => {
+describe("rows: conf.d layout", () => {
   const { rows, summary } = rowsOf(stream("confd"));
   const obs = rows.observation;
   const files = fixtureFiles("confd");
@@ -422,7 +422,7 @@ describe("rows: conf.d layout (conf.d layout)", () => {
   });
 });
 
-describe("rows: sites-enabled layout (sites-enabled layout)", () => {
+describe("rows: sites-enabled layout", () => {
   const files = fixtureFiles("sites");
   const live = (p: string) => files.get(p)!;
   const EXPORT = "/home/svc/backup-export";

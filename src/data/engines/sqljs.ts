@@ -1,6 +1,7 @@
-// sql.js engine: SQLite in WebAssembly, in memory, for SAMPLE_MODE and tests. Applies sql/schema.sql,
-// loads a bundle (keys = table names, values = arrays of row objects), inserts rows into one table at a
-// time (insertRows: what an in-memory ledger writes through) and runs one SELECT at a time.
+// sql.js engine: SQLite in WebAssembly, in memory, for SAMPLE_MODE and tests. Applies sql/schema.sql and the file
+// tables' DDL (src/data/files.ts: lesson and rule, which Postgres never holds), loads a bundle (keys = table names,
+// values = arrays of row objects) and the file tables' rows (loadFileTables, from src/data/file-rows.ts), inserts
+// rows into one table at a time (insertRows: what an in-memory ledger writes through) and runs one SELECT at a time.
 // Results are normalised exactly as Zetaris.normalise does: columns from the statement, every value
 // String(), null -> "", integers without decimals, rowCount, total, latencyMs. A parity test
 // compares the two engines row for row on that contract.
@@ -14,6 +15,7 @@ import { randomUUID } from "node:crypto";
 import initSqlJs, { type Database, type SqlJsStatic, type SqlValue, type Statement } from "sql.js";
 import type { QueryResult } from "../../adapters/zetaris.ts";
 import { DataLayerError, stripLiterals, type Engine, type RunOptions } from "../layer.ts";
+import { FILE_SCHEMA_SQL, FILE_TABLES, type FileRows } from "../files.ts";
 import { KEYS, isTimestampColumn, type Rows, type TableName } from "../rows.ts";
 import { SCHEMA_SQL, tableDef, type TableDef } from "../schema.ts";
 
@@ -53,11 +55,12 @@ export class SqlJsEngine implements Engine {
 
   private constructor(private readonly db: Database) {}
 
-  /** A fresh in-memory database with the shared schema applied. */
+  /** A fresh in-memory database with the shared schema and the file tables applied. */
   static async create(): Promise<SqlJsEngine> {
     const SQL = await init();
     const db = new SQL.Database();
     db.exec(SCHEMA_SQL);
+    db.exec(FILE_SCHEMA_SQL);
     return new SqlJsEngine(db);
   }
 
@@ -86,6 +89,27 @@ export class SqlJsEngine implements Engine {
         stmt.free();
       }
       counts[key] = rows.length;
+    }
+    return counts;
+  }
+
+  /**
+   * Insert the file tables' rows (lesson, rule) with loadBundle's checks: every key a column, every timestamp
+   * canonical. The same rows npm run zetaris:setup writes into the Zetaris filestore. Returns rows inserted per table given.
+   */
+  loadFileTables(rows: Partial<FileRows>): Record<string, number> {
+    const counts: Record<string, number> = {};
+    for (const def of FILE_TABLES) {
+      const list = (rows as Record<string, readonly object[] | undefined>)[def.name];
+      if (!list) continue;
+      const values = rowValues(def, list as Record<string, unknown>[], def.name);
+      const stmt = this.db.prepare(insertSql(def));
+      try {
+        for (const v of values) stmt.run(v);
+      } finally {
+        stmt.free();
+      }
+      counts[def.name] = list.length;
     }
     return counts;
   }

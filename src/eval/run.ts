@@ -35,6 +35,11 @@
 //     the judge of every judging configuration, once per run. A call whose verified receipt names another tier
 //     than the one requested invalidates its run. Nothing is retried into a better number: the only repeat is
 //     the gate's custody retry, which discards an answer filed under another request.
+//   Memory isolation (eval/PROTOCOL.md changelog, 26 Oct 2026): every model call goes out under its own
+//     meterless-scope, "<prefix>-<seq>", the prefix EvalOptions.scopePrefix or "<set>-<run id>" (dev, heldout or all,
+//     then the runner's start stamp), seq counting the calls of the whole eval from 1; each CallRecord keeps the scope
+//     and the receipt's hmem.injected. A call whose receipt shows injected memory invalidates its run, and the result
+//     says how many calls of how many carried it.
 //
 // Measured 25 Oct 2026 over test/fixtures/recorded-bundle.json under policy/hackathon.json version 2 (15 rules), C0
 // in two runs (test/eval.test.ts): 38 items, 31 scored (the 7 drift_vs_approved items not raised), 31 with a verdict,
@@ -58,8 +63,8 @@ import type { Tracer } from "../trace.ts";
 import { assessChecks } from "./assess.ts";
 import { historyFinding } from "./history.ts";
 import { itemKind, matchItem, type EvalSet, type Item, type LabelValue } from "./items.ts";
-import { countRun, passDifferences, runDifferences } from "./measures.ts";
-import { directVerdict, evalRedactor, isSubstitution, judge, Recorder, scrubber, selectChecks, type CallRecord, type ModelCallContext } from "./models.ts";
+import { countRun, memoryTally, passDifferences, runDifferences } from "./measures.ts";
+import { directVerdict, evalRedactor, isMemoryInjected, isSubstitution, judge, Recorder, scrubber, selectChecks, type CallRecord, type ModelCallContext, type ScopeSource } from "./models.ts";
 import type { PlantedClaim } from "./planted.ts";
 import { plantedEvidence } from "./planted.ts";
 import { decideHistory, historyPolicy, loadEvalPolicy, underPolicy, type Decided, type HistoryPolicy } from "./policy.ts";
@@ -96,7 +101,15 @@ export interface EvalOptions {
   policyFile?: string;
   /** What every string handed to a model and every string kept in a result passes; default evalRedactor(). */
   redactor?: Redactor;
+  /** The meterless-scope prefix of every model call, each call under "<prefix>-<seq>"; default "<set>-<run id>", the run id the runner's start stamp. */
+  scopePrefix?: string;
 }
+
+/** A scope prefix goes out in a header: letters, digits, '.', '_' and '-' only. */
+const SCOPE_PREFIX = /^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$/;
+
+/** The runner's start as a run id: the ISO instant with its milliseconds dropped and ':' as '-', the form of scripts/eval.ts's results directory. */
+export const runIdOf = (iso: string): string => iso.replace(/\.\d{3}Z$/, "Z").replace(/:/g, "-");
 
 export interface BaselineFinding { id: string; class: string; verb: Verb; summary: string }
 
@@ -116,6 +129,12 @@ export interface EvalResult {
   baseline: { findings: BaselineFinding[]; unmatched: BaselineFinding[] };
   /** Per configuration: what two passes or two runs were compared, and their differences; null with one run of a model configuration. */
   determinism: Record<string, { compared: string; differences: string[] } | null>;
+  /** The meterless-scope prefix of this eval's calls: each call went out under "<scope_prefix>-<seq>". */
+  scope_prefix: string;
+  /** Over every call of every run (planted claims' included): calls whose receipt shows injected memory, all calls, calls with no receipt to read. */
+  memory: { injected: number; calls: number; unread: number };
+  /** false when any run is invalid (a substitution or injected memory). */
+  valid: boolean;
   started_at: string;
   finished_at: string;
 }
@@ -187,6 +206,10 @@ export async function runEval(opts: EvalOptions): Promise<EvalResult> {
   const split = splitItems(evalSet.labels.map((l) => l.id), labelsSeed(evalSet.labelsText));
   const set = opts.set ?? "all";
   const itemIds = chooseItems(evalSet, split, set, opts.items);
+  const scope_prefix = opts.scopePrefix ?? `${set}-${runIdOf(started_at)}`;
+  if (!SCOPE_PREFIX.test(scope_prefix)) throw new Error(`scope prefix is not a header-safe token: ${JSON.stringify(scope_prefix)}`);
+  let seq = 0;
+  const nextScope: ScopeSource = () => `${scope_prefix}-${++seq}`;
 
   const redactor = opts.redactor ?? evalRedactor();
   const clean = scrubber(redactor);
@@ -246,7 +269,7 @@ export async function runEval(opts: EvalOptions): Promise<EvalResult> {
 
   for (const spec of ordered) {
     for (let run = 1; run <= runs; run++) {
-      const r = await runConfiguration(spec, run, { layer, prepared, protocol, tenant, decided_at, auditWithheld: ctx.auditWithheld, tracer, models, planted: opts.planted ?? [], plantedOut: planted, redactor, clean, hp, decidedByPass });
+      const r = await runConfiguration(spec, run, { layer, prepared, protocol, tenant, decided_at, auditWithheld: ctx.auditWithheld, tracer, models, planted: opts.planted ?? [], plantedOut: planted, redactor, clean, hp, decidedByPass, nextScope });
       results.push(r);
       opts.onRun?.(r);
     }
@@ -272,7 +295,7 @@ export async function runEval(opts: EvalOptions): Promise<EvalResult> {
     protocol, split, set, itemIds, configs: ordered, runs: results, planted, tenant, decided_at,
     policy: { file: policy.file, version: policy.version, rows: policy.rows, inserted: policy.inserted, rules: policy.rules.length },
     baseline: { findings: base.findings.map(baseFinding), unmatched: base.findings.filter((f) => !matchedAnywhere.has(f.id)).map(baseFinding) },
-    determinism, started_at, finished_at: new Date().toISOString(),
+    determinism, scope_prefix, memory: memoryTally(results), valid: results.every((x) => x.valid), started_at, finished_at: new Date().toISOString(),
   };
 }
 
@@ -293,6 +316,8 @@ interface RunContext {
   hp: HistoryPolicy;
   /** The baseline pass's decision per finding id, under the policy. */
   decidedByPass: Map<string, DispositionNote>;
+  /** The meterless-scope of the next model call: "<prefix>-<seq>", seq over the whole eval. */
+  nextScope: ScopeSource;
 }
 
 const emptySubject = (s: Subject, clean: Clean): Omit<SubjectOutcome, "verb" | "reason" | "not_judged"> => ({
@@ -303,7 +328,7 @@ async function runConfiguration(spec: ConfigSpec, run: number, rc: RunContext): 
   const started_at = new Date().toISOString();
   const { clean } = rc;
   const usesModel = spec.select.kind === "model" || spec.judge !== null || spec.direct !== null;
-  const recorder = usesModel ? new Recorder(rc.models.nightshift, rc.models.receipts(), rc.redactor) : null;
+  const recorder = usesModel ? new Recorder(rc.models.nightshift, rc.models.receipts(), rc.redactor, rc.nextScope) : null;
   const mctx = (item: string): ModelCallContext => ({ recorder: recorder!, tenantId: rc.tenant, item, tracer: rc.tracer, redactor: rc.redactor });
 
   let pass: RunResult["pass"] = null;
@@ -401,10 +426,15 @@ async function runConfiguration(spec: ConfigSpec, run: number, rc: RunContext): 
 
   const calls: CallRecord[] = recorder?.calls ?? [];
   const subs = calls.filter(isSubstitution);
+  const injected = calls.filter(isMemoryInjected);
+  const invalid = [
+    subs.length ? `substitution: ${subs.length} call(s) served ${[...new Set(subs.map((c) => `${c.served_model} (${c.served_tier}) for ${c.requested_tier}`))].join(", ")}` : "",
+    injected.length ? `memory injected: ${injected.length} of ${calls.length} calls (${injected.reduce((a, c) => a + (c.memory_injected ?? 0), 0)} records in all, from the receipts' hmem)` : "",
+  ].filter(Boolean);
   return {
     config: spec, run, started_at, finished_at: new Date().toISOString(),
-    valid: subs.length === 0,
-    invalid_reason: subs.length ? `substitution: ${subs.length} call(s) served ${[...new Set(subs.map((c) => `${c.served_model} (${c.served_tier}) for ${c.requested_tier}`))].join(", ")}` : null,
+    valid: invalid.length === 0,
+    invalid_reason: invalid.length ? invalid.join("; ") : null,
     items, calls, counts: countRun(items, calls, isSubstitution), pass,
   };
 }

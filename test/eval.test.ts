@@ -4,9 +4,11 @@
 // (test/fixtures/recorded-bundle.json); history items read from its audit log; the eval queries' rows; the
 // planted claims false on sql.js; the check path reproducing the pass; and every configuration end to end
 // with stubbed Nemotron replies under receipts signed with a throwaway key (test/fixtures/signed-receipt.ts),
-// a substitution invalidating its run, the recording decided under policy/hackathon.json as SAMPLE_MODE
+// a substitution invalidating its run, every call under its own meterless-scope and a receipt with injected memory
+// (hmem) invalidating its run too, the recording decided under policy/hackathon.json as SAMPLE_MODE
 // decides, and a deny-list word a model echoes kept out of every result. EVAL_LIVE=true runs C1 and C3 on three
-// development items once through the live Nightshift and prints each call's receipt; skipped otherwise.
+// development items once through the live Nightshift and prints each call's receipt, scope and injected count, and
+// fails on any injected memory; skipped otherwise.
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -230,8 +232,11 @@ const ITEMS = ["E01", "E02", "E13", "E16", "E30", "E37"];
 const STANDS = JSON.stringify({ refute_with_sql: "SELECT run_id FROM {{t:collection_run}} WHERE run_id = 'run-none'", rationale: "rows would show the claim false" });
 const REFUTES = JSON.stringify({ refute_with_sql: "SELECT run_id FROM {{t:collection_run}} WHERE tenant_id = 'client-1'", rationale: "rows show the claim false" });
 
-/** A Nightshift that answers each prompt kind, filing every answer under a receipt signed here for the request and app it was sent with. */
-function stubModels(o: { serve?: (requested: string) => string; cache?: string; judge?: string; direct?: string; extra?: unknown } = {}) {
+/**
+ * A Nightshift that answers each prompt kind, filing every answer under a receipt signed here for the request and app it
+ * was sent with; `hmem` gives the n-th call's receipt a memory record (hmem null when it returns undefined).
+ */
+function stubModels(o: { serve?: (requested: string) => string; cache?: string; judge?: string; direct?: string; extra?: unknown; hmem?: (n: number) => unknown } = {}) {
   const receipts = new Map<string, SignedReceipt>();
   const sent: Parameters<JudgeModel["chatWithFallback"]>[0][] = [];
   const nightshift: JudgeModel = {
@@ -251,9 +256,9 @@ function stubModels(o: { serve?: (requested: string) => string; cache?: string; 
       const requestId = `req_${n}`;
       receipts.set(receiptId, signed({
         receipt_id: receiptId, request_id: requestId, app: opts.appId, routing: { winner: model }, phases: [{ model, phase: "final_synthesis" }], winning_route: { model },
-        cache: { status: o.cache ?? "miss" }, requested_mode: "meterless/auto", status: "ok",
+        cache: { status: o.cache ?? "miss" }, requested_mode: "meterless/auto", status: "ok", hmem: o.hmem?.(n) ?? null,
       }));
-      return { content, modelRequested: opts.models[0], modelRouted: model, receiptId, requestId, tokensIn: 100, tokensOut: 20, latencyMs: 5, retries: 0, raw: {}, hop: 0 };
+      return { content, modelRequested: opts.models[0], modelRouted: model, receiptId, requestId, tokensIn: 100, tokensOut: 20, latencyMs: 5, retries: 0, raw: {}, hop: 0, ...(opts.scope ? { scope: opts.scope } : {}) };
     },
   };
   return { models: { nightshift, receipts: () => ({ find: async (id: string) => receipts.get(id) ?? null }) }, sent };
@@ -374,6 +379,51 @@ describe("runEval", () => {
     expect(cached.runs[0].counts.cache_hits).toBe(10);
   });
 
+  it("memory isolation: every call goes out under its own meterless-scope, <prefix>-<seq> over the whole eval, its record keeping the scope and the receipt's hmem count; a clean eval says memory injected: 0 of M calls", async () => {
+    const { models, sent } = stubModels();
+    const r = await evalWith({ configs: ["C1", "C3"], models, scopePrefix: "heldout-test" });
+    const calls = r.runs.flatMap((x) => x.calls);
+    expect(calls).toHaveLength(30);
+    expect(calls.map((c) => c.scope)).toEqual(Array.from({ length: 30 }, (_, i) => `heldout-test-${i + 1}`));
+    expect(sent.map((o) => o.scope)).toEqual(calls.map((c) => c.scope));
+    expect(calls.every((c) => c.memory_injected === 0)).toBe(true);
+    expect(r).toMatchObject({ scope_prefix: "heldout-test", memory: { injected: 0, calls: 30, unread: 0 }, valid: true });
+    expect(r.runs.map((x) => [x.config.id, x.valid, x.counts.memory_injected])).toEqual([["C1", true, 0], ["C3", true, 0]]);
+    const md = renderSummary(r, { recording: "test/fixtures/recorded-bundle.json", out: "test" });
+    expect(md).toContain("memory injected: 0 of 30 calls, read from each call's signed receipt (hmem). Every call went out under its own meterless-scope, heldout-test-<n>.");
+    expect(md).not.toContain("[!CAUTION]");
+    // the default prefix: the set, then the runner's start stamp; a prefix that is not header-safe is refused
+    const d = await evalWith({ configs: ["C1"], set: "heldout", items: ["E02"], models: stubModels().models });
+    expect(d.scope_prefix).toMatch(/^heldout-\d{4}-\d\d-\d\dT\d\d-\d\d-\d\dZ$/);
+    expect(d.runs[0].calls.map((c) => c.scope)).toEqual([`${d.scope_prefix}-1`]);
+    await expect(evalWith({ configs: ["C1"], items: ["E02"], models: stubModels().models, scopePrefix: "user scope" })).rejects.toThrow(/scope prefix is not a header-safe token/);
+  });
+
+  it("a call whose receipt shows injected memory is not judged and keeps the count; its run is invalid, and the summary opens with a red caution and says how many calls of how many", async () => {
+    const mem = { ids: ["mem_a", "mem_b", "mem_c"], injected: 3, reason: "retrieved 3 memories", strategy: "comprehensive", top_score: 0.528 };
+    const r = await evalWith({ configs: ["C1"], models: stubModels({ hmem: (n) => (n % 5 === 0 ? mem : undefined) }).models, scopePrefix: "dev-test" });
+    const run = r.runs[0];
+    expect(run.calls.map((c) => c.memory_injected)).toEqual([0, 0, 0, 0, 3, 0, 0, 0, 0, 3]);
+    expect(run.valid).toBe(false);
+    expect(run.invalid_reason).toBe("memory injected: 2 of 10 calls (6 records in all, from the receipts' hmem)");
+    expect(run.counts.memory_injected).toBe(2);
+    expect(r).toMatchObject({ valid: false, memory: { injected: 2, calls: 10, unread: 0 } });
+    const hit = run.calls.filter((c) => c.memory_injected);
+    expect(hit.map((c) => [c.item, c.scope, c.gate])).toEqual([["E37", "dev-test-5", "refused"], ["E37", "dev-test-10", "refused"]]);
+    expect(hit.every((c) => /^receipt gate: memory injected \(3 records\): receipt rcpt_\d+ /.test(c.reason))).toBe(true);
+    expect(run.items.map((i) => [i.id, i.verdict === null])).toEqual([["E01", false], ["E02", false], ["E13", false], ["E16", false], ["E30", true], ["E37", true]]);
+    expect(run.items.find((i) => i.id === "E37")!.not_judged).toMatch(/^2 of 6 findings not judged: selection: receipt gate: memory injected \(3 records\)/);
+    const md = renderSummary(r, { recording: "test/fixtures/recorded-bundle.json", out: "test" });
+    const lines = md.split("\n");
+    expect(lines.slice(2, 5)).toEqual([
+      "> [!CAUTION]",
+      "> INVALID: memory injected on 2 of 10 calls. Nightshift put stored answers to earlier requests in front of them (hmem in the signed receipt), so C1 run 1 is invalid and every number below was measured under that memory.",
+      "",
+    ]);
+    expect(lines[5]).toBe("memory injected: 2 of 10 calls, read from each call's signed receipt (hmem). Every call went out under its own meterless-scope, dev-test-<n>.");
+    expect(md).toContain("- C1 run 1 is invalid: memory injected: 2 of 10 calls (6 records in all, from the receipts' hmem)");
+  });
+
   it("refuses an unknown configuration and an item outside the chosen set", async () => {
     await expect(evalWith({ configs: ["C9"] })).rejects.toThrow(/C9 is absent from the protocol's table/);
     await expect(evalWith({ configs: ["C0"], set: "dev", items: ["E01"] })).rejects.toThrow(/E01 is outside the dev set/);
@@ -450,13 +500,18 @@ describe.skipIf(!live)("EVAL_LIVE: C1 and C3 on three development items, one run
     for (const run of r.runs) {
       for (const i of run.items) say(`EVAL_LIVE ${run.config.id} ${i.id} label ${i.label} verdict ${i.verdict ?? "not judged"}${i.not_judged ? ` (${i.not_judged})` : ""}`);
       for (const c of run.calls) {
-        say(`EVAL_LIVE ${run.config.id} ${c.kind} ${c.item} attempt ${c.attempt}: requested ${c.requested_tier} ${c.model_requested}, served ${c.served_model ?? "-"} (${c.served_tier}), receipt ${c.receipt_id ?? "-"}, signature ${c.signature_ok}, cache ${c.cache_status ?? "-"}, gate ${c.gate}, ${c.latency_ms} ms, tokens ${c.tokens_in}/${c.tokens_out}${c.gate === "ok" ? "" : `: ${c.reason}`}`);
+        say(`EVAL_LIVE ${run.config.id} ${c.kind} ${c.item} attempt ${c.attempt}: requested ${c.requested_tier} ${c.model_requested}, served ${c.served_model ?? "-"} (${c.served_tier}), receipt ${c.receipt_id ?? "-"}, signature ${c.signature_ok}, cache ${c.cache_status ?? "-"}, scope ${c.scope}, memory injected ${c.memory_injected ?? "-"}, gate ${c.gate}, ${c.latency_ms} ms, tokens ${c.tokens_in}/${c.tokens_out}${c.gate === "ok" ? "" : `: ${c.reason}`}`);
       }
       say(`EVAL_LIVE ${run.config.id} counts ${JSON.stringify(run.counts)}`);
     }
+    say(`EVAL_LIVE memory injected: ${r.memory.injected} of ${r.memory.calls} calls (${r.memory.unread} with no receipt to read), scopes ${r.scope_prefix}-1 to ${r.scope_prefix}-${r.memory.calls}; ${r.valid ? "every run valid" : `INVALID: ${r.runs.filter((x) => !x.valid).map((x) => `${x.config.id} run ${x.run}: ${x.invalid_reason}`).join("; ")}`}`);
     say(`EVAL_LIVE trace ${tracer.logFile}`);
     const calls = r.runs.flatMap((x) => x.calls);
     expect(calls.length).toBeGreaterThan(0);
     expect(calls.every((c) => c.receipt_id !== null || c.gate !== "ok")).toBe(true);
+    // Memory isolation: each call under its own scope of this eval, and no receipt shows injected memory.
+    expect(new Set(calls.map((c) => c.scope)).size).toBe(calls.length);
+    expect(calls.every((c) => c.scope.startsWith(`${r.scope_prefix}-`))).toBe(true);
+    expect(r.memory.injected).toBe(0);
   });
 });

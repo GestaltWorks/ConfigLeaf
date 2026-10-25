@@ -24,7 +24,7 @@
 //     one), so the Actor records kind fix, status refused, FIX_REFUSED, after the investigation.
 //
 // Measured 24 Oct 2026: exercised with a stub model and receipts signed by a throwaway key (test/actions.test.ts), two
-// model calls per investigation; Nightshift had received 0 calls from it. Measured 25 Oct 2026 live on the lab
+// model calls per investigation. Measured 25 Oct 2026 live on the lab
 // (lab/README.md), a FIX on www.lab.test: at max_tokens 1,024 all four Lightning route attempts answered
 // empty_response (act-8e962ee34398e0e1, the default checks ran); at SELECT_MAX_TOKENS, act-45f088e61ed545f1: Lightning
 // selected 4 valid checks on receipt rcpt_req_nn4ag0yu (4,094 tokens out, 27.5 s), Ultra stood on rcpt_req_iehg9gmt

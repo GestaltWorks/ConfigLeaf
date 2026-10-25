@@ -7,7 +7,8 @@
 //   - a "/no_think" system message with a small max_tokens makes Lightning return an empty
 //     response (502 provider_error); plain prompts work;
 //   - Ultra puts its reasoning in content, so JSON must be parsed tolerant of a preamble;
-//   - receipts are Ed25519 over the compact, key-sorted UTF-8 JSON of `body`;
+//   - receipts are Ed25519 over the compact, key-sorted UTF-8 JSON of `body`, numbers spelled as the Rust signer
+//     prints them (5.47e-6, not 0.00000547: canonicalReceiptBody);
 //   - chat_template_kwargs.enable_thinking (Nemotron's documented switch) is accepted but has no
 //     observable effect through the OpenRouter routes: 3+3 calls per model on one small-JSON prompt
 //     (scripts/probe-thinking.ts), </think> absent in all 12, tokens_out 11/11 for Lightning and
@@ -21,8 +22,18 @@
 // answered on the nvidia route. A route that answers 5xx (or 429) or an empty body is tried once more after
 // RETRY_DELAY_MS before the ladder moves on; every model_call trace line names its attempt ("attempt 2 of 2"); the
 // result names the route that answered (modelRequested, hop) and its attempts there (retries + 1).
+//
+// Memory, measured 25 Oct 2026 (a read of the installed engine and six test calls): Nightshift 1.2.7 stores an answer
+// it judges confident (24+ characters, confidence 0.6+) with its prompt and, before a later request that shares the
+// same meterless-scope, across apps, prepends up to three similar stored answers as a system message; the signed
+// receipt records it as hmem {ids, injected, reason, strategy, top_score}, or hmem null when nothing was injected. No
+// request header or body field switches it off; the scope is the only wall (one probe call injected 3 records under
+// scope "user" and 0 under each of two fresh scopes). So every request goes out under a fresh meterless-scope,
+// "<meterless-app>-<16 hex>" (drift-agent-<tenant>-<call id> under a tenant's app id), unless the caller pins one
+// (opts.scope); the result returns the scope that answer's request used, and the response's own copy of hmem.injected.
+// The gate (src/gate.ts) reads hmem from the signed receipt, never from the response.
 
-import { createPublicKey, verify as cryptoVerify } from "node:crypto";
+import { createPublicKey, randomBytes, verify as cryptoVerify } from "node:crypto";
 import { config, redact } from "../config.ts";
 import type { Tracer } from "../trace.ts";
 
@@ -33,6 +44,20 @@ export const ROUTE_ATTEMPTS = 2;
 
 /** A status worth one more attempt on the same route: any 5xx, and 429. */
 const retryable = (status: number): boolean => status >= 500 || status === 429;
+
+/** A meterless-scope no earlier request used: "<app id>-<16 hex>", so the runtime has no stored answer to inject. */
+export function freshScope(appId: string = config.nightshift.appId): string {
+  return `${appId}-${randomBytes(8).toString("hex")}`;
+}
+
+/** hmem.injected as a response's own copy of its receipt states it; null when the response carries no copy. Never trusted by the gate. */
+function claimedInjected(meter: any): number | null {
+  const rc = meter?.receipt;
+  if (!rc || typeof rc !== "object" || !("hmem" in rc)) return null;
+  const h = rc.hmem;
+  if (h === null || typeof h !== "object") return 0;
+  return typeof h.injected === "number" ? h.injected : Array.isArray(h.ids) ? h.ids.length : 0;
+}
 
 export interface NightshiftOptions {
   /** The runtime token; default the configured one (METERLESS_RUNTIME_TOKEN, else the runtime's token file). */
@@ -53,6 +78,10 @@ export interface ChatResult {
   tokensOut: number;
   latencyMs: number;
   retries: number;
+  /** The meterless-scope this answer's request went out under; the adapter always sets it (optional for test stubs). */
+  scope?: string;
+  /** hmem.injected as the response's own receipt copy states it (0 for hmem null), null when it carries none; the gate reads the signed receipt instead. */
+  memoryInjected?: number | null;
   raw: unknown;
 }
 
@@ -95,10 +124,11 @@ export class Nightshift {
    * no content), a timeout or a network error is tried once more after retryDelayMs; any other status throws at
    * once. The caller names the model explicitly; `meterless/*` modes are allowed but the receipt's routed_model is
    * what we trust. Each attempt is one model_call trace line whose output_summary names it ("attempt 1 of 2");
-   * the result's retries is the attempts made less one.
+   * the result's retries is the attempts made less one. Each attempt goes out under its own fresh meterless-scope
+   * (freshScope of the app id) unless `scope` pins one for every attempt; the trace line and the result name it.
    */
   async chat(
-    opts: { model: string; messages: ChatMessage[]; maxTokens?: number; temperature?: number; enableThinking?: boolean; appId?: string; agent: string; tracer?: Tracer },
+    opts: { model: string; messages: ChatMessage[]; maxTokens?: number; temperature?: number; enableThinking?: boolean; appId?: string; scope?: string; agent: string; tracer?: Tracer },
   ): Promise<ChatResult> {
     const body = JSON.stringify({
       model: opts.model,
@@ -113,8 +143,9 @@ export class Nightshift {
       if (attempt > 1 && this.retryDelayMs > 0) await new Promise((r) => setTimeout(r, this.retryDelayMs));
       const t0 = Date.now();
       const nth = `attempt ${attempt} of ${ROUTE_ATTEMPTS}`;
+      const scope = opts.scope ?? freshScope(opts.appId);
       const failed = (err: NightshiftError, routed?: string): NightshiftError => {
-        opts.tracer?.emit({ agent: opts.agent, action: "model_call", model_requested: opts.model, ...(routed ? { model_routed: routed } : {}), status: "failed", retry_count: attempt - 1, latency_ms: Date.now() - t0, output_summary: nth, detail: err.detail ?? err.message });
+        opts.tracer?.emit({ agent: opts.agent, action: "model_call", model_requested: opts.model, ...(routed ? { model_routed: routed } : {}), status: "failed", retry_count: attempt - 1, latency_ms: Date.now() - t0, scope, output_summary: nth, detail: err.detail ?? err.message });
         return err;
       };
       let r: Response;
@@ -122,7 +153,7 @@ export class Nightshift {
       try {
         r = await fetch(`${this.base}/chat/completions`, {
           method: "POST",
-          headers: this.headers({ "Content-Type": "application/json", "meterless-scope": "user" }, opts.appId),
+          headers: this.headers({ "Content-Type": "application/json", "meterless-scope": scope }, opts.appId),
           body,
           signal: AbortSignal.timeout(180_000),
         });
@@ -158,9 +189,11 @@ export class Nightshift {
         tokensOut: j.usage?.completion_tokens ?? meter.usage?.output_tokens ?? 0,
         latencyMs: Date.now() - t0,
         retries: attempt - 1,
+        scope,
+        memoryInjected: claimedInjected(meter),
         raw: j,
       };
-      opts.tracer?.emit({ agent: opts.agent, action: "model_call", model_requested: opts.model, model_routed: result.modelRouted ?? undefined, receipt_id: result.receiptId ?? undefined, tokens_in: result.tokensIn, tokens_out: result.tokensOut, latency_ms: result.latencyMs, retry_count: attempt - 1, status: "ok", output_summary: nth });
+      opts.tracer?.emit({ agent: opts.agent, action: "model_call", model_requested: opts.model, model_routed: result.modelRouted ?? undefined, receipt_id: result.receiptId ?? undefined, tokens_in: result.tokensIn, tokens_out: result.tokensOut, latency_ms: result.latencyMs, retry_count: attempt - 1, status: "ok", scope, memory_injected: result.memoryInjected, output_summary: nth });
       return result;
     }
     throw lastErr ?? new NightshiftError("chat failed", 0);
@@ -170,10 +203,11 @@ export class Nightshift {
    * Chat with a failover ladder: the primary model, then each fallback in order, each in chat()'s attempts.
    * Every hop is a Nemotron route through Nightshift, so the award evidence holds whichever answered; the
    * result names the route (modelRequested, hop) and the receipt's routed_model the model that served. A
-   * `fallback` trace event records each hop that failed. Every hop failing throws the last hop's error.
+   * `fallback` trace event records each hop that failed. Every hop failing throws the last hop's error. A pinned
+   * `scope` goes out on every hop and attempt; without one each attempt draws a fresh scope.
    */
   async chatWithFallback(
-    opts: { models: string[]; messages: ChatMessage[]; maxTokens?: number; temperature?: number; enableThinking?: boolean; appId?: string; agent: string; tracer?: Tracer },
+    opts: { models: string[]; messages: ChatMessage[]; maxTokens?: number; temperature?: number; enableThinking?: boolean; appId?: string; scope?: string; agent: string; tracer?: Tracer },
   ): Promise<ChatResult & { hop: number }> {
     let lastErr: unknown;
     for (let hop = 0; hop < opts.models.length; hop++) {
@@ -283,13 +317,40 @@ export interface SignedReceipt {
   sig_b64: string;
 }
 
-/** Canonical form the runtime signs: compact JSON, keys sorted recursively, UTF-8 as-is. */
+const U64_MAX = 2n ** 64n - 1n;
+const I64_MIN = -(2n ** 63n);
+
+/**
+ * A number as the runtime's signer prints it. meterlessd (Rust, serde_json) parses the engine's receipt and signs its
+ * own serialisation: an integer that fits i64 or u64 is its digits, any other number ryu's shortest form, which turns
+ * to an exponent below 1e-5 where JavaScript stays decimal down to 1e-6. A $0.00000547 cost is signed as 5.47e-6 while
+ * GET /v1/meterless/receipts serves the same value as 0.00000547 (25 Oct 2026: a 30-token Lightning call with no
+ * injected memory; this form reproduces all 815 stored bodies of receipts.jsonl byte for byte, JSON.stringify 810).
+ */
+function signerNumber(n: number): string {
+  if (!Number.isFinite(n)) return "null";
+  const js = String(n);
+  if (Number.isInteger(n) && Math.abs(n) < 1e21) {
+    const b = BigInt(js);
+    if (b >= I64_MIN && b <= U64_MAX) return js;
+  }
+  const [m, e] = Math.abs(n).toExponential().split("e"); // the shortest round-trip digits, as ryu picks them
+  const d = m.replace(".", ""), len = d.length, kk = Number(e) + 1, k = kk - len;
+  const s = 0 <= k && kk <= 16 ? `${d}${"0".repeat(k)}.0`
+    : 0 < kk && kk <= 16 ? `${d.slice(0, kk)}.${d.slice(kk)}`
+    : -5 < kk && kk <= 0 ? `0.${"0".repeat(-kk)}${d}`
+    : `${d[0]}${len > 1 ? `.${d.slice(1)}` : ""}e${kk - 1}`;
+  return n < 0 ? `-${s}` : s;
+}
+
+/** Canonical form the runtime signs: compact JSON, keys sorted recursively, UTF-8 as-is, numbers as its signer prints them (signerNumber). */
 export function canonicalReceiptBody(body: unknown): string {
-  const sort = (v: any): any =>
-    Array.isArray(v) ? v.map(sort)
-    : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sort(v[k])]))
-    : v;
-  return JSON.stringify(sort(body));
+  const ser = (v: any): string =>
+    typeof v === "number" ? signerNumber(v)
+    : Array.isArray(v) ? `[${v.map((x) => (x === undefined ? "null" : ser(x))).join(",")}]`
+    : v && typeof v === "object" ? `{${Object.keys(v).sort().filter((k) => v[k] !== undefined).map((k) => `${JSON.stringify(k)}:${ser(v[k])}`).join(",")}}`
+    : JSON.stringify(v);
+  return ser(body);
 }
 
 /** Verify a receipt's Ed25519 signature offline. Verified 9/9 against the build machine's runtime on 23 Oct. */

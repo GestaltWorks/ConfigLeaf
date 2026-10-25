@@ -17,7 +17,7 @@ wsl.exe -d Ubuntu-24.04 -- bash lab/down.sh   # removes the container; the image
 ## The two lab aids
 
 - The published port: `lab/up.sh` maps `127.0.0.1:18080` to the container's port 80, beside `127.0.0.1:2222` to 22.
-  Port 8080 of this machine belongs to another process (a Python listener on 25 Oct 2026), so the lab takes 18080.
+  The lab takes 18080, since port 8080 of this machine was in use on 25 Oct 2026.
 - `PROBE_TARGETS_OVERRIDE=<name>=<address>[:<port>],...` (`src/config.ts`, `.env.example`): set on the command line,
   it is the probe population of every probe run (`npm run probe`, the cycle's probe step, the Actor's verification
   after a write), and the Cloudflare read is skipped, one trace line saying so. Each name's http probe is `GET /` at
@@ -63,10 +63,10 @@ copy through `sudo -n tee` (before aef9a6791a0e, after a811a0a5d0dc, the approve
 pass, `nginx -T` shows 8081, lab.example answers 200, and the action row reads `failed: written and reloaded; the
 probes of lab.example did not run`. The next collection and pass: 0 findings. The same break again gives `refused:
 action <id> rolled this file back to commit 5dde7698 over the same live bytes and failed ...; the same write is left
-to a technician`; a break with other bytes (8090) gets its own rollback. Those rows carry `failed`, the status the
-code gave a completed write with no probe read before `unverified` existed.
+to a technician`; a break with other bytes (8090) gets its own rollback. Those rows carry `failed`: the Actor that
+wrote them, 05:22 to 05:28 UTC, had no `unverified` status.
 
-Measured 25 Oct 2026, 05:46 to 05:49 UTC, with the unverified status and the account's token: the break to 8091
+Measured 25 Oct 2026, 05:46 to 05:49 UTC, with the account's token: the break to 8091
 (the file 34c11a7a6a95, bytes no earlier break carried); the collection, run run-463c7c0ce537bd16, vault commit
 7d229b0a; the pass gives `drift_vs_approved` ROLLBACK under rule-6c41a25a00c404c8 (vault commit 5dde7698 holds the
 approved copy, validated ok with 0 gaps) and `changed_since_backup` HOLD 24 h; the plan is 1 rollback_file, refused
@@ -87,7 +87,7 @@ http://127.0.0.1:8081;`. The next collection, run run-f97423f25dc75884 (vault co
 
 ## No valid copy: a FIX, investigated with Nemotron through Nightshift
 
-The runbook's act three on the lab: a change signed off before the validator has seen it, then broken.
+A change signed off before the validator has seen it, then broken.
 
 ```bash
 ssh -F lab/ssh_config.local drift-lab "sed 's#root /var/www/lab-test;#root /var/www/lab;#' /etc/nginx/sites-available/www.lab.test > /tmp/x && sudo -n tee /etc/nginx/sites-available/www.lab.test < /tmp/x >/dev/null && sudo -n nginx -t && sudo -n systemctl reload nginx"
@@ -114,8 +114,9 @@ www.lab.test), so rule rule-6c41a25a00c404c8 investigates, fixes where allowed, 
 The first apply, 09:37:40 to 09:39:43 UTC, sent Lightning's selection with max_tokens 1,024: four route attempts
 (openrouter/nvidia/nemotron-3.5-lightning twice, nvidia/nemotron-3.5-lightning-30b-a3b twice) each answered
 `empty_response`, the default checks ran, Ultra stood on receipt rcpt_req_88ch3rxi, and the rows are
-act-8e962ee34398e0e1 (investigate done) and act-190d06845d8ee1be (fix refused). The selection call now takes the eval's
-cap, SELECT_MAX_TOKENS (16,384), and a new pass gives a new FIX disposition. The second apply, 09:42:26 to 09:43:53 UTC:
+act-8e962ee34398e0e1 (investigate done) and act-190d06845d8ee1be (fix refused). For the second apply the selection call
+takes the eval's cap, SELECT_MAX_TOKENS (16,384), after a new pass gave a new FIX disposition. The second apply, 09:42:26
+to 09:43:53 UTC:
 
 ```text
 investigate act-45f088e61ed545f1 done: investigated: 4 checks ran (1 hold, 3 fail); the judge's verdict counted: stands
@@ -213,7 +214,7 @@ ticket's Why holds that sentence, 20 timeline lines (the ledger's rollbacks of t
 to `+++ live 46c5ef5e`. The owner's document (`npm run document -- --tenant lab-1 --out logs/document-lab-1.md`,
 20:29 UTC) lists the same sentence under Why.
 
-## How it differs from a real host
+## The lab's stand-ins
 
 - `systemctl` is `lab/systemctl`, a stand-in for systemd: `reload nginx` runs `nginx -s reload`, `status nginx` asks
   pgrep, `list-timers --all --no-pager` prints a fixed two-line table.

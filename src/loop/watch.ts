@@ -13,8 +13,8 @@
 //     "; stopping").
 //   - The signal ends the sleep at once and the cycle in progress runs to its end, so a write it began is recorded.
 //
-// Measured 24 Oct 2026: test/loop.test.ts runs four fake cycles on a fake clock: one inside the interval, an overrun,
-// a throw, and the stop.
+// Tested by test/loop.test.ts: four fake cycles on a fake clock, one inside the interval, an overrun, a throw and the
+// stop.
 
 import { redact } from "../config.ts";
 import type { CycleResult } from "./cycle.ts";

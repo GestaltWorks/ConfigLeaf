@@ -1,11 +1,13 @@
-// summary.md of one eval run: the policy file and version the recording was decided under, the protocol's
+// summary.md of one eval run: a red caution block first when any run is invalid for injected memory, the line
+// "memory injected: N of M calls" (Nightshift's hmem from each call's signed receipt; every call went out under its own
+// meterless-scope), the policy file and version the recording was decided under, the protocol's
 // counts per configuration and run, its measures (accuracy with
 // Wilson 95% intervals, determinism, coverage, false-positive rate, stability over uncached answers, the
 // planted-claim strikes), the requested-versus-served table, the items not judged, the items not raised, the
 // findings no item names and the unsure items' verdicts. Plain markdown, every number read from EvalResult.
 
-import { accuracy, coverage, falsePositiveRate, stability } from "./measures.ts";
-import { isSubstitution } from "./models.ts";
+import { accuracy, coverage, falsePositiveRate, memoryTally, stability } from "./measures.ts";
+import { isMemoryInjected, isSubstitution } from "./models.ts";
 import type { EvalResult } from "./run.ts";
 import type { Counts, RunResult } from "./types.ts";
 
@@ -20,15 +22,26 @@ const COUNT_COLUMNS: [keyof Counts, string][] = [
   ["unsure", "unsure"], ["false_positives", "no read yes"], ["checks_selected", "checks selected"], ["checks_valid", "valid"],
   ["checks_ran_unmodified", "ran unmodified"], ["checks_run", "checks run"], ["falsifier_ran", "falsifier ran"], ["falsifier_struck", "struck"],
   ["agreed_strikes", "agreed strikes"], ["wrong_strikes", "wrong strikes"], ["early_stops", "early stops"], ["judge_withheld", "judge withheld"],
-  ["calls", "calls"], ["cache_hits", "cache hits"], ["substitutions", "substitutions"], ["tokens_in", "tokens in"], ["tokens_out", "tokens out"],
+  ["calls", "calls"], ["cache_hits", "cache hits"], ["substitutions", "substitutions"], ["memory_injected", "memory injected"], ["tokens_in", "tokens in"], ["tokens_out", "tokens out"],
   ["latency_ms_median", "median ms"],
 ];
 
 export function renderSummary(r: EvalResult, meta: { recording: string; out: string }): string {
   const byConfig = (id: string): RunResult[] => r.runs.filter((x) => x.config.id === id);
   const dev = r.itemIds.filter((id) => r.split.dev.includes(id)).length;
+  const mem = memoryTally(r.runs);
+  const hit = r.runs.filter((x) => x.calls.some(isMemoryInjected));
+  // GitHub renders a CAUTION alert as a red block: the run is invalid and every number below was measured under injected memory.
+  const caution = mem.injected ? [
+    "> [!CAUTION]",
+    `> INVALID: memory injected on ${mem.injected} of ${mem.calls} calls. Nightshift put stored answers to earlier requests in front of them (hmem in the signed receipt), so ${hit.map((x) => `${x.config.id} run ${x.run}`).join(", ")} ${hit.length === 1 ? "is" : "are"} invalid and every number below was measured under that memory.`,
+    "",
+  ] : [];
   const lines: string[] = [
     `# Eval results ${meta.out}`,
+    "",
+    ...caution,
+    `memory injected: ${mem.injected} of ${mem.calls} calls, read from each call's signed receipt (hmem)${mem.unread ? `; ${mem.unread} call(s) had no receipt to read` : ""}. Every call went out under its own meterless-scope, ${r.scope_prefix}-<n>.`,
     "",
     `Recording ${meta.recording}, tenant ${r.tenant}, every disposition decided at ${r.decided_at}. Contract eval/PROTOCOL.md; configurations as its table states them.`,
     `Policy ${r.policy.file} version ${r.policy.version}: ${r.policy.rows} rule(s) loaded into the recording before its passes (${r.policy.inserted} inserted), ${r.policy.rules} read for ${r.tenant}; C0 to C3 decide by the exception, then the rule, then the default.`,
@@ -99,7 +112,7 @@ export function renderSummary(r: EvalResult, meta: { recording: string; out: str
     "",
     "## Requested versus served",
     "",
-    "From the verified receipt of every call; a served tier other than the requested one invalidates the run.",
+    "From the verified receipt of every call; a served tier other than the requested one invalidates the run, as injected memory does.",
     "",
   ];
   const served = new Map<string, { config: string; kind: string; req: string; model: string; served: string; tier: string; n: number; hits: number; subs: number; unverified: number }>();

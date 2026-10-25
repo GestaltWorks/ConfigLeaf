@@ -25,9 +25,6 @@
 //            dns_change otherwise (no previous run, or the bytes changed too). The finding carries
 //            the DNS record its row came from, matched on content: a name with an A and an AAAA
 //            record gives two rows and two findings, each naming its own record.
-//   check    the default precondition policy for the class, bound from the finding and run through
-//            the catalogue; a parameter the finding cannot supply, or a check the SQL guard refuses,
-//            is a recorded rejection, not a guess: it escalates that one finding and the pass goes on.
 //   survey   the estate queries (data/queries.ts) over the same pass: once per tenant against its DNS
 //            run, a proxied CNAME aliasing a direct address record (proxy_split); per host, against
 //            the latest passing nginx run and that DNS run, a proxied name served by an enabled block
@@ -37,7 +34,7 @@
 //            A survey finding has no previous observation, so its window is the audit log's reach
 //            (AUDIT_SPAN_SQL) up to the observation; its anchor is the nginx setting the row names, or
 //            the DNS record itself (object_id = record id) when the finding is about the record.
-//            [detectors] Then, over the latest run of each (tenant, surface, host) when it passes the gate
+//            Then, over the latest run of each (tenant, surface, host) when it passes the gate
 //            and over the tenant's latest passing DNS run: every setting whose live value differs from its
 //            latest approval (drift_vs_approved, window from the approval to the observation); and over
 //            each such nginx run, every file the host's newest backup lacks or holds with other bytes
@@ -49,8 +46,8 @@
 //            it; an absent record's name is its name in the latest passing DNS run that held it.
 //   check    the default precondition policy for the class, bound from the finding and run through
 //            the catalogue; a parameter the finding cannot supply, or a check the SQL guard refuses,
-//            is a recorded rejection, not a guess: it escalates that one finding and the pass goes on.
-//   decide   [policy] src/policy/decide.ts, in precedence order: the technician's exception, then the
+//            is a recorded rejection: it escalates that one finding and the pass goes on.
+//   decide   src/policy/decide.ts, in precedence order: the technician's exception, then the
 //            policy rule that governs the setting (policy_rule rows of the tenant and of "*", read once per
 //            tenant at the start of the pass, resolved per finding by src/policy/resolve.ts), then the
 //            default: every check holds and none was rejected -> ADOPT, as a candidate; anything else ->
@@ -60,30 +57,25 @@
 //            is weighed as drift_vs_approved is, against the live value "". A HOLD the rule gives meets the
 //            latest HOLD the ledger holds on the same live value (PRIOR_HOLDS_SQL, read once per tenant
 //            with rules, decided before this pass): in force, the HOLD keeps that expiry; expired, ESCALATE.
-//            Without a governing rule the verbs and the decide line are the default's. [stoprule] Between checks the
-//            stop rule (src/stoprule.ts) may end checking early; [exposure] for a finding on a DNS record
-//            the step dates its exposure (src/engine/world.ts). [memory] When the pass is given a
+//            Without a governing rule the verbs and the decide line are the default's. Between checks the
+//            stop rule (src/stoprule.ts) may end checking early; for a finding on a DNS record
+//            the step dates its exposure (src/engine/world.ts). When the pass is given a
 //            TechnicianMemory (src/engine/memory.ts) the Decider recalls the technician's lessons for the
 //            finding first, by exact scope key: an accepted exception in force yields ADOPT with its expiry
 //            on the finding and a trace line naming the lesson; one that has lapsed re-raises the finding
 //            as ESCALATE ("exception lapsed"), whatever the checks or the policy say. The checks still run
-//            and are recorded either way. [ledger] Given a Ledger, the pass records one disposition per
+//            and are recorded either way. Given a Ledger, the pass records one disposition per
 //            finding, keyed on its live value, its run and the pass's decided_at (src/ledger.ts, rows.ts
 //            dispositionId), and, in the observe step, one referent_fingerprint per dns_name
 //            observation of each passing host run (src/data/fingerprint.ts). One decider line per pass
 //            counts the settings a locked rule governs that have no approved value, and the verbs.
-//   judge    skipped and traced as such: model: none; [stoprule] or "verdict cannot move" when the
+//   judge    skipped and traced as such: model: none; or "verdict cannot move" when the
 //            withdraw rule says no judge call would be worth spending, or when an exception settled it.
 //
-// Measured 25 Oct 2026 on sample/bundle.json (19 runs, 26 policy rules, 333 approvals, 336 vault copies, three probe
-// runs, the 81 ledger rows of the live passes of 24 Oct 23:21 and 23:36 UTC and 25 Oct 01:16 UTC), decided at its
-// instant 2026-10-25T01:16:49.394Z: 27 findings, HOLD 27 by policy; approved_missing over the three latest passing runs
-// finds 0 (every approved object of the 19:56 UTC runs is in the 23:35 UTC runs); the prior-HOLD read returns 23 rows,
-// the 23:36 UTC pass's HOLD of each live value the 27 findings rest on, and every HOLD keeps the expiry carried from the
-// 23:21 UTC pass (26 at 2026-10-27T23:21:06.870Z, the proxy_split at 2026-10-25T03:21:06.870Z); 0 locked settings
-// without an approved value; the ledger writes 0 dispositions (the bundle holds the 01:16 UTC rows under the same ids)
-// and 0 referent fingerprints. On test/fixtures/policy-bundle.json
-// (test/pipeline.test.ts): 11 findings, ADOPT 2, HOLD 4, ESCALATE 1, ROLLBACK 3, FIX 1; blog.conf's approved_missing is
+// Measured 25 Oct 2026 on sample/bundle.json with the committed lessons (examples/memory), decided at
+// 2026-10-25T14:17:53.416Z, the latest lesson's instant: 27 findings, ADOPT 23 under accepted exceptions, HOLD 3,
+// ESCALATE 1 (examples/document.md).
+// On test/fixtures/policy-bundle.json (test/pipeline.test.ts): 11 findings, ADOPT 2, HOLD 4, ESCALATE 1, ROLLBACK 3, FIX 1; blog.conf's approved_missing is
 // ROLLBACK from its copy, the HOLD in force keeps its expiry and the expired one is ESCALATE; passes over the same runs
 // at later instants write 11 rows each, and the first past the kept expiry records the found_but_different ESCALATE.
 
@@ -100,14 +92,14 @@ import { dispositionId, type DecidedBy, type Disposition, type DispositionVerb, 
 import type { ExceptionLesson, TechnicianMemory } from "./engine/memory.ts";
 import { DriftWorld, recordExposure, type ExposureLine, type ExposureMeasure, type Observation } from "./engine/world.ts";
 import type { Ledger } from "./ledger.ts";
-// [policy] the Decider and the rule that governs a setting (src/policy/).
+// The Decider and the rule that governs a setting (src/policy/).
 import {
   APPROVAL_CLASSES, NO_PROBE_RUN, decide, production, productionText, validCopy, type ApprovedValue, type CopyCandidate, type ExceptionState, type PriorHold, type ProbeView,
 } from "./policy/decide.ts";
 import { resolvePolicy } from "./policy/resolve.ts";
 import { PolicyRuleRow, issues } from "./policy/schema.ts";
 import type { Tracer } from "./trace.ts";
-// [stoprule] the verifier's stop rule and the withdraw rule before the judge (src/stoprule.ts).
+// The verifier's stop rule and the withdraw rule before the judge (src/stoprule.ts).
 import { VERDICT_CANNOT_MOVE, countersSummary, earlyStopSummary, shouldStop, shouldWithdraw, zeroCounters, type StopCounters, type StopPolicy } from "./stoprule.ts";
 
 type Row = Record<string, string>;
@@ -116,7 +108,7 @@ type Row = Record<string, string>;
 export type Verb = DispositionVerb;
 export const VERBS: readonly Verb[] = ["ADOPT", "HOLD", "ESCALATE", "ROLLBACK", "FIX"];
 
-/** [policy] What the Decider settled for the finding: the verb, one plain sentence, the expiry (every HOLD has one), who decided and under which rule. */
+/** What the Decider settled for the finding: the verb, one plain sentence, the expiry (every HOLD has one), who decided and under which rule. */
 export interface DispositionNote { verb: Verb; reason: string; expires_at: string | null; decided_by: DecidedBy; rule_id: string | null }
 
 /** The detail of a decide line the default settled: the default policy in one line. */
@@ -129,7 +121,7 @@ export interface CheckOutcome { template: string; holds: boolean; rowCount: numb
 
 export interface WorldView { before: string | null; after: string | null; changed: boolean; bytes_unchanged: boolean }
 
-/** [memory] The technician's accepted exception the Decider applied (ADOPT until `expires_at`) or found lapsed (re-raised as ESCALATE). */
+/** The technician's accepted exception the Decider applied (ADOPT until `expires_at`) or found lapsed (re-raised as ESCALATE). */
 export interface ExceptionNote {
   /** The lesson's id in the agent's memory (scripts/answer.ts --forget takes it). */
   lesson: string;
@@ -146,7 +138,7 @@ export interface Finding {
   id: string;
   finding: FindingSummary;
   verb: Verb;
-  /** [policy] The Decider's disposition: the verb above, its reason, expiry, who decided and the rule. The ledger row carries the same fields. */
+  /** The Decider's disposition: the verb above, its reason, expiry, who decided and the rule. The ledger row carries the same fields. */
   disposition: DispositionNote;
   /** FOUND-BUT-DIFFERENT as the World Model saw it: the referent's fingerprint at the previous and at the current observation. Hero findings only; a survey finding has no previous observation. */
   world?: WorldView;
@@ -154,13 +146,13 @@ export interface Finding {
   /** Checks that did not run: a parameter the finding could not supply, or a check the data layer refused. */
   rejected: RejectedCheck[];
   judge: "skipped";
-  /** [stoprule] The stop rule ended checking early: why, and the templates it did not run. */
+  /** The stop rule ended checking early: why, and the templates it did not run. */
   earlyStop?: { reason: string; skipped: string[] };
-  /** [stoprule] Why the judge call was not spent, when the withdraw rule said so. */
+  /** Why the judge call was not spent, when the withdraw rule said so. */
   judgeWithheld?: string;
-  /** [exposure] Since when the record this finding rests on has been in its current state (src/engine/world.ts). */
+  /** Since when the record this finding rests on has been in its current state (src/engine/world.ts). */
   exposure?: ExposureLine;
-  /** [memory] The accepted exception that settled the verb, applied or lapsed. Absent when none applies. */
+  /** The accepted exception that settled the verb, applied or lapsed. Absent when none applies. */
   exception?: ExceptionNote;
 }
 
@@ -178,17 +170,17 @@ export interface PassResult {
   gatedOut: string[];
   observed: number;
   findings: Finding[];
-  /** [stoprule] The verifier's counters for this pass; stopCounters reads the same numbers back from the trace's stop and judge lines. */
+  /** The verifier's counters for this pass; stopCounters reads the same numbers back from the trace's stop and judge lines. */
   verifier: StopCounters;
-  /** [memory] What the Decider recalled; null when the pass was given no memory. */
+  /** What the Decider recalled; null when the pass was given no memory. */
   memory: MemoryCounters | null;
-  /** [policy] Findings per verb, every verb listed. */
+  /** Findings per verb, every verb listed. */
   verbs: Record<Verb, number>;
-  /** [policy] Settings of the pass's latest runs that a locked rule governs and that have no approved value on record. */
+  /** Settings of the pass's latest runs that a locked rule governs and that have no approved value on record. */
   locked: number;
-  /** [policy] policy_rule rows read for the pass's tenants (their own and every "*" rule), the refused ones left out. */
+  /** The policy_rule rows read for the pass's tenants (their own and every "*" rule), the refused ones left out. */
   rules: number;
-  /** [ledger] Rows the ledger wrote this pass; null when the pass was given no ledger. */
+  /** Rows the ledger wrote this pass; null when the pass was given no ledger. */
   ledger: { dispositions: number; fingerprints: number } | null;
 }
 
@@ -224,17 +216,17 @@ export interface PassOptions {
   tracer?: Tracer;
   world?: DriftWorld;
   stopPolicy?: Omit<StopPolicy, "gatedTables">;
-  /** [memory] The technician's lessons the Decider consults before deciding; none when absent (tests, the eval, pre-flight). */
+  /** The technician's lessons the Decider consults before deciding; none when absent (tests, the eval, pre-flight). */
   memory?: TechnicianMemory;
-  /** [memory] The instant lessons are recalled at (ISO 8601 UTC); the memory's clock when absent. */
+  /** The instant lessons are recalled at (ISO 8601 UTC); the memory's clock when absent. */
   at?: string;
   /**
-   * [policy] Each disposition's decided_at and the base of every HOLD expiry (ISO 8601 UTC); the system clock when absent.
+   * Each disposition's decided_at and the base of every HOLD expiry (ISO 8601 UTC); the system clock when absent.
    * scripts/sample.ts, scripts/examples.ts and scripts/build-site.ts pass the bundle's decisionInstant (src/data/instant.ts),
    * so two passes over the same rows give the same findings, expiries included.
    */
   decidedAt?: string;
-  /** [ledger] Where the pass records its dispositions and referent fingerprints; nothing is written when absent. */
+  /** Where the pass records its dispositions and referent fingerprints; nothing is written when absent. */
   ledger?: Ledger;
 }
 
@@ -267,11 +259,11 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
   const { tracer, memory } = opts;
   const world = opts.world ?? new DriftWorld("pass");
   const findings: Finding[] = [];
-  // [stoprule] counters for the pass; [exposure] one measurement per (tenant, DNS run, record, field); [memory] what was recalled.
+  // Counters for the pass; one measurement per (tenant, DNS run, record, field); what was recalled.
   const verifier = zeroCounters();
   const exposureCache = new Map<string, ExposureMeasure>();
   const recalled: MemoryCounters | null = memory ? { lessons: memory.lessons().length, applied: 0, lapsed: 0 } : null;
-  // [policy] every disposition of the pass carries one decided_at; [ledger] the rows go to the ledger at the end.
+  // Every disposition of the pass carries one decided_at; the rows go to the ledger at the end.
   const decidedAt = new Date(opts.decidedAt ?? Date.now()).toISOString();
   const dispositions: Disposition[] = [];
   let fingerprints = 0;
@@ -279,7 +271,7 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
   /** Why the tenant's audit log may not be consulted this pass, or null when its latest audit run passed the gate. Filled by the gate step. */
   const auditWithheld = new Map<string, string>();
 
-  // [policy] The tenant's rules (read below, once per tenant), the probe rows of each probe run (read on first use), and the
+  // The tenant's rules (read below, once per tenant), the probe rows of each probe run (read on first use), and the
   // observations of each passing run the pass loaded; the Decider's inputs come from these and from one copy query per drift.
   const rulesByTenant = new Map<string, PolicyRule[]>();
   const probeRows = new Map<string, ProbeView["rows"]>();
@@ -316,7 +308,7 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     return held ? namesIn(held) : [];
   };
 
-  // [policy] The latest HOLD of each live value of the tenant's settings decided before this pass (PRIOR_HOLDS_SQL), read once
+  // The latest HOLD of each live value of the tenant's settings decided before this pass (PRIOR_HOLDS_SQL), read once
   // per tenant with rules: a HOLD comes from a rule only. Keyed on surface, host, object, setting and live value.
   const holdsByTenant = new Map<string, Map<string, PriorHold>>();
   const holdKey = (x: { surface: string; host: string | null; object_id: string; setting_path: string; value_hash: string }): string =>
@@ -330,7 +322,7 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     const checks: CheckOutcome[] = [];
     const rejected: RejectedCheck[] = [...selection.rejected];
     const withheld = auditWithheld.get(finding.tenant_id);
-    // [stoprule] Between checks the stop rule says whether the verb can still move. A settled verdict skips
+    // Between checks the stop rule says whether the verb can still move. A settled verdict skips
     // the queued checks that do not inform the next action (traced "skipped" with the reason); when every
     // queued check reads the withheld audit log they are recorded at once as not checked (they escalate).
     const stopPolicy: StopPolicy = { ...opts.stopPolicy, gatedTables: withheld !== undefined ? ["audit_event"] : [] };
@@ -390,15 +382,15 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
         checks.length === 0 && rejected.length === 0 ? "no precondition ran" : "",
       ].filter(Boolean).join("; ");
 
-    // [memory] recall before deciding, by exact scope key (same tenant, same class, the finding's host, name or
+    // Recall before deciding, by exact scope key (same tenant, same class, the finding's host, name or
     // address). An exception in force settles ADOPT with its expiry; a lapsed one, with none in force, re-raises
-    // the finding as ESCALATE however the checks came out. Answers (kind "answer") are the Decider's helper for a
-    // question it has not yet learned to ask; the pass asks none today, so they are counted and left alone.
+    // the finding as ESCALATE however the checks came out. Answers (kind "answer") are stored and counted; the pass
+    // reads exceptions only.
     const recall = memory?.recall(finding, opts.at);
     const applied = recall?.applicable.find((l): l is ExceptionLesson => l.kind === "exception") ?? null;
     const lapsed = applied ? null : (recall?.expired.filter((l): l is ExceptionLesson => l.kind === "exception").at(-1) ?? null);
     const lesson = applied ?? lapsed;
-    // [policy] the rule that governs the setting, and what the Decider needs to weigh it: the vault copies of the approved
+    // The rule that governs the setting, and what the Decider needs to weigh it: the vault copies of the approved
     // value (a drift under a locked or rollback rule), the probes of the pass, the names the object serves. No rule, or an
     // exception that settles it, and nothing more is read.
     const rule = resolvePolicy(rulesByTenant.get(finding.tenant_id) ?? [], finding);
@@ -433,7 +425,7 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
         detail: `lesson ${lapsed.id} on ${lapsed.scopeKey} (${lapsed.findingClass}), accepted by ${lapsed.provenance.by} ${lapsed.recordedAt}: ${lapsed.reason}; the exception is not applied; model: none`,
       });
     }
-    // [policy] a rule's decide line names the rule, what the checks alone say, production and the copy weighed; the default's is the default policy.
+    // A rule's decide line names the rule, what the checks alone say, production and the copy weighed; the default's is the default policy.
     const prod = weigh ? production(probes, serves) : null;
     const copy = approved ? validCopy(copies, approved.value_hash) : null;
     const basis = weigh && rule
@@ -445,14 +437,14 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     tracer?.emit({
       agent: "decider", action: "decide", status: "ok", input_summary: `${cls} ${setting}`, output_summary: `${verb}: ${why}`,
       detail: basis
-        + (earlyStop ? `; earlyStop: true (${earlyStop.reason})` : "") // [stoprule] the decide step receives { earlyStop, reason }
-        + (lesson ? `; exception: ${lesson.id} ${applied ? "applied" : "lapsed"}` : "") // [memory] and the lesson that settled it
+        + (earlyStop ? `; earlyStop: true (${earlyStop.reason})` : "") // The decide step receives { earlyStop, reason }
+        + (lesson ? `; exception: ${lesson.id} ${applied ? "applied" : "lapsed"}` : "") // and the lesson that settled it
         + (lesson && rule ? `; policy: ${rule.rule_id} governs the setting, the exception decides` : ""),
     });
-    // [exposure] the decide step records the exposure line: SQL dates it, the World Model keeps it as an open edge.
+    // The decide step records the exposure line: SQL dates it, the World Model keeps it as an open edge.
     const exposure = await recordExposure(layer, world, finding, { tracer, cache: exposureCache });
-    // [stoprule] withdraw before the judge: no judge call is spent on a verdict that cannot move or a claim its own checks contradict;
-    // [memory] nor on a verdict the technician's exception settled, in force or lapsed.
+    // Withdraw before the judge: no judge call is spent on a verdict that cannot move or a claim its own checks contradict;
+    // nor on a verdict the technician's exception settled, in force or lapsed.
     const withdraw = applied
       ? { withdraw: true, reason: `${VERDICT_CANNOT_MOVE}: accepted exception ${applied.id} holds until ${applied.expiresAt}; the technician's acceptance, not a judge, settles it` }
       : lapsed
@@ -469,7 +461,7 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
       : undefined;
     const id = shortFindingId(world.findingId(finding));
     const disposition: DispositionNote = { verb, reason: why, expires_at: decision.expires_at, decided_by: decision.decided_by, rule_id: decision.rule_id };
-    // [ledger] one row per finding per pass, about the live value the decision is about.
+    // One row per finding per pass, about the live value the decision is about.
     dispositions.push({
       disposition_id: dispositionId(finding.tenant_id, finding.surface, finding.host, finding.object_id, finding.setting_path, finding.value_hash, id, finding.run_id, decidedAt),
       tenant_id: finding.tenant_id, surface: finding.surface, host: finding.host, object_id: finding.object_id, setting_path: finding.setting_path,
@@ -485,7 +477,7 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
 
   runs = objects(await listRuns(layer, { tracer, agent: "observer" }));
 
-  // [policy] the tenant's rules and every "*" rule, once per tenant, at the start of the pass; a row the policy schema refuses is
+  // The tenant's rules and every "*" rule, once per tenant, at the start of the pass; a row the policy schema refuses is
   // left out and traced, so only rules the schema accepts decide.
   let rulesRead = 0;
   for (const tenant of [...new Set(runs.map((r) => r.tenant_id))].sort()) {
@@ -549,7 +541,7 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     const fp = new Map<string, string[]>();
     for (const x of res) fp.set(x.obs_id, [...(fp.get(x.obs_id) ?? []), x.content]);
     for (const o of obs) await world.observe(toObservation(o, fp.get(o.obs_id)?.sort().join(",") ?? null));
-    // [ledger] the same fingerprints as rows: what each dns_name setting of the run resolved to in its DNS run.
+    // The same fingerprints as rows: what each dns_name setting of the run resolved to in its DNS run.
     if (opts.ledger && dns) fingerprints += await opts.ledger.recordFingerprints(fingerprintRows(obs, res, dns));
     observed += obs.length;
     tracer?.emit({
@@ -699,7 +691,7 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     }
   }
 
-  // [detectors] drift from the latest approval and change since the newest backup, over the latest run of each (tenant,
+  // Drift from the latest approval and change since the newest backup, over the latest run of each (tenant,
   // surface, host) that passed the gate, then drift over each tenant's latest passing DNS run (one observation per record field).
   const dnsObs = new Map<string, Row[]>();
   const dnsObservations = async (runId: string, agent: string): Promise<Row[]> => {
@@ -801,7 +793,7 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     await detectMissing(dns, "cloudflare.dns", "", "cloudflare.dns", dns.run_id);
   }
 
-  // [policy] the settings of the pass's latest passing runs that a locked rule governs and that have no approved value on
+  // The settings of the pass's latest passing runs that a locked rule governs and that have no approved value on
   // record: what a locked rule has nothing to roll back to. Counted, one line per pass, no finding.
   let locked = 0;
   const keyOf = (o: Row): string => [o.surface, o.host, o.object_id, o.setting_path].join("\u001f");
@@ -821,15 +813,15 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     }
   }
 
-  // [ledger] one disposition per finding of the pass.
+  // One disposition per finding of the pass.
   const written = opts.ledger ? await opts.ledger.record(dispositions) : null;
   const verbs = Object.fromEntries(VERBS.map((v) => [v, findings.filter((f) => f.verb === v).length])) as Record<Verb, number>;
   const decidedBy = (d: DecidedBy): number => findings.filter((f) => f.disposition.decided_by === d).length;
   const probeRuns = passing.filter((r) => r.surface === "probe").map((r) => r.run_id);
 
-  // [stoprule] one summary line per pass; stopCounters reads the same numbers back from the stop and judge lines.
+  // One summary line per pass; stopCounters reads the same numbers back from the stop and judge lines.
   tracer?.emit({ agent: "decider", action: "triage", status: "ok", input_summary: "stop rule", output_summary: countersSummary(verifier), detail: "model: none" });
-  // [memory] one summary line per pass when a memory was consulted: what it held and what the Decider did with it.
+  // One summary line per pass when a memory was consulted: what it held and what the Decider did with it.
   if (recalled) {
     tracer?.emit({
       agent: "decider", action: "triage", status: "ok", input_summary: "memory",
@@ -837,7 +829,7 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
       detail: `${memory!.directory ? "local store" : "in-memory store"}; recall by exact scope key, never by similarity; model: none`,
     });
   }
-  // [policy] one line per pass: what the locked rules have no approved value for, the verbs, who decided, the probes and the ledger.
+  // One line per pass: what the locked rules have no approved value for, the verbs, who decided, the probes and the ledger.
   tracer?.emit({
     agent: "decider", action: "triage", status: "ok", input_summary: "policy",
     output_summary: `locked settings without an approved value: ${locked}`,

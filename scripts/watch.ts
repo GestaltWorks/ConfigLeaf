@@ -2,14 +2,14 @@
 //
 // The watcher (src/loop/watch.ts): one live cycle (src/loop/live.ts, the cycle npm run cycle runs) every <minutes>
 // from the start of the last, until SIGINT. Each cycle prints the cycle's table (src/loop/present.ts) under its own
-// header, "drift-agent · cycle <n> · tenant <id> · <time> UTC · watch every <minutes> min", then the time of the next
+// header, "ConfigLeaf · cycle <n> · tenant <id> · <time> UTC · watch every <minutes> min", then the time of the next
 // cycle; each cycle writes its own trace to logs/cycle_<base36 ms>.jsonl, which its done line names. --verbose and
 // --quiet are the cycle's. The first SIGINT ends the wait at once, or lets the cycle in progress run to its end; a
 // second one exits at once with status 130. --every takes a whole number of minutes, 1 to 1440. The flags after it
 // are the cycle's.
 // Exit 0 after a SIGINT; 2 on a usage error or a missing setting (src/loop/live.ts liveRefusal).
 //
-// Measured 24 Oct 2026: test/loop.test.ts runs the loop over fake cycles; the live watcher is the operator's.
+// test/loop.test.ts runs the watcher over fake cycles; the live watcher is the operator's.
 
 import { parseArgs } from "node:util";
 import { redact } from "../src/config.ts";

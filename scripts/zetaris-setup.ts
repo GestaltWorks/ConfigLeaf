@@ -1,7 +1,10 @@
 // npm run zetaris:setup: the idempotent Zetaris setup (src/zetaris/setup.ts) against the local bundle.
 // Needs an admin-role ZETARIS_API_KEY and DATABASE_URL in .env; ZETARIS_PG_HOST (default drift-pg) is
-// where the Zetaris driver container reaches that Postgres. Against an instance already set up every
-// statement is ok or skipped. Exits 1 on the first statement that fails with anything but "already exist".
+// where the Zetaris driver container reaches that Postgres. The LESSONS and RULES files are written from
+// DRIFT_MEMORY_DIR and DRIFT_POLICY_FILE into the driver container (ZETARIS_DRIVER_CONTAINER, default
+// zetaris-driver-1) with docker, through wsl.exe -d ZETARIS_WSL_DISTRO (default Ubuntu-24.04) on Windows.
+// Against an instance already set up every statement is ok or skipped. Exits 1 on the first step that fails
+// with anything but "already exist".
 // --plan prints the ordered statements without running them; the password reads "<redacted>".
 import { redact } from "../src/config.ts";
 import { apply, envFromProcess, formatPlan, plan } from "../src/zetaris/setup.ts";

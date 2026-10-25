@@ -1,7 +1,8 @@
 // The refuting judge with a stub Nightshift (canned replies in the shapes Ultra and Lightning really
-// return) and a stub receipt store holding the two real receipt fixtures. The refuting SQL runs for
-// real against sql.js on the authored fixture (test/fixtures/authored-bundle.json, the hero story), so
-// stands/refuted come from rows, not from a canned verdict. The failover ladder runs through the real
+// return) and a stub receipt store holding the two real receipt fixtures' bodies with hmem null, signed
+// again here (the real ones carry 3 injected records, which the gate refuses: a test below holds that). The
+// refuting SQL runs for real against sql.js on the authored fixture (test/fixtures/authored-bundle.json, the hero
+// story), so stands/refuted come from rows, not from a canned verdict. The failover ladder runs through the real
 // adapter over a fake fetch: one retry per route after a 5xx or an empty body, then the next route.
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { Nightshift, type ChatResult, type SignedReceipt } from "../src/adapters/nightshift.ts";
@@ -13,12 +14,13 @@ import { tenantAppId } from "../src/gate.ts";
 import { JUDGE_MAX_TOKENS, MAX_EVIDENCE_ROWS, SYSTEM_PROMPT, buildMessages, guardRefutation, judgeClaim, type JudgeModel } from "../src/agents/judge.ts";
 import bundle from "./fixtures/authored-bundle.json" with { type: "json" };
 import { MemTracer } from "./fixtures/mem-tracer.ts";
-import { ultraReceipt } from "./fixtures/signed-receipt.ts";
+import { isolated, ultraReceipt } from "./fixtures/signed-receipt.ts";
 import lightningJson from "./fixtures/receipt-lightning.json" with { type: "json" };
 import ultraJson from "./fixtures/receipt-ultra.json" with { type: "json" };
 
-const lightning = lightningJson as unknown as SignedReceipt;
-const ultra = ultraJson as unknown as SignedReceipt;
+const realUltra = ultraJson as unknown as SignedReceipt;
+const lightning = isolated(lightningJson as unknown as SignedReceipt);
+const ultra = isolated(realUltra);
 const ULTRA_ID = ultra.body.receipt.receipt_id as string;
 const ULTRA_MODEL = ultra.body.receipt.routing.winner as string;
 const LIGHTNING_ID = lightning.body.receipt.receipt_id as string;
@@ -246,6 +248,22 @@ describe("judgeClaim on the authored fixture", () => {
     expect(tracer.events).toHaveLength(1);
     expect(tracer.events[0]).toMatchObject({ agent: "judge", action: "hypothesise", status: "not_judged", model_requested: "nvidia/nemotron-3-ultra-550b-a55b" });
   });
+
+  it("not_judged: the real Ultra receipt as the runtime signed it carries 3 injected records; the verdict says so, records the count and the scope sent, and the SQL never runs", async () => {
+    const before = layer.runs;
+    const ns = stub(reply("SELECT asset_id FROM {{t:inventory_asset}} WHERE address = '203.0.113.77'"), { scope: "user" });
+    const tracer = new MemTracer("test_judge");
+    const v = await judgeClaim({ claim: HERO_CLAIM, evidenceRows: EVIDENCE, layer, nightshift: ns, receipts: { find: async () => realUltra }, tracer });
+    expect(v).toMatchObject({ status: "not_judged", rowCount: null, receiptId: ULTRA_ID, servedModel: ULTRA_MODEL, signatureOk: true, memoryInjected: 3, scope: "user" });
+    expect(v.reason).toMatch(/^receipt gate: memory injected \(3 records\): receipt /);
+    expect(v.sql).toMatch(/LIMIT 50$/); // parsed for the record, never run
+    expect(layer.runs).toBe(before);
+    expect(ns.opts).toHaveLength(1);
+    expect(tracer.events.map((e) => `${e.action}:${e.status}:${e.memory_injected}`)).toEqual(["check:not_judged:3"]);
+    // the same reply on a receipt with hmem null stands, and the verdict says 0 were injected
+    const clean = await judgeClaim({ claim: HERO_CLAIM, evidenceRows: EVIDENCE, layer, nightshift: stub(reply("SELECT asset_id FROM {{t:inventory_asset}} WHERE address = '203.0.113.77'")), receipts });
+    expect(clean).toMatchObject({ status: "stands", memoryInjected: 0 });
+  });
 });
 
 describe("judgeClaim under a tenant: the call goes out under the tenant's app id and the receipt must pass custody", () => {
@@ -341,6 +359,18 @@ describe("judgeClaim under a tenant: the call goes out under the tenant's app id
     expect(v).toMatchObject({ status: "not_judged", receiptId: LIGHTNING_ID, servedModel: LIGHTNING_MODEL, attempts: 1 });
     expect(v.reason).toMatch(/receipt gate: .*ultra was requested$/);
     expect(ns.opts).toHaveLength(1);
+  });
+
+  it("injected memory under a tenant is never retried: one call, not_judged, custody holding but the answer refused", async () => {
+    const mem = ultraReceipt("rcpt_mem", "chatcmpl-mem", CLIENT_APP, { hmem: { ids: ["mem_a"], injected: 1, reason: "retrieved 1 memories", strategy: "comprehensive", top_score: 0.6 } });
+    const clean = ultraReceipt("rcpt_clean", "chatcmpl-clean", CLIENT_APP);
+    const ns = planned([{ receipt: mem, requestId: "chatcmpl-mem" }, { receipt: clean, requestId: "chatcmpl-clean" }]);
+    const before = layer.runs;
+    const v = await judgeClaim({ claim: HERO_CLAIM, evidenceRows: EVIDENCE, layer, nightshift: ns, receipts: find(mem, clean), tenantId: CLIENT });
+    expect(v).toMatchObject({ status: "not_judged", receiptId: "rcpt_mem", attempts: 1, memoryInjected: 1, custody: { ok: true } });
+    expect(v.reason).toMatch(/^receipt gate: memory injected \(1 record\): /);
+    expect(ns.opts).toHaveLength(1);
+    expect(layer.runs).toBe(before);
   });
 
   it("a tenant id that is not a header-safe token is refused before any call, as a verdict and never a throw", async () => {

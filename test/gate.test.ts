@@ -3,15 +3,21 @@
 // receipt-ultra.json. Checked by eye and by grep for hostnames, paths and mail addresses: none, the
 // only free text is the probe prompt and runtime labels. Body, pubkey and signature are untouched so
 // the Ed25519 check still passes; a tampered body must fail the gate even when the tier then matches.
+// Both real receipts carry Nightshift's injected memory (hmem.injected 3, the scope "user" every call shared
+// then), which the gate refuses; the tests whose subject is the tier or the signature also run on their bodies
+// with hmem null, signed again here (test/fixtures/signed-receipt.ts isolated).
 import { describe, expect, it } from "vitest";
 import type { ChatResult, SignedReceipt } from "../src/adapters/nightshift.ts";
-import { ReceiptStore, gateChatResult, servedModelOf, tierOf } from "../src/gate.ts";
+import { ReceiptStore, gateChatResult, hmemOf, memoryInjectedOf, servedModelOf, tierOf } from "../src/gate.ts";
 import { MemTracer } from "./fixtures/mem-tracer.ts";
+import { isolated, signed, ultraReceipt } from "./fixtures/signed-receipt.ts";
 import lightningJson from "./fixtures/receipt-lightning.json" with { type: "json" };
 import ultraJson from "./fixtures/receipt-ultra.json" with { type: "json" };
 
-const lightning = lightningJson as unknown as SignedReceipt;
-const ultra = ultraJson as unknown as SignedReceipt;
+const realLightning = lightningJson as unknown as SignedReceipt;
+const realUltra = ultraJson as unknown as SignedReceipt;
+const lightning = isolated(realLightning);
+const ultra = isolated(realUltra);
 const LIGHTNING_ID = lightning.body.receipt.receipt_id as string;
 const ULTRA_ID = ultra.body.receipt.receipt_id as string;
 
@@ -60,15 +66,68 @@ describe("servedModelOf", () => {
 });
 
 describe("gateChatResult", () => {
-  it("ok: real Lightning receipt, Lightning requested; the receipt, not the response, names the model", async () => {
+  it("ok: the real Lightning receipt's body with hmem null, Lightning requested; the receipt, not the response, names the model", async () => {
     const g = await gateChatResult(chat({ receiptId: LIGHTNING_ID, modelRouted: "something/else" }), "lightning", store(lightning));
-    expect(g).toMatchObject({ ok: true, requestedTier: "lightning", servedTier: "lightning", servedModel: lightning.body.receipt.routing.winner, receiptId: LIGHTNING_ID, signatureOk: true });
-    expect(g.reason).toMatch(/signature verified/);
+    expect(g).toMatchObject({ ok: true, requestedTier: "lightning", servedTier: "lightning", servedModel: lightning.body.receipt.routing.winner, receiptId: LIGHTNING_ID, signatureOk: true, memoryInjected: 0 });
+    expect(g.reason).toMatch(/signature verified, no memory injected$/);
   });
 
-  it("ok: real Ultra receipt, Ultra requested", async () => {
+  it("ok: the real Ultra receipt's body with hmem null, Ultra requested", async () => {
     const g = await gateChatResult(chat({ receiptId: ULTRA_ID }), "ultra", store(lightning, ultra));
-    expect(g).toMatchObject({ ok: true, servedTier: "ultra", servedModel: "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free", signatureOk: true });
+    expect(g).toMatchObject({ ok: true, servedTier: "ultra", servedModel: "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free", signatureOk: true, memoryInjected: 0 });
+  });
+
+  it("not ok: the real receipts as the runtime signed them carry 3 injected records, so the gate refuses them with memory injected (3 records), never on the response's word", async () => {
+    for (const [r, tier] of [[realLightning, "lightning"], [realUltra, "ultra"]] as const) {
+      const id = r.body.receipt.receipt_id as string;
+      const g = await gateChatResult(chat({ receiptId: id, scope: "user", memoryInjected: 0 }), tier, store(r));
+      expect(g).toMatchObject({ ok: false, servedTier: tier, signatureOk: true, memoryInjected: 3, scope: "user" });
+      expect(g.reason).toBe(`memory injected (3 records): receipt ${id} ${r.body.receipt.routing.winner} (${tier}), hmem ids ${(r.body.receipt.hmem.ids as string[]).join(", ")}, top_score ${r.body.receipt.hmem.top_score}, scope user; the answer was conditioned on earlier stored answers, not judged`);
+    }
+  });
+
+  it("hmem null or absent passes; injected 0 passes; one record reads singular; the scope sent and the count land on the result and on the check event", async () => {
+    const make = (id: string, extra: Record<string, unknown>) => ultraReceipt(id, `chatcmpl-${id}`, "drift-agent-client-a", extra);
+    const nul = make("rcpt_null", { hmem: null });
+    const absent = make("rcpt_absent", {});
+    const zero = make("rcpt_zero", { hmem: { ids: [], injected: 0, reason: "no memories above threshold", strategy: "comprehensive", top_score: 0.1 } });
+    const one = make("rcpt_one", { hmem: { ids: ["mem_a"], injected: 1, reason: "retrieved 1 memories", strategy: "comprehensive", top_score: 0.61 } });
+    const tracer = new MemTracer("test_gate_memory");
+    const finder = store(nul, absent, zero, one);
+    for (const id of ["rcpt_null", "rcpt_absent", "rcpt_zero"]) {
+      const g = await gateChatResult(chat({ receiptId: id, scope: "drift-agent-client-a-0123456789abcdef" }), "ultra", finder, tracer);
+      expect(g, id).toMatchObject({ ok: true, memoryInjected: 0, scope: "drift-agent-client-a-0123456789abcdef" });
+    }
+    const g1 = await gateChatResult(chat({ receiptId: "rcpt_one" }), "ultra", finder, tracer);
+    expect(g1).toMatchObject({ ok: false, memoryInjected: 1, scope: null });
+    expect(g1.reason).toMatch(/^memory injected \(1 record\): receipt rcpt_one .*hmem ids mem_a, top_score 0\.61; /);
+    expect(tracer.events.map((e) => [e.status, e.scope, e.memory_injected])).toEqual([
+      ["ok", "drift-agent-client-a-0123456789abcdef", 0], ["ok", "drift-agent-client-a-0123456789abcdef", 0], ["ok", "drift-agent-client-a-0123456789abcdef", 0], ["not_judged", undefined, 1],
+    ]);
+    expect(tracer.events[3].output_summary).toBe("ultra requested, ultra served, 1 record of memory injected");
+    // no receipt found: no count, the gate refuses as unreceipted
+    const none = await gateChatResult(chat({ receiptId: "rcpt_missing" }), "ultra", finder);
+    expect(none).toMatchObject({ ok: false, memoryInjected: null, signatureOk: null });
+  });
+
+  it("hmemOf and memoryInjectedOf read the receipt's hmem: null for none, the count from injected or else the ids", () => {
+    expect(hmemOf(realUltra)).toEqual({ injected: 3, ids: realUltra.body.receipt.hmem.ids, topScore: realUltra.body.receipt.hmem.top_score });
+    expect(hmemOf(ultra)).toBeNull();
+    expect(memoryInjectedOf(ultra)).toBe(0);
+    expect(memoryInjectedOf(realLightning)).toBe(3);
+    expect(memoryInjectedOf(signed({ receipt_id: "r", hmem: { ids: ["a", "b"] } }))).toBe(2);
+    expect(memoryInjectedOf(signed({ receipt_id: "r" }))).toBe(0);
+  });
+
+  it("a substitution outranks injected memory in the reason; a tampered body is still a signature failure first", async () => {
+    const sub = await gateChatResult(chat({ receiptId: LIGHTNING_ID }), "ultra", store(realLightning));
+    expect(sub).toMatchObject({ ok: false, servedTier: "lightning", memoryInjected: 3 });
+    expect(sub.reason).toMatch(/\(lightning\), ultra was requested$/);
+    const tampered = structuredClone(realUltra);
+    tampered.body.receipt.hmem = null;                            // claim no memory; the signature no longer covers the body
+    const t = await gateChatResult(chat({ receiptId: ULTRA_ID }), "ultra", store(tampered));
+    expect(t).toMatchObject({ ok: false, signatureOk: false });
+    expect(t.reason).toMatch(/signature does not verify/);
   });
 
   it("not ok: Ultra requested, the receipt says Lightning answered", async () => {

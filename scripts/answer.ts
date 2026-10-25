@@ -12,8 +12,8 @@
 //   --accept    an accepted exception: findings of this class on this scope are ADOPT until --until, then
 //               re-raised as ESCALATE ("exception lapsed"). --until is required; an exception without an
 //               expiry is a permanent silence, which the agent does not record.
-//   --answer    an answer to a question the agent would otherwise ask, on this scope, until --until
-//               (default: 30 days from now).
+//   --answer    an answer to a question, on this scope, until --until (default: 30 days from now); stored
+//               and listed, the pass reads exceptions only.
 //   --scope     which of the finding's values the lesson keys on: its DNS name (default when it has one),
 //               its host, or the address it resolves to. Exact match only; a lesson about one name never
 //               applies to another.
@@ -22,14 +22,22 @@
 // for one command: when it is blank, .world/memory (gitignored), or examples/memory in sample mode, the committed store a clean clone
 // and CI decide with. Recording and --forget write the store; --list only reads it. Free text (reason, question,
 // answer, --by) goes through the redactor before it is stored; the printed lesson is the stored one.
+//
+// After a write to the store the live pass reads (DRIFT_MEMORY_DIR), outside sample mode and with ZETARIS_API_KEY set,
+// the Zetaris copy of the lessons and the rules goes in again when its hash differs from the last copy's
+// (refreshFileTables), so LESSONS.lesson holds the new lesson before the next pass; one "zetaris:" line says which.
 
 import { readFileSync } from "node:fs";
+import path from "node:path";
 import { parseArgs } from "node:util";
+import { config } from "../src/config.ts";
 import { DataLayer } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { MemoryError, TechnicianMemory, scopeValuesOf, type Lesson, type ScopeType } from "../src/engine/memory.ts";
 import { DriftWorld } from "../src/engine/world.ts";
 import { runPass, type Finding } from "../src/pipeline.ts";
+import { refreshText } from "../src/zetaris/filestore.ts";
+import { refreshFileTables } from "../src/zetaris/setup.ts";
 
 const { values: args } = parseArgs({
   options: {
@@ -66,6 +74,13 @@ const fail = (msg: string, code = 2): never => {
 const memory = new TechnicianMemory({ storage: args.list ? "read" : "local", directory: args["memory-dir"] });
 const where = memory.directory!;
 
+/** After a write: the Zetaris copy of the store the live pass reads, put again when stale. */
+async function refreshZetaris(): Promise<void> {
+  if (config.sampleMode || !config.zetaris.apiKey || path.resolve(where) !== path.resolve(config.memoryDir)) return;
+  const r = await refreshFileTables();
+  console.log(`zetaris: ${refreshText(r)}${r.status === "failed" ? "; the next live pass or npm run zetaris:setup puts them" : ""}`);
+}
+
 const describe = (l: Lesson): string => l.kind === "exception"
   ? `${l.id}  exception  ${l.findingClass} on ${l.scopeKey} (${l.tenantId})  until ${l.expiresAt}  by ${l.provenance.by} at ${l.recordedAt}: ${l.reason}`
   : `${l.id}  answer     ${l.scope.type} ${l.scope.key} (${l.tenantId})  until ${l.expiresAt}  by ${l.provenance.by} at ${l.recordedAt}: Q ${l.question} A ${l.answer}`;
@@ -82,6 +97,7 @@ if (args.forget) {
   if (!l) fail(`no lesson ${args.forget} in ${where}`, 1);
   console.log(`forgot ${describe(l!)}`);
   console.log(`the store now holds ${memory.lessons().length} lesson(s); the withdrawal is in the ledger (${where})`);
+  await refreshZetaris();
   process.exit(0);
 }
 
@@ -129,3 +145,4 @@ try {
   if (err instanceof MemoryError) fail(err.message, 1);
   throw err;
 }
+await refreshZetaris();

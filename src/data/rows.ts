@@ -4,7 +4,7 @@
 // interfaces (below) and at test time against sql/schema.sql (test/store.test.ts), so the three cannot drift.
 //
 // Ids are deterministic: the same collection yields the same ids, so a re-run of an insert is a no-op
-// (ON CONFLICT DO NOTHING) instead of a duplicate. stableId is the first 16 hex (64 bits) of sha256 over
+// (ON CONFLICT DO NOTHING). stableId is the first 16 hex (64 bits) of sha256 over
 // the parts joined by U+001F, which no part contains; a null part hashes as "".
 
 import { createHash } from "node:crypto";

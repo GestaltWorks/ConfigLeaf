@@ -27,8 +27,8 @@
 //     one CYCLE summary line, traced and returned. Printed text passes `scrub` (the tenant's redactor live); the
 //     tracer redacts its own fields.
 //
-// Measured 24 Oct 2026: test/loop.test.ts runs it over fakes and over sql.js with the policy fixture; scripts/cycle.ts
-// has the live run.
+// Tested by test/loop.test.ts over fakes and over sql.js with the policy fixture; scripts/cycle.ts records the live
+// runs.
 
 import { redact } from "../config.ts";
 import type { QueryTally } from "../data/engines/counting.ts";

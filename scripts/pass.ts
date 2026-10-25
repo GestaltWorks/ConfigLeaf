@@ -5,7 +5,8 @@
 // search_path) for the tenant's dispositions and referent fingerprints, the technician's lessons read from the store
 // DRIFT_MEMORY_DIR names (read only), the trace to logs/pass_<base36 ms>.jsonl. Prints the cycle's pass section
 // (src/loop/present.ts): the header (mode "recorded", or "dry run, nothing changed" with --no-ledger), the pass row
-// with its findings by verb, the classes in plain words and one line per ROLLBACK, FIX and ESCALATE, and the done
+// with its findings by verb, the Lightning SQL it sent and the DQ rule exception_in_force over its adoptions (with
+// --no-ledger, the latest recorded pass's), the classes in plain words and one line per ROLLBACK, FIX and ESCALATE, and the done
 // line naming the trace. --verbose
 // adds the full output: one JSON object per finding of the tenant, one DISPOSITION line per finding as the ledger
 // holds it (read back through Zetaris), the PASS summary line and the trace file; --quiet prints the header and the
@@ -24,11 +25,13 @@ import { randomBytes } from "node:crypto";
 import { parseArgs } from "node:util";
 import { config, redact } from "../src/config.ts";
 import { DataLayer } from "../src/data/layer.ts";
+import { CountingEngine } from "../src/data/engines/counting.ts";
 import { ZetarisEngine } from "../src/data/engines/zetaris.ts";
 import { Store } from "../src/data/store.ts";
 import { TechnicianMemory } from "../src/engine/memory.ts";
 import { PgLedger } from "../src/ledger.ts";
 import { passStep } from "../src/loop/pass.ts";
+import { refreshFileTables } from "../src/zetaris/setup.ts";
 import { MODE, Table, passView, presentOptions } from "../src/loop/present.ts";
 import { FileTracer } from "../src/loop/trace.ts";
 import { TENANT } from "../src/policy/schema.ts";
@@ -76,10 +79,11 @@ console.log(table.header({ command: "pass", tenant, at: new Date(t0), mode: reco
 let store: Store | null = null;
 try {
   store = record ? Store.fromEnv({ schema: args.schema }) : null;
-  const layer = new DataLayer(new ZetarisEngine());
-  const r = await passStep(layer, { tenant, ledger: store ? new PgLedger(store) : null, memory: new TechnicianMemory({ storage: "read" }), decidedAt, tracer });
+  const engine = new CountingEngine(new ZetarisEngine());
+  const layer = new DataLayer(engine);
+  const r = await passStep(layer, { tenant, ledger: store ? new PgLedger(store) : null, memory: new TechnicianMemory({ storage: "read" }), decidedAt, tracer, refreshFiles: () => refreshFileTables() });
   const ms = Date.now() - t0;
-  if (!present.quiet) for (const l of table.row("pass", passView(r), ms)) console.log(l);
+  if (!present.quiet) for (const l of table.row("pass", passView(r, { datasource: config.zetaris.datasource, ...engine.tally() }), ms)) console.log(l);
   if (present.verbose) {
     for (const l of r.lines) console.log(redactor.text(l));
     console.log(redactor.text(r.summary));

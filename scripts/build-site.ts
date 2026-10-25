@@ -94,6 +94,7 @@ import { runPass, type Finding } from "../src/pipeline.ts";
 import { loadPolicyFile } from "../src/policy/load.ts";
 import { Redactor, countLabels, describeRedactions } from "../src/redactor.ts";
 import { DQ_RULES, USL_NAME, USL_TABLES, uslMarkdown } from "../src/zetaris/setup.ts";
+import { FILE_DATASOURCES } from "../src/data/files.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
@@ -101,7 +102,7 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const DATASOURCE = config.zetaris.datasource;
 /** The data layer with Zetaris's table names: the SQL text a live pass sends for a template and its parameters. render() reads qualify() alone. */
 const AS_ZETARIS = new DataLayer(new ZetarisEngine());
-const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven"];
+const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen"];
 const word = (n: number): string => NUMBER_WORDS[n] ?? String(n);
 
 /** The page and every data file together. */
@@ -144,7 +145,7 @@ const FindingRecord = z.looseObject({
   /** The Decider's disposition (src/pipeline.ts DispositionNote); older records have none. */
   disposition: z.looseObject({ verb: z.string(), reason: z.string(), expires_at: z.string().nullable(), decided_by: z.string(), rule_id: z.string().nullable() }).optional(),
   world: z.looseObject({ before: z.string().nullable(), after: z.string().nullable(), changed: z.boolean(), bytes_unchanged: z.boolean() }).optional(),
-  // The exposure line (plan addendum item 4: {since, days, source, still_open_in}); shown as recorded, whatever fields it grows.
+  // The exposure line ({since, days, source, still_open_in}); shown as recorded, whatever fields it grows.
   exposure: z.record(z.string(), z.unknown()).nullable().optional(),
   checks: z.array(CheckRecord),
   rejected: z.array(z.looseObject({ check: z.unknown(), reason: z.string() })).default([]),
@@ -943,7 +944,7 @@ ${markdownToHtml(usl, 1)}</div></section>`;
 function zetarisParagraph(): string {
   const code = (s: string): string => `<code>${escapeHtml(s)}</code>`;
   const rules = DQ_RULES.map((r) => `${code(r.name)} on ${code(r.table)}`).join(", ");
-  return `<p>In a live pass every detector and check query runs as Zetaris Lightning SQL over the ${code(DATASOURCE)} datasource, the app Postgres registered in Zetaris, each table named ${code(`${DATASOURCE}.<table>`)}. Over it, the ${code(USL_NAME)} semantic layer holds ${word(USL_TABLES.length)} entities (${USL_TABLES.map(code).join(", ")}) and ${word(DQ_RULES.length)} DQ rules (${rules}). On this page the same SQL runs on sql.js over the recorded rows, and each query on the Findings tab carries the text the live pass sends to Zetaris, rendered at build time. <code>test/parity.test.ts</code> holds the two engines to the same columns, rows and totals; the README's "What it proves" table gives its last measured count.</p>`;
+  return `<p>In a live pass every detector and check query runs as Zetaris Lightning SQL over the ${code(DATASOURCE)} datasource, the app Postgres registered in Zetaris, each table named ${code(`${DATASOURCE}.<table>`)}. Beside it Zetaris reads the technician's memory store as ${code(FILE_DATASOURCES.lesson)} and the policy file as ${code(FILE_DATASOURCES.rule)}, both files in its filestore. Over the three, the ${code(USL_NAME)} semantic layer holds ${word(USL_TABLES.length)} entities (${USL_TABLES.map(code).join(", ")}) and ${word(DQ_RULES.length)} DQ rules (${rules}). On this page the same SQL runs on sql.js over the recorded rows, and each query on the Findings tab carries the text the live pass sends to Zetaris, rendered at build time. <code>test/parity.test.ts</code> holds the two engines to the same columns, rows and totals; the README's "What it proves" table gives its last measured count.</p>`;
 }
 
 // ---- the build --------------------------------------------------------------------------------------------------
@@ -992,7 +993,7 @@ export async function buildSite(opts: BuildOptions = {}): Promise<BuildResult> {
   const all = examples.flatMap((e) => e.findings);
   const checks = all.flatMap((f) => f.checks);
   const index: SiteIndex = {
-    title: "drift-agent replay",
+    title: "ConfigLeaf replay",
     examples: examples.map((e) => ({ dir: e.dir, file: `data/${e.dir}.json`, findings: e.findings.length, checks: e.findings.reduce((n, f) => n + f.checks.length, 0), reproduced: e.reproduced })),
     totals: {
       examples: examples.length, findings: all.length, checks: checks.length, checksRerun: checks.filter((c) => c.status === "ran").length,
@@ -1052,8 +1053,8 @@ const page = (documentTab: string, sourcesTab: string, nemotronTab: string): str
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>drift-agent replay</title>
-<meta name="description" content="Every finding of the drift-agent pass over recorded, redacted real collections, with the SQL that ran, the rows it returned, the hashes and the judge step.">
+<title>ConfigLeaf replay</title>
+<meta name="description" content="Every finding of the ConfigLeaf pass over recorded, redacted real collections, with the SQL that ran, the rows it returned, the hashes and the judge step.">
 <style>
 :root{--bg:#f8f7f4;--fg:#1c1d1f;--muted:#5b5f65;--line:#dcd8cf;--card:#fff;--code:#f1efea;--accent:#1f55c0;--ok:#1b6a39;--ok-bg:#e1f1e6;--bad:#a12a1c;--bad-bg:#f7e2dd;--warn:#7f5300;--warn-bg:#f8ecd2;--chip:#ebe8e1;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
 @media (prefers-color-scheme:dark){:root{--bg:#131416;--fg:#e7e5e0;--muted:#a19f99;--line:#2e3034;--card:#1a1b1e;--code:#212327;--accent:#93b2ff;--ok:#82d49e;--ok-bg:#1b3124;--bad:#ff9d8c;--bad-bg:#3a1f1b;--warn:#f0c46e;--warn-bg:#382c13;--chip:#26282c}}
@@ -1143,8 +1144,8 @@ td pre{white-space:pre-wrap;word-break:break-word;margin:4px 0 0;min-width:36ch;
 </head>
 <body>
 <header><div class="wrap">
-<h1>drift-agent: every finding, with the SQL behind it</h1>
-<p class="lede">A config-drift assurance pass for MSP technicians, replayed from recorded collections. Open a finding to see the detector query that raised it, each precondition check with the SQL that ran, the rows it returned and the hashes, and the judge step. The Document tab holds the owner's document over the full recorded bundle, the Sources tab names the tables and the source behind each finding class, and the Nemotron tab holds the eval's Nemotron calls with every SELECT its judges wrote, re-run at build. In a live pass the same detector and check SQL runs as Zetaris Lightning SQL over the <code>${escapeHtml(DATASOURCE)}</code> datasource, with the <code>${escapeHtml(USL_NAME)}</code> semantic layer and its ${word(DQ_RULES.length)} DQ rules over it; on this page it runs on sql.js over the recorded rows, and <code>test/parity.test.ts</code> holds the two engines to the same columns, rows and totals.</p>
+<h1>ConfigLeaf: every finding, with the SQL behind it</h1>
+<p class="lede">A config-drift assurance pass for MSP technicians, replayed from recorded collections. Open a finding to see the detector query that raised it, each precondition check with the SQL that ran, the rows it returned and the hashes, and the judge step. The Document tab holds the owner's document over the full recorded bundle, the Sources tab names the tables and the source behind each finding class, and the Nemotron tab holds the eval's Nemotron calls with every SELECT its judges wrote, re-run at build. In a live pass the same detector and check SQL runs as Zetaris Lightning SQL over the <code>${escapeHtml(DATASOURCE)}</code> datasource, beside the technician's memory store and the policy file, with the <code>${escapeHtml(USL_NAME)}</code> semantic layer and its ${word(DQ_RULES.length)} DQ rules over the three; on this page it runs on sql.js over the recorded rows, and <code>test/parity.test.ts</code> holds the two engines to the same columns, rows and totals.</p>
 <ul class="stats" id="stats"></ul>
 <p class="report"><a href="${REPORT_LINK}">Report</a><br><span class="meta">The owner's report, <code>examples/report.html</code>: one HTML file over the same recorded bundle as the Document tab, opened from a clone of the repository.</span></p>
 <nav class="tabs" aria-label="Page sections"><a href="#findings">Findings</a><a href="#document">Document</a><a href="#sources">Sources</a><a href="#nemotron">Nemotron</a></nav>

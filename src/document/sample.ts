@@ -5,11 +5,16 @@
 // the report (src/document/report.ts). scripts/document.ts under SAMPLE_MODE, scripts/examples.ts and the report's
 // test render through here, so examples/document.md and examples/report.html come from one sequence.
 //
-// The report in sample mode is a function of the bundle and the store alone: no clock, no trace id, no tip, the
-// fixed BUNDLE_REDACTOR, so a second render is byte-identical with or without a .env. Measured 25 Oct 2026 over
-// sample/bundle.json for client-1 with examples/memory: examples/report.html, 24,941 bytes, a second render the same (test/report.test.ts).
+// The report in sample mode is a function of the bundle, the store and the replay page's committed data alone: no
+// clock, no trace id, no tip, the fixed BUNDLE_REDACTOR, so a second render is byte-identical with or without a .env.
+// docs/data (npm run site) gives the two links only the files can say: the replay page's anchor of each finding it
+// carries, and the eval run its Nemotron tab shows, whose summary the report links. Measured 25 Oct 2026 over
+// sample/bundle.json for client-1 with examples/memory: examples/report.html, a second render the same (test/report.test.ts).
 
 import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { config } from "../config.ts";
 import { DataLayer } from "../data/layer.ts";
 import { SqlJsEngine } from "../data/engines/sqljs.ts";
@@ -21,7 +26,9 @@ import { MemoryLedger } from "../ledger.ts";
 import { runPass, type Finding, type PassResult } from "../pipeline.ts";
 import type { Tracer } from "../trace.ts";
 import { renderDocument, type DocumentResult } from "./render.ts";
-import { REPORT_MODE, renderReport } from "./report.ts";
+import { REPORT_MODE, renderReport, type ReportLinks } from "./report.ts";
+
+const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 
 export interface SampleRender {
   doc: DocumentResult;
@@ -52,10 +59,35 @@ export const textSha256 = (text: string): string => `sha256:${createHash("sha256
 /** The policy file as the footer names it: a path inside the repository as configured, else its last segment. */
 export const policyFileShown = (file: string = config.policyFile): string => (/^(?:[A-Za-z]:)?[\\/]/.test(file) ? file.split(/[\\/]/).at(-1)! : file.replace(/\\/g, "/"));
 
-/** The report in sample mode: the page's rows and the pass's findings of the tenant, BUNDLE_REDACTOR, no trace, no tip. */
+/**
+ * What the replay page's data says for the report's links, relative to examples/: each finding's anchor on the page
+ * (the first example that carries it, in the page's order) and the summary of the eval run its Nemotron tab shows.
+ * No anchors and no eval link when docs/data is missing or unreadable: the links then point at the page alone.
+ */
+export function replayLinks(root: string = ROOT): Pick<ReportLinks, "replayAnchors" | "eval"> {
+  const replayAnchors: Record<string, string> = {};
+  let evalSummary: string | null = null;
+  try {
+    const index = JSON.parse(readFileSync(path.join(root, "docs", "data", "index.json"), "utf8")) as { examples?: { file: string }[]; totals?: { nemotron?: { stamp?: string } } };
+    for (const e of index.examples ?? []) {
+      const ex = JSON.parse(readFileSync(path.join(root, "docs", e.file), "utf8")) as { findings?: { id: string; fields?: [string, unknown][] }[] };
+      for (const f of ex.findings ?? []) {
+        const id = f.fields?.find(([k]) => k === "finding id")?.[1];
+        if (typeof id === "string" && !(id in replayAnchors)) replayAnchors[id] = f.id;
+      }
+    }
+    const stamp = index.totals?.nemotron?.stamp;
+    if (stamp && /^[\w.-]+$/.test(stamp) && existsSync(path.join(root, "eval", "results", stamp, "summary.md"))) evalSummary = `../eval/results/${stamp}/summary.md`;
+  } catch {
+    // no replay data: the report links the page without an anchor and names no eval summary
+  }
+  return { replayAnchors, eval: evalSummary };
+}
+
+/** The report in sample mode: the page's rows and the pass's findings of the tenant, BUNDLE_REDACTOR, no trace, no tip, the replay page's links. */
 export function sampleReport(doc: DocumentResult, findings: readonly Finding[], bundle: { path: string; sha256: string }): string {
   return renderReport(doc.data, {
     redactor: BUNDLE_REDACTOR, mode: REPORT_MODE.dryRun, trace: null, tip: null, policyFile: policyFileShown(),
-    findings: findings.filter((f) => f.finding.tenant_id === doc.data.tenant), bundle,
+    findings: findings.filter((f) => f.finding.tenant_id === doc.data.tenant), bundle, links: replayLinks(),
   });
 }

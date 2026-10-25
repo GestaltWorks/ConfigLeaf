@@ -13,7 +13,7 @@
 //   gated   every remaining check reads a table whose collection run is gated out this pass (the audit
 //           log, when the tenant's latest audit run failed the DQ gate). None of them can run; they are
 //           recorded at once as not checked, which escalates the finding exactly as each would have one
-//           by one. Not a skip that hides anything: the finding carries every one as a rejection.
+//           by one. The finding carries every one as a rejection.
 // A check that could still move ADOPT/ESCALATE is never skipped: while every check so far holds and none
 // was rejected, shouldStop says no.
 //

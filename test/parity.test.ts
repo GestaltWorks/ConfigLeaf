@@ -13,7 +13,7 @@
 // Measured live 25 Oct 2026 over the export that carries the 03:25 UTC cycle's rows (26 runs, 7,532 observations), 107
 // cases with the document's inventory read: 216 of 216 tests, 107 of 107 cases equal.
 import { beforeAll, describe, expect, it } from "vitest";
-import { config } from "../src/config.ts";
+import { SAMPLE_MEMORY_DIR, config } from "../src/config.ts";
 import { DataLayer, type Overlays, type Params } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { ZetarisEngine } from "../src/data/engines/zetaris.ts";
@@ -31,6 +31,8 @@ import {
 import { TICKETS_SQL, TICKET_ACTIONS_SQL, TICKET_ZONES_SQL } from "../src/data/queries.ts";
 import { COLUMNS } from "../src/data/rows.ts";
 import { SCHEMA_TABLES } from "../src/data/schema.ts";
+import { fileRows } from "../src/data/file-rows.ts";
+import { ADOPTION_CHECK_SQL, ADOPTION_SQL, FILE_TABLES } from "../src/data/files.ts";
 import { CATALOGUE } from "../src/catalogue/templates.ts";
 import { EVAL_PARITY_CASES } from "../src/eval/queries.ts";
 import bundle from "../sample/bundle.json" with { type: "json" };
@@ -175,6 +177,33 @@ SELECT obs_id AS disposition_id, tenant_id, surface, host, object_id, setting_pa
        'policy' AS decided_by, 'rule-00000000000000c3' AS rule_id, obs_id AS finding_id, run_id, '2026-10-24T08:00:00.000Z' AS decided_at
 FROM {{t:observation}} WHERE run_id = '${SITES_RUN}' AND setting_path = 'file'`,
 };
+/**
+ * The file tables' rows: the store DRIFT_MEMORY_DIR names and the policy file, what npm run zetaris:setup wrote into
+ * the Zetaris filestore (both sides read the same files on this machine).
+ */
+const FILES = fileRows();
+/** The lesson the adoption cases name: the store's first exception (mem-1 of examples/memory). */
+const LESSON = FILES.lesson.find((l) => l.kind === "exception") ?? { lesson_id: "mem-0", tenant_id: T, expires_at: "2026-11-30T00:00:00.000Z" };
+const ADOPTED_AT = "2026-10-26T00:00:00.000Z";
+const adoptionRow = (id: string, tenant: string, verb: string, by: string, reason: string, at: string): string =>
+  `SELECT '${id}' AS disposition_id, '${tenant}' AS tenant_id, 'cloudflare.dns' AS surface, NULL AS host, 'host-000000.com' AS object_id, 'proxied' AS setting_path, 'sha256:0' AS value_hash, '${verb}' AS verb, '${reason}' AS reason, NULL AS expires_at, '${by}' AS decided_by, NULL AS rule_id, 'fnd-${id}' AS finding_id, 'run-00000000000000a1' AS run_id, '${at}' AS decided_at`;
+const holds = (lesson: string): string => `accepted exception ${lesson} holds until 2026-11-30T00:00:00.000Z (parity); the checks alone would say HOLD`;
+/**
+ * Five ledger rows in place of the stored ones, so the case reads the same dispositions on both engines whatever the
+ * datasource holds: an ADOPT under the store's lesson (in force), one naming a lesson the store lacks, one decided after
+ * the lesson's expiry, one of another tenant naming the same lesson, and a HOLD by policy, which the read leaves out.
+ */
+const adoptionsOf = (lesson: { lesson_id: string; tenant_id: string }): Overlays => ({
+  disposition: [
+    `SELECT disposition_id, tenant_id, surface, host, object_id, setting_path, value_hash, verb, reason, expires_at, decided_by, rule_id, finding_id, run_id, decided_at FROM {{t:disposition}} WHERE disposition_id = ''`,
+    adoptionRow("disp-adopt-in-force", lesson.tenant_id, "ADOPT", "operator", holds(lesson.lesson_id), ADOPTED_AT),
+    adoptionRow("disp-adopt-no-lesson", lesson.tenant_id, "ADOPT", "operator", holds("mem-999999"), ADOPTED_AT),
+    adoptionRow("disp-adopt-expired", lesson.tenant_id, "ADOPT", "operator", holds(lesson.lesson_id), "2026-12-31T00:00:00.000Z"),
+    adoptionRow("disp-adopt-other-tenant", "client-z", "ADOPT", "operator", holds(lesson.lesson_id), ADOPTED_AT),
+    adoptionRow("disp-hold", lesson.tenant_id, "HOLD", "policy", "held under the catch-all rule", ADOPTED_AT),
+  ].join("\nUNION ALL\n"),
+});
+const ADOPTIONS = adoptionsOf(LESSON);
 /** One rollback_file action per file of the sites host's run, and one of another tenant, which the tenant's read leaves out. */
 const ACTIONS: Overlays = {
   action: `SELECT ${ACTION_COLUMNS} FROM {{t:action}}
@@ -387,6 +416,10 @@ const CASES: Case[] = [
   ...TICKET_CASES,
   ...EVAL_PARITY_CASES.map((c) => ({ ...c, mask: noEvidenceBodies })),
   ...CATALOGUE.map((t) => ({ name: `template ${t.id}`, sql: t.sql, params: SAMPLE[t.id], rows: t.id === "setting_matches_approved" ? QUEST_APPROVALS : t.id === "backup_recent" ? RECENT_BACKUPS : SAMPLE_ROWS[t.id] })),
+  // The file tables, Zetaris's LESSONS.lesson and RULES.rule, and the cross-source read over them (src/data/files.ts).
+  ...FILE_TABLES.map((t) => ({ name: `file table ${t.name}`, sql: `SELECT ${t.columns.join(", ")} FROM {{t:${t.name}}} ORDER BY ${t.columns[0]}`, params: {}, rows: FILES[t.name as keyof typeof FILES].length })),
+  { name: "adoptions (five ledger rows: one in force, one naming no lesson, one after the expiry, one of another tenant, one HOLD)", sql: ADOPTION_SQL, params: {}, overlays: ADOPTIONS, rows: 4 },
+  { name: "exception_in_force at one decision instant", sql: ADOPTION_CHECK_SQL, params: { decided_at: ADOPTED_AT }, overlays: ADOPTIONS, rows: 1 },
   // Every table, the eight of the design included: a bundle exported before they existed holds none of their rows, and the datasource then holds none either.
   ...SCHEMA_TABLES.map((t) => ({
     name: `table ${t.name}`,
@@ -411,6 +444,7 @@ describe("engine parity", () => {
   beforeAll(async () => {
     const engine = await SqlJsEngine.create();
     engine.loadBundle(bundle);
+    engine.loadFileTables(FILES);
     sqljs = new DataLayer(engine);
   });
 
@@ -470,6 +504,31 @@ describe("the document's inventory read over sample/bundle.json, on sql.js: the 
     const sitesOlder = assets(SITES_HOST).filter((a) => String(a.observed_at) < latestStart(SITES_HOST)).length;
     expect(await read(SITES_HOST, OLDER_INVENTORY)).toEqual({ latest: String(assets(SITES_HOST).length - sitesOlder), older: String(sitesOlder + assets(SITES_HOST).length) });
     expect(await read("host-000000")).toEqual({ latest: "", older: "" });
+    engine.close();
+  });
+});
+
+describe("the file tables over the committed store and policy, on sql.js: exception_in_force at one decision instant", () => {
+  it("the ADOPT under a lesson in force joins it; one naming no lesson, one after the expiry and one of another tenant do not; the HOLD is left out", async () => {
+    const files = fileRows({ memoryDir: SAMPLE_MEMORY_DIR, policyFile: "policy/hackathon.json" });
+    expect(files.lesson).toHaveLength(23);
+    expect(files.rule).toHaveLength(15);
+    const lesson = files.lesson[0];
+    expect(lesson).toMatchObject({ lesson_id: "mem-1", tenant_id: "client-1", kind: "exception", finding_class: "proxied_without_real_ip", expires_at: "2026-11-30T00:00:00.000Z" });
+    const engine = await SqlJsEngine.create();
+    engine.loadBundle(bundle);
+    expect(engine.loadFileTables(files)).toEqual({ lesson: 23, rule: 15 });
+    const layer = new DataLayer(engine).withOverlays(adoptionsOf(lesson));
+    const rows = objects(await layer.run(`${ADOPTION_SQL} ORDER BY disposition_id`, {}));
+    expect(rows.map((r) => [r.disposition_id, r.lesson_id, r.lesson_expires_at])).toEqual([
+      ["disp-adopt-expired", "mem-1", "2026-11-30T00:00:00.000Z"],
+      ["disp-adopt-in-force", "mem-1", "2026-11-30T00:00:00.000Z"],
+      ["disp-adopt-no-lesson", "", ""],
+      ["disp-adopt-other-tenant", "", ""],
+    ]);
+    expect(objects(await layer.run(ADOPTION_CHECK_SQL, { decided_at: ADOPTED_AT }))).toEqual([{ adoptions: "3", in_force: "1" }]);
+    expect(objects(await layer.run(ADOPTION_CHECK_SQL, { decided_at: "2026-12-31T00:00:00.000Z" }))).toEqual([{ adoptions: "1", in_force: "0" }]);
+    expect(objects(await layer.run(ADOPTION_CHECK_SQL, { decided_at: "2027-01-01T00:00:00.000Z" }))).toEqual([{ adoptions: "0", in_force: "0" }]);
     engine.close();
   });
 });

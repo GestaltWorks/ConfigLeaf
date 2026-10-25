@@ -4,7 +4,9 @@
 // output is SQL that we execute ourselves, under the same guard as the catalogue queries.
 //
 // A verdict counts only when the receipt gate (src/gate.ts) says a signed receipt names the tier requested
-// (JudgeInput.requestedTier: Ultra by default, Lightning for the eval's C2) and, when the claim belongs to a
+// (JudgeInput.requestedTier: Ultra by default, Lightning for the eval's C2), records no injected memory (hmem null:
+// every call goes out under a fresh meterless-scope, src/adapters/nightshift.ts freshScope; a receipt with
+// hmem.injected above 0 files not_judged, "memory injected (n records)", never retried) and, when the claim belongs to a
 // tenant, that the receipt is ours: filed under that tenant's app id
 // ("drift-agent-<tenant>") for the request we made. The gate runs before the reply is read, because a
 // receipt that is not ours means the answer is discarded and the call made once more as a fresh request
@@ -71,6 +73,9 @@ export interface JudgeVerdict {
   /** The ladder's route (model id) that answered, and its attempts on that route (2 after one retry); absent when no route answered. */
   route?: string;
   routeAttempts?: number;
+  /** From the gate: the records Nightshift's memory injected as the signed receipt states (null with no receipt), and the meterless-scope sent. Absent when no gate ran. */
+  memoryInjected?: number | null;
+  scope?: string | null;
 }
 
 export interface JudgeInput {
@@ -250,7 +255,7 @@ export async function judgeClaim(input: JudgeInput): Promise<JudgeVerdict> {
   }
   const served = {
     receiptId: gate.receiptId, servedModel: gate.servedModel, signatureOk: gate.signatureOk, ...(gate.custody ? { custody: gate.custody } : {}), ...(appId ? { attempts } : {}),
-    route: chat.modelRequested, routeAttempts: chat.retries + 1,
+    route: chat.modelRequested, routeAttempts: chat.retries + 1, memoryInjected: gate.memoryInjected, scope: gate.scope,
   };
 
   // 2. The reply, parsed and guarded. A reply the gate refused is recorded (its SQL shown) and never run.

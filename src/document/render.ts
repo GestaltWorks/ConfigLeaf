@@ -76,6 +76,10 @@ import type { Action, FindingCause, PolicyRule } from "../data/rows.ts";
 import { withRestore } from "../explain/cause.ts";
 import { CAUSES_SQL, causeOf } from "../explain/explain.ts";
 import { TABLE_NAMES } from "../data/schema.ts";
+import { fileURLToPath } from "node:url";
+import { SAMPLE_MEMORY_DIR } from "../config.ts";
+import { fileRows, ledgerEntries } from "../data/file-rows.ts";
+import { FILE_DATASOURCES } from "../data/files.ts";
 import { ruleOf, VERBS } from "../pipeline.ts";
 import { resolvePolicy } from "../policy/resolve.ts";
 import type { Tracer } from "../trace.ts";
@@ -202,8 +206,12 @@ function groupBy<T>(rows: readonly T[], key: (r: T) => string): [string, T[]][] 
 // For each finding class the pass raises: the tables its detector SQL names as {{t:...}} (src/data/queries.ts) and
 // the tables its default checks name (DEFAULT_CHECKS and the record lists in src/catalogue/select.ts, each template's
 // sql in src/catalogue/templates.ts), and the source each table's rows come from. Read off the SQL text when the
-// section renders, so a changed query changes the row. The README carries the same section (npm run sources), and
-// test/document.test.ts holds the two equal.
+// section renders, so a changed query changes the row. Then the two file sources Zetaris registers beside DRIFT
+// (fileSourceRows: the technician's memory store as LESSONS, the policy file as RULES), counted off the committed
+// files. The README carries the same section (npm run sources), and test/document.test.ts holds the two equal.
+
+/** The committed policy file, under the repository root: the RULES row counts it. */
+const COMMITTED_POLICY = fileURLToPath(new URL("../../policy/hackathon.json", import.meta.url));
 
 /** Where each table's rows come from, in the order the section lists the sources. */
 const SOURCES: readonly { name: string; tables: readonly string[]; holds: string }[] = [
@@ -286,6 +294,42 @@ function sourceLines(): string[] {
     "The sources:",
     "",
     ...SOURCES.filter((s) => rows.some((r) => r.sources.includes(s.name))).map((s) => `- ${s.name} (${s.tables.map(code).join(", ")}): ${s.holds}.`),
+    "",
+    "Two more sources decide what happens to a finding: the technician's memory store, which the Decider recalls from, and the policy file, which `npm run policy:load` turns into the `policy_rule` rows. Zetaris reads both as files beside `DRIFT`: `npm run zetaris:setup` writes them into its filestore and registers them. The DQ rule `exception_in_force` on `drift_usl.adoption` joins every ADOPT the ledger holds under an accepted exception to its lesson, across the two datasources. The rows are those of the committed files:",
+    "",
+    ...table(["source", "Zetaris datasource", "tables", "rows", "what it holds"], fileSourceRows().map((r) => [`${r.name} (${code(r.file)})`, code(r.datasource), r.tables.map(code).join(", "), r.rows, r.holds])),
+  ];
+}
+
+export interface FileSourceRow {
+  name: string;
+  /** The committed file or directory the rows are read from. */
+  file: string;
+  /** The Zetaris Lightning database it is registered as. */
+  datasource: string;
+  /** Its tables there, as <datasource>.<table>. */
+  tables: string[];
+  /** The row counts, in words. */
+  rows: string;
+  holds: string;
+}
+
+/** The two file sources, counted off the committed store (examples/memory) and policy file (policy/hackathon.json): no query, the same in every clone. */
+export function fileSourceRows(): FileSourceRow[] {
+  const files = fileRows({ memoryDir: SAMPLE_MEMORY_DIR, policyFile: COMMITTED_POLICY });
+  const ledger = ledgerEntries(SAMPLE_MEMORY_DIR).length;
+  const versions = [...new Set(files.rule.map((r) => r.version))].sort((a, b) => a - b).join(", ");
+  return [
+    {
+      name: "technician memory store", file: "examples/memory", datasource: FILE_DATASOURCES.lesson, tables: [`${FILE_DATASOURCES.lesson}.lesson`, `${FILE_DATASOURCES.lesson}.ledger`],
+      rows: `${files.lesson.length} lessons, ${ledger} ledger entries`,
+      holds: "the lessons the technician taught, in the Meterless H-MEM store, each with its tenant, scope key, expiry and provenance; the Decider recalls them, and an accepted exception makes its finding ADOPT until it expires",
+    },
+    {
+      name: "policy rules", file: "policy/hackathon.json", datasource: FILE_DATASOURCES.rule, tables: [`${FILE_DATASOURCES.rule}.rule`],
+      rows: `${files.rule.length} rules, version ${versions}`,
+      holds: "the MSP's policy, one row per rule under the rule id every disposition decided by policy names",
+    },
   ];
 }
 

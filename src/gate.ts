@@ -35,6 +35,16 @@
 // gateWithCustody makes the call once more as a fresh request (a new nonce for the prompt, so a new
 // request_id and no cache hit); a second failure fails closed, not_judged, with a reason that starts
 // "custody". Every custody check is one trace event; the prompt text never reaches the trace, only ids.
+//
+// Memory (measured 25 Oct 2026). Nightshift 1.2.7 puts up to three stored answers to similar earlier requests in front
+// of a request that shares their meterless-scope, across apps, and the signed receipt records it as hmem {ids, injected,
+// reason, strategy, top_score}, or hmem null when nothing was injected. An answer conditioned on earlier answers is not
+// the answer to the prompt we sent, so a verified receipt whose hmem.injected is above 0 fails the gate with the reason
+// "memory injected (n records)" and the verdict files not_judged, as a substituted tier does: returned at once, never
+// retried. hmem null or absent passes. In the development run of 25 Oct, 281 of 380 receipts carried it, the two real
+// fixtures of 23 Oct (test/fixtures/receipt-*.json) included (3 records each). The adapter now sends a fresh
+// meterless-scope per request (src/adapters/nightshift.ts freshScope); the gate result records the scope sent and the
+// injected count the signed receipt states.
 
 import { randomBytes } from "node:crypto";
 import { Nightshift, verifyReceipt, type ChatResult, type SignedReceipt } from "./adapters/nightshift.ts";
@@ -61,7 +71,23 @@ export interface GateResult {
   reason: string;
   /** The custody check, when the caller asked for one and a verified receipt was there to check. */
   custody?: CustodyCheck;
+  /** The records Nightshift's memory injected, as the receipt states (hmem.injected; 0 for hmem null or absent); null when no receipt was found. */
+  memoryInjected: number | null;
+  /** The meterless-scope the request went out under (ChatResult.scope); null when the result does not say. */
+  scope: string | null;
 }
+
+/** A receipt's hmem: the records Nightshift injected before the request, or null when it injected none (hmem null or absent). */
+export function hmemOf(r: SignedReceipt): { injected: number; ids: string[]; topScore: number | null } | null {
+  const h = r.body.receipt?.hmem;
+  if (h === null || h === undefined || typeof h !== "object") return null;
+  const ids: string[] = Array.isArray(h.ids) ? h.ids.map(String) : [];
+  const injected = typeof h.injected === "number" && Number.isFinite(h.injected) ? h.injected : ids.length;
+  return injected > 0 ? { injected, ids, topScore: typeof h.top_score === "number" ? h.top_score : null } : null;
+}
+
+/** hmem.injected of a receipt: 0 when hmem is null or absent. */
+export const memoryInjectedOf = (r: SignedReceipt): number => hmemOf(r)?.injected ?? 0;
 
 export interface ReceiptFinder {
   find(receiptId: string): Promise<SignedReceipt | null>;
@@ -183,10 +209,11 @@ export function newNonce(): string {
  * Gate one chat result. The served model comes from the receipt when it is found, else from the
  * response (so the trace says what the response claimed); the signature is checked when the receipt
  * is found. ok only when the receipt was found, its signature verifies, the served tier is the
- * requested tier and, when `custody` is given, the receipt is ours (checkCustody): the response body
- * is exactly what a substituting proxy controls, so its own routed_model never passes the gate on its
- * own. One "check" trace event for the custody check when it ran, then one for the gate, status ok or
- * not_judged.
+ * requested tier, the receipt says no memory was injected (hmem null, absent or injected 0) and, when
+ * `custody` is given, the receipt is ours (checkCustody): the response body is exactly what a
+ * substituting proxy controls, so its own routed_model (or its copy of hmem) never passes the gate on
+ * its own. One "check" trace event for the custody check when it ran, then one for the gate, status ok
+ * or not_judged, carrying the scope sent and the injected count.
  */
 export async function gateChatResult(
   result: ChatResult,
@@ -201,7 +228,10 @@ export async function gateChatResult(
   const servedModel = (receipt ? servedModelOf(receipt) : null) ?? result.modelRouted ?? null;
   const servedTier = tierOf(servedModel);
   const custodyCheck = custody && receipt && signatureOk === true ? checkCustody(receipt, result, custody) : undefined;
-  const ok = signatureOk === true && servedTier === requestedTier && (custodyCheck === undefined || custodyCheck.ok);
+  const hmem = receipt ? hmemOf(receipt) : null;
+  const memoryInjected = receipt ? hmem?.injected ?? 0 : null;
+  const scope = result.scope ?? null;
+  const ok = signatureOk === true && servedTier === requestedTier && memoryInjected === 0 && (custodyCheck === undefined || custodyCheck.ok);
 
   if (custodyCheck) {
     tracer?.emit({
@@ -215,19 +245,22 @@ export async function gateChatResult(
   }
 
   const source = receipt ? `receipt ${result.receiptId}` : result.receiptId ? `receipt ${result.receiptId} not in the runtime list, response says` : "no receipt_id on the response, response says";
+  const records = (n: number): string => `${n} record${n === 1 ? "" : "s"}`;
   const reason = signatureOk === false ? `${source}: signature does not verify; body altered or not signed by the runtime`
     : servedTier !== requestedTier ? `${source} ${servedModel ?? "no model"} (${servedTier}), ${requestedTier} was requested`
+    : hmem && signatureOk ? `memory injected (${records(hmem.injected)}): ${source} ${servedModel} (${servedTier}), hmem ids ${hmem.ids.join(", ") || "none listed"}${hmem.topScore !== null ? `, top_score ${hmem.topScore}` : ""}${scope ? `, scope ${scope}` : ""}; the answer was conditioned on earlier stored answers, not judged`
     : custodyCheck && !custodyCheck.ok ? custodyCheck.reason
-    : signatureOk ? `${source} ${servedModel} (${servedTier}), signature verified${custodyCheck ? ", custody holds" : ""}`
+    : signatureOk ? `${source} ${servedModel} (${servedTier}), signature verified, no memory injected${custodyCheck ? ", custody holds" : ""}`
     : `${source} ${servedModel} (${servedTier}), unreceipted, not judged`;
 
   tracer?.emit({
     agent, action: "check", status: ok ? "ok" : "not_judged",
     model_requested: result.modelRequested, model_routed: servedModel ?? undefined,
     receipt_id: result.receiptId ?? undefined, signature_ok: signatureOk ?? undefined,
-    output_summary: `${requestedTier} requested, ${servedTier} served`, detail: reason,
+    ...(scope ? { scope } : {}), memory_injected: memoryInjected,
+    output_summary: `${requestedTier} requested, ${servedTier} served${memoryInjected ? `, ${records(memoryInjected)} of memory injected` : ""}`, detail: reason,
   });
-  return { ok, requestedTier, servedModel, servedTier, receiptId: result.receiptId ?? null, signatureOk, reason, ...(custodyCheck ? { custody: custodyCheck } : {}) };
+  return { ok, requestedTier, servedModel, servedTier, receiptId: result.receiptId ?? null, signatureOk, reason, ...(custodyCheck ? { custody: custodyCheck } : {}), memoryInjected, scope };
 }
 
 export interface CustodyAttempt {
@@ -249,9 +282,9 @@ export interface CustodyOutcome {
  * The call-then-gate loop with the custody rule. `attempt` makes the model call; it receives a fresh
  * nonce each time and must put it into the prompt it sends under `appId`, and returns the result with
  * the message text(s) it sent, the user message last. A result that fails the gate for custody alone (signature verified,
- * tier right, receipt not ours) is discarded and traced as a retry, and the call is made once more;
+ * tier right, no memory injected, receipt not ours) is discarded and traced as a retry, and the call is made once more;
  * a second custody failure fails closed with a reason that starts "custody". Any other failure
- * (substitution, a tampered body, an unreceipted response) is returned at once and never retried,
+ * (substitution, injected memory, a tampered body, an unreceipted response) is returned at once and never retried,
  * as before. A thrown model error propagates: the caller files it not_judged as it does today.
  */
 export async function gateWithCustody(
@@ -267,7 +300,8 @@ export async function gateWithCustody(
     const a = await attempt({ nonce: newNonce(), attempt: n });
     const gate = await gateChatResult(a.chat, requestedTier, receipts, tracer, agent, { appId, prompt: a.prompt });
     if (gate.ok) return { chat: a.chat, gate, attempts: n, discarded };
-    const custodyOnly = gate.custody !== undefined && !gate.custody.ok && gate.signatureOk === true && gate.servedTier === requestedTier;
+    // Injected memory is refused like a substitution: returned at once, never asked again into a cleaner answer.
+    const custodyOnly = gate.custody !== undefined && !gate.custody.ok && gate.signatureOk === true && gate.servedTier === requestedTier && gate.memoryInjected === 0;
     if (!custodyOnly) return { chat: a.chat, gate, attempts: n, discarded };
     discarded.push({ chat: a.chat, gate });
     if (n === 1) {

@@ -27,10 +27,7 @@
 // (test/actions.test.ts): ROLLBACK 3 (app.conf, the missing blog.conf, rec-c3's content) and FIX 1 give five actions
 // (rollback_file 2, revert_record, investigate, fix), and a second run over the same ledger writes 0. Live the same day,
 // as the act step of the cycles of 23:36 and 23:38 UTC (dry run through Zetaris): 27 dispositions of 3 runs in scope,
-// HOLD 27, the plan empty, 0.4 s each. Measured 25 Oct 2026 over sample/bundle.json (SAMPLE_MODE=true): 81 dispositions
-// of the tenant in the ledger, the bundle's rows of three live passes (the sample pass writes 0), 27 of 3 runs in scope,
-// HOLD 27, the plan empty, 2.2 s; as the act step of the 01:16 UTC cycle, a dry run through Zetaris, 0 actions planned,
-// the ledger at 81.
+// HOLD 27, the plan empty, 0.4 s each.
 
 import { pseudonymHost } from "../collectors/linux.ts";
 import type { JudgeModel } from "../agents/judge.ts";

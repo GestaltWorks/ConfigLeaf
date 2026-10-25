@@ -3,7 +3,9 @@
 // SQL over the bundle's rows and the World Model confirms FOUND-BUT-DIFFERENT from what it recorded;
 // nothing here maps an input to a stored answer. Prints one JSON finding per line, then one disposition
 // line per finding as the ledger holds it under the finding's disposition_id, then one CAUSE line per finding
-// the explain step explains, then one summary, then one REPORT line: the owner's report (src/document/report.ts) for
+// the explain step explains, then one ADOPTIONS line (the DQ rule exception_in_force over the pass's ADOPTs under an
+// exception: the drift_usl.adoption SQL over the ledger and the lesson table, which sql.js holds beside the bundle as
+// Zetaris holds LESSONS.lesson, with the rule table from the policy file), then one summary, then one REPORT line: the owner's report (src/document/report.ts) for
 // the tenant of the bundle's latest DNS run, rendered from the owner's document's rows over the same engine after the
 // explain step and written to examples/report.html once it passes the deny-list probe (src/document/sample.ts
 // sampleReport: no clock, trace or tip in it, so npm run document in sample mode writes the same bytes).
@@ -36,6 +38,8 @@ import { DataLayer } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { decisionInstantWith } from "../src/data/instant.ts";
 import { DISPOSITIONS_SQL, objects } from "../src/data/queries.ts";
+import { lessonRows, ruleRows } from "../src/data/file-rows.ts";
+import { ADOPTION_CHECK_SQL } from "../src/data/files.ts";
 import { TechnicianMemory } from "../src/engine/memory.ts";
 import { DriftWorld } from "../src/engine/world.ts";
 import { CAUSE_CLASSES } from "../src/explain/cause.ts";
@@ -58,6 +62,9 @@ const counts = engine.loadBundle(bundle);
 tracer.emit({ agent: "collector", action: "observe", status: "ok", output_summary: `sample/bundle.json loaded into sql.js: ${Object.entries(counts).map(([t, n]) => `${t} ${n}`).join(", ")}`, detail: "model: none (recorded, redacted rows exported from the app Postgres; see sample/bundle.json _note)" });
 
 const memory = new TechnicianMemory({ storage: "read" });
+// The file tables Zetaris reads as LESSONS.lesson and RULES.rule, the same rows npm run zetaris:setup writes there.
+const files = engine.loadFileTables({ lesson: lessonRows(memory), rule: ruleRows() });
+tracer.emit({ agent: "collector", action: "observe", status: "ok", output_summary: `file tables loaded into sql.js: lesson ${files.lesson} (${config.memoryDir}), rule ${files.rule} (${config.policyFile})`, detail: "model: none" });
 const layer = new DataLayer(engine);
 // decidedAt: the bundle's own instant (the later of its latest run's finish and its latest ledger row), or the instant the
 // latest lesson was taught when that is later, so every disposition and HOLD expiry is the same on every run with the same
@@ -91,6 +98,9 @@ const described = pass.findings.map((f) => {
 const mem = pass.memory ? `; memory: ${pass.memory.lessons} lesson(s), ${pass.memory.applied} exception(s) applied, ${pass.memory.lapsed} lapsed` : "";
 const verbs = VERBS.filter((v) => pass.verbs[v] > 0).map((v) => `${v} ${pass.verbs[v]}`).join(", ") || "none";
 const recorded = pass.ledger ? `; ledger: ${pass.ledger.dispositions} disposition(s), ${pass.ledger.fingerprints} referent fingerprint(s)` : "";
+// exception_in_force over this pass's ADOPTs, the drift_usl.adoption SQL on sql.js: the ledger joined to the lessons.
+const adoption = objects(await layer.run(ADOPTION_CHECK_SQL, { decided_at: decidedAt }, { tracer, agent: "sample" }))[0];
+console.log(`ADOPTIONS: ${adoption.adoptions} ADOPT decided under an accepted exception, ${adoption.in_force} joined to a lesson in force at the decision instant (exception_in_force over the disposition and lesson tables)`);
 console.log(`SAMPLE: ${pass.runs} collection runs, ${pass.gatedOut.length} failed the DQ gate (${pass.gatedOut.join(", ") || "none"}), ${pass.observed} observations in the World Model, ${pass.findings.length} finding(s): ${described.join("; ") || "none"}; judge skipped (model: none)${mem}; verbs: ${verbs}; policy rules ${pass.rules}, locked settings without an approved value ${pass.locked}${recorded}${explain}`);
 
 // The owner's report for the tenant of the bundle's latest DNS run (client-1), from the page's rows over this engine.

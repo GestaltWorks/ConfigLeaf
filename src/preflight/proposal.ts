@@ -1,7 +1,6 @@
 // A proposed change, typed. A technician (or a model, in live mode) says what they are about to do;
 // the pre-flight binds it to one row of the latest passing run or rejects it, and the rejection is
-// counted (the eval reads `invalid`). Nothing here reads a model: a proposal that does not parse or
-// does not bind is a measurement, not a guess.
+// counted (the eval reads `invalid`). Nothing here reads a model.
 //
 //   dns_record      one Cloudflare record, by record_id or by name + type, in the tenant's latest
 //                   passing cloudflare.dns run; field proxied (0/1) or content (a name or address)

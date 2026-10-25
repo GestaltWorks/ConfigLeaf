@@ -16,7 +16,7 @@ import {
   nemotronOf, passView, presentOptions, probeView, seconds, shortModel, shortUtc, thousands, ticketsView, utcMinute, validateView, whatHappened, withoutRunIds, type PresentOptions,
   type CauseFacts, type StoryInput, type TicketFacts,
 } from "../src/loop/present.ts";
-import { dispositionIdOf, type PassStep } from "../src/loop/pass.ts";
+import { dispositionIdOf, type AdoptionCheck, type PassStep } from "../src/loop/pass.ts";
 import type { Finding, Verb } from "../src/pipeline.ts";
 import type { TicketOp } from "../src/psa/index.ts";
 import type { TicketOutcome } from "../src/psa/step.ts";
@@ -135,7 +135,7 @@ describe("the table over a clean dry run", () => {
       t.done({ ms: 112711, steps: 9, trace: "logs/cycle_test.jsonl" }),
     ];
     expect(screen).toEqual([
-      "drift-agent · cycle · tenant client-1 · 2026-10-25 15:38 UTC · dry run, nothing changed",
+      "ConfigLeaf · cycle · tenant client-1 · 2026-10-25 15:38 UTC · dry run, nothing changed",
       at("  collect   cloudflare    58 records in 6 zones · audit 1,036 rows · vault 0a1b2c3d", "5.8 s"),
       at("  collect   fixture-host  24 files · 46 blocks · 761 settings · vault 1a2b3c4d", "3.3 s"),
       at("  probe     37 names      http 27 ok · dns 34 ok · tls 30 ok · 20 failing", "9.8 s"),
@@ -194,6 +194,30 @@ describe("the table over a clean dry run", () => {
     const c = new Table({ ...PLAIN, color: true });
     expect(c.row("pass", passView(cleanPass, { datasource: "DRIFT", queries: 3, rows: 1, failed: 2 }), null)[1])
       .toBe(`            Zetaris Lightning SQL over DRIFT · 3 queries · 1 row · ${ESC}[31m2 failed${ESC}[0m`);
+  });
+
+  it("the Zetaris line carries the pass's read of exception_in_force over its adoptions, wrapped at the width; red when one fails, yellow when not read", () => {
+    const sent = { datasource: "DRIFT", queries: 437, rows: 26_956, failed: 0 };
+    const pass = (adoptions: AdoptionCheck) => ({ ...cleanPass, adoptions });
+    const rows = t.row("pass", passView(pass({ rule: "exception_in_force", of: "pass", decidedAt: "2026-10-25T21:12:42.005Z", adoptions: 23, inForce: 23 }), sent), 68593);
+    expect(rows.slice(1, 3)).toEqual([
+      "            Zetaris Lightning SQL over DRIFT · 437 queries · 26,956 rows · 0 failed",
+      "            DQ exception_in_force 23 of 23 adoptions",
+    ]);
+    // the rest of the row is the row without the read
+    expect([rows[0], rows[1], ...rows.slice(3)]).toEqual(t.row("pass", passView(cleanPass, sent), 68593));
+    // a pass with no ledger reads the latest recorded pass's, and says which (measured 25 Oct 2026, 22:29 UTC, client-1)
+    const dry = t.row("pass", passView(pass({ rule: "exception_in_force", of: "recorded", decidedAt: "2026-10-25T21:12:42.005Z", adoptions: 23, inForce: 23 }), sent), 135_800);
+    expect(dry[2]).toBe("            DQ exception_in_force 23 of 23 adoptions of the pass recorded at 2026-10-25 21:12 UTC");
+    const none = t.row("pass", passView(pass({ rule: "exception_in_force", of: "recorded", decidedAt: null, adoptions: 0, inForce: 0 }), sent), null);
+    expect(none[2]).toBe("            DQ exception_in_force 0 of 0 adoptions, no pass recorded one");
+    // without the Zetaris facts (sql.js) no line names it
+    expect(t.row("pass", passView(pass({ rule: "exception_in_force", of: "pass", decidedAt: null, adoptions: 1, inForce: 1 })), null)).toEqual(t.row("pass", passView(cleanPass), null));
+    const c = new Table({ ...PLAIN, color: true, width: 200 });
+    expect(c.row("pass", passView(pass({ rule: "exception_in_force", of: "pass", decidedAt: null, adoptions: 23, inForce: 21 }), sent), null)[1])
+      .toBe(`            Zetaris Lightning SQL over DRIFT · 437 queries · 26,956 rows · 0 failed · ${ESC}[31mDQ exception_in_force 21 of 23 adoptions${ESC}[0m`);
+    expect(c.row("pass", passView(pass({ rule: "exception_in_force", error: "Zetaris 400: table not found" }), sent), null)[1])
+      .toBe(`            Zetaris Lightning SQL over DRIFT · 437 queries · 26,956 rows · 0 failed · ${ESC}[33mDQ exception_in_force not read${ESC}[0m`);
   });
 
   it("says nothing new when no vault commit came in, and names the repositories it could not validate", () => {
@@ -812,7 +836,7 @@ describe("--verbose and --quiet through runCycle", () => {
     const present: PresentOptions = { ...PLAIN, verbose: true };
     const res = await runCycle({ tenant: "t1", apply: false, aliases: [], skip: new Set(["probe", "validate", "act", "tickets", "document"] as const) }, steps, { print: (l) => printed.push(l), clock: () => (ms += 500), present });
     expect(printed.slice(0, 4)).toEqual([
-      "drift-agent · cycle · tenant t1 · 1970-01-01 00:00 UTC · dry run, nothing changed",
+      "ConfigLeaf · cycle · tenant t1 · 1970-01-01 00:00 UTC · dry run, nothing changed",
       at("  collect   cloudflare    1,036 records in 6 zones · audit 12 rows · vault abcdef01", "0.5 s"),
       "cycle: [1/8] collect:cloudflare ok in 0.5 s: collect:cloudflare: dns 58/58 complete",
       "  probe     skipped",
@@ -843,7 +867,7 @@ describe("--verbose and --quiet through runCycle", () => {
     const quiet: string[] = [];
     await runCycle({ tenant: "t1", apply: true, aliases: [], skip: new Set(["probe", "validate", "act", "tickets", "document"] as const) }, steps, { print: (l) => quiet.push(l), clock: () => (ms += 500), present: { ...PLAIN, quiet: true } });
     expect(quiet).toHaveLength(2);
-    expect(quiet[0]).toBe("drift-agent · cycle · tenant t1 · 1970-01-01 00:00 UTC · applying changes");
+    expect(quiet[0]).toBe("ConfigLeaf · cycle · tenant t1 · 1970-01-01 00:00 UTC · applying changes");
     expect(quiet[1]).toMatch(/^done · 8 steps · 5 skipped · /);
   });
 });

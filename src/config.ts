@@ -19,7 +19,8 @@ const Schema = z.object({
   METERLESS_RUNTIME_TOKEN: z.string().default(""),
   METERLESS_APP_ID: z.string().default("drift-agent"),
   // Nemotron through Nightshift, one endpoint. Measured 23 Oct: OpenRouter Nemotron answered 12/12
-  // at 1 to 2 s median; NVIDIA's free endpoint 4/6 at 7.5 s with empty responses. The agent requests
+  // at 1 to 2 s median; NVIDIA's free endpoint 4/6 at 7.5 s with empty responses
+  // (scripts/probe-openrouter-nemotron.ts). The agent requests
   // the primary; on failure the adapter walks the fallback list. A local lane
   // (local-runtime/nemotron-3.5-lightning-30b-a3b) joins the list when its weights are installed: on
   // 25 Oct it answered 503 local_runtime_not_ready on this machine, which holds none.

@@ -2,7 +2,8 @@
 //
 // Writes test/fixtures/policy-bundle.json from the committed fixture: its policy_rule rows are policy/hackathon.json
 // loaded for client-a through src/policy/load.ts under the fixture's salt (policy-fixture-salt), in rule_id order,
-// with the rule count and the file's version in the fixture's _note; and two cases of the pipeline's build B rows,
+// with the rule count and the file's version in the fixture's _note; and two cases of the pipeline's approved_missing
+// and prior-HOLD rows,
 // written by key so a second run changes nothing:
 //   - approved_missing: /etc/nginx/conf.d/blog.conf on host-7f1c, approved at its 19 Oct bytes, observed in the 20
 //     Oct nginx run (whose counts become 4 of 4), committed to the vault in that run with an nginx-t validation ok,
@@ -62,7 +63,7 @@ function upsert<T extends object>(bundle: Bundle, table: TableName, add: readonl
   return [...rows.entries()].sort(([a], [b]) => cmp(a, b)).map(([, r]) => r);
 }
 
-/** The build B rows of the fixture, from the rules the policy file gives. */
+/** The approved_missing and prior-HOLD rows of the fixture, from the rules the policy file gives. */
 function buildB(bundle: Bundle, rules: readonly PolicyRule[]): Partial<Record<TableName, object[]>> {
   const ruleFor = (surface: string, objectGlob: string, settingGlob: string): string => {
     const r = rules.find((x) => x.surface === surface && x.object_glob === objectGlob && x.setting_glob === settingGlob);
@@ -121,7 +122,7 @@ function buildB(bundle: Bundle, rules: readonly PolicyRule[]): Partial<Record<Ta
   };
 }
 
-/** The fixture's text with its policy_rule rows, its build B rows and its note regenerated. */
+/** The fixture's text with its policy_rule rows, its approved_missing and prior-HOLD rows and its note regenerated. */
 export function policyBundleText(current: string = readFileSync(FIXTURE, "utf8")): string {
   const bundle = JSON.parse(current) as Bundle;
   const { file, rows } = loadPolicyFile(POLICY, { tenant: FIXTURE_TENANT, redactor: new Redactor(FIXTURE_SALT) });

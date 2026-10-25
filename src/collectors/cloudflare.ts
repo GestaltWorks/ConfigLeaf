@@ -30,7 +30,7 @@
 //
 // The audit log has no total to assert, so the audit run's expected_count is the sum of the server's
 // per-page counts and observed_count the distinct rows that normalised: a row without id, type or a
-// parseable time is dropped and fails the DQ gate instead of vanishing.
+// parseable time is dropped and fails the DQ gate.
 //
 // Each dns_record row also becomes five observation rows of the DNS run, one per RECORD_FIELDS entry
 // (type, name, content, ttl, proxied): surface cloudflare.dns, host null, object_id the record id,

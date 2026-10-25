@@ -137,6 +137,13 @@ The sources:
 - inventory (`inventory_asset`): the hosts' addresses.
 - populations (`collection_run`): each source's own population, asserted before a row is read, and each run's status.
 
+Two more sources decide what happens to a finding: the technician's memory store, which the Decider recalls from, and the policy file, which `npm run policy:load` turns into the `policy_rule` rows. Zetaris reads both as files beside `DRIFT`: `npm run zetaris:setup` writes them into its filestore and registers them. The DQ rule `exception_in_force` on `drift_usl.adoption` joins every ADOPT the ledger holds under an accepted exception to its lesson, across the two datasources. The rows are those of the committed files:
+
+| source | Zetaris datasource | tables | rows | what it holds |
+|---|---|---|---|---|
+| technician memory store (`examples/memory`) | `LESSONS` | `LESSONS.lesson`, `LESSONS.ledger` | 23 lessons, 23 ledger entries | the lessons the technician taught, in the Meterless H-MEM store, each with its tenant, scope key, expiry and provenance; the Decider recalls them, and an accepted exception makes its finding ADOPT until it expires |
+| policy rules (`policy/hackathon.json`) | `RULES` | `RULES.rule` | 15 rules, version 2 | the MSP's policy, one row per rule under the rule id every disposition decided by policy names |
+
 ## Work
 
 No action is recorded for client-1.

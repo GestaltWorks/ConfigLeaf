@@ -1,4 +1,4 @@
-// Spike A: Lightning SQL over REST with the configured ZETARIS_API_KEY (the tenant's key: only an admin
+// Zetaris check: Lightning SQL over REST with the configured ZETARIS_API_KEY (the tenant's key: only an admin
 // can generate one, and it is tenant-scoped, not a user's). Read-only by default: SELECT 1 and SHOW
 // LIGHTNING DATABASES, which is all the agent is meant to run with it. With --register it also proves
 // the key can register a Lightning database, see it and drop it again; that is DDL the agent's own query

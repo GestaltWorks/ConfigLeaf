@@ -1,8 +1,7 @@
 // Store: the app Postgres the collectors write through (drift-pg, registered in Zetaris as the DRIFT
-// datasource, so what lands here is what the live pass reads). Measured 24 Oct: 127.0.0.1:15432 from
-// Windows (DATABASE_URL), drift-pg:5432 from inside the Zetaris network; sql/schema.sql applied, and
-// applied again the same evening with the eight tables of the design: 16 tables in public, the eight new
-// ones empty, the first eight at the counts of sample/bundle.json; a second apply changed nothing.
+// datasource, so what lands here is what the live pass reads): 127.0.0.1:15432 from Windows (DATABASE_URL),
+// drift-pg:5432 from inside the Zetaris network. Measured 24 Oct 2026: a second apply of sql/schema.sql
+// changed nothing.
 //
 // Contract:
 //   - Every collected-text column (rows.ts REDACT: names, paths, values, actors; not ids, hashes,

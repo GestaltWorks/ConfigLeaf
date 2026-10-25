@@ -1,14 +1,17 @@
-// Idempotent Zetaris setup: the DRIFT datasource over the app Postgres, the drift_usl Unified Semantic
-// Layer over it (eleven tables) and four DQ rules on it. plan() lists the statements in the order they run,
-// apply() runs them one at a time. uslRows() and uslMarkdown() read the layer's table off USL_DDL, activation() and
-// DQ_RULES: each entity, the DRIFT tables its activation SELECT reads, its keys and its DQ rule with the rule's
-// expression. npm run sources -- --usl prints it, and the README and the replay page's Sources tab carry it.
+// Idempotent Zetaris setup: the DRIFT datasource over the app Postgres, the LESSONS and RULES Lightning databases
+// over files in the Zetaris filestore (the technician's memory store and the policy file, src/data/files.ts), the
+// drift_usl Unified Semantic Layer over the three (fourteen tables) and five DQ rules on it. plan() lists the steps
+// in the order they run, apply() runs them one at a time. uslRows() and uslMarkdown() read the layer's table off
+// USL_DDL, activation() and DQ_RULES: each entity, the tables its activation SELECT reads, its keys and its DQ rule
+// with the rule's expression. npm run sources -- --usl prints it, and the README and the replay page's Sources tab carry it.
 //
-// The eleven tables: collection (collection_run), setting (observation; source_kind for source), referent (each
+// The fourteen tables: collection (collection_run), setting (observation; source_kind for source), referent (each
 // dns_name observation joined to the records of its name), backup_copy (backup_item joined to its snapshot),
 // policy (policy_rule), copy (vault_copy with its latest copy_validation and a validated flag), probe,
-// disposition, action (the Actor's rows, the reason and the record among them), ticket and cause (finding_cause,
-// the explainer's rows; cause_class for class). The four rules:
+// disposition, action (the Actor's rows, the reason and the record among them), ticket, cause (finding_cause,
+// the explainer's rows; cause_class for class), lesson (LESSONS.lesson), rule (RULES.rule) and adoption (every ADOPT
+// decided under an accepted exception, DRIFT.disposition LEFT JOINed to the LESSONS.lesson its reason names: the
+// catalogue's ADOPTION_SQL). The five rules:
 //   run_complete     on collection: observed_count IS NOT NULL AND expected_count IS NOT NULL AND
 //                    observed_count >= expected_count AND status = 'complete'
 //   copy_validated   on copy: validated = 1
@@ -17,8 +20,18 @@
 //                    that names no verifying probe fails the rule, its status carrying what is missing
 //   cause_evidenced  on cause: cause_class = 'unknown' OR evidence_ids <> '[]'; a cause of any class but unknown
 //                    names at least one evidence id
+//   exception_in_force on adoption: lesson_id IS NOT NULL AND lesson_kind = 'exception' AND lesson_recorded_at <=
+//                    decided_at AND decided_at < lesson_expires_at; the lesson an ADOPT names was in force when it
+//                    was decided
 //
 // Contract:
+//   - The file sources: every run writes ledger.json (the store's H-MEM ledger, entry for entry), lessons.json and
+//     rules.json (src/data/file-rows.ts) into FILESTORE_DIR in the driver container (src/zetaris/filestore.ts), each
+//     one JSON array, and records the copy's hash in COPY_STATE_FILE (.world/filestore-copy.json); the live pass and
+//     npm run answer put the files again when their hash differs from it (refreshFileTables). SHOW LIGHTNING DATABASES decides each CREATE LIGHTNING DATABASE; SHOW LIGHTNING TABLES lists
+//     each database's tables with their path and format, and DESCRIBE DATASOURCE TABLE the columns of lesson and
+//     rule. A table listed over another path or format, or with other columns, is dropped and created again; an
+//     absent one is created. A table listed as stated is kept: it re-reads its file on every query.
 //   - Re-runnable. CREATE DATASOURCE has no IF NOT EXISTS, so SHOW DATASOURCES decides it. REGISTER
 //     DATASOURCE TABLES follows a create, and for an existing source runs when SHOW DATASOURCE TABLES lacks
 //     a table of sql/schema.sql; REFRESH DATASOURCE TABLES runs when it lists all of them. Namespaces carry
@@ -26,15 +39,16 @@
 //   - The USL: SHOW NAMESPACES OR TABLES IN lightning.metastore.drift says whether drift_usl exists; LOAD
 //     USL reads its model. A model whose tables or columns differ from COMPILE_USL's is stale: REMOVE USL,
 //     then COMPILE afresh. COMPILE runs only when the USL is absent or was removed this run, so an instance
-//     already holding the eleven tables keeps its USL and its DQ rules. The USL is derived from the
-//     datasource, so a removal loses nothing.
-//   - Every run re-ACTIVATEs the eleven tables (each a SELECT over DRIFT.* returning exactly the declared
-//     columns, NOT NULL varchars in COALESCE, ints CAST), then LIST DQ USL decides each rule of DQ_RULES:
+//     already holding the fourteen tables keeps its USL and its DQ rules. The USL is derived from the
+//     datasources, so a removal loses nothing.
+//   - Every run re-ACTIVATEs the fourteen tables (each a SELECT over DRIFT.*, LESSONS.* or RULES.* returning exactly
+//     the declared columns, NOT NULL varchars in COALESCE, ints CAST), then LIST DQ USL decides each rule of DQ_RULES:
 //     REGISTER when the listing lacks it, UPDATE DQ ... SET NAME, EXPRESSION when it is listed with another
 //     expression (whitespace aside), nothing when it is listed as stated. RUN DQ on collection, copy,
-//     action and cause, the USL's table listing, a count per table.
-//   - One statement per call, except COMPILE USL ... DDL: eleven CREATE TABLE blocks separated by ';' in
-//     one request, sent with the adapter's allowMultiStatement (honoured for COMPILE USL only).
+//     action, cause and adoption, the USL's table listing, a count per table and one of LESSONS.ledger.
+//   - One statement per call, except COMPILE USL ... DDL: fourteen CREATE TABLE blocks separated by ';' in
+//     one request, sent with the adapter's allowMultiStatement (honoured for COMPILE USL only). The copy is the
+//     one step that is no statement: docker, its trace line action observe with no engine.
 //   - The CREATE DATASOURCE statement carries the Postgres password and is built in memory when it is
 //     sent, nowhere else: plan() holds password "<redacted>", its trace line says only "CREATE DATASOURCE
 //     DRIFT (credentials redacted)", and every error message is redact()ed and scrubbed of the literal
@@ -42,8 +56,9 @@
 //   - Zetaris reaches the Postgres at ZETARIS_PG_HOST (host[:port], 5432 when absent): measured
 //     drift-pg:5432 from the driver container, 127.0.0.1:15432 from Windows. Only the user, password and
 //     database come from DATABASE_URL.
-//   - Admin-only statements (CREATE/REGISTER/REFRESH DATASOURCE, COMPILE/REMOVE/ACTIVATE USL, REGISTER/
-//     UPDATE DQ) need an admin-role key; the agent's own key only SELECTs.
+//   - Admin-only statements (CREATE/REGISTER/REFRESH DATASOURCE, CREATE LIGHTNING DATABASE and FILESTORE TABLE, DROP
+//     LIGHTNING DATABASE TABLE, COMPILE/REMOVE/ACTIVATE USL, REGISTER/UPDATE DQ) need an admin-role key; the agent's
+//     own key only SELECTs.
 //
 // Measured on 2.4.3.1: the USL DDL validator rejects a column named source and a table named reference with
 // a generic "Invalid DDL statement", hence source_kind and referent; class is unmeasured and the cause entity
@@ -77,11 +92,29 @@
 // statements, 41 ok, 6 skipped, 0 failed, 13.0 s. RUN DQ: run_complete 135 / 135 / 0, copy_validated 2268 / 1967 /
 // 301, action_verified 18 / 16 / 2, cause_evidenced on cause 4 / 4 / 0 (the four lab-1 causes, each operator_edit
 // with its evidence ids), the cause entity's disposition_id foreign key 4 / 4 / 0.
+//
+// Measured live 25 Oct 2026, 22:11 to 22:28 UTC: CREATE LIGHTNING DATABASE and CREATE LIGHTNING FILESTORE TABLE ...
+// FORMAT JSON OPTIONS (path "<absolute path in the driver container>") register a file table; the path is absolute
+// inside the container (FILESTORE_DIR). FORMAT JSON reads the file as one document: the newline-delimited
+// ledger.jsonl gave 1 row with and without multiLine "false", the same 23 entries as one JSON array 23 rows. A file
+// table re-reads its file on every query (2 rows, then 23, no UNCACHE) and keeps the columns it was created with (a
+// key added to the file is not resolvable after UNCACHE). SHOW LIGHTNING DATABASES lists RULES as "rules". A second
+// CREATE LIGHTNING DATABASE answers 'A database named "RULES" already exists.' The DDL with lesson, rule and adoption
+// compiles (COMPILE USL without DEPLOY first, which stores nothing): rule as a table name, description and provenance
+// as columns pass. A LEFT JOIN of DRIFT.disposition to LESSONS.lesson with LIKE and || in its ON runs. Then the
+// setup: the eleven-table USL stale ("lacks lesson, rule, adoption"), the ledger table over ledger.jsonl dropped and
+// created over ledger.json, REMOVE USL, COMPILE of the fourteen, REGISTER for all five rules: 71 steps, 58 ok, 13
+// skipped, 0 failed, 23.2 s; again at once, 49 ok, 22 skipped, 0 failed, 18.9 s. RUN DQ: run_complete 140 / 140 / 0,
+// copy_validated 2380 / 2079 / 301, action_verified 18 / 16 / 2, cause_evidenced 5 / 5 / 0, exception_in_force on
+// adoption 184 / 184 / 0 (8 recorded client-1 passes of 23 ADOPTs each), the adoption entity's lesson_id foreign key
+// 184 / 184 / 0; counts lesson 23, rule 15, adoption 184, LESSONS.ledger 23.
 
 import { Zetaris, type QueryResult } from "../adapters/zetaris.ts";
 import { config, redact } from "../config.ts";
+import { ADOPTION_SQL, EXCEPTION_IN_FORCE, FILE_DATASOURCES, fileTableDef } from "../data/files.ts";
 import { TABLE_NAMES } from "../data/schema.ts";
 import type { Tracer, TraceEvent } from "../trace.ts";
+import { COPY_STATE_FILE, FILESTORE_DIR, filesHash, putFiles, recordCopy, refreshFiles, type PutResult, type Refresh, type RefreshDeps } from "./filestore.ts";
 
 export const NAMESPACE = "lightning.metastore.drift";
 export const USL_NAME = "drift_usl";
@@ -254,6 +287,43 @@ const USL_DDL = {
     "window_to varchar(40) NOT NULL",
     "decided_at varchar(40) NOT NULL",
   ],
+  lesson: [
+    "lesson_id varchar(64) NOT NULL PRIMARY KEY",
+    "tenant_id varchar(64) NOT NULL",
+    "kind varchar(16) NOT NULL",
+    "finding_class varchar(64)",
+    "scope_key varchar(255) NOT NULL",
+    "reason varchar(2048) NOT NULL",
+    "recorded_at varchar(40) NOT NULL",
+    "expires_at varchar(40) NOT NULL",
+    "provenance varchar(512) NOT NULL",
+  ],
+  rule: [
+    "rule_id varchar(128) NOT NULL PRIMARY KEY",
+    "tenant_id varchar(64) NOT NULL",
+    "version int NOT NULL",
+    "surface varchar(64) NOT NULL",
+    "object_glob varchar(512) NOT NULL",
+    "setting_glob varchar(512) NOT NULL",
+    "criticality varchar(16) NOT NULL",
+    "locked int NOT NULL",
+    "on_drift varchar(16) NOT NULL",
+    "on_no_copy varchar(32) NOT NULL",
+    "hold_hours int NOT NULL",
+    "alert varchar(16) NOT NULL",
+    "psa_priority varchar(8) NOT NULL",
+    "description varchar(1024)",
+  ],
+  adoption: [
+    "disposition_id varchar(128) NOT NULL PRIMARY KEY",
+    "tenant_id varchar(64) NOT NULL",
+    "finding_id varchar(255) NOT NULL",
+    "decided_at varchar(40) NOT NULL",
+    "lesson_id varchar(64) FOREIGN KEY REFERENCES lesson(lesson_id)",
+    "lesson_kind varchar(16)",
+    "lesson_recorded_at varchar(40)",
+    "lesson_expires_at varchar(40)",
+  ],
 } as const;
 
 export type UslTable = keyof typeof USL_DDL;
@@ -279,16 +349,18 @@ export interface DqRule { name: string; table: UslTable; expression: string }
  * status <> 'done' arm passes its row: the status itself records the missing verification, and a done row
  * with no probe id stays the one row the rule fails. cause_evidenced: a cause of any class but unknown names at
  * least one audit_event or action id; evidence_ids is a JSON array as text, '[]' when it names none, so the rule
- * compares plain columns.
+ * compares plain columns. exception_in_force (src/data/files.ts EXCEPTION_IN_FORCE): every ADOPT decided under an
+ * accepted exception joins, across DRIFT and LESSONS, to a lesson that was in force at the decision instant.
  */
 export const DQ_RULES: readonly DqRule[] = [
   { name: "run_complete", table: "collection", expression: "observed_count IS NOT NULL AND expected_count IS NOT NULL AND observed_count >= expected_count AND status = 'complete'" },
   { name: "copy_validated", table: "copy", expression: "validated = 1" },
   { name: "action_verified", table: "action", expression: "kind NOT IN ('rollback_file','revert_record') OR status IN ('failed','refused','not_judged') OR verification <> ''" },
   { name: "cause_evidenced", table: "cause", expression: "cause_class = 'unknown' OR evidence_ids <> '[]'" },
+  { name: "exception_in_force", table: "adoption", expression: EXCEPTION_IN_FORCE },
 ];
 /** The tables RUN DQ runs on, one statement each. */
-export const DQ_TABLES: readonly UslTable[] = ["collection", "copy", "action", "cause"];
+export const DQ_TABLES: readonly UslTable[] = ["collection", "copy", "action", "cause", "adoption"];
 export const DQ_RULE = "run_complete";
 
 /** How an entity's rows are formed from its tables, for each entity whose rows are other than one table's rows under its own column names. */
@@ -298,11 +370,33 @@ const USL_FORMED: Partial<Record<UslTable, string>> = {
   backup_copy: "each `backup_item` joined to its `backup_snapshot`",
   copy: "each `vault_copy` with its latest `copy_validation` (by `validated_at`, then `validation_id`); `validated` is 1 when that result is ok or ok_with_gaps",
   cause: "`class` as `cause_class`",
+  lesson: "one row per lesson of the technician's memory store, the Meterless H-MEM store the Decider recalls from, as `lessons.json` in the Zetaris filestore",
+  rule: "one row per rule of the policy file, as `rules.json` in the Zetaris filestore; `lock` as `locked`, `hold_max_hours` as `hold_hours`, `note` as `description`",
+  adoption: "each `disposition` decided ADOPT by the operator, under an accepted exception, LEFT JOINed across the two datasources to the `LESSONS.lesson` row its reason names, on the tenant and the lesson id",
 };
+
+/** A file table of the setup: its Lightning database, its name there, the file in FILESTORE_DIR it reads and, when the setup holds it to them, its columns. */
+export interface FileSource { db: string; table: string; file: string; columns?: readonly string[] }
+
+/**
+ * The Lightning databases (Zetaris's file sources) and their tables. LESSONS: the technician's memory store, its
+ * lessons (the `lesson` entity) and its H-MEM ledger as the store wrote it; RULES: the policy file.
+ */
+export const LIGHTNING_DBS: readonly { name: string; describe: string }[] = [
+  { name: FILE_DATASOURCES.lesson, describe: "drift-agent technician memory store, the Meterless H-MEM lessons and ledger" },
+  { name: FILE_DATASOURCES.rule, describe: "drift-agent policy file, one row per rule" },
+];
+export const FILE_SOURCES: readonly FileSource[] = [
+  { db: FILE_DATASOURCES.lesson, table: "ledger", file: "ledger.json" },
+  { db: FILE_DATASOURCES.lesson, table: "lesson", file: "lessons.json", columns: fileTableDef("lesson")!.columns },
+  { db: FILE_DATASOURCES.rule, table: "rule", file: "rules.json", columns: fileTableDef("rule")!.columns },
+];
+const pathOf = (f: FileSource): string => `${FILESTORE_DIR}/${f.file}`;
+const keyOf = (f: FileSource): string => `${f.db}.${f.table}`;
 
 export interface UslRow {
   entity: UslTable;
-  /** The DRIFT tables its activation SELECT reads, each once, in first-appearance order. */
+  /** The tables its activation SELECT reads, each once, in first-appearance order: a DRIFT table by its name, a file table as <database>.<table>. */
   builtFrom: string[];
   /** How its rows are formed from those tables; empty when each row is one row of its one table. */
   formed: string;
@@ -314,6 +408,9 @@ export interface UslRow {
   rule?: DqRule;
 }
 
+/** A table an activation names: DRIFT.<table>, LESSONS.<table> or RULES.<table>. */
+const SOURCE_TABLE = new RegExp(`\\b(DRIFT|${LIGHTNING_DBS.map((d) => d.name).join("|")})\\.(\\w+)`, "g");
+
 /** One row per USL entity, in DDL order, read off USL_DDL, activation() over the DRIFT datasource and DQ_RULES. */
 export function uslRows(): UslRow[] {
   return USL_TABLES.map((entity) => {
@@ -321,7 +418,7 @@ export function uslRows(): UslRow[] {
     const name = (l: string): string => l.split(" ")[0];
     return {
       entity,
-      builtFrom: [...new Set([...activation(entity, "DRIFT").matchAll(/\bDRIFT\.(\w+)/g)].map((m) => m[1]))],
+      builtFrom: [...new Set([...activation(entity, "DRIFT").matchAll(SOURCE_TABLE)].map((m) => (m[1] === "DRIFT" ? m[2] : `${m[1]}.${m[2]}`)))],
       formed: USL_FORMED[entity] ?? "",
       primaryKey: name(lines.find((l) => l.includes(" PRIMARY KEY"))!),
       foreignKeys: lines.flatMap((l) => {
@@ -345,7 +442,7 @@ export function uslMarkdown(): string {
     r.rule ? code(r.rule.expression) : "",
   ];
   return [
-    `${code(USL_NAME)} in ${code(NAMESPACE)} is the semantic layer over the ${code("DRIFT")} datasource: ${rows.length} entities, each activated as one SELECT over the tables it is built from (${code("activation()")} in ${code("src/zetaris/setup.ts")}), and ${DQ_RULES.length} DQ rules, each an expression RUN DQ tests on every row of its entity.`,
+    `${code(USL_NAME)} in ${code(NAMESPACE)} is the semantic layer over three datasources: ${code("DRIFT")}, the app Postgres; ${code(FILE_DATASOURCES.lesson)}, the technician's memory store; ${code(FILE_DATASOURCES.rule)}, the policy file. It holds ${rows.length} entities, each activated as one SELECT over the tables it is built from (${code("activation()")} in ${code("src/zetaris/setup.ts")}), a table of ${code("DRIFT")} by its name and a file table as ${code("<datasource>.<table>")}, and ${DQ_RULES.length} DQ rules, each an expression RUN DQ tests on every row of its entity.`,
     "",
     "| entity | built from | key | DQ rule | expression |",
     "|---|---|---|---|---|",
@@ -380,6 +477,7 @@ export function envFromProcess(): SetupEnv {
  */
 export type When =
   | "datasource_absent" | "datasource_present" | "tables_missing" | "tables_registered"
+  | "lightning_db_absent" | "file_table_listed" | "file_table_stale" | "file_table_absent"
   | "usl_present" | "usl_stale" | "usl_absent" | "dq_rule_absent" | "dq_rule_differs";
 
 export interface Step {
@@ -393,8 +491,14 @@ export interface Step {
   when?: When;
   /** The DQ rule a dq_rule_* condition is about. */
   rule?: DqRule;
+  /** The Lightning database a lightning_db_absent condition or a file_tables probe is about. */
+  db?: string;
+  /** The file table a file_table_* condition or a file_columns probe is about. */
+  file?: FileSource;
+  /** Not a statement: put the files into the filestore (ApplyDeps.put), then go on. */
+  copy?: true;
   /** What the result tells the steps after it. */
-  probe?: "datasources" | "datasource_tables" | "usl" | "usl_model" | "dq_rules";
+  probe?: "datasources" | "datasource_tables" | "lightning_dbs" | "file_tables" | "file_columns" | "usl" | "usl_model" | "dq_rules";
   /** An "already exist" error from this step means the datasource existed. */
   marksDatasource?: true;
   /** A success from this step means the USL is gone (REMOVE USL). */
@@ -461,6 +565,13 @@ export function activation(table: UslTable, ds: string): string {
       return `SELECT ${keep("ticket_id tenant_id psa ?external_id ?url type priority status ?action_id finding_id created_at updated_at")} FROM ${ds}.ticket`;
     case "cause":
       return `SELECT ${keep("cause_id tenant_id finding_id disposition_id")}, COALESCE(class, '') AS cause_class, ${keep("?actor ?mechanism ?occurred_at ?source_host evidence_ids ?diff summary window_from window_to decided_at")} FROM ${ds}.finding_cause`;
+    case "lesson":
+      return `SELECT ${keep("lesson_id tenant_id kind ?finding_class scope_key reason recorded_at expires_at provenance")} FROM ${FILE_DATASOURCES.lesson}.lesson`;
+    case "rule":
+      return `SELECT ${keep("rule_id tenant_id")}, CAST(COALESCE(version, 0) AS INT) AS version, ${keep("surface object_glob setting_glob criticality")}, CAST(COALESCE(locked, 0) AS INT) AS locked, ${keep("on_drift on_no_copy")}, CAST(COALESCE(hold_hours, 0) AS INT) AS hold_hours, ${keep("alert psa_priority ?description")} FROM ${FILE_DATASOURCES.rule}.rule`;
+    case "adoption":
+      // The catalogue's own SQL (src/data/files.ts), one line, its tables named as Zetaris names them: the cross-source join.
+      return squash(ADOPTION_SQL.replace("{{t:disposition}}", `${ds}.disposition`).replace("{{t:lesson}}", `${FILE_DATASOURCES.lesson}.lesson`));
   }
 }
 
@@ -479,6 +590,18 @@ export function plan(env: SetupEnv = envFromProcess()): Step[] {
     { name: "list datasource tables", sql: `SHOW DATASOURCE TABLES ${ds}`, when: "datasource_present", probe: "datasource_tables" },
     { name: "register datasource tables", sql: `REGISTER DATASOURCE TABLES FROM ${ds}`, when: "tables_missing" },
     { name: "refresh datasource tables", sql: `REFRESH DATASOURCE TABLES FROM ${ds}`, when: "tables_registered" },
+    {
+      name: "copy files to the filestore", copy: true,
+      sql: `docker exec -i <driver container> sh -c 'cat > ${FILESTORE_DIR}/<file>' for ${FILE_SOURCES.map((f) => f.file).join(", ")} (written from DRIFT_MEMORY_DIR and DRIFT_POLICY_FILE)`,
+    },
+    { name: "show lightning databases", sql: "SHOW LIGHTNING DATABASES", probe: "lightning_dbs" },
+    ...LIGHTNING_DBS.map((d): Step => ({ name: `create lightning database ${d.name}`, sql: `CREATE LIGHTNING DATABASE ${d.name} DESCRIBE BY "${d.describe}"`, when: "lightning_db_absent", db: d.name })),
+    ...LIGHTNING_DBS.map((d): Step => ({ name: `list ${d.name} tables`, sql: `SHOW LIGHTNING TABLES ${d.name}`, probe: "file_tables", db: d.name })),
+    ...FILE_SOURCES.flatMap((f): Step[] => [
+      ...(f.columns ? [{ name: `describe ${keyOf(f)}`, sql: `DESCRIBE DATASOURCE TABLE ${keyOf(f)}`, when: "file_table_listed", probe: "file_columns", file: f } satisfies Step] : []),
+      { name: `drop ${keyOf(f)}`, sql: `DROP LIGHTNING DATABASE TABLE ${keyOf(f)}`, when: "file_table_stale", file: f },
+      { name: `create ${keyOf(f)}`, sql: `CREATE LIGHTNING FILESTORE TABLE ${f.table} FROM ${f.db} FORMAT JSON OPTIONS (path "${pathOf(f)}")`, when: "file_table_absent", file: f },
+    ]),
     { name: "namespace lightning.metastore", sql: "CREATE NAMESPACE IF NOT EXISTS lightning.metastore" },
     { name: `namespace ${NAMESPACE}`, sql: `CREATE NAMESPACE IF NOT EXISTS ${NAMESPACE}` },
     { name: `list ${NAMESPACE}`, sql: `SHOW NAMESPACES OR TABLES IN ${NAMESPACE}`, probe: "usl" },
@@ -494,6 +617,7 @@ export function plan(env: SetupEnv = envFromProcess()): Step[] {
     ...DQ_TABLES.map((tb): Step => ({ name: `run dq ${tb}`, sql: `RUN DQ TABLE ${USL}.${tb}`, show: true, dqTable: tb, timeoutMs: 150_000 })),
     { name: `show ${USL}`, sql: `SHOW NAMESPACES OR TABLES IN ${USL}`, show: true },
     ...USL_TABLES.map((tb): Step => ({ name: `count ${tb}`, sql: `SELECT COUNT(*) AS n FROM ${USL}.${tb}` })),
+    ...FILE_SOURCES.filter((f) => !f.columns).map((f): Step => ({ name: `count ${keyOf(f)}`, sql: `SELECT COUNT(*) AS n FROM ${keyOf(f)}` })),
   ];
 }
 
@@ -502,6 +626,10 @@ const WHEN_TEXT: Record<When, (ds: string, s: Step) => string> = {
   datasource_present: (ds) => `only when ${ds} already existed`,
   tables_missing: (ds) => `only when ${ds} was created this run or lacks a table of sql/schema.sql`,
   tables_registered: (ds) => `only when ${ds} already existed and lists every table of sql/schema.sql`,
+  lightning_db_absent: (_ds, s) => `only when SHOW LIGHTNING DATABASES lacks ${s.db}`,
+  file_table_listed: (_ds, s) => `only when ${s.file?.db} lists ${s.file?.table}`,
+  file_table_stale: (_ds, s) => `only when ${s.file?.db} lists ${s.file?.table} over another path or format${s.file?.columns ? ", or with other columns" : ""}`,
+  file_table_absent: (_ds, s) => `only when ${s.file?.db} lacks ${s.file?.table} or it was dropped this run`,
   usl_present: () => `only when ${NAMESPACE} lists ${USL_NAME}`,
   usl_stale: () => `only when ${USL_NAME}'s tables or columns differ from the ${USL_TABLES.length} below`,
   usl_absent: () => `only when ${USL_NAME} is absent or was removed this run`,
@@ -544,6 +672,34 @@ export interface ApplyDeps {
   tracer?: Tracer;
   out?: (line: string) => void;
   env?: SetupEnv;
+  /** The files of FILE_SOURCES, by file name, as JSON text (default: filestoreFiles() over DRIFT_MEMORY_DIR and DRIFT_POLICY_FILE). */
+  files?: () => Readonly<Record<string, string>> | Promise<Readonly<Record<string, string>>>;
+  /** Puts the files into FILESTORE_DIR (default: src/zetaris/filestore.ts putFiles, docker through wsl.exe on Windows). */
+  put?: (files: Readonly<Record<string, string>>) => PutResult[];
+  /** Where the copy's hash is recorded for the live pass's freshness check: COPY_STATE_FILE with the real put; with `put` given, nowhere unless named. */
+  copyState?: string | null;
+}
+
+/**
+ * The files the file tables read, each one JSON array (FORMAT JSON reads a file as one document): lessons.json and
+ * rules.json from src/data/file-rows.ts, ledger.json the store's H-MEM ledger entry for entry. Refuses a store with no
+ * lesson and a policy with no rule: Zetaris infers a file table's columns from its rows when it is created.
+ */
+export async function filestoreFiles(): Promise<Record<string, string>> {
+  const { fileRows, ledgerEntries } = await import("../data/file-rows.ts");
+  const rows = fileRows();
+  if (!rows.lesson.length) throw new SetupError(`the memory store at ${config.memoryDir} holds no lesson; Zetaris infers the columns of LESSONS.lesson from its rows, so the setup needs one (npm run answer records one)`);
+  if (!rows.rule.length) throw new SetupError(`the policy file ${config.policyFile} holds no rule`);
+  return { "ledger.json": JSON.stringify(ledgerEntries()), "lessons.json": JSON.stringify(rows.lesson), "rules.json": JSON.stringify(rows.rule) };
+}
+
+/**
+ * The live pass's and npm run answer's refresh of the file tables: filestoreFiles over DRIFT_MEMORY_DIR and
+ * DRIFT_POLICY_FILE, put when their hash differs from the one the last copy recorded (src/zetaris/filestore.ts
+ * refreshFiles). A failure is returned, never thrown.
+ */
+export function refreshFileTables(deps: Partial<RefreshDeps> = {}): Promise<Refresh> {
+  return refreshFiles({ files: filestoreFiles, ...deps });
 }
 
 const col = (r: QueryResult, name: string): number => r.columns.findIndex((c) => c.toLowerCase() === name);
@@ -612,7 +768,16 @@ export async function apply(deps: ApplyDeps = {}): Promise<ApplyResult> {
   const steps = plan(env);
   const { password } = pgTarget(env);
   const clean = (s: string) => (password.length >= 4 ? redact(s).split(password).join("<redacted>") : redact(s)).slice(0, 400);
-  const state = { datasourceExisted: false, missingTables: null as string[] | null, uslPresent: false, uslStale: null as string | null, rules: null as Map<string, string> | null };
+  const state = {
+    datasourceExisted: false, missingTables: null as string[] | null, uslPresent: false, uslStale: null as string | null, rules: null as Map<string, string> | null,
+    /** SHOW LIGHTNING DATABASES, names upper-cased: it listed RULES as "rules" (25 Oct 2026). */
+    lightningDbs: new Set<string>(),
+    /** SHOW LIGHTNING TABLES per database: each table's path and format. */
+    fileTables: new Map<string, { path: string; format: string }>(),
+    /** Why a listed file table is to be dropped and created again. */
+    fileStale: new Map<string, string>(),
+    dropped: new Set<string>(),
+  };
   const results: StepResult[] = [];
   const dqRuns: Partial<Record<UslTable, QueryResult>> = {};
   const t0 = Date.now();
@@ -626,6 +791,10 @@ export async function apply(deps: ApplyDeps = {}): Promise<ApplyResult> {
       case "tables_registered":
         return !state.datasourceExisted ? `${env.datasource} created this run`
           : (state.missingTables === null || state.missingTables.length > 0) && `registered this run`;
+      case "lightning_db_absent": return state.lightningDbs.has(s.db!.toUpperCase()) && `${s.db} exists`;
+      case "file_table_listed": return !state.fileTables.has(keyOf(s.file!)) && `${s.file!.db} lacks ${s.file!.table}`;
+      case "file_table_stale": return !state.fileStale.has(keyOf(s.file!)) && (state.fileTables.has(keyOf(s.file!)) ? `${keyOf(s.file!)} listed as stated` : `${s.file!.db} lacks ${s.file!.table}`);
+      case "file_table_absent": return state.fileTables.has(keyOf(s.file!)) && !state.dropped.has(keyOf(s.file!)) && `${keyOf(s.file!)} listed as stated`;
       case "usl_present": return !state.uslPresent && `${USL_NAME} is absent`;
       case "usl_stale": return state.uslStale === null && (state.uslPresent ? `${USL_NAME} holds the ${USL_TABLES.length} tables as compiled` : `${USL_NAME} is absent`);
       case "usl_absent": return state.uslPresent && `${USL_NAME} holds the ${USL_TABLES.length} tables as compiled`;
@@ -652,9 +821,57 @@ export async function apply(deps: ApplyDeps = {}): Promise<ApplyResult> {
       continue;
     }
     const s0 = Date.now();
+    if (s.copy) {
+      try {
+        const files = await (deps.files ?? filestoreFiles)();
+        const put = (deps.put ?? ((f) => putFiles(f)))(files);
+        // The hash of this copy, so the live pass puts the files again only when the store or the policy file changes.
+        const stateFile = deps.copyState !== undefined ? deps.copyState : deps.put ? null : COPY_STATE_FILE;
+        if (stateFile) recordCopy({ hash: filesHash(files), at: new Date().toISOString(), files: put }, stateFile);
+        // Not a query: the trace line reads the sources and names no engine, so a tally of Zetaris queries leaves it out.
+        record(i, s, { name: s.name, status: "ok", note: put.map((p) => `${p.path.slice(p.path.lastIndexOf("/") + 1)} ${p.bytes} bytes`).join(", "), ms: Date.now() - s0 }, { action: "observe", engine: undefined });
+        continue;
+      } catch (e) {
+        const msg = clean((e as Error).message ?? String(e));
+        record(i, s, { name: s.name, status: "failed", note: msg, ms: Date.now() - s0 }, { action: "observe", engine: undefined, detail: msg });
+        const ms = Date.now() - t0;
+        out(`ZETARIS SETUP FAILED at ${String(i + 1).padStart(2, "0")} ${s.name} after ${ms} ms: ${msg}`);
+        return { ok: false, results, dq: dqRuns.collection, dqRuns, error: msg, ms };
+      }
+    }
     try {
       const r = await client.query(s.secret ? s.secret() : s.sql, { limit: 200, timeoutMs: s.timeoutMs ?? 60_000, ...(s.multi ? { allowMultiStatement: true } : {}) });
       let note = rowsNote(r);
+      if (s.probe === "lightning_dbs") {
+        const n = col(r, "name");
+        state.lightningDbs = new Set(r.rows.map((row) => (n >= 0 ? row[n] : row[0]).toUpperCase()));
+        note += `, ${LIGHTNING_DBS.map((d) => `${d.name} ${state.lightningDbs.has(d.name.toUpperCase()) ? "listed" : "not listed"}`).join(", ")}`;
+      }
+      if (s.probe === "file_tables") {
+        const [n, p, f] = [col(r, "name"), col(r, "source_table"), col(r, "format")];
+        const say: string[] = [];
+        for (const fs of FILE_SOURCES.filter((x) => x.db === s.db)) {
+          const row = r.rows.find((x) => x[n >= 0 ? n : 0] === fs.table);
+          if (!row) { say.push(`${fs.table} not listed`); continue; }
+          const listed = { path: p >= 0 ? row[p] : "", format: f >= 0 ? row[f].toLowerCase() : "" };
+          state.fileTables.set(keyOf(fs), listed);
+          if (listed.path !== pathOf(fs) || listed.format !== "json") state.fileStale.set(keyOf(fs), `listed over ${listed.path} as ${listed.format}`);
+          say.push(`${fs.table} ${state.fileStale.has(keyOf(fs)) ? state.fileStale.get(keyOf(fs)) : "listed"}`);
+        }
+        note += `, ${say.join(", ")}`;
+      }
+      if (s.probe === "file_columns" && s.file?.columns) {
+        const n = col(r, "col_name");
+        const have = new Set(r.rows.map((row) => row[n >= 0 ? n : 0]));
+        const lacks = s.file.columns.filter((c) => !have.has(c));
+        const extra = [...have].filter((c) => !s.file!.columns!.includes(c)).sort();
+        if (lacks.length || extra.length) {
+          const why = [lacks.length ? `lacks ${lacks.join(", ")}` : "", extra.length ? `holds ${extra.join(", ")}` : ""].filter(Boolean).join("; ");
+          state.fileStale.set(keyOf(s.file), state.fileStale.has(keyOf(s.file)) ? `${state.fileStale.get(keyOf(s.file))}; ${why}` : why);
+        }
+        note += `, ${state.fileStale.has(keyOf(s.file)) ? `stale: ${state.fileStale.get(keyOf(s.file))}` : `the ${s.file.columns.length} columns`}`;
+      }
+      if (s.when === "file_table_stale" && s.file) state.dropped.add(keyOf(s.file));
       if (s.probe === "datasources") {
         state.datasourceExisted = r.rows.some((row) => row.some((v) => v.toUpperCase() === env.datasource.toUpperCase()));
         note += `, ${env.datasource} ${state.datasourceExisted ? "listed" : "not listed"}`;

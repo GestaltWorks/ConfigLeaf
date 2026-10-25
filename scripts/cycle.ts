@@ -18,21 +18,12 @@
 // (src/loop/live.ts liveRefusal).
 //
 // Measured 24 Oct 2026 for client-1 with --skip collect,probe,validate (dry run): at 23:22 UTC the tickets step
-// created issue #2 of DRIFT_TICKETS_REPO, an incident P1 for the proxy_split HOLD under rule 13 (alert always). At
-// 23:26 UTC: pass 34.3 s (27 findings, HOLD 27; 0 dispositions written, the 27 rows of the 23:21 UTC pass kept on the
-// same runs), act 0.4 s (27 dispositions of 3 runs in scope, 0 actions planned), tickets 1.2 s (1 ticket row before;
-// plan create 0, comment 0, close 0, skip 27), document 5.7 s (document.md, 150 lines, 27 findings open, 32 queries,
-// deny-list probe 0 of 27 labels); the cycle 41.6 s, 526 trace lines.
+// created issue #2 of DRIFT_TICKETS_REPO, an incident P1 for the proxy_split HOLD under rule 13 (alert always).
 // Measured 25 Oct 2026 at 16:32 UTC for client-1 with --tickets-dry-run, off a TTY: the table in 13 lines, every
 // row's time at column 90, each collect:linux row under its LINUX_HOSTS alias; collect 5.9, 3.4 and 3.5 s, probe 39
 // names in 8.0 s, validate 3 copies, pass 27 findings (ADOPT 23, HOLD 3, ESCALATE 1, one ESCALATE line, the
 // proxy_split hold expired 25 Oct 03:21 UTC) in 60.6 s, act nothing to do, tickets would close #5 (resolved),
 // document 189 lines; done in 103.4 s, the trace logs/cycle_mvo1qgai.jsonl.
-// Measured 25 Oct 2026 at 17:13 UTC, the same command with the classes in plain words: the header "dry run, nothing
-// changed", the pass's tally on three lines at 90 columns, the ESCALATE line with the hold's end at 25 Oct 03:21 UTC,
-// act nothing to do, tickets nothing to send (1 open), document 191 lines, then the what-happened block in three
-// sentences (nothing changed on the estate, 1 finding with a technician, 23 adopted and 3 held); the table in 19
-// lines, done in 119.4 s, the trace logs/cycle_mvo37iao.jsonl.
 // Measured 25 Oct 2026 at 20:24 UTC on the lab (tenant lab-1, --apply --skip collect,validate --tickets-dry-run, a
 // sudo tee break to 8098 collected first, run run-ea6025e231e361d0): pass 2 findings (ROLLBACK 1, HOLD 1) in 82.9 s,
 // 427 queries through Zetaris; "explain   1 cause   operator 1" in 1.3 s; act rollback_file done in 3.7 s, 1 probe

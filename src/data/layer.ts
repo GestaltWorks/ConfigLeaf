@@ -4,10 +4,15 @@
 // identifiers, single-quoted literals with ' doubled, no casts, no date functions, no booleans,
 // one SELECT per call) so it runs unchanged on sql.js and on Spark-SQL-style Zetaris Lightning.
 // Both engines return every value as a string and null as "", so a parity test can compare rows.
+// The known tables are sql/schema.sql's and the file tables of src/data/files.ts (lesson, rule).
 
 import type { QueryResult } from "../adapters/zetaris.ts";
 import type { Tracer } from "../trace.ts";
+import { FILE_TABLE_NAMES } from "./files.ts";
 import { TABLE_NAMES } from "./schema.ts";
+
+/** The tables a DataLayer renders by default: every table of sql/schema.sql, then the file tables. */
+export const LAYER_TABLES: readonly string[] = [...TABLE_NAMES, ...FILE_TABLE_NAMES];
 
 export interface RunOptions { limit?: number; agent?: string; tracer?: Tracer }
 
@@ -78,7 +83,7 @@ const AFTER_TABLE = /^\s*(?:as\s+)?([A-Za-z_]\w*)/i;
 export class DataLayer {
   readonly overlays: Overlays;
 
-  constructor(readonly engine: Engine, readonly tables: readonly string[] = TABLE_NAMES, opts: { overlays?: Overlays } = {}) {
+  constructor(readonly engine: Engine, readonly tables: readonly string[] = LAYER_TABLES, opts: { overlays?: Overlays } = {}) {
     this.overlays = opts.overlays ?? {};
     for (const [table, body] of Object.entries(this.overlays)) {
       if (!tables.includes(table)) throw new DataLayerError(`overlay on unknown table: ${table}`);

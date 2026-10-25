@@ -13,19 +13,31 @@
 //     pass's decided_at (rows.ts dispositionId), so a row already stored under it is an earlier pass's at the same
 //     instant over the same runs, and kept counts those. With no ledger the line carries the pass's own decision,
 //     marked as not recorded. summary: one line of counts.
+//   - On Zetaris, after the Decider and the ledger write, one SELECT over drift_usl.adoption (adoptionCheckSql) reads
+//     the DQ rule exception_in_force for the tenant's ADOPTs under an exception: those decided at this pass's instant
+//     when it recorded them, else the latest recorded pass's. Read only; a failed read is carried, never thrown, and
+//     the Decider's own recall from the store is what decided. The summary and the pass row's Zetaris line carry it.
+//     On sql.js nothing is read.
+//   - Live, before anything else, refreshFiles puts the lessons and the rules into the Zetaris filestore again when
+//     their hash differs from the last copy's, so the DQ read joins the lessons the Decider recalls (a lesson npm run
+//     answer recorded since the last copy included). Its outcome is one trace line and one clause of the summary; a
+//     failed refresh is carried, never thrown.
 //
 // Measured 25 Oct 2026: over the Actor's fixture world (test/loop.test.ts) 12 findings, each read back under its
 // disposition_id; a second pass at a later instant writes 12 rows of its own, and one at the same instant writes 0
 // and counts 12 kept; the first live pass with the PgLedger is in scripts/pass.ts.
 
+import { EXCEPTION_IN_FORCE } from "../data/files.ts";
 import { DISPOSITIONS_SQL, listRuns, objects } from "../data/queries.ts";
-import type { DataLayer } from "../data/layer.ts";
+import { assertSelectOnly, literal, type DataLayer } from "../data/layer.ts";
 import { dispositionId, type Disposition, type ReferentFingerprint } from "../data/rows.ts";
 import type { TechnicianMemory } from "../engine/memory.ts";
 import { DriftWorld } from "../engine/world.ts";
 import type { Ledger } from "../ledger.ts";
 import { VERBS, runPass, type Finding, type PassResult } from "../pipeline.ts";
 import type { Tracer } from "../trace.ts";
+import { refreshText, type Refresh } from "../zetaris/filestore.ts";
+import { USL } from "../zetaris/setup.ts";
 
 export class LoopError extends Error {}
 
@@ -51,12 +63,56 @@ export interface PassStepOptions {
   decidedAt?: string;
   tracer?: Tracer;
   world?: DriftWorld;
+  /**
+   * Live: the Zetaris copy of the lessons and the rules, put again when the store or the policy file changed since the
+   * last copy (src/zetaris/setup.ts refreshFileTables). Runs first, before the Decider and its DQ read.
+   */
+  refreshFiles?: () => Promise<Refresh>;
+}
+
+/**
+ * The DQ rule exception_in_force over the tenant's adoptions as Zetaris reads them (drift_usl.adoption: DRIFT's
+ * dispositions joined to LESSONS's lessons). `of` "pass": the ADOPTs this pass recorded, decided at its instant;
+ * "recorded": a pass with no ledger recorded none, so the latest pass that did, decided at `decidedAt`.
+ */
+export type AdoptionCheck =
+  | { rule: "exception_in_force"; of: "pass" | "recorded"; decidedAt: string | null; adoptions: number; inForce: number }
+  | { rule: "exception_in_force"; error: string };
+
+/** The USL entity the pass reads the rule over. */
+export const ADOPTION_ENTITY = `${USL}.adoption`;
+
+/**
+ * One SELECT over drift_usl.adoption: per decision instant of the tenant, the ADOPTs under an exception and those for
+ * which the rule's expression holds; the instant given, or the latest when none is. The expression is the registered
+ * rule's own text (EXCEPTION_IN_FORCE), so Zetaris tests the same predicate RUN DQ tests, on this pass's rows only.
+ */
+export function adoptionCheckSql(tenant: string, decidedAt: string | null): string {
+  return `SELECT decided_at, COUNT(*) AS adoptions, SUM(CASE WHEN ${EXCEPTION_IN_FORCE} THEN 1 ELSE 0 END) AS in_force FROM ${ADOPTION_ENTITY} WHERE tenant_id = ${literal(tenant)}${decidedAt === null ? "" : ` AND decided_at = ${literal(decidedAt)}`} GROUP BY decided_at ORDER BY decided_at DESC LIMIT 1`;
+}
+
+/** Read the check through the layer's engine (Zetaris only; the USL lives there). A failed read is returned, never thrown: the Decider has decided by then. */
+export async function readAdoptionCheck(layer: DataLayer, tenant: string, decidedAt: string | null, tracer?: Tracer): Promise<AdoptionCheck> {
+  const sql = adoptionCheckSql(tenant, decidedAt);
+  try {
+    assertSelectOnly(sql);
+    const r = await layer.engine.run(sql, { tracer, agent: "loop", limit: 1 });
+    const row = objects(r)[0];
+    const n = (v: string | undefined): number => (v ? Number(v) : 0);
+    return { rule: "exception_in_force", of: decidedAt === null ? "recorded" : "pass", decidedAt: row?.decided_at || decidedAt, adoptions: n(row?.adoptions), inForce: n(row?.in_force) };
+  } catch (e) {
+    return { rule: "exception_in_force", error: ((e as Error).message ?? String(e)).slice(0, 300) };
+  }
 }
 
 export interface PassStep {
   tenant: string;
   decidedAt: string;
   pass: PassResult;
+  /** Read after the Decider when the layer runs on Zetaris; absent on sql.js. */
+  adoptions?: AdoptionCheck;
+  /** The refresh of the file tables' copy, when the caller gave one. */
+  files?: Refresh;
   /** The tenant's findings, in the pass's order. */
   findings: Finding[];
   /** The tenant's collection runs. */
@@ -71,11 +127,26 @@ export interface PassStep {
 export const dispositionIdOf = (f: Finding, decidedAt: string): string =>
   dispositionId(f.finding.tenant_id, f.finding.surface, f.finding.host, f.finding.object_id, f.finding.setting_path, f.finding.value_hash, f.id, f.finding.run_id, decidedAt);
 
+/** "DQ exception_in_force 23 of 23 adoptions", "... of the pass recorded at <instant>", or "... not read: <why>". */
+export function adoptionText(a: AdoptionCheck): string {
+  if ("error" in a) return `DQ ${a.rule} not read: ${a.error}`;
+  const of = a.of === "recorded" ? (a.decidedAt ? ` of the pass recorded at ${a.decidedAt}` : " (no pass recorded one)") : "";
+  return `DQ ${a.rule} ${a.inForce} of ${a.adoptions} adoption${a.adoptions === 1 ? "" : "s"}${of}`;
+}
+
 const tally = (xs: readonly string[]): string =>
   [...xs.reduce((m, x) => m.set(x, (m.get(x) ?? 0) + 1), new Map<string, number>())].sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, n]) => `${k} ${n}`).join(", ") || "none";
 
 export async function passStep(layer: DataLayer, opts: PassStepOptions): Promise<PassStep> {
   const { tenant, tracer } = opts;
+  // First: the copy drift_usl.adoption joins (LESSONS.lesson), current with the store the Decider recalls from.
+  const files = opts.refreshFiles ? await opts.refreshFiles() : undefined;
+  if (files) {
+    tracer?.emit({
+      agent: "loop", action: "observe", status: files.status === "failed" ? "failed" : files.status === "current" ? "skipped" : "ok",
+      input_summary: `file tables ${tenant}`, output_summary: refreshText(files), latency_ms: files.ms,
+    });
+  }
   const runs = objects(await listRuns(layer, { tracer, agent: "loop" })).filter((r) => r.tenant_id === tenant);
   if (!runs.length) throw new LoopError(`the datasource holds no collection run of tenant ${tenant}`);
   const dnsRuns = new Set(runs.filter((r) => r.surface === "cloudflare.dns").map((r) => r.run_id));
@@ -103,6 +174,10 @@ export async function passStep(layer: DataLayer, opts: PassStepOptions): Promise
   // The rows stored under this pass's ids beyond the ones it wrote are an earlier pass's at the same instant over the same runs.
   if (stored && pass.ledger) kept = Math.max(0, findings.length - pass.ledger.dispositions);
 
+  // After the Decider, read only: the rule exception_in_force over this pass's adoptions as Zetaris joins them across
+  // DRIFT and LESSONS; with no ledger the pass recorded none, so the latest recorded pass's.
+  const adoptions = layer.engine.name === "zetaris" ? await readAdoptionCheck(layer, tenant, ledger ? decidedAt : null, tracer) : undefined;
+
   const tenantRuns = new Set(runs.map((r) => r.run_id));
   const gated = pass.gatedOut.filter((r) => tenantRuns.has(r));
   const verbs = VERBS.map((v) => [v, findings.filter((f) => f.verb === v).length] as const).filter(([, n]) => n > 0).map(([v, n]) => `${v} ${n}`).join(", ") || "none";
@@ -111,9 +186,10 @@ export async function passStep(layer: DataLayer, opts: PassStepOptions): Promise
   const recorded = pass.ledger
     ? `ledger: ${pass.ledger.dispositions} disposition(s) and ${pass.ledger.fingerprints} referent fingerprint(s) written, ${kept} finding(s) on rows an earlier pass wrote`
     : "ledger: none, nothing recorded";
+  const dq = `${files ? `; ${refreshText(files)}` : ""}${adoptions ? `; ${adoptionText(adoptions)}` : ""}`;
   const summary = `PASS: tenant ${tenant}, decided at ${decidedAt}: ${runs.length} collection run(s) of the tenant, ${gated.length} failed the DQ gate (${gated.join(", ") || "none"}), `
     + `${pass.observed} observations in the World Model, ${findings.length} finding(s) (${tally(findings.map((f) => f.finding.class))}); verbs: ${verbs}; decided by ${by}; `
-    + `judge skipped (model: none); ${mem}; policy rules ${pass.rules}, locked settings without an approved value ${pass.locked}; ${recorded}`;
+    + `judge skipped (model: none); ${mem}; policy rules ${pass.rules}, locked settings without an approved value ${pass.locked}; ${recorded}${dq}`;
   tracer?.emit({ agent: "loop", action: "triage", status: "ok", input_summary: `pass ${tenant}`, output_summary: summary.slice(0, 1000), detail: "model: none" });
-  return { tenant, decidedAt, pass, findings, runs: runs.length, kept, lines, summary };
+  return { tenant, decidedAt, pass, findings, runs: runs.length, kept, lines, summary, ...(adoptions ? { adoptions } : {}), ...(files ? { files } : {}) };
 }

@@ -4,9 +4,9 @@
 // constructor({ clock }), add(), query(), feedback() and the service surface (store, ledger, sleep,
 // dreaming, conflicts). We re-export the reference's implementation unchanged and add the domain layer
 // the agent needs on top: TechnicianMemory, the lessons a technician teaches the agent. A lesson is
-// either an answer to a question the agent asked (so the Decider does not ask it again) or an accepted
-// exception for one finding class on one scope (so the Decider treats the finding as ADOPT with an
-// expiry). Every lesson carries a tenant, a scope key, an expiry and provenance. Recall is by exact
+// either an accepted exception for one finding class on one scope (the Decider treats the finding as
+// ADOPT until its expiry) or an answer to a question on one scope, stored and listed; the pass reads
+// exceptions only. Every lesson carries a tenant, a scope key, an expiry and provenance. Recall is by exact
 // scope key, never by similarity: a lesson about one host never applies to another because the two
 // embed alike. An expired lesson comes back flagged so the Decider re-raises the finding; it is never
 // applied silently.
@@ -210,7 +210,7 @@ export class TechnicianMemory {
     return [`${TAG.provKind}${p.kind}`, `${TAG.provAt}${p.at}`, `${TAG.provBy}${by}`, ...(p.runId ? [`${TAG.provRun}${p.runId}`] : [])];
   }
 
-  /** (a) A question the agent asked and the technician answered, on one scope of the tenant's estate, until it expires. */
+  /** (a) An answer to a question, on one scope of the tenant's estate, until it expires; stored and listed. */
   recordAnswer(input: AnswerInput): AnswerLesson {
     this.writable("answer");
     const v = parse(AnswerSchema, input, "answer");

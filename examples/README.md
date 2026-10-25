@@ -9,7 +9,8 @@ Names are `host-XXXXXX.<tld>`, addresses `ip-XXXXXX`, hosts the pseudonyms of th
 `mail-XXXXXX@domain-XXXXXX`, all under the tenant's salt, so a pseudonym here is the same pseudonym in the full bundle
 and in the trace.
 
-Each slice also keeps what the Decider reads for its own rows: the 26 policy rules, the approvals, vault copies and
+Each slice also keeps what the Decider reads for its own rows: the 26 `policy_rule` rows (versions 1 and 2; version
+2's 15 rules govern), the approvals, vault copies and
 validations of its objects, the probes of its names, the tenant's 11 probe runs (24 Oct 19:59 UTC to 25 Oct 13:53
 UTC) and the disposition rows of its objects and records (12, 132 and 312 of the bundle's 343). The pass over each
 slice reads the technician's lessons from [memory/](memory/) (`DRIFT_MEMORY_DIR=examples/memory`), the committed
@@ -30,14 +31,14 @@ store, applied, the expiry 2026-11-30T00:00:00.000Z, the scope key, the operator
 The directories are named for the case: the bundle pseudonymises the zone, and a folder named after the zone would
 undo that for every row of the zone and every trace line that names it. `proposals/` holds the four
 pre-flight proposals and the verdicts the simulator returned for them; its own README explains them.
-[document.md](document.md) is the owner's document over the full bundle (`npm run document` in sample mode, 181
+[document.md](document.md) is the owner's document over the full bundle (`npm run document` in sample mode, 196
 lines): the estate, the copies with their gaps, the approvals, the 27 findings open (ADOPT 23, HOLD 3, ESCALATE 1),
-where each answer comes from, the work and tickets, the probes counted ok, fail and skipped, and the 14 named queries
-it ran, 81 runs in all. [report.html](report.html) is the owner's report over the same bundle and lessons, one HTML
+the Why of its one cause, where each answer comes from, the work and tickets, the probes counted ok, fail and
+skipped, and the 16 named queries it ran, 83 runs in all. [report.html](report.html) is the owner's report over the same bundle and lessons, one HTML
 file rendered from the document's rows (`npm run sample`, `npm run document` in sample mode and `npm run examples`
 write it alike): the one finding that needs a person with its cause and ticket #2, the 3 held until 27 Oct 2026 23:21
 UTC, the 23 adopted under the technician's exceptions, no action, and the latest read of each source with its DQ gate
-result; on 25 Oct 2026, 24,941 bytes. [memory/](memory/) is the store itself, `state.json` and `ledger.jsonl` as the
+result; on 25 Oct 2026, 30,094 bytes. [memory/](memory/) is the store itself, `state.json` and `ledger.jsonl` as the
 vendored H-MEM reference writes them; `npm run answer -- --list` prints its 23 lessons.
 
 ## proxy-split
@@ -50,8 +51,8 @@ the apex (21:47) by an API token, which has no email and so no actor.
 
 Rows: the DNS and audit runs of 13:53 UTC on 25 Oct, the two records, the three audit events, and the Decider's rows.
 Finding: `proxy_split`, ESCALATE by policy under rule 13 (`rule-8e75e1d767980665`: `proxied` on any record, critical,
-lock 1, a rollback rule, 4 h): its HOLD expired at 2026-10-25T03:21:06.870Z and the finding stands, the demo's
-ticket, decided by the policy alone. A rollback rule restores a setting to its approved value, and this finding concerns the
+lock 1, a rollback rule, 4 h): its HOLD expired at 2026-10-25T03:21:06.870Z and the finding stands, decided by the
+policy alone; its ticket is issue #2. A rollback rule restores a setting to its approved value, and this finding concerns the
 record's relation to another record while its own value stands, so the rule holds it, then escalates it at the
 expiry. 3 of 4 preconditions hold. `run_complete` holds, `actor_attributed` holds (two events with a named actor
 inside the window), `previous_value_recoverable` holds (Cloudflare logs no old values, so the state before the latest
@@ -95,8 +96,8 @@ with their `.zone` and `.enabled` siblings, the tenant's inventory, its export s
 Seven findings, ADOPT 3, HOLD 3 and ESCALATE 1:
 
 - 3 `orphan_record`, HOLD by policy under rule 15 (72 h) until 2026-10-27T23:21:06.870Z, the expiry the first HOLD on
-  each live value set at 23:21 UTC on 24 Oct, carried by the 13:54 UTC HOLDs the slice holds; the operator keeps these
-  three on HOLD for the demo. Each holds `run_complete` and `host_in_inventory`; one is attributed
+  each live value set at 23:21 UTC on 24 Oct, carried by the 13:54 UTC HOLDs the slice holds; the operator's 23
+  exceptions name `proxied_without_real_ip` and `orphan_vhost` findings, so rule 15 decides these three. Each holds `run_complete` and `host_in_inventory`; one is attributed
   (`actor_attributed` holds on `host-c10fff.com`), and `previous_value_recoverable` fails on all three. The one on
   `host-c10fff.com` is dated by the exposure line: at least 110 days, since 2026-07-06T18:46:40.994Z, because its one
   audit body sets the content the DNS run still shows and the log holds nothing earlier on the record. The three

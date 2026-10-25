@@ -39,6 +39,14 @@ export interface TraceEvent {
   tokens_out?: number;
   latency_ms?: number;
   retry_count?: number;
+  /** On model_call and receipt-gate check events: the meterless-scope the request went out under (src/adapters/nightshift.ts freshScope). */
+  scope?: string;
+  /**
+   * On model_call and receipt-gate check events: the records Nightshift's memory put in front of the request (hmem.injected;
+   * 0 for hmem null), as the response's copy of its receipt says on model_call and as the signed receipt says on the gate's
+   * check; null when there was no receipt to read it from.
+   */
+  memory_injected?: number | null;
   status: "ok" | "failed" | "needs_revision" | "not_checked" | "skipped" | "not_judged" | "substituted";
   detail?: string;
 }

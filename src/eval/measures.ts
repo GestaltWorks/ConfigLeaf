@@ -4,7 +4,10 @@
 //   countRun: the protocol's "What is counted" per configuration run, over the scored items (raised or
 //     history) of the set: checks selected, valid and run unmodified; falsifier queries run and the ones that
 //     struck; strikes on items labelled no (agreed) and yes (wrong); verdict agreement with the label, unsure
-//     apart; items not judged; calls, cache hits, substitutions, tokens and the median latency per call.
+//     apart; items not judged; calls, cache hits, substitutions, calls with memory injected (the receipt's hmem),
+//     tokens and the median latency per call.
+//   memoryTally: over every call of the runs, those whose receipt says Nightshift injected memory, of all calls, and
+//     those with no receipt to read it from.
 //   wilson: the Wilson score interval at 95% (z = 1.959964) for k agreements in n; null for n = 0.
 //   determinism: C0 compares two passes' findings, verbs and reasons; a model configuration compares its
 //     runs 1 and 2 item by item (verdict and every finding's reason); the count of differences.
@@ -13,7 +16,7 @@
 //   stability: per count, the spread (max - min) over the runs, each run counted over the items every one of
 //     whose calls the receipt marks uncached (cache.status other than "hit").
 
-import type { CallRecord } from "./models.ts";
+import { isMemoryInjected, type CallRecord } from "./models.ts";
 import type { Counts, ItemOutcome, RunResult } from "./types.ts";
 
 export const Z95 = 1.959963984540054;
@@ -71,10 +74,17 @@ export function countRun(items: readonly ItemOutcome[], calls: readonly CallReco
     calls: calls.length,
     cache_hits: calls.filter((c) => c.cache_status === "hit").length,
     substitutions: calls.filter(isSubstitution).length,
+    memory_injected: calls.filter(isMemoryInjected).length,
     tokens_in: sum(calls.map((c) => c.tokens_in)),
     tokens_out: sum(calls.map((c) => c.tokens_out)),
     latency_ms_median: median(calls.map((c) => c.latency_ms)),
   };
+}
+
+/** Calls whose receipt says memory was injected, of all calls, and calls with no receipt to read hmem from (memory_injected null). */
+export function memoryTally(runs: readonly { calls: readonly CallRecord[] }[]): { injected: number; calls: number; unread: number } {
+  const calls = runs.flatMap((r) => r.calls);
+  return { injected: calls.filter(isMemoryInjected).length, calls: calls.length, unread: calls.filter((c) => c.memory_injected === null || c.memory_injected === undefined).length };
 }
 
 export interface Coverage { items: { with_verdict: number; scored: number }; findings: { with_disposition: number; assessed: number } }

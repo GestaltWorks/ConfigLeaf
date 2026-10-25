@@ -2,7 +2,7 @@
 // purpose, finding classes, parameter names), one redacted finding and the JSON shape; it chooses at
 // most four template ids and fills their parameters. Nothing it says becomes SQL. validateSelection
 // drops what does not fit (unknown id, bad params, duplicates, more than six) and records a reason per
-// drop instead of throwing, so an eval can count valid against invalid selections; a missing or long
+// drop, so an eval can count valid against invalid selections; a missing or long
 // "why" is tolerated (blank or truncated), because it is prose, not a query input. defaultSelection is
 // the documented fallback policy: the checks every finding of a class gets in SAMPLE_MODE and whenever
 // no model answered; defaultChecks binds them from the finding through the same validator.

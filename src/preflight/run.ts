@@ -16,7 +16,7 @@
 // world they ran in), overlay_delta, prerequisite, judge, decide. In sample mode, or with no Nightshift
 // token, the judge is skipped and traced as such. Live, the judge's falsifier is asked in the fixed world
 // (the last simulation), where the claim is false: it must return rows there (`falsifier_fires`), or it
-// was vacuous and the verdict records that instead of a judgement. The target: for a GO, the first finding
+// was vacuous and the verdict records that. The target: for a GO, the first finding
 // the change removes (its claim is true in the recorded world); for a GO-IF, the finding the last
 // prerequisite was bound from and cleared (its claim is true in the simulation it was bound in, not in
 // the recorded world, where it does not exist). The trace says which target was chosen.

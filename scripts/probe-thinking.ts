@@ -1,5 +1,5 @@
 // Does Nightshift forward chat_template_kwargs.enable_thinking, Nemotron's documented reasoning
-// switch, to the model? Measured, not assumed: one fixed small-JSON prompt, N calls per model per
+// switch, to the model? One fixed small-JSON prompt, N calls per model per
 // setting (default 3), on config.nightshift.modelFast and modelJudge. Forwarding is observable as a
 // change in </think> presence or tokens_out between false and true. Prints a table and one verdict.
 // The token is read by config and never printed. Unreachable runtime: say so once, exit 2, no loop.

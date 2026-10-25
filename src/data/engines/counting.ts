@@ -5,7 +5,7 @@
 // ZetarisEngine in one (src/loop/live.ts), and the cycle's screen reads the tally: the Lightning SQL queries the
 // pass sent, and those the cycle sent in all.
 //
-// Measured 25 Oct 2026: test/loop.test.ts counts runs that return and runs that throw over sql.js.
+// Tested by test/loop.test.ts over sql.js, runs that return and runs that throw.
 
 import type { QueryResult } from "../../adapters/zetaris.ts";
 import type { Engine, RunOptions } from "../layer.ts";

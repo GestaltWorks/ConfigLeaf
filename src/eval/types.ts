@@ -90,6 +90,8 @@ export interface Counts {
   calls: number;
   cache_hits: number;
   substitutions: number;
+  /** Calls whose receipt says Nightshift's memory injected stored answers in front of them (hmem.injected above 0). */
+  memory_injected: number;
   tokens_in: number;
   tokens_out: number;
   latency_ms_median: number | null;
@@ -100,7 +102,7 @@ export interface RunResult {
   run: number;
   started_at: string;
   finished_at: string;
-  /** false when any call's verified receipt names a tier other than the one requested. */
+  /** false when any call's verified receipt names a tier other than the one requested, or any call's receipt shows injected memory. */
   valid: boolean;
   invalid_reason: string | null;
   items: ItemOutcome[];

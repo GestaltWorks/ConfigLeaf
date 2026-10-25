@@ -20,7 +20,8 @@
 //                       off); ok when the run is complete.
 //   validate            validateCopies over every repository's head when the collect steps made a new commit, else
 //                       nothing; ok when every repository validated, whatever each result.
-//   pass                passStep with the PgLedger; its row names the queries the pass sent through Zetaris, the
+//   pass                passStep with the PgLedger, the Zetaris copy of the lessons and the rules refreshed first when
+//                       stale (refreshFileTables); its row names the queries the pass sent through Zetaris, the
 //                       context's query tally (LiveContext queries) read before and after it, with the datasource.
 //   explain             explainPass (src/explain/explain.ts) over the pass's findings: one finding_cause row per
 //                       ROLLBACK, FIX, ESCALATE and explained HOLD into the Store, a dry run included; ok always, an
@@ -41,8 +42,8 @@
 // the collect:linux subject aside: the ssh alias as LINUX_HOSTS names it. act and tickets also hand the cycle their
 // results (StepReport act, tickets) for its "what happened" block; act's view names each object from the pass.
 //
-// Measured 24 Oct 2026: test/loop.test.ts drives each step with fakes and the pass, act, tickets and document steps
-// over sql.js with test/fixtures/policy-bundle.json; the live cycle is measured in scripts/cycle.ts.
+// Tested by test/loop.test.ts: each step with fakes, and the pass, act, tickets and document steps over sql.js with
+// test/fixtures/policy-bundle.json; the live cycle is measured in scripts/cycle.ts.
 
 import { writeFileSync } from "node:fs";
 import path from "node:path";
@@ -73,6 +74,7 @@ import { storeCopies, validateCopies, type CopyStore } from "../validate/run.ts"
 import type { NginxRunner } from "../validate/nginx.ts";
 import { vaultCloudflareRun, vaultLinuxRun, type HookResult } from "../vault/hook.ts";
 import type { Vault } from "../vault/vault.ts";
+import { refreshFileTables } from "../zetaris/setup.ts";
 import type { CollectReport, CycleSteps, NewCommit, PassReport, StepReport } from "./cycle.ts";
 import { passStep, type PassStep } from "./pass.ts";
 import { actView, cloudflareView, documentView, explainView, linuxView, passView, probeView, ticketsView, validateView, type ActFacts, type CauseFacts, type TicketFacts } from "./present.ts";
@@ -325,7 +327,7 @@ export function liveSteps(ctx: LiveContext): CycleSteps {
     validate: (commits) => validateStep(commits, { tenant, vaultDir: ctx.vaultDir, store: storeCopies(store), redactor }),
     pass: async (): Promise<PassReport> => {
       const before = ctx.queries?.();
-      const r = await passStep(layer, { tenant, ledger: new PgLedger(store), memory: ctx.memory, tracer });
+      const r = await passStep(layer, { tenant, ledger: new PgLedger(store), memory: ctx.memory, tracer, refreshFiles: () => refreshFileTables() });
       const sent = before && ctx.queries ? { datasource: config.zetaris.datasource, ...tallySince(before, ctx.queries()) } : undefined;
       return { ok: true, summary: redactor.text(r.summary), pass: r, view: passView(r, sent) };
     },

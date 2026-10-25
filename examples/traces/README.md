@@ -1,10 +1,10 @@
 # Traces
 
-Three traces exactly as the tracer (`src/trace.ts`) wrote them to `logs/`: one JSON line per agent action, every
+Four traces exactly as the tracer (`src/trace.ts`) wrote them to `logs/`: one JSON line per agent action, every
 free-text field through the redactor, so each name, address, host and actor is the pseudonym the stored rows carry.
-All three were recorded on 25 Oct 2026. The first two predate the `engine` field on query lines; in them a query
+All four were recorded on 25 Oct 2026. The first three predate the `engine` field on query lines; in them a query
 whose SQL names `DRIFT.<table>` went to Zetaris Lightning SQL (the datasource prefix `ZetarisEngine.qualify` adds).
-The third carries `engine` on every query line.
+The fourth carries `engine` on every query line.
 
 - [act_mvnn2tja.jsonl](act_mvnn2tja.jsonl): the lab's FIX investigated with Nemotron through Nightshift
   ([lab/README.md](../../lab/README.md), "No valid copy"), `npm run act -- --tenant lab-1 --apply --only investigate`,
@@ -12,10 +12,16 @@ The third carries `engine` on every query line.
   (receipt `rcpt_req_nn4ag0yu`), Ultra's verdict stands (receipt `rcpt_req_iehg9gmt`), and the fix is refused with no
   valid copy. The investigation's pass also read the production tenant's runs, so their findings appear beside the
   lab's, pseudonymised; only lab-1's FIX was acted on.
-- [cycle_mvo5600q.jsonl](cycle_mvo5600q.jsonl): the act-three cycle on the production estate, tenant client-1, with
-  `--apply`, 18:08:54 to 18:16:51 UTC: nine steps ok (collect Cloudflare and both Linux hosts, probe, validate, pass,
-  act, tickets, document), 29 findings, verbs ADOPT 23, HOLD 4, ESCALATE 1, FIX 1; the act step investigates the FIX
-  and refuses the fix, and the tickets step creates #7.
+- [cycle_mvo2bil0.jsonl](cycle_mvo2bil0.jsonl): the operator's rehearsal cycle on the production estate after a
+  staged record change, tenant client-1, with `--apply`, 16:49:12 to 16:51:03 UTC: nine steps ok, 30 findings,
+  FOUND-BUT-DIFFERENT on real rows (2 `found_but_different` findings, the :443 and :80 `server_name` of one vhost,
+  byte-identical since the 16:32 UTC run while their name resolved to another address, each held under rule 15) and
+  the record's `drift_vs_approved` ROLLBACK; the act step reverts the record through the provider, `revert_record`
+  done with the record read back equal to the copy, and the tickets step opens and closes the change #6 and closes #5.
+- [cycle_mvo5600q.jsonl](cycle_mvo5600q.jsonl): the operator's rehearsal cycle on the production estate, tenant
+  client-1, with `--apply`, 18:08:54 to 18:16:51 UTC: nine steps ok (collect Cloudflare and both Linux hosts, probe,
+  validate, pass, act, tickets, document), 29 findings, verbs ADOPT 23, HOLD 4, ESCALATE 1, FIX 1; the act step
+  investigates the FIX and refuses the fix, and the tickets step creates #7.
 - [cycle_mvoa0l1i.jsonl](cycle_mvoa0l1i.jsonl): the lab's explain cycle, tenant lab-1, after a `sudo -n tee` break
   of `lab.example` to 8098 and its collection ([lab/README.md](../../lab/README.md), "Why it changed, on the lab"),
   `npm run cycle -- --tenant lab-1 --apply --skip collect,validate --tickets-dry-run`, 20:24:34 to 20:26:12 UTC: the
