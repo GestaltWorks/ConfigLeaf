@@ -11,23 +11,35 @@
 //                    script accepts, the previous bytes, which for a `file` setting must hash to the disposition's
 //                    live value, and the names the copy's run records for the object. Any gap is a refusal with
 //                    one sentence, and nothing is written. A failed rollback of the same target to the same commit
-//                    over the same live bytes is refused too: that write is left to a technician.
+//                    over the same live bytes is refused too: that write is left to a technician. An unverified one
+//                    completed its write, so the rollback goes ahead and its reason names that action.
 //   planRollback     the dry-run lines (plan.ts): what would be written where, from which commit, what follows.
-//   rollbackFile     the session and the probes. done: written, nginx -t passed, reloaded, the after hash is the
-//                    copy's, and every probe of the served names is ok. refused: the live file is a symlink, is
-//                    unreadable, changed since the run, or sudo refused before the write ("sudo: a password is
-//                    required"). failed: anything else, with nginx's or systemd's output redacted, the write-back
-//                    named, the failing probes named; a rollback no probe verified ends failed.
+//   rollbackFile     the session and the probes. The write path completes when write, nginx -t and the reload
+//                    exit 0 and the file's sha256 after is the copy's. done: completed, and every probe of the
+//                    served names is ok. unverified: completed, and no probe verified it: the copy's run records no
+//                    name the object serves, the probe population is unreadable, the account holds no record of the
+//                    names, or a probe reached no address because its name resolves nowhere (no probe answering
+//                    fail). refused: the live file is a symlink, is unreadable, changed since the run, or sudo
+//                    refused before the write ("sudo: a password is required"). failed: the write path did not
+//                    complete, with nginx's or systemd's output redacted and the write-back named, or a probe that
+//                    answered fails, the failing probes named.
 //
 // Measured 24 Oct 2026: every end above exercised against a fake host and a fake probe (test/actions.test.ts); the
-// production hosts had received 0 writes from it.
+// production hosts had received 0 writes from it. Measured 25 Oct 2026 on the lab estate (lab/README.md), tenant
+// lab-1: the first real rollbacks, act-a5f7774e2cb78881 at 05:22 UTC and act-6cc0c3178d96e317 at 05:28 UTC, each
+// written and reloaded with after_hash the copy's, 0.72 s and 0.49 s, and ended failed, unverified (a placeholder
+// Cloudflare token failed the verification read, so no probe ran); the same break again was refused as a retry of a
+// failed write (act-66ac170572034040). With the unverified status and the account's token, at 05:47 UTC:
+// act-b5d5e77f69ab6f17 wrote the copy over a break to 8091, write, nginx-t and reload at exit 0, after_hash the
+// copy's, 1.9 s, and ended unverified, "no probe of lab.example ran (the account holds no record of these names)";
+// the next collection and pass gave 0 findings. The unverified ends and the retry after one: test/actions.test.ts.
 
 import { redactText } from "../collectors/linux.ts";
-import type { Disposition, Probe } from "../data/rows.ts";
+import type { Action, Disposition, Probe } from "../data/rows.ts";
 import type { Redactor } from "../redactor.ts";
 import { treePath, sha256, type Vault } from "../vault/vault.ts";
 import {
-  c8, gaps, h12, outcome, plural, probeSentence, resolveCopy, sha, targetOf,
+  c8, gaps, h12, outcome, plural, priorUnverified, priorWrites, probeSentence, resolveCopy, sha,
   type ActionOutcome, type ActorReads, type CopyChoice, type Emitter, type ProbeFn, type Row,
 } from "./plan.ts";
 import { NGINX_PATH, hex256, parseSession, writeScript, type SshRunner } from "./ssh.ts";
@@ -55,6 +67,8 @@ export interface PreparedRollback {
   runCommit: string;
   /** The redacted names the copy's run records for the object. */
   names: string[];
+  /** The latest unverified rollback of the same target to the same commit over the same live bytes; null when none. */
+  prior: Action | null;
 }
 
 export type RollbackPrep = PreparedRollback | { refused: string };
@@ -95,14 +109,16 @@ export async function prepareRollback(d: Disposition, deps: RollbackDeps): Promi
   if (previous && d.setting_path === "file" && sha256(previous) !== d.value_hash) {
     return { refused: `the vault's commit of run ${d.run_id} holds ${h12(sha256(previous))} for the file; the disposition decided on ${h12(d.value_hash)}` };
   }
-  const before = previous ? sha256(previous) : null;
-  const failedBefore = deps.reads.actionsOn(targetOf(d)).filter((a) => a.kind === "rollback_file" && a.status === "failed" && a.vault_commit === copy.git_commit && a.before_hash === before).at(-1);
-  if (failedBefore) {
-    return { refused: `action ${failedBefore.action_id} rolled this file back to commit ${c8(copy.git_commit)} over the same live bytes and failed at ${failedBefore.finished_at ?? failedBefore.started_at}; the same write is left to a technician` };
+  const prior = priorWrites(deps.reads, d, "rollback_file", copy.git_commit, previous ? sha256(previous) : null);
+  if (prior.failed) {
+    return { refused: `action ${prior.failed.action_id} rolled this file back to commit ${c8(copy.git_commit)} over the same live bytes and failed at ${prior.failed.finished_at ?? prior.failed.started_at}; the same write is left to a technician` };
   }
   const names = servedNames(await deps.reads.observationsOf(copy.run_id), d.object_id);
-  return { alias, path, choice, copy: bytes, previous, runCommit, names };
+  return { alias, path, choice, copy: bytes, previous, runCommit, names, prior: prior.unverified };
 }
+
+/** A probe that reached no address: its name resolves nowhere, so it verifies nothing either way. */
+const UNRESOLVED = /^unreachable: (ENOTFOUND|ENODATA|EAI_AGAIN)\b/;
 
 /** The dry-run lines of one rollback. */
 export function planRollback(d: Disposition, p: PreparedRollback): string[] {
@@ -116,7 +132,8 @@ export function planRollback(d: Disposition, p: PreparedRollback): string[] {
     `then sudo -n nginx -t, the previous ${p.previous ? "bytes written back" : "state restored by removing the file"} on a refusal; sudo -n systemctl reload nginx, the same on a failure; the file's sha256 after`,
     p.names.length
       ? `then probes http and tls of ${p.names.join(", ")}`
-      : `then no probe: run ${copy.run_id} records no name the object serves, so the rollback would end failed, unverified`,
+      : `then no probe: run ${copy.run_id} records no name the object serves, so a completed write would end unverified`,
+    ...(p.prior ? [`action ${p.prior.action_id} wrote this copy over the same live bytes at ${p.prior.finished_at ?? p.prior.started_at} and ended unverified; the write runs again`] : []),
   ];
 }
 
@@ -135,9 +152,9 @@ export async function rollbackFile(d: Disposition, p: PreparedRollback, deps: Ro
     `vault commit ${c8(copy.git_commit)} holds the copy (${plural(p.copy.length, "byte")}, sha256 ${h12(copyHex)}); the commit of run ${d.run_id}, ${c8(p.runCommit)}, holds ${p.previous ? `the previous bytes, ${h12(expect)}` : "no file at this path"}`,
   ];
   const base = { vault_commit: copy.git_commit, started_at: started };
-  const end = (status: "done" | "failed" | "refused", reason: string, extra: { before?: string | null; after?: string | null; verification?: string[] } = {}): ActionOutcome =>
+  const end = (status: "done" | "unverified" | "failed" | "refused", reason: string, extra: { before?: string | null; after?: string | null; verification?: string[] } = {}): ActionOutcome =>
     outcome(d, "rollback_file", {
-      ...base, status, reason: red(reason), record: record.map(red), finished_at: deps.now().toISOString(),
+      ...base, status, reason: red(`${reason}${priorUnverified(p.prior)}`), record: record.map(red), finished_at: deps.now().toISOString(),
       before_hash: extra.before === undefined || extra.before === null || extra.before === "absent" || extra.before === "unreadable" ? null : sha(extra.before),
       after_hash: extra.after ? sha(extra.after) : null, verification: extra.verification,
     });
@@ -198,20 +215,26 @@ export async function rollbackFile(d: Disposition, p: PreparedRollback, deps: Ro
   record.push(`after: ${h12(s.after)}, the copy's bytes; nginx -t passed and nginx reloaded`);
   const after = { before: s.before, after: s.after };
   if (!p.names.length) {
-    return end("failed", `written and reloaded; run ${copy.run_id} records no name the object serves, so no probe verified it`, after);
+    return end("unverified", `written and reloaded; run ${copy.run_id} records no name the object serves, so no probe ran`, after);
   }
   let rows: Probe[];
   try {
     rows = await deps.probe(p.names, ["http", "tls"]);
   } catch (e) {
-    return end("failed", `written and reloaded; the probes of ${p.names.join(", ")} did not run: ${safe(r, e)}`, after);
+    return end("unverified", `written and reloaded; the probes of ${p.names.join(", ")} did not run: ${safe(r, e)}`, after);
   }
   for (const x of rows) record.push(probeSentence(x));
   const ids = rows.map((x) => x.probe_id);
-  if (!rows.length) return end("failed", `written and reloaded; no probe of ${p.names.join(", ")} ran (the account holds no record of these names)`, after);
-  const failing = rows.filter((x) => x.status !== "ok");
+  if (!rows.length) return end("unverified", `written and reloaded; no probe of ${p.names.join(", ")} ran (the account holds no record of these names)`, after);
+  const notOk = rows.filter((x) => x.status !== "ok");
+  const unread = notOk.filter((x) => UNRESOLVED.test(x.observed));
+  const failing = notOk.filter((x) => !UNRESOLVED.test(x.observed));
   if (failing.length) {
     return end("failed", `written and reloaded; ${failing.length} of ${plural(rows.length, "probe")} fail: ${failing.map((x) => `${x.kind} ${x.target}`).join(", ")}`, { ...after, verification: ids });
+  }
+  if (unread.length) {
+    const nowhere = [...new Set(unread.map((x) => x.target))].sort();
+    return end("unverified", `written and reloaded; ${unread.length} of ${plural(rows.length, "probe")} reached no address: ${nowhere.join(", ")} ${nowhere.length === 1 ? "resolves" : "resolve"} nowhere (${[...new Set(unread.map((x) => x.observed.replace(/^unreachable: /, "")))].join(", ")})`, { ...after, verification: ids });
   }
   return end("done", `restored to the approved copy at vault commit ${c8(copy.git_commit)}; nginx -t passed, nginx reloaded, ${plural(rows.length, "probe")} of ${p.names.join(", ")} ok`, { ...after, verification: ids });
 }

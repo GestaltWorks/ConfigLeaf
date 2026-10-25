@@ -10,7 +10,8 @@
 //                    observed_count >= expected_count AND status = 'complete'
 //   copy_validated   on copy: validated = 1
 //   action_verified  on action, scoped to the write paths: kind NOT IN ('rollback_file','revert_record') OR
-//                    status <> 'done' OR verification <> ''
+//                    status IN ('failed','refused','not_judged') OR verification <> ''; a done or unverified write
+//                    that names no verifying probe fails the rule, its status carrying what is missing
 //
 // Contract:
 //   - Re-runnable. CREATE DATASOURCE has no IF NOT EXISTS, so SHOW DATASOURCES decides it. REGISTER
@@ -244,12 +245,15 @@ export interface DqRule { name: string; table: UslTable; expression: string }
  * present, the observed count at least the asserted one, status complete, so a run that never asserted
  * its population fails here as it fails the pass's gate. copy_validated: the copy's latest validation is
  * ok or ok_with_gaps. action_verified, scoped to the write paths: a done rollback_file or revert_record
- * names the probes that verified it; an investigation and a fix pass it whatever they carry.
+ * names the probes that verified it; an investigation and a fix pass it whatever they carry. A write that
+ * completed with no verification probe run or read carries status unverified, never done, so the rule's
+ * status <> 'done' arm passes its row: the status itself records the missing verification, and a done row
+ * with no probe id stays the one row the rule fails.
  */
 export const DQ_RULES: readonly DqRule[] = [
   { name: "run_complete", table: "collection", expression: "observed_count IS NOT NULL AND expected_count IS NOT NULL AND observed_count >= expected_count AND status = 'complete'" },
   { name: "copy_validated", table: "copy", expression: "validated = 1" },
-  { name: "action_verified", table: "action", expression: "kind NOT IN ('rollback_file','revert_record') OR status <> 'done' OR verification <> ''" },
+  { name: "action_verified", table: "action", expression: "kind NOT IN ('rollback_file','revert_record') OR status IN ('failed','refused','not_judged') OR verification <> ''" },
 ];
 /** The tables RUN DQ runs on, one statement each. */
 export const DQ_TABLES: readonly UslTable[] = ["collection", "copy", "action"];

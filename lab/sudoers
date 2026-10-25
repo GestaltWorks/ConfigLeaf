@@ -1,0 +1,3 @@
+# /etc/sudoers.d/drift-lab (root:root, 0440): what the drift-agent write session (src/actions/ssh.ts) runs as root
+# with no password: sudo -n tee, sudo -n nginx -t, sudo -n systemctl reload nginx (the stand-in), sudo -n rm -f.
+drift ALL=(root) NOPASSWD: /usr/bin/tee, /usr/sbin/nginx, /usr/local/bin/systemctl, /bin/rm

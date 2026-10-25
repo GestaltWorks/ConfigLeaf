@@ -31,7 +31,7 @@ const TEN = ["collection", "setting", "referent", "backup_copy", "policy", "copy
 const RULES = ["run_complete", "copy_validated", "action_verified"];
 const RUN_COMPLETE_EXPR = "observed_count IS NOT NULL AND expected_count IS NOT NULL AND observed_count >= expected_count AND status = 'complete'";
 /** action_verified, scoped to the write paths. */
-const ACTION_VERIFIED_EXPR = "kind NOT IN ('rollback_file','revert_record') OR status <> 'done' OR verification <> ''";
+const ACTION_VERIFIED_EXPR = "kind NOT IN ('rollback_file','revert_record') OR status IN ('failed','refused','not_judged') OR verification <> ''";
 
 /** The SELECT list's output names of an ACTIVATE statement: parenthesised groups removed, then the last word of each item. */
 function activatedColumns(sql: string): string[] {

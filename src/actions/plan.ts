@@ -16,6 +16,12 @@
 //     query id, probe id or receipt id it rests on where one exists. The row carries both, the record one sentence per
 //     line and cut at rows.ts ACTION_RECORD_MAX characters, so the ticket step and the owner read them from the action
 //     table; the trace and the caller get them too.
+//   - A write path's status: done when the write completed and every verification probe is ok; unverified when the
+//     write completed and no verification probe ran or could be read, the reason naming which; failed when the write
+//     path did not complete, its read back differs, or a probe that answered fails; refused when nothing was written.
+//   - priorWrites: the actions of one kind already recorded over the same target, vault commit and live value. A
+//     failed one refuses the retry (left to a technician); an unverified one completed its write, so the write runs
+//     again and the new action's reason names it (priorUnverified).
 
 import type { CopyCandidate } from "../policy/decide.ts";
 import { validCopy } from "../policy/decide.ts";
@@ -99,6 +105,16 @@ export async function resolveCopy(d: Disposition, reads: ActorReads): Promise<Co
   if (!copy.git_commit.startsWith(named)) return { refused: `the valid copy of approved ${h12(approval.value_hash)} is at commit ${c8(copy.git_commit)} now; the Decider named commit ${named}` };
   return { approval, copy };
 }
+
+/** The latest failed and the latest unverified action of `kind` over the disposition's target, vault commit `commit` and live value `before`. */
+export function priorWrites(reads: ActorReads, d: Disposition, kind: ActionKind, commit: string, before: string | null): { failed: Action | null; unverified: Action | null } {
+  const same = reads.actionsOn(targetOf(d)).filter((a) => a.kind === kind && a.vault_commit === commit && a.before_hash === before);
+  return { failed: same.filter((a) => a.status === "failed").at(-1) ?? null, unverified: same.filter((a) => a.status === "unverified").at(-1) ?? null };
+}
+
+/** The clause a reason carries for an unverified action that wrote the same copy over the same live value before; "" when there is none. */
+export const priorUnverified = (a: Pick<Action, "action_id" | "started_at" | "finished_at"> | null): string =>
+  a ? `; action ${a.action_id} wrote the same copy over the same live value at ${a.finished_at ?? a.started_at} and ended unverified` : "";
 
 /** The gap count of a copy's latest validation, as the Decider counts it. */
 export const gaps = (c: Pick<CopyCandidate, "missing_dependencies">): number => c.missing_dependencies.split("\n").filter((s) => s.trim() !== "").length;

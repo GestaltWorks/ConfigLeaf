@@ -22,10 +22,13 @@
 //     closed in place, and a row without one gets its issue created.
 //   - Closing: a change ticket closes with a comment once its action is done and verified (status done,
 //     verification probe ids recorded) and stays open with the failure named when the action failed or was
-//     refused. A ticket opened under HOLD closes with a comment when the finding's disposition is ADOPT, or
-//     when a pass whose runs cover the setting raises no finding on it. On an open ticket, a new action or a
-//     verb other than the one in force at its last update is one comment; anything else leaves it as it is.
-//     A closed row stays closed.
+//     refused. An unverified action (the write completed, no verification probe ran or could be read) leaves
+//     its change ticket open with a comment that states the write completed and the verification it lacks; the
+//     ticket closes, with that fact, when a pass whose runs cover the setting raises no finding on it, the setting
+//     then holding its approved value. A ticket opened under HOLD closes with a comment when the finding's
+//     disposition is ADOPT, or when a pass whose runs cover the setting raises no finding on it. On an open
+//     ticket, a new action or a verb other than the one in force at its last update is one comment; anything
+//     else leaves it as it is. A closed row stays closed.
 //   - outgoing: every string bound for a PSA passes the tenant's redactor and then the deny-list probe
 //     (redactor.ts countLabels over REDACT_WORDS and EXPORT_DENY_WORDS); one label and nothing is sent. The
 //     error names the label's position in the list and the count, never the label.
@@ -44,7 +47,7 @@ import { stableId, type Action, type Disposition, type DispositionVerb, type Pol
 import type { TicketPatch } from "../data/store.ts";
 import { resolvePolicy } from "../policy/resolve.ts";
 import { countLabels, type Redactor } from "../redactor.ts";
-import { closeComment, commentBody, objectLabel, ticketBody, ticketTitle, type ProbeEvidence } from "./body.ts";
+import { closeComment, commentBody, objectLabel, ticketBody, ticketTitle, unverifiedComment, type ProbeEvidence } from "./body.ts";
 
 export type TicketType = Ticket["type"];
 export type TicketStatus = "open" | "closed";
@@ -129,7 +132,7 @@ export interface TicketFinding {
   exposure?: ExposureLine;
 }
 
-/** An action row as TICKET_ACTIONS_SQL returns it: the action, the finding and the verb of its disposition. status is the Actor's (done, failed, refused, not_judged). */
+/** An action row as TICKET_ACTIONS_SQL returns it: the action, the finding and the verb of its disposition. status is the Actor's (done, unverified, failed, refused, not_judged). */
 export interface ActionView extends Omit<Action, "status"> { status: string; finding_id: string; verb: string }
 
 export interface TicketInput {
@@ -155,7 +158,8 @@ export interface TicketInput {
 }
 
 export type TicketOp =
-  | { op: "create"; ticket: Ticket; draft: IssueDraft; existing: boolean; close: string | null; reason: string }
+  /** close: the comment the issue closes with right after its create; note: a comment posted after the create that leaves it open. */
+  | { op: "create"; ticket: Ticket; draft: IssueDraft; existing: boolean; close: string | null; note: string | null; reason: string }
   | { op: "comment"; ticket: Ticket; body: string; patch: TicketPatch; reason: string }
   | { op: "close"; ticket: Ticket; body: string; reason: string }
   | { op: "skip"; finding_id: string; reason: string };
@@ -179,6 +183,9 @@ export function carryingAction(verb: DispositionVerb, actions: readonly ActionVi
 
 /** Done and verified: status done with the verifying probe ids recorded. */
 export const verified = (a: ActionView): boolean => a.status === "done" && a.verification.trim() !== "";
+
+/** A write that completed and that no verification probe verified. */
+export const unverified = (a: ActionView): boolean => a.status === "unverified" && ROLLBACK_KINDS.includes(a.kind);
 
 /** The plan for one pass: creates, comments, closes and skips, in the pass's finding order, then the open tickets of findings the pass no longer raises. */
 export function planTickets(input: TicketInput): TicketOp[] {
@@ -235,7 +242,8 @@ export function planTickets(input: TicketInput): TicketOp[] {
         labels: labelsOf(call.type, call.priority, f.finding.class, d.verb),
       };
       const closing = call.type === "change" && carry && verified(carry) ? closeComment("rollback", { disposition: d, action: carry, ticketId: id }) : null;
-      ops.push({ op: "create", ticket, draft, existing: false, close: closing, reason: call.why });
+      const note = call.type === "change" && carry && unverified(carry) ? unverifiedComment({ disposition: d, action: carry, ticketId: id }) : null;
+      ops.push({ op: "create", ticket, draft, existing: false, close: closing, note, reason: call.why });
       continue;
     }
 
@@ -243,7 +251,7 @@ export function planTickets(input: TicketInput): TicketOp[] {
     if (current.external_id === null) {
       const type = current.type;
       ops.push({
-        op: "create", ticket: current, existing: true, close: null, reason: `ticket ${current.ticket_id} is recorded with no issue; its issue is created`,
+        op: "create", ticket: current, existing: true, close: null, note: null, reason: `ticket ${current.ticket_id} is recorded with no issue; its issue is created`,
         draft: {
           title: ticketTitle(d.verb, f.finding.class, objectLabel(f.finding), where),
           body: ticketBody({ ...parts, ticketId: current.ticket_id, type, priority: current.priority }),
@@ -276,20 +284,25 @@ export function planTickets(input: TicketInput): TicketOp[] {
     ops.push({ op: "skip", finding_id: f.id, reason: `ticket ${current.ticket_id} (#${current.external_id}) is current: ${d.verb}, no new action` });
   }
 
-  // Open tickets of findings the current pass no longer raises: a ticket opened under HOLD closes when the pass covers the setting.
+  // Open tickets of findings the current pass no longer raises: a ticket opened under HOLD, and a change whose write
+  // is unverified, close when the pass covers the setting.
   for (const t of [...input.tickets].filter((x) => x.tenant_id === input.tenant && open(x) && !seen.has(x.finding_id)).sort((a, b) => (a.ticket_id < b.ticket_id ? -1 : 1))) {
     const last = input.dispositions.filter((d) => d.finding_id === t.finding_id).sort(byTime).at(-1);
     const openedUnder = verbAt(input.dispositions, t.finding_id, t.created_at)?.verb ?? null;
+    const write = t.type === "change" && t.action_id ? input.actions.find((a) => a.action_id === t.action_id && unverified(a)) ?? null : null;
     if (!last) {
       ops.push({ op: "skip", finding_id: t.finding_id, reason: `ticket ${t.ticket_id}: the ledger holds no disposition for finding ${t.finding_id}` });
-    } else if (openedUnder !== "HOLD") {
+    } else if (openedUnder !== "HOLD" && !write) {
       ops.push({ op: "skip", finding_id: t.finding_id, reason: `ticket ${t.ticket_id}: finding ${t.finding_id} is absent from this pass; the ticket, opened under ${openedUnder ?? "an earlier pass"}, stays with the technician` });
     } else if (!t.external_id) {
       ops.push({ op: "skip", finding_id: t.finding_id, reason: `ticket ${t.ticket_id}: finding ${t.finding_id} is absent from this pass and the ticket has no issue to close` });
     } else if (!input.covered(last)) {
       ops.push({ op: "skip", finding_id: t.finding_id, reason: `ticket ${t.ticket_id}: finding ${t.finding_id} is absent from this pass, whose runs for its setting failed the gate; the ticket stays open` });
     } else {
-      ops.push({ op: "close", ticket: t, body: closeComment("resolved", { disposition: last, runs: input.passRuns, ticketId: t.ticket_id }), reason: `finding ${t.finding_id} is resolved in the pass over ${input.passRuns.join(", ")}` });
+      ops.push({
+        op: "close", ticket: t, body: closeComment("resolved", { disposition: last, runs: input.passRuns, ticketId: t.ticket_id, action: write }),
+        reason: `finding ${t.finding_id} is resolved in the pass over ${input.passRuns.join(", ")}${write ? `; action ${write.action_id}'s write stands, unverified` : ""}`,
+      });
     }
   }
   return ops;
@@ -300,7 +313,7 @@ export function opLine(op: TicketOp): string {
   if (op.op === "skip") return `skip ${op.finding_id}: ${op.reason}`;
   const t = op.ticket;
   const ref = t.external_id ? `#${t.external_id}` : "new issue";
-  if (op.op === "create") return `create ${t.type} ${t.priority} ${t.ticket_id} (${op.existing ? "recorded row" : "new row"}) for ${t.finding_id}: ${op.draft.title}${op.close ? "; then close with a comment" : ""} (${op.reason})`;
+  if (op.op === "create") return `create ${t.type} ${t.priority} ${t.ticket_id} (${op.existing ? "recorded row" : "new row"}) for ${t.finding_id}: ${op.draft.title}${op.close ? "; then close with a comment" : ""}${op.note ? "; then a comment that the write is unverified, the ticket left open" : ""} (${op.reason})`;
   if (op.op === "comment") return `comment ${t.ticket_id} ${ref} for ${t.finding_id}: ${op.reason}`;
   return `close ${t.ticket_id} ${ref} for ${t.finding_id}: ${op.reason}`;
 }

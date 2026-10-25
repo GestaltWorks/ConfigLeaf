@@ -1,5 +1,6 @@
 // The write session: one nginx file on one host set to its approved copy, in one SSH session (ssh -o
-// BatchMode=yes -o ConnectTimeout=15 <alias> bash -s, the collector's options) with the write script on stdin.
+// BatchMode=yes -o ConnectTimeout=15 [-F <LINUX_SSH_CONFIG>] <alias> bash -s, the collector's sshArgv) with the
+// write script on stdin.
 // The read collector's script (src/collectors/linux.ts) stays read-only; this script is the one place sudo appears.
 //
 // Contract:
@@ -22,10 +23,12 @@
 //
 // Measured 24 Oct 2026: `bash -n` (GNU bash 5.2) accepts the scripts the tests generate, with and without previous
 // bytes (test/actions.test.ts, when bash is on PATH); the production hosts had received 0 write sessions.
+// Measured 25 Oct 2026 at 05:22 and 05:28 UTC against the lab estate (lab/README.md, Debian bookworm, sudo 1.9.13p3):
+// two sessions ran write, nginx-t and reload at exit 0, each AFTER equal to the copy's sha256.
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { HOSTS, MARK, SSH_ARGS } from "../collectors/linux.ts";
+import { HOSTS, MARK, sshArgv } from "../collectors/linux.ts";
 
 export class WriteSessionError extends Error {}
 
@@ -146,7 +149,7 @@ export type SshRunner = (alias: string, script: string) => Promise<SessionResult
 export const runWriteSession: SshRunner = (alias, script) => {
   if (!HOSTS[alias]) return Promise.reject(new WriteSessionError(`unknown host alias: ${alias}; allowed: ${Object.keys(HOSTS).join(", ")}`));
   return new Promise((resolve, reject) => {
-    const child = spawn("ssh", [...SSH_ARGS, alias, "bash", "-s"], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+    const child = spawn("ssh", sshArgv(alias), { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     child.stdout.on("data", (b: Buffer) => out.push(b));

@@ -15,7 +15,8 @@
 //   - applyTickets, dry run: one "would" line per operation, a create's title, labels and body indented below
 //     it; no request and no row. Otherwise, per operation: the strings through outgoing() first (a refusal
 //     writes no row and sends nothing), then for a create the row (status open, no external_id), the issue,
-//     and the row's external_id and redacted url; for a comment or a close the issue's status in the PSA first
+//     the row's external_id and redacted url, and the comment an unverified write leaves (the issue stays open)
+//     or the closing comment and the close; for a comment or a close the issue's status in the PSA first
 //     (closed there: the row is marked closed and nothing is sent), then the comment, the close and the row.
 //     One failing operation is recorded and the rest go on.
 //   - One trace line per operation and one summary line, agent psa; the token never reaches either.
@@ -201,7 +202,7 @@ export async function applyTickets(ops: readonly TicketOp[], adapter: TicketAdap
     if (op.op === "skip") { done(op, "skipped", line); continue; }
     if (opts.dryRun || !adapter || !rows) {
       done(op, "planned", `would ${line}`);
-      if (op.op === "create") print(indent(red(`title: ${op.draft.title}\nlabels: ${op.draft.labels.join(", ")}\n\n${op.draft.body}${op.close ? `\n\n(then a closing comment)\n${op.close}` : ""}`)));
+      if (op.op === "create") print(indent(red(`title: ${op.draft.title}\nlabels: ${op.draft.labels.join(", ")}\n\n${op.draft.body}${op.close ? `\n\n(then a closing comment)\n${op.close}` : ""}${op.note ? `\n\n(then a comment, the issue left open)\n${op.note}` : ""}`)));
       else print(indent(red(op.body)));
       continue;
     }
@@ -209,15 +210,17 @@ export async function applyTickets(ops: readonly TicketOp[], adapter: TicketAdap
       if (op.op === "create") {
         const draft = screenDraft(opts.redactor, opts.deny, op.draft);
         const closing = op.close === null ? null : outgoing(opts.redactor, opts.deny, op.close, "comment");
+        const note = op.note === null ? null : outgoing(opts.redactor, opts.deny, op.note, "comment");
         if (!op.existing) await rows.insert([op.ticket]);
         const ref = await adapter.create(draft);
         await rows.update(op.ticket.ticket_id, { external_id: ref.external_id, url: red(ref.url), updated_at: now() });
+        if (note !== null) await adapter.comment(ref.external_id, note);
         if (closing !== null) {
           await adapter.comment(ref.external_id, closing);
           await adapter.close(ref.external_id);
           await rows.update(op.ticket.ticket_id, { status: "closed", updated_at: now() });
         }
-        done(op, closing === null ? "created" : "closed", `${closing === null ? "created" : "created and closed"} #${ref.external_id} ${red(ref.url)}: ${line}`, ref.external_id);
+        done(op, closing === null ? "created" : "closed", `${closing === null ? `created${note === null ? "" : " and commented"}` : "created and closed"} #${ref.external_id} ${red(ref.url)}: ${line}`, ref.external_id);
         continue;
       }
       const ext = op.ticket.external_id!;

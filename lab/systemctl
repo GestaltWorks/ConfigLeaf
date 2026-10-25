@@ -1,0 +1,10 @@
+#!/bin/sh
+# Stands in for systemd inside the drift-lab container, where PID 1 is lab/entrypoint.sh: the three calls the
+# drift-agent sessions make. reload nginx signals the nginx master, status nginx asks pgrep for it, list-timers prints a
+# fixed two-line table in systemctl's layout.
+case "$*" in
+  "reload nginx") exec /usr/sbin/nginx -s reload ;;
+  "status nginx") pgrep -x nginx >/dev/null && echo "nginx.service: active (running)" ;;
+  "list-timers --all --no-pager") printf '%s\n' "NEXT                        LEFT     LAST                        PASSED  UNIT                 ACTIVATES" "Mon 2026-10-26 03:30:00 UTC 22h left Sun 2026-10-25 03:30:00 UTC 2h ago  config-export.timer  config-export.service" ;;
+  *) echo "systemctl stand-in: the lab maps reload nginx, status nginx and list-timers --all --no-pager; asked: $*" >&2; exit 1 ;;
+esac

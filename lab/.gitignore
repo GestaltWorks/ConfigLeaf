@@ -1,0 +1,3 @@
+# lab/up.sh writes these: the key pair and known_hosts under .keys/, and the ssh_config that names them.
+.keys/
+ssh_config.local

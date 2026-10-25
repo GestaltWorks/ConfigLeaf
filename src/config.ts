@@ -48,6 +48,9 @@ const Schema = z.object({
   // aliases are the operator's own ssh_config entries; the export dir is where the host's nightly
   // server-config tarball lands (a login's home path belongs here, not in source).
   LINUX_HOSTS: z.string().default(""),
+  // The ssh_config file the LINUX_HOSTS aliases are read from, passed to every ssh session as -F <file>
+  // (lab/ssh_config.local for the lab estate). Blank = the user's own (~/.ssh/config).
+  LINUX_SSH_CONFIG: z.string().default(""),
   // The vault: one git repository per tenant and host alias (and one per tenant for Cloudflare) holding the
   // collected bytes under their real names, outside the repository. Blank = the vault is off.
   DRIFT_VAULT_DIR: z.string().default(""),
@@ -128,6 +131,8 @@ export const config = {
   redactWords: raw.REDACT_WORDS.split(",").map((s) => s.trim()).filter(Boolean),
   exportDenyWords: raw.EXPORT_DENY_WORDS.split(",").map((s) => s.trim()).filter(Boolean),
   linuxHosts: parseLinuxHosts(raw.LINUX_HOSTS),
+  /** LINUX_SSH_CONFIG; "" = the user's own ssh_config. */
+  linuxSshConfig: raw.LINUX_SSH_CONFIG.trim(),
   /** DRIFT_VAULT_DIR; "" = the vault is off. */
   vaultDir: raw.DRIFT_VAULT_DIR.trim(),
   /** DRIFT_POLICY_FILE, default policy/hackathon.json. */

@@ -93,7 +93,8 @@ row's natural parts, so a re-run inserts nothing twice; every collected-text col
    complete, asserted nothing, or (host surfaces) stored fewer rows than it asserted; a failing run feeds nothing
    below. In Zetaris it is a DQ rule on the USL's `collection` table, beside `copy_validated` on `copy` (the latest
    validation passed) and `action_verified` on `action`, scoped to the write paths: `kind NOT IN
-   ('rollback_file','revert_record') OR status <> 'done' OR verification <> ''`.
+   ('rollback_file','revert_record') OR status IN ('failed','refused','not_judged') OR verification <> ''`, so a
+   completed write that no probe verified fails the rule until a probe does.
 3. **Verify.** The questions as SQL in the portable subset through one DataLayer: the hero query, the survey, the
    detectors (`drift_vs_approved`, `changed_since_backup`, `approved_missing`), then the precondition catalogue per
    finding. Live, the engine is Zetaris over `DRIFT`; in sample mode, sql.js over the exported bundle;
@@ -121,24 +122,33 @@ row's natural parts, so a re-run inserts nothing twice; every collected-text col
    - `rollback_file`, a ROLLBACK on an nginx file: the Decider's copy from the vault commit its reason names, written
      over one SSH session (`sudo -n tee`, `sudo -n nginx -t`, `sudo -n systemctl reload nginx`), the previous bytes
      written back on a refusal or any failure, then http and tls probes of the names the file serves, as a probe run
-     of surface `probe.verify`; done needs every probe ok.
+     of surface `probe.verify`; done needs every probe ok. A write that completed (write, `nginx -t` and the reload
+     at exit 0, the file's sha256 after the copy's) and that no probe verified (no record of the names in the
+     account, the probe population unreadable, the names resolving nowhere) is unverified, the reason naming which;
+     a write path that did not complete, or a probe that answered fail, is failed.
    - `revert_record`, a ROLLBACK on a record field: `PATCH` to the vault JSON, or `POST` for an approved record the
-     zone lacks, read back and compared field by field, then one dns probe of the name (surface `probe.verify`). A
-     record created again carries its approvals to its new id and its old id's absence is approved, so the next cycle
-     raises nothing on either.
+     zone lacks, read back and compared field by field, then one dns probe of the name (surface `probe.verify`): with
+     the read back equal, done when the probe ran and unverified when none ran. A record created again carries its
+     approvals to its new id and its old id's absence is approved, so the next cycle raises nothing on either.
    - `investigate`, for a FIX and for an ESCALATE under an `on_drift` investigate rule: Lightning picks the checks,
      they run through the DataLayer, Ultra judges the claim under the tenant's app id; the record ties each sentence
      to its query, receipt or probe id. `fix` follows a FIX's investigation and is refused: a FIX names no valid
      copy.
    - Every write path refuses a live file or record that changed since the decision, and a retry of a failed write to
-     the same target, commit and live value.
+     the same target, commit and live value. An unverified write completed, so the same write again runs and its
+     reason names the unverified action.
+   - The lab estate (`lab/README.md`) proves the write path: on 25 Oct 2026 at 05:47 UTC a rollback of `lab.example`
+     wrote the copy, passed `nginx -t`, reloaded and ended unverified, and the next pass found 0 findings.
+     Verification is measured on hosts whose names resolve; the lab's names sit in no zone.
 
    The ticket step (`src/psa/`) then plans from the pass's findings, the ledger, the actions and the ticket rows:
    ESCALATE and FIX open an incident; ROLLBACK opens a change under `alert` always or on_fix, once its action is
    recorded; HOLD opens an incident under `alert` always; ADOPT opens nothing. Priority is the rule's
    `psa_priority`, P3 with no rule. A ticket is updated in place: a new action or a new verb is one comment; a change
-   closes when its action is done and verified; a HOLD's ticket closes on ADOPT, or when a pass that covers the
-   setting raises nothing on it; a closed row stays closed. Every string passes the tenant's redactor and the
+   closes when its action is done and verified; a change whose action is unverified stays open with a comment that
+   states the write completed and the verification it lacks, and closes, with that fact, when a pass that covers the
+   setting raises nothing on it; a HOLD's ticket closes on ADOPT, or when a pass that covers the setting raises
+   nothing on it; a closed row stays closed. Every string passes the tenant's redactor and the
    deny-list probe before it leaves; one label and nothing is sent.
 8. **Document and repeat.** The owner's document (`src/document/render.ts`) is one markdown page per tenant from 13
    named queries: estate, copies, approvals, open findings, where each answer comes from (read off the SQL text),
@@ -335,8 +345,9 @@ Absent, with the one line each maps:
 
 - The write paths run behind `--apply` only, and on 24 Oct 2026 every Actor run was a dry run: the two live cycles
   planned 0 actions over 27 HOLD dispositions, and `rollback_file` and `revert_record` ran against a fake host, a
-  fake probe and a fake fetch (`test/actions.test.ts`). The `action` table holds 0 rows. The first write to a host
-  or a zone is the operator's rehearsal; `revert_record` needs a token that holds DNS Edit.
+  fake probe and a fake fetch (`test/actions.test.ts`). On 25 Oct 2026 the `action` table holds the lab estate's
+  rows, tenant `lab-1` (§4 step 7), and the operator's hosts and zones hold 0 writes from the Actor. The first write
+  to a host or a zone is the operator's rehearsal; `revert_record` needs a token that holds DNS Edit.
 - One PSA backend: GitHub Issues. HaloPSA, ConnectWise and Autotask are the field map in `src/psa/mapping.json`. The
   `ticket` table holds 1 row on 25 Oct 2026: issue #2, the incident P1 for the `proxy_split` under rule 13, open.
   The HOLD expires 2026-10-25T03:21:06.870Z; the 03:25 UTC cycle of 25 Oct 2026, the first pass after it, records

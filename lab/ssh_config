@@ -1,0 +1,12 @@
+# The lab's ssh alias, as a template: lab/up.sh writes lab/ssh_config.local from it, @LAB_DIR@ replaced by the
+# absolute path of lab/ (D:/... from WSL's wslpath -m). LINUX_SSH_CONFIG names lab/ssh_config.local; with -F, ssh
+# reads that file alone, so the session reaches drift-lab and no alias of ~/.ssh/config.
+Host drift-lab
+    HostName 127.0.0.1
+    Port 2222
+    User drift
+    IdentityFile "@LAB_DIR@/.keys/drift-lab"
+    IdentitiesOnly yes
+    HostKeyAlias drift-lab
+    UserKnownHostsFile "@LAB_DIR@/.keys/known_hosts"
+    StrictHostKeyChecking yes

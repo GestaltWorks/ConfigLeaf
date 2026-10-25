@@ -1,0 +1,7 @@
+# The lab's static site.
+server {
+    listen 80;
+    server_name www.lab.test;
+    root /var/www/lab-test;
+    index index.html;
+}

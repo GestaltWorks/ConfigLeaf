@@ -8,7 +8,8 @@
 // the expiry), Work done (each action: kind, status, hashes before and after, vault commit, verification probe ids,
 // then the Actor's sentence for it), Receipts (the model receipts of those actions) and Ledger (disposition,
 // finding, run and ticket ids). A comment on a new action carries its Work done, its record as Evidence and its
-// Receipts. Hashes are 12 hex, commits 8. Every string here is
+// Receipts; on an unverified write, it first states that the write completed and the verification it lacks
+// (unverifiedComment, the same lines, follows the create of a change ticket). Hashes are 12 hex, commits 8. Every string here is
 // redacted text from the ledger and the pass; outgoing() in src/psa/index.ts runs the redactor and the deny-list
 // probe over the result before it leaves the process. A body is cut at BODY_MAX characters with a line saying so.
 // Measured 24 Oct 2026: the six sections in order on the first issue the step creates over the policy fixture
@@ -135,10 +136,25 @@ export function ticketBody(p: BodyParts & { ticketId: string; type: TicketType; 
   ].join("\n"));
 }
 
-/** A comment on an open ticket: the new verb with its decision, the new action with its receipts, the ledger. */
+/** What an unverified write's comment states: the write completed, the verification it lacks, and what closes the ticket. */
+function unverifiedLines(a: ActionView): string[] {
+  return [
+    `Action ${a.action_id} (${a.kind}) completed its write: after ${h12(a.after_hash)}, the approved copy at vault commit ${c8(a.vault_commit)}. It is unverified: ${a.reason.trim() || "no verification probe ran"}.`,
+    "",
+    "The ticket stays open until a pass whose runs cover the setting raises no finding on it, which closes it with that fact.",
+  ];
+}
+
+/** The comment a change ticket takes after its create when its action is unverified: the write completed, the verification missing, the ledger. */
+export function unverifiedComment(p: { disposition: Disposition; action: ActionView; ticketId: string }): string {
+  return cut([...unverifiedLines(p.action), "", ...ledgerLines(p.disposition, p.ticketId)].join("\n"));
+}
+
+/** A comment on an open ticket: the new verb with its decision, the new action with its receipts (an unverified write saying so), the ledger. */
 export function commentBody(p: BodyParts & { ticketId: string; previousVerb: string | null; action: ActionView | null }): string {
   const lines = [`Update from the pass decided ${p.disposition.decided_at}.`];
   if (p.previousVerb) lines.push("", `The decision moved from ${p.previousVerb} to ${p.disposition.verb}.`, "", ...decisionLines(p.disposition, p.rule));
+  if (p.action && p.action.status === "unverified") lines.push("", ...unverifiedLines(p.action));
   if (p.action) {
     const evidence = recordLines([p.action]);
     lines.push("", ...workLines(p.disposition, [p.action]), ...(evidence.length ? ["", "### Evidence", ...evidence] : []), "", ...receiptLines([p.action]));
@@ -149,13 +165,19 @@ export function commentBody(p: BodyParts & { ticketId: string; previousVerb: str
 
 export interface CloseParts { disposition: Disposition; ticketId: string; action?: ActionView | null; runs?: readonly string[] }
 
-/** The comment a ticket closes with: a rollback done and verified, a hold adopted, or a setting the latest pass resolves. */
+/**
+ * The comment a ticket closes with: a rollback done and verified, a hold adopted, or a setting the latest pass resolves;
+ * resolved with an action, the unverified write whose setting the pass finds at its approved value.
+ */
 export function closeComment(kind: "rollback" | "adopted" | "resolved", p: CloseParts): string {
   const d = p.disposition;
+  const runs = (p.runs ?? []).join(", ") || "none";
   const head = kind === "rollback"
     ? [`The rollback is done and verified by probes ${p.action?.verification ?? ""}; closing.`, "", ...workLines(d, p.action ? [p.action] : []), "", ...receiptLines(p.action ? [p.action] : [])]
     : kind === "adopted"
       ? [`The hold is adopted: ${d.reason}; closing.`]
-      : [`Resolved: the pass over run(s) ${(p.runs ?? []).join(", ") || "none"} raises no finding on this setting; its last disposition is ${d.verb} ${d.disposition_id}, decided ${d.decided_at}; closing.`];
+      : p.action
+        ? [`Resolved: the pass over run(s) ${runs} raises no finding on this setting, so it holds its approved value; action ${p.action.action_id} (${p.action.kind}) wrote it and ended unverified, and its write stands; its last disposition is ${d.verb} ${d.disposition_id}, decided ${d.decided_at}; closing.`, "", ...workLines(d, [p.action])]
+        : [`Resolved: the pass over run(s) ${runs} raises no finding on this setting; its last disposition is ${d.verb} ${d.disposition_id}, decided ${d.decided_at}; closing.`];
   return cut([...head, "", ...ledgerLines(d, p.ticketId)].join("\n"));
 }

@@ -196,8 +196,15 @@ export interface Disposition {
 }
 
 export type ActionKind = "rollback_file" | "revert_record" | "fix" | "investigate";
-/** not_judged: an investigation whose verdict the receipt gate refused, or whose judge never answered. */
-export type ActionStatus = "done" | "failed" | "refused" | "not_judged";
+/**
+ * done: a write completed and every verification probe is ok, or an investigation whose verdict counted. unverified: a
+ * write path completed (rollback_file: write, nginx -t and reload at exit 0 and the file's sha256 after the copy's;
+ * revert_record: the PATCH or POST answered and the read back equals the vault JSON) and no verification probe ran or
+ * could be read; the reason says which. failed: the write path did not complete, its read back differs, or a probe
+ * that answered fails. refused: nothing was written. not_judged: an investigation whose verdict the receipt gate
+ * refused, or whose judge never answered.
+ */
+export type ActionStatus = "done" | "unverified" | "failed" | "refused" | "not_judged";
 
 /** The longest action.record the Actor writes and the Store takes, in characters. */
 export const ACTION_RECORD_MAX = 4000;

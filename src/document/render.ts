@@ -25,8 +25,9 @@
 //                  one row per finding class: its question, the tables its detector SQL and its default checks name
 //                  as {{t:...}}, and the source each table comes from (sourceRows, below). Read off the SQL text,
 //                  so it runs no query and prints no number.
-//   Work          the actions by kind and status (DOC_ACTIONS_SQL), the tickets by type and status with their
-//                  urls (DOC_TICKETS_SQL).
+//   Work          the actions by kind and status (DOC_ACTIONS_SQL) with the unverified writes counted (written,
+//                  no verification probe run or read), the tickets by type and status with their urls
+//                  (DOC_TICKETS_SQL).
 //   Probes         the passing probe runs counted by surface, probe (the pass's, every served name) and probe.verify
 //                  (the Actor's, after a write); the latest passing run of surface probe, its probes by kind and
 //                  status (DOC_PROBES_SQL) and the failing names by kind (DOC_PROBE_FAILURES_SQL).
@@ -342,7 +343,11 @@ export async function renderDocument(layer: DataLayer, opts: DocumentOptions): P
   const tickets = await q("DOC_TICKETS_SQL", DOC_TICKETS_SQL, { tenant_id: tenant });
   line("## Work", "");
   if (!actions.length) line(`No action is recorded for ${tenant}.`, "");
-  else line("Actions by kind and status:", "", ...table(["kind", "status", "actions"], actions.map((a) => [a.kind, a.status, a.n])), "");
+  else {
+    line("Actions by kind and status:", "", ...table(["kind", "status", "actions"], actions.map((a) => [a.kind, a.status, a.n])), "");
+    const unverified = actions.filter((a) => a.status === "unverified").reduce((n, a) => n + Number(a.n), 0);
+    line(`Unverified writes: ${unverified}, each completed with no verification probe run or read; the change ticket of such a write stays open until a pass finds its setting at the approved value.`, "");
+  }
   if (!tickets.length) line(`No ticket is recorded for ${tenant}.`, "");
   else {
     line("Tickets by type and status:", "", ...table(["type", "status", "tickets"], groupBy(tickets, (t) => `${t.type}\u001f${t.status}`).map(([, rows]) => [rows[0].type, rows[0].status, rows.length])), "");

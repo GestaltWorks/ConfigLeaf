@@ -1,0 +1,6 @@
+# /etc/ssh/sshd_config.d/drift-lab.conf: key logins for the drift user on port 22.
+Port 22
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+AllowUsers drift

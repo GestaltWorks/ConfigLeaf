@@ -7,18 +7,21 @@
 //   prepareRevert  read before anything is written: the copy (plan.ts resolveCopy), the record JSON at its commit,
 //                  whose field fingerprint (the collector's rule, cloudflare.ts dnsObservationRows) must be the
 //                  approved hash, and whether the disposition's run holds the record (the plan says PATCH or POST).
-//                  A failed revert of the same target to the same commit over the same live value is refused.
+//                  A failed revert of the same target to the same commit over the same live value is refused; an
+//                  unverified one completed its write, so the revert goes ahead and its reason names that action.
 //   planRevert     the dry-run lines.
 //   revertRecord   the live record by id first. Present: its field must still carry the disposition's live value,
 //                  else refused (it changed since the run); then PATCH. Absent while the run held it: refused, for
 //                  the same reason. Absent from the run and the zone (an approved record that is missing): a record
 //                  of the same name, type and content in the zone is a refusal (the approval names the old id;
 //                  re-approve the record), else POST. Verification is authoritative: the record read back and compared field by field with the
-//                  copy (names and CNAME, NS and MX targets case-insensitive, without a trailing dot); done when
-//                  every field matches, failed naming each one that differs. One dns probe of the record's name
-//                  through src/probe follows and is recorded with the caveat that resolvers answer from cache until
-//                  the TTL passes, so its status leaves the action's alone. after_hash is the fingerprint of the
-//                  disposition's field on the record read back.
+//                  copy (names and CNAME, NS and MX targets case-insensitive, without a trailing dot); failed
+//                  naming each field that differs. One dns probe of the record's name through src/probe follows and
+//                  is recorded with the caveat that resolvers answer from cache until the TTL passes, so the status
+//                  it answers leaves the action's alone: done when every field matches and the probe ran;
+//                  unverified when every field matches and no probe ran (the probe population unreadable, or the
+//                  account holding no A, AAAA or CNAME record of the name), the reason naming which. after_hash is
+//                  the fingerprint of the disposition's field on the record read back.
 //   carry          after a POST whose read back equals the copy: for each latest approval of the old record's
 //                  fields, an approved_setting row of the new record id with the same value_hash and approved_by,
 //                  note "carried from <old id> by action <action id>", and one of the old id with value_hash '',
@@ -29,15 +32,16 @@
 //
 // Measured 24 Oct 2026: PATCH, POST, the twin refusal and the read back exercised against a fake fetch
 // (test/actions.test.ts); the Cloudflare account had received 0 writes from it. Measured 25 Oct 2026: the carry after a
-// POST against the fake fetch and the sql.js sink, and the detectors over the next DNS run raising nothing on either id.
+// POST against the fake fetch and the sql.js sink, and the detectors over the next DNS run raising nothing on either id;
+// the unverified end, an empty and an unreadable probe population after a read back equal to the copy.
 
 import { dnsObservationRows, dnsRecordRow, type CfRecord, type CfRecordBody, type CfZone } from "../collectors/cloudflare.ts";
 import { redactText } from "../collectors/linux.ts";
-import { actionId, approvalId, type ApprovedSetting, type Disposition, type Probe } from "../data/rows.ts";
+import { actionId, approvalId, type Action, type ApprovedSetting, type Disposition, type Probe } from "../data/rows.ts";
 import type { Redactor } from "../redactor.ts";
 import { CLOUDFLARE_REPO, treePath, type Vault } from "../vault/vault.ts";
 import {
-  c8, gaps, h12, outcome, plural, probeSentence, resolveCopy, targetOf,
+  c8, gaps, h12, outcome, plural, priorUnverified, priorWrites, probeSentence, resolveCopy,
   type ActionOutcome, type ActorReads, type CopyChoice, type Emitter, type ProbeFn,
 } from "./plan.ts";
 
@@ -75,6 +79,8 @@ export interface PreparedRevert {
   redactedZone: string;
   /** The disposition's run holds the record: PATCH; absent: POST. */
   inRun: boolean;
+  /** The latest unverified revert of the same target to the same commit over the same live value; null when none. */
+  prior: Action | null;
 }
 
 export type RevertPrep = PreparedRevert | { refused: string };
@@ -141,13 +147,13 @@ export async function prepareRevert(d: Disposition, deps: RevertDeps): Promise<R
   if (approvedField !== approval.value_hash) {
     return { refused: `the record at vault commit ${c8(copy.git_commit)} carries ${h12(approvedField)} for ${d.setting_path}; the approval is ${h12(approval.value_hash)}` };
   }
-  const failedBefore = deps.reads.actionsOn(targetOf(d)).filter((a) => a.kind === "revert_record" && a.status === "failed" && a.vault_commit === copy.git_commit && a.before_hash === d.value_hash).at(-1);
-  if (failedBefore) {
-    return { refused: `action ${failedBefore.action_id} reverted this record to commit ${c8(copy.git_commit)} over the same live value and failed at ${failedBefore.finished_at ?? failedBefore.started_at}; the same write is left to a technician` };
+  const prior = priorWrites(deps.reads, d, "revert_record", copy.git_commit, d.value_hash);
+  if (prior.failed) {
+    return { refused: `action ${prior.failed.action_id} reverted this record to commit ${c8(copy.git_commit)} over the same live value and failed at ${prior.failed.finished_at ?? prior.failed.started_at}; the same write is left to a technician` };
   }
   const row = dnsRecordRow(r, asCf(record), zone, { tenantId: d.tenant_id, runId: "-", observedAt: "1970-01-01T00:00:00.000Z" })!;
   const inRun = (await deps.reads.observationsOf(d.run_id)).some((o) => o.object_id === d.object_id);
-  return { choice, record, zone, redactedName: row.name, redactedZone: row.zone, inRun };
+  return { choice, record, zone, redactedName: row.name, redactedZone: row.zone, inRun, prior: prior.unverified };
 }
 
 /** The dry-run lines of one revert. */
@@ -160,6 +166,7 @@ export function planRevert(d: Disposition, p: PreparedRevert): string[] {
       ? `PATCH the record's type, name, content, ttl and proxied to the approved copy at ${from}: ${d.setting_path} from ${h12(d.value_hash)} to ${h12(approval.value_hash)}`
       : `POST a record with the approved copy's type, name, content, ttl and proxied from ${from}: run ${d.run_id} holds no record ${d.object_id}; a record of the same name, type and content in the zone is a refusal; once the read back equals the copy, the approvals of ${d.object_id} are carried to the new record's id and its absence is approved`,
     `then the record read back from the API and compared field by field with the copy; then one dns probe of ${p.redactedName}, which resolvers answer from cache until the TTL (${p.record.ttl ?? "auto"} s) passes`,
+    ...(p.prior ? [`action ${p.prior.action_id} wrote this copy over the same live value at ${p.prior.finished_at ?? p.prior.started_at} and ended unverified; the write runs again`] : []),
   ];
 }
 
@@ -169,9 +176,9 @@ export async function revertRecord(d: Disposition, p: PreparedRevert, deps: Reve
   const started = deps.now().toISOString();
   const { copy } = p.choice;
   const record: string[] = [`vault commit ${c8(copy.git_commit)} holds record ${d.object_id} (${p.redactedName}, ${p.record.type}, ttl ${p.record.ttl ?? "auto"}, proxied ${p.record.proxied ?? "unset"})`];
-  const end = (status: "done" | "failed" | "refused", reason: string, extra: { before?: string | null; after?: string | null; verification?: string[] } = {}): ActionOutcome =>
+  const end = (status: "done" | "unverified" | "failed" | "refused", reason: string, extra: { before?: string | null; after?: string | null; verification?: string[] } = {}): ActionOutcome =>
     outcome(d, "revert_record", {
-      status, reason: red(reason), record: record.map(red), vault_commit: copy.git_commit, started_at: started, finished_at: deps.now().toISOString(),
+      status, reason: red(`${reason}${priorUnverified(p.prior)}`), record: record.map(red), vault_commit: copy.git_commit, started_at: started, finished_at: deps.now().toISOString(),
       before_hash: extra.before ?? null, after_hash: extra.after ?? null, verification: extra.verification,
     });
   const api = deps.records;
@@ -230,16 +237,21 @@ export async function revertRecord(d: Disposition, p: PreparedRevert, deps: Reve
   record.push(diff.length ? `read back: ${diff.join(", ")} differ from the copy` : `read back: type, name, content${p.record.ttl === null ? "" : ", ttl"}${p.record.proxied === null ? "" : ", proxied"} equal the copy; ${d.setting_path} ${h12(after)}`);
 
   let probes: Probe[] = [];
+  let unread: string | null = null;
   try {
     probes = await deps.probe([p.redactedName], ["dns"]);
+    if (!probes.length) unread = `no dns probe of ${p.redactedName} ran (the account holds no A, AAAA or CNAME record of this name)`;
   } catch (e) {
-    record.push(`the dns probe of ${p.redactedName} did not run: ${safe(r, e)}`);
+    unread = `the dns probe of ${p.redactedName} did not run: ${safe(r, e)}`;
+    record.push(unread);
   }
   for (const x of probes) record.push(`${probeSentence(x)}; resolvers answer from cache until the TTL (${p.record.ttl ?? "auto"} s) passes, so the API read above decides the status`);
   const verification = probes.map((x) => x.probe_id);
   if (diff.length) return end("failed", `written; the record read back differs from the copy in ${diff.join(", ")}`, { before, after, verification });
   if (!current) await carryApprovals(d, id, deps, record);
-  return end("done", `${current ? "reverted" : "re-created"} to the approved copy at vault commit ${c8(copy.git_commit)}; the record read back equals the copy field by field`, { before, after, verification });
+  const written = `${current ? "reverted" : "re-created"} to the approved copy at vault commit ${c8(copy.git_commit)}; the record read back equals the copy field by field`;
+  if (unread) return end("unverified", `${written}; ${unread}`, { before, after, verification });
+  return end("done", written, { before, after, verification });
 }
 
 /** The approved_setting rows that carry a re-created record's approvals from its old id to `newId` (see the header). */

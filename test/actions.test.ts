@@ -3,9 +3,11 @@
 // (test/fixtures/actions/). Every write path is driven to each of its ends: the dry-run plan, rollback done, nginx -t
 // refusing with the previous bytes written back, sudo asking for a password, the reload failing, a probe failing after
 // the reload, the record reverted with its authoritative read back, the approved-but-missing file and record created,
-// the investigation done with its receipts and not_judged on a refused receipt, the fix refused, and a second run over
-// the same dispositions writing nothing. The ACTIONS_SQL read is asserted on sql.js; Store.actionsOf against a
-// throwaway schema of the live Postgres, skipped without DATABASE_URL.
+// a completed write no probe verified (unverified: an empty or unreadable probe population, names resolving nowhere,
+// a record with no dns probe), the retry after an unverified write, the change ticket an unverified write leaves open
+// and the later pass that closes it (fake GitHub fetch), the investigation done with its receipts and not_judged on a
+// refused receipt, the fix refused, and a second run over the same dispositions writing nothing. The ACTIONS_SQL read
+// is asserted on sql.js; Store.actionsOf against a throwaway schema of the live Postgres, skipped without DATABASE_URL.
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -14,20 +16,24 @@ import path from "node:path";
 import pg from "pg";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import "../src/config.ts"; // loads .env into process.env
-import { aliasFromHosts, act, actLines, kindsFor, latestRuns, type ActResult } from "../src/actions/act.ts";
+import { aliasFromHosts, act, actLines, kindsFor, latestRuns, probeNames, type ActResult } from "../src/actions/act.ts";
 import { FIX_REFUSED } from "../src/actions/investigate.ts";
-import { formatPlan, namedCommit, targetOf, type ActionOutcome } from "../src/actions/plan.ts";
+import { formatPlan, namedCommit, targetOf, type ActionOutcome, type ProbeFn } from "../src/actions/plan.ts";
 import { NGINX_PATH, WriteSessionError, parseSession, shQuote, writeScript } from "../src/actions/ssh.ts";
-import { dnsObservationRows, dnsRecordRow } from "../src/collectors/cloudflare.ts";
+import { dnsObservationRows, dnsRecordRow, type FetchLike } from "../src/collectors/cloudflare.ts";
 import { pseudonymHost, readScript } from "../src/collectors/linux.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { DataLayer } from "../src/data/layer.ts";
 import { ACTIONS_SQL, approvedMissing, driftVsApproved, objects, tenantActions } from "../src/data/queries.ts";
-import { actionId, dispositionId, type Action, type ActionKind, type Disposition } from "../src/data/rows.ts";
+import { actionId, dispositionId, obsId, probeId, type Action, type ActionKind, type Disposition, type Probe } from "../src/data/rows.ts";
 import { DriftWorld } from "../src/engine/world.ts";
-import { runPass } from "../src/pipeline.ts";
+import { MemoryLedger } from "../src/ledger.ts";
+import { runPass, type PassResult } from "../src/pipeline.ts";
 import { Store } from "../src/data/store.ts";
 import { tenantAppId } from "../src/gate.ts";
+import { GithubIssues } from "../src/psa/github.ts";
+import { ticketId, type TicketOp } from "../src/psa/index.ts";
+import { MemoryTicketRows, ticketStep } from "../src/psa/step.ts";
 import { Redactor } from "../src/redactor.ts";
 import { FakeModel } from "./fixtures/actions/fake-model.ts";
 import { ALIAS, APP, BLOG, HOST, SHOP, TENANT, ZONE, ZONE_ID, buildBase, buildWorld, type Base, type World } from "./fixtures/actions/world.ts";
@@ -47,6 +53,35 @@ const actions = async (w: World): Promise<Action[]> => objects(await tenantActio
 /** The outcome of one disposition's action of one kind. */
 const pick = (res: ActResult, d: Disposition, kind: ActionKind): ActionOutcome => res.outcomes.find((o) => o.action.disposition_id === d.disposition_id && o.action.kind === kind)!;
 const app = async (w: World): Promise<ActionOutcome> => pick(await run(w, { only: ["rollback_file"] }), of(w, "ROLLBACK", APP), "rollback_file");
+/** A probe population that holds no record of the names asked for, through the live Actor's own probeNames. */
+const noRecords = (w: World): ProbeFn => probeNames({ tenantId: TENANT, redactor: w.redactor, population: async () => [], sink: null });
+
+/** GitHub Issues in memory: the label listing and creates, issue create, comment, close and status. */
+function fakeIssues() {
+  const issues = new Map<number, { title: string; body: string; state: string; comments: string[] }>();
+  let next = 0;
+  const json = (status: number, v: unknown): Response => new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json" } });
+  const fetch: FetchLike = async (url, init) => {
+    const u = new URL(url);
+    const method = init?.method ?? "GET";
+    const body = typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : null;
+    if (u.pathname.endsWith("/labels")) return method === "GET" ? json(200, []) : json(201, { name: body?.name });
+    if (u.pathname.endsWith("/issues") && method === "POST") {
+      const n = ++next;
+      issues.set(n, { title: String(body?.title), body: String(body?.body), state: "open", comments: [] });
+      return json(201, { number: n, html_url: `https://github.example/owner/tickets/issues/${n}` });
+    }
+    const m = u.pathname.match(/\/issues\/(\d+)(\/comments)?$/);
+    const issue = m ? issues.get(Number(m[1])) : undefined;
+    if (m && issue) {
+      if (m[2] && method === "POST") { issue.comments.push(String(body?.body)); return json(201, { id: issue.comments.length }); }
+      if (method === "PATCH") { issue.state = String(body?.state); return json(200, { state: issue.state }); }
+      if (method === "GET") return json(200, { state: issue.state });
+    }
+    return json(404, { message: "Not Found" });
+  };
+  return { fetch, issues };
+}
 
 describe("the write script", () => {
   const input = { path: "/etc/nginx/conf.d/app.conf", copy: Buffer.from(APPROVED_APP), previous: Buffer.from(LIVE_APP) };
@@ -320,6 +355,111 @@ describe("the Actor over the policy fixture", () => {
     expect(w.host.scripts).toHaveLength(sessions);
   });
 
+  it("rollback_file unverified: written, nginx -t passed, reloaded, the after hash the copy's, and no probe read: an empty population, an unreadable one, names resolving nowhere", async () => {
+    const d = of(w, "ROLLBACK", APP);
+    const res = await run(w, { only: ["rollback_file"] }, { probe: noRecords(w) });
+    const o = pick(res, d, "rollback_file");
+    expect(o.action).toMatchObject({ status: "unverified", before_hash: `sha256:${hex(LIVE_APP)}`, after_hash: `sha256:${hex(APPROVED_APP)}`, verification: "", vault_commit: w.commits["run-nginx-7f1c-1020"] });
+    expect(o.reason).toBe("written and reloaded; no probe of app.example.invalid ran (the account holds no record of these names)");
+    expect(o.record).toContain(`after: ${hex(APPROVED_APP).slice(0, 12)}, the copy's bytes; nginx -t passed and nginx reloaded`);
+    expect(w.host.files.get(APP)!.toString("utf8")).toBe(APPROVED_APP);
+    expect((await actions(w)).filter((a) => a.disposition_id === d.disposition_id).map((a) => [a.kind, a.status, a.reason])).toEqual([["rollback_file", "unverified", o.reason]]);
+    expect(w.tracer.events.some((e) => e.agent === "actor" && e.action === "revise" && e.status === "not_checked")).toBe(true);
+    // app.conf and the missing blog.conf, both written with no probe read
+    expect(actLines(TENANT, res, w.redactor).at(-1)).toBe("act: applied: 2 actions (rollback_file 2, revert_record 0, investigate 0, fix 0): done 0, unverified 2, failed 0, refused 0, not_judged 0; 0 already recorded; 2 action rows written");
+
+    const unreadable = await buildWorld(base);
+    try {
+      const population = async (): Promise<never> => { throw new Error("Cloudflare 400 GET /zones: 6003: Invalid request headers"); };
+      const u = pick(await run(unreadable, { only: ["rollback_file"] }, { probe: probeNames({ tenantId: TENANT, redactor: unreadable.redactor, population, sink: null }) }), of(unreadable, "ROLLBACK", APP), "rollback_file");
+      expect([u.action.status, u.reason]).toEqual(["unverified", "written and reloaded; the probes of app.example.invalid did not run: Cloudflare 400 GET /zones: 6003: Invalid request headers"]);
+    } finally {
+      unreadable.cleanup();
+    }
+    const nowhere = await buildWorld(base);
+    try {
+      const probe: ProbeFn = async (names, kinds) => names.flatMap((name) => kinds.map((kind): Probe => ({
+        probe_id: probeId("run-verify-x", kind, name), run_id: "run-verify-x", tenant_id: TENANT, kind, target: name, expected: "answers", observed: "unreachable: ENOTFOUND",
+        status: "fail", latency_ms: 5, observed_at: "2026-10-23T03:05:00.000Z",
+      })));
+      const n = pick(await run(nowhere, { only: ["rollback_file"] }, { probe }), of(nowhere, "ROLLBACK", APP), "rollback_file");
+      expect([n.action.status, n.reason]).toEqual(["unverified", "written and reloaded; 2 of 2 probes reached no address: app.example.invalid resolves nowhere (ENOTFOUND)"]);
+      expect(n.action.verification.split(",")).toHaveLength(2);
+    } finally {
+      nowhere.cleanup();
+    }
+  });
+
+  it("an unverified rollback completed its write: the same file, commit and live bytes again is written once more, its reason naming the unverified action", async () => {
+    const first = pick(await run(w, { only: ["rollback_file"] }, { probe: noRecords(w) }), of(w, "ROLLBACK", APP), "rollback_file");
+    expect(first.action.status).toBe("unverified");
+    // the file is the copy now; the same live bytes come back, as a second break with the first one's bytes
+    w.host.files.set(APP, Buffer.from(LIVE_APP));
+    const sessions = w.host.scripts.length;
+    const src = of(w, "ROLLBACK", APP);
+    const again: Disposition = { ...src, finding_id: "fnd-0000000000000002", disposition_id: dispositionId(src.tenant_id, src.surface, src.host, src.object_id, src.setting_path, src.value_hash, "fnd-0000000000000002", src.run_id, src.decided_at) };
+    w.engine.insertRows("disposition", [again]);
+    const at = "2026-10-23T03:04:00.000Z";
+    const plan = (await run(w, { only: ["rollback_file"], apply: false })).plan.find((p) => p.disposition_id === again.disposition_id)!;
+    expect(plan.refused).toBeUndefined();
+    expect(plan.lines.at(-1)).toBe(`action ${first.action.action_id} wrote this copy over the same live bytes at ${at} and ended unverified; the write runs again`);
+    const o = pick(await run(w, { only: ["rollback_file"] }), again, "rollback_file");
+    expect(o.action.status).toBe("done");
+    expect(o.reason).toBe(`restored to the approved copy at vault commit ${w.commits["run-nginx-7f1c-1020"].slice(0, 8)}; nginx -t passed, nginx reloaded, 2 probes of app.example.invalid ok; action ${first.action.action_id} wrote the same copy over the same live value at ${at} and ended unverified`);
+    expect(w.host.scripts).toHaveLength(sessions + 1);
+    expect(w.host.files.get(APP)!.toString("utf8")).toBe(APPROVED_APP);
+  });
+
+  it("the ticket step on an unverified rollback: the change opens with a comment that the write completed and what verification is missing, stays open, and the next pass that finds the file at its approved value closes it", async () => {
+    const d = of(w, "ROLLBACK", APP);
+    const o = pick(await run(w, { only: ["rollback_file"] }, { probe: noRecords(w) }), d, "rollback_file");
+    const gh = fakeIssues();
+    const issues = new GithubIssues({ repo: "example-owner/drift-tickets", fetch: gh.fetch, redactor: w.redactor, deny: [], token: () => "test-token-for-the-fake" });
+    const step = (pass: Pick<PassResult, "findings" | "gatedOut">, rows: MemoryTicketRows, now: string) =>
+      ticketStep(w.layer, pass, issues, rows, { tenant: TENANT, dryRun: false, redactor: w.redactor, deny: [], now: () => now, print: () => undefined });
+    const id = ticketId(TENANT, d.finding_id, o.action.action_id);
+    const ledger = ["", "### Ledger", `- disposition ${d.disposition_id}`, `- finding ${d.finding_id}`, `- run ${d.run_id}`, `- ticket ${id}`];
+
+    const rows = new MemoryTicketRows();
+    const one = await step(w.pass, rows, "2026-10-23T04:00:00.000Z");
+    const create = one.ops.find((x): x is Extract<TicketOp, { op: "create" }> => x.op === "create" && x.ticket.ticket_id === id)!;
+    expect([create.ticket.type, create.ticket.priority, create.close]).toEqual(["change", "P1", null]);
+    const created = one.outcomes.find((x) => x.ticket_id === id)!;
+    expect(created.status).toBe("created");
+    expect(created.line).toMatch(/^created and commented #\d+ \S+: create change P1 .*; then a comment that the write is unverified, the ticket left open \(/);
+    const issue = gh.issues.get(Number(created.external_id))!;
+    expect(issue.state).toBe("open");
+    expect(issue.body).toContain(`- action ${o.action.action_id}: rollback_file unverified, started `);
+    expect(issue.comments).toEqual([[
+      `Action ${o.action.action_id} (rollback_file) completed its write: after ${hex(APPROVED_APP).slice(0, 12)}, the approved copy at vault commit ${w.commits["run-nginx-7f1c-1020"].slice(0, 8)}. It is unverified: written and reloaded; no probe of app.example.invalid ran (the account holds no record of these names).`,
+      "", "The ticket stays open until a pass whose runs cover the setting raises no finding on it, which closes it with that fact.", ...ledger,
+    ].join("\n")]);
+    expect(rows.rows.find((t) => t.ticket_id === id)).toMatchObject({ type: "change", status: "open", action_id: o.action.action_id });
+
+    // the next cycle: a host run with app.conf as the rollback left it (the approved bytes, run 1020's rows), the rest as run 1023
+    const RUN2 = "run-nginx-7f1c-1025";
+    const at = "2026-10-25T02:01:00.000Z";
+    const obs = w.bundle.observation.filter((x) => (x.run_id === "run-nginx-7f1c-1023" && x.object_id !== APP) || (x.run_id === "run-nginx-7f1c-1020" && x.object_id === APP))
+      .map((x) => ({ ...x, obs_id: obsId(RUN2, x.object_id, x.setting_path), run_id: RUN2, observed_at: at }));
+    const prev = w.bundle.collection_run.find((r) => r.run_id === "run-nginx-7f1c-1023")!;
+    w.engine.insertRows("collection_run", [{ ...prev, run_id: RUN2, started_at: at, finished_at: "2026-10-25T02:01:02.000Z", status: "complete" as const }]);
+    w.engine.insertRows("observation", obs);
+    w.engine.insertRows("ticket", rows.rows);
+    const next = await runPass(w.layer, { world: new DriftWorld("test_actions_tickets"), ledger: new MemoryLedger(w.engine), at: "2026-10-25T03:00:00.000Z", decidedAt: "2026-10-25T03:00:00.000Z" });
+    expect(next.findings.filter((f) => f.id === d.finding_id)).toEqual([]);
+    const rows2 = new MemoryTicketRows(rows.rows);
+    const two = await step(next, rows2, "2026-10-25T03:05:00.000Z");
+    const close = two.ops.find((x): x is Extract<TicketOp, { op: "close" }> => x.op === "close" && x.ticket.ticket_id === id)!;
+    expect(close.reason).toMatch(new RegExp(`^finding ${d.finding_id} is resolved in the pass over .*${RUN2}.*; action ${o.action.action_id}'s write stands, unverified$`));
+    expect(two.outcomes.find((x) => x.ticket_id === id)!.status).toBe("closed");
+    expect(issue.state).toBe("closed");
+    expect(issue.comments).toHaveLength(2);
+    expect(issue.comments[1]).toMatch(new RegExp(`^Resolved: the pass over run\\(s\\) .*${RUN2}.* raises no finding on this setting, so it holds its approved value; action ${o.action.action_id} \\(rollback_file\\) wrote it and ended unverified, and its write stands; its last disposition is ROLLBACK ${d.disposition_id}, decided ${d.decided_at}; closing\\.\\n`));
+    expect(issue.comments[1]).toContain(`\n- action ${o.action.action_id}: rollback_file unverified, `);
+    expect(issue.comments[1].endsWith(ledger.join("\n"))).toBe(true);
+    expect(rows2.rows.find((t) => t.ticket_id === id)!.status).toBe("closed");
+  });
+
   it("approved but missing: the deleted blog.conf is written from the copy and probed; on a refusal the file it created is removed again", async () => {
     const d = of(w, "ROLLBACK", BLOG);
     const done = pick(await run(w, { only: ["rollback_file"] }), d, "rollback_file");
@@ -349,6 +489,23 @@ describe("the Actor over the policy fixture", () => {
     expect(o.action.verification.split(",")).toHaveLength(1);
     expect(o.record.at(-1)).toMatch(/^probe probe-[0-9a-f]{16}: dns mail\.example\.invalid ok \(status 200\); resolvers answer from cache until the TTL \(3600 s\) passes, so the API read above decides the status$/);
     expect(o.reason).toBe(`reverted to the approved copy at vault commit ${w.commits["run-dns-1020"].slice(0, 8)}; the record read back equals the copy field by field`);
+  });
+
+  it("revert_record unverified: the PATCH answered and the read back equals the copy, and no dns probe ran: an empty population, an unreadable one", async () => {
+    const d = of(w, "ROLLBACK", "rec-c3", "content");
+    const o = pick(await run(w, { only: ["revert_record"] }, { probe: noRecords(w) }), d, "revert_record");
+    const written = `reverted to the approved copy at vault commit ${w.commits["run-dns-1020"].slice(0, 8)}; the record read back equals the copy field by field`;
+    expect(o.action).toMatchObject({ status: "unverified", before_hash: d.value_hash, after_hash: policyBundle.approved_setting.find((a) => a.object_id === "rec-c3")!.value_hash, verification: "" });
+    expect(o.reason).toBe(`${written}; no dns probe of mail.example.invalid ran (the account holds no A, AAAA or CNAME record of this name)`);
+    expect(w.cf.records.get(ZONE_ID)!.find((r) => r.id === "rec-c3")!.content).toBe("198.51.100.12");
+    const v = await buildWorld(base);
+    try {
+      const probe: ProbeFn = async () => { throw new Error("Cloudflare 400 GET /zones: 6003: Invalid request headers"); };
+      const u = pick(await run(v, { only: ["revert_record"] }, { probe }), of(v, "ROLLBACK", "rec-c3", "content"), "revert_record");
+      expect([u.action.status, u.reason]).toEqual(["unverified", `${written}; the dns probe of mail.example.invalid did not run: Cloudflare 400 GET /zones: 6003: Invalid request headers`]);
+    } finally {
+      v.cleanup();
+    }
   });
 
   it("revert_record: a record changed since the run is refused; a refused write is failed with Cloudflare's status", async () => {

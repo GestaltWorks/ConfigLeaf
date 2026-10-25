@@ -111,6 +111,7 @@ describe("the document's reads, through sql.js over test/fixtures/policy-bundle.
     const b = withWork();
     expect(await q(DOC_ACTIONS_SQL, { tenant_id: A }, b)).toEqual([
       { kind: "investigate", status: "done", n: "1" }, { kind: "rollback_file", status: "done", n: "2" }, { kind: "rollback_file", status: "failed", n: "1" },
+      { kind: "rollback_file", status: "unverified", n: "1" },
     ]);
     expect((await q(DOC_TICKETS_SQL, { tenant_id: A }, b)).map((t) => [t.ticket_id, t.type, t.status, t.url])).toEqual([
       ["tkt-0000000000000002", "change", "closed", "https://tickets.example.invalid/issues/2"],
@@ -127,7 +128,7 @@ describe("the document's reads, through sql.js over test/fixtures/policy-bundle.
   });
 });
 
-/** The policy fixture with four actions and two tickets of the tenant, and one of another tenant. */
+/** The policy fixture with five actions (one unverified) and two tickets of the tenant, and one of another tenant. */
 function withWork(): Record<string, unknown> {
   const b: Record<string, unknown> = structuredClone(policyBundle);
   const act = (id: string, kind: string, status: string) => ({
@@ -141,7 +142,7 @@ function withWork(): Record<string, unknown> {
     probe_id: "probe-verify-0000001", run_id: verify.run_id, tenant_id: A, kind: "http", target: "app.example.invalid", expected: "answers (status below 500); cf-ray any",
     observed: "status 200 server=nginx cf-ray absent", status: "ok", latency_ms: 12, observed_at: "2026-10-23T03:05:31.000Z",
   }];
-  b.action = [act("act-1", "rollback_file", "done"), act("act-2", "rollback_file", "done"), act("act-3", "rollback_file", "failed"), act("act-4", "investigate", "done"), { ...act("act-5", "fix", "refused"), tenant_id: "client-b" }];
+  b.action = [act("act-1", "rollback_file", "done"), act("act-2", "rollback_file", "done"), act("act-3", "rollback_file", "failed"), act("act-4", "investigate", "done"), act("act-6", "rollback_file", "unverified"), { ...act("act-5", "fix", "refused"), tenant_id: "client-b" }];
   const tkt = (id: string, type: string, status: string, n: number) => ({
     ticket_id: id, tenant_id: A, psa: "github", external_id: String(n), url: `https://tickets.example.invalid/issues/${n}`, type, priority: "P1", status,
     action_id: null, finding_id: "fnd-0000000000000001", created_at: "2026-10-23T03:07:00.000Z", updated_at: "2026-10-23T03:08:00.000Z",
@@ -237,6 +238,8 @@ describe("the page over test/fixtures/policy-bundle.json with work recorded", ()
     expect(md).toContain("Locked settings without an approved value: 1.");
     expect(md).toContain("- proxied in rec-c3 (cloudflare.dns), locked by rule-8e75e1d767980665");
     expect(section(md, "Work")).toContain("| rollback_file | failed | 1 |");
+    expect(section(md, "Work")).toContain("| rollback_file | unverified | 1 |");
+    expect(section(md, "Work")).toContain("Unverified writes: 1, each completed with no verification probe run or read; the change ticket of such a write stays open until a pass finds its setting at the approved value.");
     expect(section(md, "Work")).toContain("| incident | open | 1 |");
     expect(section(md, "Work")).toContain("- incident P1 open: https://tickets.example.invalid/issues/1 (github #1, finding fnd-0000000000000001)");
     expect(section(md, "Probes")).toContain("- http: shop.example.invalid");

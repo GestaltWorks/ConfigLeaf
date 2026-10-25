@@ -18,6 +18,9 @@
 //     what was done; a record re-created by POST carries its approvals to its new id through the same sink.
 //   - Verification probes (probeNames): one probe run of surface probe.verify per call, so the pass's own probe run,
 //     surface probe, stays the one it reads for production.
+//   - An outcome's status is one of rows.ts ActionStatus: done, unverified (written, and no verification probe ran or
+//     could be read), failed, refused, not_judged; the summary line counts each, and an unverified one traces as
+//     not_checked.
 //   - Every printed line passes the tenant's redactor; one trace line per plan item and per outcome, agent "actor".
 //
 // Measured 24 Oct 2026 on test/fixtures/policy-bundle.json with a vault built from its file and record rows
@@ -166,7 +169,7 @@ export function probeNames(opts: { tenantId: string; redactor: Redactor; populat
   };
 }
 
-const STATUS_TRACE = { done: "ok", failed: "failed", refused: "skipped", not_judged: "not_judged" } as const;
+const STATUS_TRACE = { done: "ok", unverified: "not_checked", failed: "failed", refused: "skipped", not_judged: "not_judged" } as const satisfies Record<ActionStatus, string>;
 const keyOf = (dispositionId: string, kind: ActionKind): string => `${dispositionId}\u001f${kind}`;
 
 export async function act(opts: ActOptions, deps: ActorDeps): Promise<ActResult> {
@@ -297,5 +300,5 @@ export function actSummary(res: ActResult): string {
     return `act: dry run: ${plural(res.plan.length, "action")} planned (${kinds(res.plan)}), ${count(res.plan, (p) => !!p.refused)} of them refused on --apply; ${res.acted.length} already recorded; 0 action rows written`;
   }
   const by = (s: ActionStatus) => count(res.outcomes, (o) => o.action.status === s);
-  return `act: applied: ${plural(res.outcomes.length, "action")} (${kinds(res.outcomes.map((o) => o.action))}): done ${by("done")}, failed ${by("failed")}, refused ${by("refused")}, not_judged ${by("not_judged")}; ${res.acted.length} already recorded; ${res.written ?? 0} action rows written`;
+  return `act: applied: ${plural(res.outcomes.length, "action")} (${kinds(res.outcomes.map((o) => o.action))}): done ${by("done")}, unverified ${by("unverified")}, failed ${by("failed")}, refused ${by("refused")}, not_judged ${by("not_judged")}; ${res.acted.length} already recorded; ${res.written ?? 0} action rows written`;
 }

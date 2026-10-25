@@ -195,15 +195,20 @@ those findings read production affected.
 
 `npm run act` acts once per disposition and kind on the latest disposition of each finding, by default as a dry run
 that prints the plan and writes nothing. With `--apply` each action records its hashes, vault commit, probes, receipts
-and status in an `action` row, and every write path refuses a live value that changed since the decision.
+and status in an `action` row, and every write path refuses a live value that changed since the decision. The status
+is one of five: `done` (written, and every verification probe ok), `unverified` (the write completed, read back equal
+to the copy, and no verification probe ran or could be read, the reason naming which), `failed` (the write path did
+not complete, or its read back or a probe that answered differs), `refused` (nothing written) and `not_judged` (an
+investigation with no counted verdict).
 
 - `rollback_file` (ROLLBACK on an nginx file): one SSH session writes the vault copy through `sudo -n tee`, runs `nginx -t` and reloads, writes the previous bytes back on any failure, then probes the names the file serves.
 - `revert_record` (ROLLBACK on a record field): `PATCH` to the vault JSON, or `POST` for a record the zone lacks, read back field by field, then one dns probe.
 - `investigate`, then `fix` (FIX): Lightning picks the checks and Ultra judges the claim; `fix` is refused without a valid copy.
 
 Tickets go to GitHub Issues: ESCALATE and FIX open an incident, ROLLBACK a change under `alert` always or on_fix, HOLD
-an incident under `alert` always; a change closes once its action is verified, and `src/psa/mapping.json` maps the
-columns onto HaloPSA, ConnectWise and Autotask. On 24 Oct 2026 the policy fixture's ROLLBACK 3 and FIX 1 gave five
+an incident under `alert` always; a change closes once its action is verified, and an unverified one stays open with
+a comment until a pass finds the setting at its approved value; `src/psa/mapping.json` maps the columns onto HaloPSA,
+ConnectWise and Autotask. On 24 Oct 2026 the policy fixture's ROLLBACK 3 and FIX 1 gave five
 actions against a fake host, probe and fetch, and a second run wrote 0.
 
 ## Pre-flight
@@ -277,7 +282,7 @@ record is `logs/eval_live_2026-10-24T23-49-31Z.log`, kept locally.
 
 ## Limits
 
-- The write paths run behind `--apply` only, and every Actor run of 24 and 25 Oct 2026 was a dry run: the `action` table holds 0 rows and both write paths have run against fakes only. The first write to a host or a zone is the operator's rehearsal.
+- The write paths run behind `--apply` only. The lab estate (`lab/README.md`, tenant `lab-1`) proves the host's write path: on 25 Oct 2026 at 05:47 UTC `rollback_file` wrote the copy, passed `nginx -t`, reloaded and ended `unverified`, and the next pass found 0 findings. Verification is measured on hosts whose names resolve; the lab's names sit in no zone. `revert_record` has run against a fake fetch only, and the operator's hosts and zones hold 0 writes from the Actor; the first is the operator's rehearsal.
 - One tenant, two hosts, six zones, one policy file, one machine and one PSA backend, GitHub Issues (HaloPSA, ConnectWise and Autotask are a field map): `npm run watch` schedules cycles while its process lives, and a GitHub issue is the one notification.
 - The live model calls so far are the 9 of the eval smoke, and the eval has run C0 on the development set; the held-out set runs once, on 26 October, after the feature freeze.
 - The hero classes find nothing on the recorded estate, where every name a vhost serves lands on an inventory host; pre-flight raises two hero findings in simulation, and `test/fixtures/authored-bundle.json` carries the full story for the tests.

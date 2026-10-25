@@ -1,9 +1,10 @@
 // Linux collector over read-only SSH. One session per host (ssh -o BatchMode=yes -o ConnectTimeout=15
-// <alias> bash -s) with READ_SCRIPT on stdin: a fixed list of reads that prints delimited sections. The
-// aliases are the operator's own ssh_config entries, configured with each host's export folder in
-// LINUX_HOSTS (HOSTS); nothing else is reachable. Nothing in the script writes, restarts, installs or
-// escalates: a path the login user cannot read comes back as a section with a non-zero exit status and
-// is recorded as not readable. The ops/ forced command runs the same reads.
+// [-F <LINUX_SSH_CONFIG>] <alias> bash -s, sshArgv) with READ_SCRIPT on stdin: a fixed list of reads that
+// prints delimited sections. The aliases are the operator's own ssh_config entries, or those of the file
+// LINUX_SSH_CONFIG names (lab/ssh_config.local for the lab estate), configured with each host's export
+// folder in LINUX_HOSTS (HOSTS); nothing else is reachable. Nothing in the script writes, restarts,
+// installs or escalates: a path the login user cannot read comes back as a section with a non-zero exit
+// status and is recorded as not readable. The ops/ forced command runs the same reads.
 //
 // Contract, in order:
 //   fetchHost     streams the script, collects stdout; ssh's own stderr is redacted before it is traced.
@@ -92,6 +93,22 @@ export class CollectorError extends Error {}
 export const HOSTS: Readonly<Record<string, { exportDir: string }>> = config.linuxHosts;
 
 export const SSH_ARGS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15"] as const;
+
+/** The ssh_config file the aliases are read from: LINUX_SSH_CONFIG in .env; "" = the user's own. */
+export const SSH_CONFIG: string = config.linuxSshConfig;
+
+/**
+ * One session's ssh argv over one alias: SSH_ARGS, then -F <file> when an ssh_config file is configured, then the
+ * alias and bash -s. The write session (src/actions/ssh.ts) runs the same argv.
+ */
+export function sshArgv(alias: string, sshConfig: string = SSH_CONFIG): string[] {
+  return [...SSH_ARGS, ...(sshConfig ? ["-F", sshConfig] : []), alias, "bash", "-s"];
+}
+
+/** The argv as a trace line prints it: the ssh_config file by the setting's name, so no path of this machine reaches the trace. */
+export const sshSummary = (alias: string, sshConfig: string = SSH_CONFIG): string =>
+  `ssh ${sshArgv(alias, sshConfig ? "<LINUX_SSH_CONFIG>" : "").join(" ")}`;
+
 export const MARK = "@@DRIFT@@";
 
 /** File names the script never reads and the population never counts: credentials and key material by name, case-insensitive on both sides. Mirrors the case pattern in the script and in ops/ssh/*, which lower-case the name first. */
@@ -189,7 +206,7 @@ export function fetchHost(alias: string, opts: { timeoutMs?: number } = {}): Pro
   const script = readScript(spec.exportDir);
   return new Promise((resolve, reject) => {
     const t0 = Date.now();
-    const child = spawn("ssh", [...SSH_ARGS, alias, "bash", "-s"], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+    const child = spawn("ssh", sshArgv(alias), { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     child.stdout.on("data", (b: Buffer) => out.push(b));
@@ -770,7 +787,7 @@ export async function collectHost(alias: string, opts: { tenantId: string; redac
   const t = opts.tracer;
   const res = await fetchHost(alias, { timeoutMs: opts.timeoutMs });
   const stderr = redactText(opts.redactor, redact(res.stderr.trim()));
-  t?.emit({ agent: "collector.linux", action: "observe", status: res.code === 0 ? "ok" : "failed", latency_ms: res.latencyMs, input_summary: `ssh ${SSH_ARGS.join(" ")} ${alias} bash -s`, output_summary: `${res.stdout.length} bytes, exit ${res.code ?? res.signal}`, detail: stderr || undefined });
+  t?.emit({ agent: "collector.linux", action: "observe", status: res.code === 0 ? "ok" : "failed", latency_ms: res.latencyMs, input_summary: sshSummary(alias), output_summary: `${res.stdout.length} bytes, exit ${res.code ?? res.signal}`, detail: stderr || undefined });
   if (res.code !== 0 && res.stdout.length === 0) throw new CollectorError(`ssh ${alias} exited ${res.code ?? res.signal}: ${stderr}`);
   const fetched = parseStream(res.stdout);
   const { rows, summary, files, links } = toRows(fetched, { tenantId: opts.tenantId, redactor: opts.redactor, alias });

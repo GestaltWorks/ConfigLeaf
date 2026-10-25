@@ -2,3 +2,5 @@
 # Windows (core.autocrlf=true) would turn "#!/bin/sh" into "#!/bin/sh\r" and sshd would refuse it.
 ops/ssh/* text eol=lf
 ops/sudoers/* text eol=lf
+# The lab's files go into a Linux container and run in WSL (lab/README.md): LF whatever the checkout.
+lab/** text eol=lf

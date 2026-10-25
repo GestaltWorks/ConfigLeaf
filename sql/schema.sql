@@ -174,7 +174,7 @@ CREATE TABLE IF NOT EXISTS action (
   vault_commit   TEXT,
   verification   TEXT NOT NULL,      -- probe ids, comma-separated; '' when none
   receipts       TEXT NOT NULL,      -- receipt ids, comma-separated; '' when none
-  status         TEXT NOT NULL,      -- done | failed | refused | not_judged
+  status         TEXT NOT NULL,      -- done | unverified | failed | refused | not_judged (unverified: the write completed, no verification probe ran or could be read)
   reason         TEXT NOT NULL,      -- the one plain sentence the Actor gives; '' when none
   record         TEXT NOT NULL,      -- executed checks, verdicts and probes, one per line, each tied to its id; '' when none; at most 4000 characters, redacted
   started_at     TEXT NOT NULL,
