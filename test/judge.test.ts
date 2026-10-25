@@ -9,7 +9,7 @@ import { DataLayer, type Params, type RunOptions } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { hero } from "../src/data/queries.ts";
 import { tenantAppId } from "../src/gate.ts";
-import { MAX_EVIDENCE_ROWS, SYSTEM_PROMPT, buildMessages, guardRefutation, judgeClaim, type JudgeModel } from "../src/agents/judge.ts";
+import { JUDGE_MAX_TOKENS, MAX_EVIDENCE_ROWS, SYSTEM_PROMPT, buildMessages, guardRefutation, judgeClaim, type JudgeModel } from "../src/agents/judge.ts";
 import bundle from "./fixtures/authored-bundle.json" with { type: "json" };
 import { MemTracer } from "./fixtures/mem-tracer.ts";
 import { ultraReceipt } from "./fixtures/signed-receipt.ts";
@@ -137,7 +137,8 @@ describe("judgeClaim on the authored fixture", () => {
     // no tenant named: no custody, no nonce, the configured app id
     expect(v.custody).toBeUndefined();
     expect(v.attempts).toBeUndefined();
-    expect(ns.opts[0]).toMatchObject({ enableThinking: true, maxTokens: 4096, temperature: 0, agent: "judge", models: [config.nightshift.modelJudge, ...config.nightshift.fallbackJudge] });
+    expect(ns.opts[0]).toMatchObject({ enableThinking: true, maxTokens: JUDGE_MAX_TOKENS, temperature: 0, agent: "judge", models: [config.nightshift.modelJudge, ...config.nightshift.fallbackJudge] });
+    expect(JUDGE_MAX_TOKENS).toBe(8192);
     expect(ns.opts[0].appId).toBeUndefined();
     expect(ns.opts[0].messages[1].content).toMatch(/^Claim: /);
     expect(ns.opts[0].messages[1].content).toContain("Claim: " + HERO_CLAIM);
@@ -145,6 +146,18 @@ describe("judgeClaim on the authored fixture", () => {
     // the gate runs before the reply is read: a discarded answer is never parsed as a hypothesis
     expect(tracer.events.map((e) => `${e.agent}:${e.action}:${e.status}`)).toEqual(["judge:check:ok", "judge:hypothesise:ok", "judge:query:ok", "judge:judge:ok"]);
     expect(tracer.events[3]).toMatchObject({ receipt_id: ULTRA_ID, signature_ok: true, model_routed: ULTRA_MODEL });
+  });
+
+  it("requestedTier and model: a Lightning judge counts on a Lightning receipt when the tier asked is lightning, and the same receipt is refused under the default tier", async () => {
+    const sql = reply("SELECT asset_id FROM {{t:inventory_asset}} WHERE tenant_id = 'client-a' AND address = '203.0.113.77'");
+    const lightningServed = { modelRouted: LIGHTNING_MODEL, receiptId: LIGHTNING_ID };
+    const ns = stub(sql, lightningServed);
+    const v = await judgeClaim({ claim: HERO_CLAIM, evidenceRows: EVIDENCE, layer, nightshift: ns, receipts, requestedTier: "lightning", model: config.nightshift.modelFast });
+    expect(v).toMatchObject({ status: "stands", receiptId: LIGHTNING_ID, servedModel: LIGHTNING_MODEL, signatureOk: true });
+    expect(ns.opts[0].models).toEqual([config.nightshift.modelFast]);
+    const ultraAsked = await judgeClaim({ claim: HERO_CLAIM, evidenceRows: EVIDENCE, layer, nightshift: stub(sql, lightningServed), receipts });
+    expect(ultraAsked.status).toBe("not_judged");
+    expect(ultraAsked.reason).toMatch(/ultra was requested/);
   });
 
   it("refuted: a false claim falls to a fenced reply whose SELECT returns the row that breaks it", async () => {

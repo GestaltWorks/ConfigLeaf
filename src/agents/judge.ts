@@ -3,8 +3,9 @@
 // it. Rows refute the claim; no rows and it stands. The judge never confirms by assertion: its only
 // output is SQL that we execute ourselves, under the same guard as the catalogue queries.
 //
-// A verdict counts only when the receipt gate (src/gate.ts) says a signed receipt names an Ultra and,
-// when the claim belongs to a tenant, that the receipt is ours: filed under that tenant's app id
+// A verdict counts only when the receipt gate (src/gate.ts) says a signed receipt names the tier requested
+// (JudgeInput.requestedTier: Ultra by default, Lightning for the eval's C2) and, when the claim belongs to a
+// tenant, that the receipt is ours: filed under that tenant's app id
 // ("drift-agent-<tenant>") for the request we made. The gate runs before the reply is read, because a
 // receipt that is not ours means the answer is discarded and the call made once more as a fresh request
 // (a new nonce in the prompt); a second custody failure fails closed. Gate failure, a receipt lookup
@@ -23,6 +24,8 @@ import type { Tracer } from "../trace.ts";
 
 export const MAX_EVIDENCE_ROWS = 20;
 export const MAX_LIMIT = 50;
+/** max_tokens of a judge call: Ultra used up to 4,087 output tokens in the 24 Oct 2026 EVAL_LIVE smoke under a cap of 4,096. */
+export const JUDGE_MAX_TOKENS = 8192;
 
 export interface Evidence { columns: string[]; rows: string[][] }
 
@@ -56,7 +59,12 @@ export interface JudgeInput {
   nightshift: JudgeModel;
   receipts?: ReceiptFinder;
   tracer?: Tracer;
+  /** The model ladder, first id first; default [model] when a model is named, else the judge model and its fallbacks. */
   requestedModels?: string[];
+  /** The tier the receipt gate expects of the served model: ultra by default; lightning for the eval's C2. */
+  requestedTier?: "lightning" | "ultra";
+  /** The id to call; default the judge model (config.nightshift.modelJudge). */
+  model?: string;
   /**
    * The client the claim belongs to. Given, the call goes out under tenantAppId(tenantId) with a request
    * nonce first in the user message, and the receipt must pass custody (request_id ours, app ours); a
@@ -154,7 +162,8 @@ class ModelUnavailable extends Error {}
  */
 export async function judgeClaim(input: JudgeInput): Promise<JudgeVerdict> {
   const { claim, evidenceRows, layer, nightshift, tracer } = input;
-  const requestedModels = input.requestedModels ?? [config.nightshift.modelJudge, ...config.nightshift.fallbackJudge];
+  const tier = input.requestedTier ?? "ultra";
+  const requestedModels = input.requestedModels ?? (input.model ? [input.model] : [config.nightshift.modelJudge, ...config.nightshift.fallbackJudge]);
   const receipts = input.receipts ?? new ReceiptStore();
   const t0 = Date.now();
   const done = (v: Omit<JudgeVerdict, "latencyMs">): JudgeVerdict => ({ ...v, latencyMs: Date.now() - t0 });
@@ -181,7 +190,7 @@ export async function judgeClaim(input: JudgeInput): Promise<JudgeVerdict> {
     const messages = buildMessages(claim, evidenceRows, nonce);
     try {
       // max_tokens is sized for a route that honours enable_thinking: the reasoning comes back in content before the JSON and must not truncate it.
-      const chat = await nightshift.chatWithFallback({ models: requestedModels, messages, maxTokens: 4096, temperature: 0, enableThinking: true, ...(appId ? { appId } : {}), agent: "judge", tracer });
+      const chat = await nightshift.chatWithFallback({ models: requestedModels, messages, maxTokens: JUDGE_MAX_TOKENS, temperature: 0, enableThinking: true, ...(appId ? { appId } : {}), agent: "judge", tracer });
       lastChat = chat;
       return { chat, prompt: messages.map((m) => m.content) };
     } catch (err) {
@@ -193,13 +202,13 @@ export async function judgeClaim(input: JudgeInput): Promise<JudgeVerdict> {
   let attempts = 1;
   try {
     if (appId) {
-      const out = await gateWithCustody(({ nonce }) => call(nonce), "ultra", receipts, appId, tracer, "judge");
+      const out = await gateWithCustody(({ nonce }) => call(nonce), tier, receipts, appId, tracer, "judge");
       chat = out.chat;
       gate = out.gate;
       attempts = out.attempts;
     } else {
       chat = (await call()).chat;
-      gate = await gateChatResult(chat, "ultra", receipts, tracer, "judge");
+      gate = await gateChatResult(chat, tier, receipts, tracer, "judge");
     }
   } catch (err) {
     if (err instanceof ModelUnavailable || !lastChat) {

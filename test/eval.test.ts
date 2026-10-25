@@ -315,12 +315,15 @@ describe("runEval", () => {
     await expect(evalWith({ configs: ["C0"], set: "dev", items: ["E01"] })).rejects.toThrow(/E01 is outside the dev set/);
   });
 
-  // C2 asks judgeClaim for the Lightning tier; it runs once src/agents/judge.ts takes JudgeInput.requestedTier.
-  const judgeTakesTier = readFileSync("src/agents/judge.ts", "utf8").includes("requestedTier");
-  it.skipIf(!judgeTakesTier)("C2: Lightning as the judge, the gate expecting Lightning", async () => {
-    const r = await evalWith({ configs: ["C2"], models: stubModels({ judge: REFUTES }).models });
+  // C2 asks judgeClaim for the Lightning tier (JudgeInput.requestedTier), so the gate expects a Lightning receipt.
+  it("C2: Lightning as the judge, the gate expecting Lightning", async () => {
+    const { models, sent } = stubModels({ judge: REFUTES });
+    const r = await evalWith({ configs: ["C2"], models });
     expect(r.runs[0].valid).toBe(true);
-    expect(r.runs[0].calls.filter((c) => c.kind === "judge").every((c) => c.requested_tier === "lightning" && c.served_tier === "lightning" && c.gate === "ok")).toBe(true);
+    const judged = r.runs[0].calls.filter((c) => c.kind === "judge");
+    expect(judged.length).toBeGreaterThan(0);
+    expect(judged.every((c) => c.requested_tier === "lightning" && c.served_tier === "lightning" && c.gate === "ok")).toBe(true);
+    expect(sent.filter((o) => o.messages[0].content === SYSTEM_PROMPT).every((o) => o.models[0] === config.nightshift.modelFast && o.maxTokens === 8192)).toBe(true);
     expect(r.runs[0].counts.falsifier_struck).toBe(10);
   });
 });

@@ -696,11 +696,14 @@ describe("the Decider under the MSP's policy (test/fixtures/policy-bundle.json)"
     const { result, tracer } = await policyPass();
     const fbd = ofClass(result.findings, "found_but_different")[0];
     const split = ofClass(result.findings, "proxy_split")[0];
-    expect(fbd.disposition).toEqual({ verb: "HOLD", decided_by: "policy", rule_id: CATCH_ALL, expires_at: HOLD_IN_FORCE.expires_at, reason: `held since ${HOLD_IN_FORCE.decided_at} until ${HOLD_IN_FORCE.expires_at} under rule ${CATCH_ALL}` });
+    expect(fbd.disposition).toEqual({
+      verb: "HOLD", decided_by: "policy", rule_id: CATCH_ALL, expires_at: HOLD_IN_FORCE.expires_at,
+      reason: `rule ${CATCH_ALL} (normal) holds this found_but_different finding until ${HOLD_IN_FORCE.expires_at}; held since ${HOLD_IN_FORCE.decided_at} under rule ${CATCH_ALL}`,
+    });
     expect(split.disposition).toEqual({ verb: "ESCALATE", decided_by: "policy", rule_id: PROXIED, expires_at: null, reason: `hold under rule ${PROXIED} expired ${HOLD_EXPIRED.expires_at}; the finding stands` });
     // the prior rows are the ledger's own: the fixture's two HOLDs, on the live values this pass decides on
     const prior = policyBundle.disposition;
-    expect(prior.map((d) => [d.finding_id, d.value_hash])).toEqual([[fbd.id, fbd.finding.value_hash], [split.id, split.finding.value_hash]]);
+    expect(prior.map((d) => [d.finding_id, d.value_hash]).sort()).toEqual([[fbd.id, fbd.finding.value_hash], [split.id, split.finding.value_hash]].sort());
     const line = (cls: string) => tracer.events.find((e) => e.action === "decide" && e.input_summary?.startsWith(`${cls} `))?.detail;
     expect(line("found_but_different")).toMatch(new RegExp(`; prior HOLD since ${HOLD_IN_FORCE.decided_at} until ${HOLD_IN_FORCE.expires_at}$`));
     expect(line("proxy_split")).toMatch(new RegExp(`; prior HOLD since ${HOLD_EXPIRED.decided_at} until ${HOLD_EXPIRED.expires_at}$`));
@@ -723,7 +726,7 @@ describe("the Decider under the MSP's policy (test/fixtures/policy-bundle.json)"
     expect(reason("drift_vs_approved", API)).toBe(`live value drifted from approved ${h12(approvedOf(API))} with no valid copy (none in the vault) and production answering (3 probes of its names ok in ${PROBE_RUN}), so rule ${CONFD} holds it until 2026-10-24T03:00:00.000Z`);
     expect(reason("drift_vs_approved", BAK)).toBe(`live value drifted from approved ${h12(approvedOf(BAK))}; rule ${COPIES} (low) adopts the live value`);
     expect(reason("changed_since_backup", API)).toBe(`rule ${CONFD} restores a setting to its approved value; this changed_since_backup finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-24T03:00:00.000Z`);
-    expect(reason("found_but_different", APP, "server.location./.proxy_pass")).toBe(`held since ${HOLD_IN_FORCE.decided_at} until ${HOLD_IN_FORCE.expires_at} under rule ${CATCH_ALL}`);
+    expect(reason("found_but_different", APP, "server.location./.proxy_pass")).toBe(`rule ${CATCH_ALL} (normal) holds this found_but_different finding until ${HOLD_IN_FORCE.expires_at}; held since ${HOLD_IN_FORCE.decided_at} under rule ${CATCH_ALL}`);
     expect(reason("proxy_split", "rec-b2", "proxied")).toBe(`hold under rule ${PROXIED} expired ${HOLD_EXPIRED.expires_at}; the finding stands`);
     expect(reason("approved_missing", BLOG)).toBe(`approved ${h12(BLOG_HASH)} is absent from the run; vault commit ${commitOf("run-nginx-7f1c-1020", BLOG).slice(0, 8)} holds the approved copy, validated ok with 0 gaps, so rule ${CONFD} restores it from that copy`);
     // the detector's own sentence for the drift and for the backup difference
@@ -753,7 +756,7 @@ describe("the Decider under the MSP's policy (test/fixtures/policy-bundle.json)"
     const rows = objects(await layer.run(DISPOSITIONS_SQL));
     expect(rows).toHaveLength(11 + 2);
     const expected = result.findings.map((f) => ({
-      disposition_id: dispositionId(f.finding.tenant_id, f.finding.surface, f.finding.host, f.finding.object_id, f.finding.setting_path, f.finding.value_hash, f.id, f.finding.run_id),
+      disposition_id: dispositionId(f.finding.tenant_id, f.finding.surface, f.finding.host, f.finding.object_id, f.finding.setting_path, f.finding.value_hash, f.id, f.finding.run_id, AT),
       tenant_id: "client-a", surface: f.finding.surface, host: f.finding.host ?? "", object_id: f.finding.object_id, setting_path: f.finding.setting_path, value_hash: f.finding.value_hash,
       verb: f.verb, reason: f.disposition.reason, expires_at: f.disposition.expires_at ?? "", decided_by: "policy", rule_id: f.disposition.rule_id ?? "", finding_id: f.id, run_id: f.finding.run_id, decided_at: AT,
     }));
@@ -769,6 +772,23 @@ describe("the Decider under the MSP's policy (test/fixtures/policy-bundle.json)"
     expect(again.ledger).toEqual({ dispositions: 0, fingerprints: 0 });
     expect(again.findings.map((f) => f.disposition)).toEqual(result.findings.map((f) => f.disposition));
     expect(objects(await layer.run(DISPOSITIONS_SQL))).toHaveLength(13);
+    // a pass over the same runs at a later instant writes its own 11 rows; the HOLD it meets is the latest, this pass's of 03:00, which carries the 21 Oct HOLD's expiry
+    const LATER = "2026-10-23T09:00:00.000Z";
+    const later = await runPass(layer, { world: new DriftWorld("later"), ledger, at: AT, decidedAt: LATER });
+    expect(later.ledger?.dispositions).toBe(11);
+    const kept = ofClass(later.findings, "found_but_different")[0];
+    expect(kept.disposition).toMatchObject({ verb: "HOLD", expires_at: HOLD_IN_FORCE.expires_at });
+    expect(kept.disposition.reason).toBe(`rule ${CATCH_ALL} (normal) holds this found_but_different finding until ${HOLD_IN_FORCE.expires_at}; held since ${AT} under rule ${CATCH_ALL}`);
+    // and past that expiry, with no new collection in between, the ESCALATE lands as a row of its own
+    const EXPIRED = "2026-10-24T04:00:00.000Z";
+    const expired = await runPass(layer, { world: new DriftWorld("expired"), ledger, at: AT, decidedAt: EXPIRED });
+    expect(expired.ledger?.dispositions).toBe(11);
+    const esc = ofClass(expired.findings, "found_but_different")[0];
+    expect(esc.disposition).toMatchObject({ verb: "ESCALATE", expires_at: null, reason: `hold under rule ${CATCH_ALL} expired ${HOLD_IN_FORCE.expires_at}; the finding stands` });
+    const trail = objects(await layer.run(DISPOSITIONS_SQL)).filter((r) => r.finding_id === esc.id).map((r) => [r.decided_at, r.verb, r.expires_at]).sort();
+    expect(trail).toEqual([
+      [HOLD_IN_FORCE.decided_at, "HOLD", HOLD_IN_FORCE.expires_at], [AT, "HOLD", HOLD_IN_FORCE.expires_at], [LATER, "HOLD", HOLD_IN_FORCE.expires_at], [EXPIRED, "ESCALATE", ""],
+    ]);
     engine.close();
   });
 
@@ -812,6 +832,17 @@ describe("the Decider under the MSP's policy (test/fixtures/policy-bundle.json)"
     expect(of(result.findings, "drift_vs_approved", API).disposition.reason).toBe(`live value drifted from approved ${h12(approvedOf(API))} with no valid copy (none in the vault) and no probe run in this pass, so production is unknown and rule ${CONFD} sends it to a technician`);
     // the file with a valid copy still rolls back; the rollback rule's other classes are held as before
     expect(of(result.findings, "drift_vs_approved", APP).verb).toBe("ROLLBACK");
+    expect(result.verbs).toEqual({ ADOPT: 2, HOLD: 3, ESCALATE: 3, ROLLBACK: 3, FIX: 0 });
+    expect(tracer.events.find((e) => e.input_summary === "policy")?.detail).toContain("; no probe run in this pass; ");
+  });
+
+  it("the Actor's verification runs (surface probe.verify) stay out of the pass: with the probe run's rows under that surface, production is unknown", async () => {
+    const b = without((x) => {
+      for (const r of x.collection_run) if (r.surface === "probe") r.surface = "probe.verify";
+    });
+    expect(b.collection_run.filter((r) => r.surface === "probe.verify").map((r) => r.run_id)).toEqual([PROBE_RUN]);
+    const { result, tracer } = await policyPass(b);
+    expect(of(result.findings, "drift_vs_approved", SHOP).disposition.reason).toContain("and no probe run in this pass, so production is unknown");
     expect(result.verbs).toEqual({ ADOPT: 2, HOLD: 3, ESCALATE: 3, ROLLBACK: 3, FIX: 0 });
     expect(tracer.events.find((e) => e.input_summary === "policy")?.detail).toContain("; no probe run in this pass; ");
   });
@@ -927,9 +958,10 @@ describe("the Decider under the MSP's policy (test/fixtures/policy-bundle.json)"
       expect((await dns(gone)).map((x) => [x.host, x.object_id, x.setting_path])).toEqual([["", "rec-c3", "content"]]);
     });
 
-    it("PRIOR_HOLDS_SQL: the earliest HOLD of each live value decided before the instant; a later HOLD of the same value and another verb are passed over", async () => {
+    it("PRIOR_HOLDS_SQL: the latest HOLD of each live value decided before the instant; an earlier HOLD of the same value, one at or after the instant, another verb and another tenant are passed over", async () => {
       const q = async (b: Readonly<Record<string, unknown>>, at: string) => objects(await (await layer(b)).run(PRIOR_HOLDS_SQL, { tenant_id: "client-a", decided_at: at }));
-      const [fbd, split] = policyBundle.disposition;
+      const fbd = policyBundle.disposition.find((d) => d.surface === "linux.nginx")!;
+      const split = policyBundle.disposition.find((d) => d.surface === "cloudflare.dns")!;
       expect((await q(policyBundle, "2026-10-23T03:00:00.000Z")).map((r) => [r.disposition_id, r.surface, r.host, r.object_id, r.setting_path, r.rule_id, r.expires_at, r.decided_at])).toEqual([
         [split.disposition_id, "cloudflare.dns", "", "rec-b2", "proxied", split.rule_id, HOLD_EXPIRED.expires_at, HOLD_EXPIRED.decided_at],
         [fbd.disposition_id, "linux.nginx", "host-7f1c", fbd.object_id, fbd.setting_path, fbd.rule_id, HOLD_IN_FORCE.expires_at, HOLD_IN_FORCE.decided_at],
@@ -938,11 +970,17 @@ describe("the Decider under the MSP's policy (test/fixtures/policy-bundle.json)"
       expect((await q(policyBundle, "2026-10-22T00:00:00.000Z")).map((r) => r.disposition_id)).toEqual([fbd.disposition_id]);
       expect(await q(policyBundle, HOLD_IN_FORCE.decided_at)).toEqual([]);
       const more = without((x) => {
-        x.disposition.push({ ...x.disposition[0], disposition_id: "disp-later-hold", run_id: "run-nginx-7f1c-1023", decided_at: "2026-10-22T03:00:00.000Z" });
-        x.disposition.push({ ...x.disposition[0], disposition_id: "disp-0000-escalate", verb: "ESCALATE", expires_at: null as unknown as string, decided_at: "2026-10-20T03:00:00.000Z" });
-        x.disposition.push({ ...x.disposition[0], disposition_id: "disp-other-tenant", tenant_id: "client-b", decided_at: "2026-10-20T03:00:00.000Z" });
+        const held = x.disposition.find((d) => d.surface === "linux.nginx")!;
+        x.disposition.push({ ...held, disposition_id: "disp-later-hold", run_id: "run-nginx-7f1c-1023", decided_at: "2026-10-22T03:00:00.000Z" });
+        x.disposition.push({ ...held, disposition_id: "disp-after-instant", run_id: "run-nginx-7f1c-1023", decided_at: "2026-10-23T05:00:00.000Z" });
+        x.disposition.push({ ...held, disposition_id: "disp-zzzz-escalate", verb: "ESCALATE", expires_at: null as unknown as string, decided_at: "2026-10-22T12:00:00.000Z" });
+        x.disposition.push({ ...held, disposition_id: "disp-other-tenant", tenant_id: "client-b", decided_at: "2026-10-22T12:00:00.000Z" });
       });
-      expect((await q(more, "2026-10-23T03:00:00.000Z")).map((r) => r.disposition_id)).toEqual([split.disposition_id, fbd.disposition_id]);
+      expect((await q(more, "2026-10-23T03:00:00.000Z")).map((r) => [r.disposition_id, r.decided_at, r.expires_at])).toEqual([
+        [split.disposition_id, HOLD_EXPIRED.decided_at, HOLD_EXPIRED.expires_at], ["disp-later-hold", "2026-10-22T03:00:00.000Z", HOLD_IN_FORCE.expires_at],
+      ]);
+      // before the later HOLD the earlier one is the latest
+      expect((await q(more, "2026-10-22T00:00:00.000Z")).map((r) => r.disposition_id)).toEqual([fbd.disposition_id]);
     });
   });
 });

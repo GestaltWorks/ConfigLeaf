@@ -409,6 +409,16 @@ describe("a probe run over the fixture account, offline", () => {
     expect(calls.finish).toEqual([[RUN, 5, "complete", NOW.toISOString()]]);
   });
 
+  it("the surface is an option, probe by default: the Actor's verification runs as surface probe.verify, under a run id of that surface", async () => {
+    const { sink, calls } = fakeSink([]);
+    const res = await runProbes({ tenantId: T, population: () => readPopulation(fixtureCloudflare()), redactor: r, deps: fakeDeps(HEALTHY), sink, kinds: ["dns"], surface: "probe.verify" });
+    const verify = runId(T, "probe.verify", null, NOW.toISOString());
+    expect(verify).not.toBe(RUN);
+    expect(calls.begin).toEqual([{ run_id: verify, tenant_id: T, surface: "probe.verify", host: null, started_at: NOW.toISOString(), expected_count: 5 }]);
+    expect(res.run).toMatchObject({ run_id: verify, surface: "probe.verify", status: "complete" });
+    expect(res.rows.every((p) => p.run_id === verify)).toBe(true);
+  });
+
   it("a dry run (no sink) writes nothing and counts the rows it produced", async () => {
     const res = await runProbes({ tenantId: T, population: () => readPopulation(fixtureCloudflare()), redactor: r, deps: fakeDeps(HEALTHY), sink: null });
     expect(res.written).toBe(0);

@@ -2,6 +2,16 @@
 // Layer over it (ten tables) and three DQ rules on it. plan() lists the statements in the order they run,
 // apply() runs them one at a time.
 //
+// The ten tables: collection (collection_run), setting (observation; source_kind for source), referent (each
+// dns_name observation joined to the records of its name), backup_copy (backup_item joined to its snapshot),
+// policy (policy_rule), copy (vault_copy with its latest copy_validation and a validated flag), probe,
+// disposition, action (the Actor's rows, the reason and the record among them) and ticket. The three rules:
+//   run_complete     on collection: observed_count IS NOT NULL AND expected_count IS NOT NULL AND
+//                    observed_count >= expected_count AND status = 'complete'
+//   copy_validated   on copy: validated = 1
+//   action_verified  on action, scoped to the write paths: kind NOT IN ('rollback_file','revert_record') OR
+//                    status <> 'done' OR verification <> ''
+//
 // Contract:
 //   - Re-runnable. CREATE DATASOURCE has no IF NOT EXISTS, so SHOW DATASOURCES decides it. REGISTER
 //     DATASOURCE TABLES follows a create, and for an existing source runs when SHOW DATASOURCE TABLES lacks
@@ -40,22 +50,20 @@
 // replaced the listed expression in place. RUN DQ TABLE returns name | table | type | total_record |
 // valid_record | invalid_record, the custom rules and the key constraints as rows.
 //
-// Measured live 24 Oct 2026 against the configured instance, after sql/schema.sql gave the Postgres its
-// 16 tables. First run (18:07 UTC): LOAD USL found the four-table USL stale ("lacks policy, copy, probe,
-// disposition, action, ticket"), REMOVE USL answered removed = true in 45 ms, COMPILE of the ten tables took
-// 82 ms; REFRESH DATASOURCE TABLES had registered none of the eight new Postgres tables, so ACTIVATE of
-// policy failed with TABLE_OR_VIEW_NOT_FOUND for DRIFT.policy_rule. REGISTER DATASOURCE TABLES FROM DRIFT on
-// the existing source registered all 16 (SHOW DATASOURCE TABLES: 8, then 16), which is why the plan lists
-// the source's tables and registers when one is missing. Next run: 42 statements, 35 ok, 7 skipped, 12.0 s,
-// the three rules registered. The run after it: 32 ok, 10 skipped, 9.4 s, every rule "listed as stated".
-// With run_complete set back to its earlier expression (observed_count >= expected_count AND status =
-// 'complete'), the next run took the UPDATE DQ path: 33 ok, 9 skipped, 9.2 s. RUN DQ rows of that run:
-// collection: run_complete 4 / 4 / 0, run_id (primary key) 4 / 4 / 0; copy: copy_validated 0 / 0 / 0,
-// copy_id 0 / 0 / 0, run_id (foreign key) 0 / 0 / 0; action: action_verified 0 / 0 / 0, action_id 0 / 0 / 0,
-// disposition_id (foreign key) 0 / 0 / 0. Counts through the USL: collection 4, setting 1062, referent 185,
-// backup_copy 76, the six new tables 0. The copy entity over two vault copies and three validations written
-// for the measurement and deleted after: each copy carries its latest validation (ok_with_gaps over an
-// earlier fail: validated 1; fail: validated 0), and RUN DQ on copy gave copy_validated 2 / 1 / 1.
+// Measured live 24 Oct 2026 against the configured instance: REGISTER DATASOURCE TABLES FROM DRIFT on an existing
+// source registers every table it lacks (SHOW DATASOURCE TABLES: 8, then 16), and REFRESH alone registers none, so
+// the plan lists the source's tables first. UPDATE DQ replaced run_complete's listed expression in place (33 ok, 9
+// skipped, 9.2 s). After the export of the 23:35 UTC collection: 42 statements, 32 ok, 10 skipped, 0 failed, 9.4 s,
+// every rule listed as stated; RUN DQ: run_complete on collection 19 / 19 / 0, copy_validated on copy 336 / 282 / 54,
+// action_verified on action 0 / 0 / 0. The copy entity over two vault copies and three validations written for the
+// measurement and deleted after: each copy carries its latest validation (ok_with_gaps over an earlier fail:
+// validated 1; fail: validated 0), and RUN DQ on copy gave copy_validated 2 / 1 / 1.
+//
+// Measured live 25 Oct 2026, 01:16 UTC: a stale USL (columns differ in action) takes REMOVE USL, then COMPILE.
+// COMPILE leaves no DQ rule registered, so LIST DQ lists none of the three, REGISTER runs for all three
+// (action_verified with its scoped expression) and every UPDATE DQ step is skipped as registered this run: 42
+// statements, 37 ok, 5 skipped, 0 failed, 10.0 s. UPDATE DQ remains the path when a rule is listed with another
+// expression and the USL is current.
 
 import { Zetaris, type QueryResult } from "../adapters/zetaris.ts";
 import { config, redact } from "../config.ts";
@@ -72,8 +80,8 @@ const PG_IDENT = /^[A-Za-z0-9_-]+$/;
 
 /**
  * The USL's ten tables, column lines in DDL order. The first four are the collected estate; policy is
- * policy_rule; copy is vault_copy with its latest copy_validation; probe, disposition, action and ticket
- * are their datasource tables.
+ * policy_rule; copy is vault_copy with its latest copy_validation; probe, disposition, action (reason and
+ * record included) and ticket are their datasource tables.
  */
 const USL_DDL = {
   collection: [
@@ -196,6 +204,8 @@ const USL_DDL = {
     "verification varchar(2048) NOT NULL",
     "receipts varchar(2048) NOT NULL",
     "status varchar(16) NOT NULL",
+    "reason varchar(1024) NOT NULL",
+    "record varchar(4096) NOT NULL",
     "started_at varchar(40) NOT NULL",
     "finished_at varchar(40)",
     "disposition_id varchar(128) NOT NULL FOREIGN KEY REFERENCES disposition(disposition_id)",
@@ -233,12 +243,13 @@ export interface DqRule { name: string; table: UslTable; expression: string }
  * The DQ rules. run_complete states RUN_COMPLETE_SQL's self-report half (src/data/queries.ts): both counts
  * present, the observed count at least the asserted one, status complete, so a run that never asserted
  * its population fails here as it fails the pass's gate. copy_validated: the copy's latest validation is
- * ok or ok_with_gaps. action_verified: a done action names the probes that verified it.
+ * ok or ok_with_gaps. action_verified, scoped to the write paths: a done rollback_file or revert_record
+ * names the probes that verified it; an investigation and a fix pass it whatever they carry.
  */
 export const DQ_RULES: readonly DqRule[] = [
   { name: "run_complete", table: "collection", expression: "observed_count IS NOT NULL AND expected_count IS NOT NULL AND observed_count >= expected_count AND status = 'complete'" },
   { name: "copy_validated", table: "copy", expression: "validated = 1" },
-  { name: "action_verified", table: "action", expression: "status <> 'done' OR verification <> ''" },
+  { name: "action_verified", table: "action", expression: "kind NOT IN ('rollback_file','revert_record') OR status <> 'done' OR verification <> ''" },
 ];
 /** The tables RUN DQ runs on, one statement each. */
 export const DQ_TABLES: readonly UslTable[] = ["collection", "copy", "action"];
@@ -346,7 +357,7 @@ function activation(table: UslTable, ds: string): string {
     case "disposition":
       return `SELECT ${keep("disposition_id tenant_id surface ?host object_id setting_path value_hash verb reason ?expires_at decided_by ?rule_id finding_id run_id decided_at")} FROM ${ds}.disposition`;
     case "action":
-      return `SELECT ${keep("action_id tenant_id kind target ?before_hash ?after_hash ?vault_commit verification receipts status started_at ?finished_at disposition_id")} FROM ${ds}.action`;
+      return `SELECT ${keep("action_id tenant_id kind target ?before_hash ?after_hash ?vault_commit verification receipts status reason record started_at ?finished_at disposition_id")} FROM ${ds}.action`;
     case "ticket":
       return `SELECT ${keep("ticket_id tenant_id psa ?external_id ?url type priority status ?action_id finding_id created_at updated_at")} FROM ${ds}.ticket`;
   }

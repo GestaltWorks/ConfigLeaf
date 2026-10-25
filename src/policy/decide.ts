@@ -21,11 +21,13 @@
 //      affected, else ESCALATE; rollback HOLD with the expiry: the rule restores a setting to its approved
 //      value, and the finding concerns the setting's relation to another setting while its own value stands.
 //      A HOLD the rule gives meets the setting's prior HOLD on the same live value, when the ledger holds one
-//      (the earliest HOLD of the same tenant, surface, host, object_id, setting_path and value_hash decided
-//      before this pass): one whose expires_at is after decided_at keeps HOLD with that expires_at, "held since
-//      <decided_at> until <expires_at> under rule <id>"; one whose expires_at is at or before decided_at gives
-//      ESCALATE, "hold under rule <id> expired <expires_at>; the finding stands". Every later pass on the same
-//      live value reads the same earliest HOLD, so an expired hold stays expired and a kept one keeps its expiry.
+//      (the latest HOLD of the same tenant, surface, host, object_id, setting_path and value_hash decided
+//      before this pass): one whose expires_at is after decided_at keeps HOLD with that expires_at and the
+//      rule's own sentence built with it, "<the rule's reason, until <expires_at>>; held since <decided_at>
+//      under rule <id>", so the reason names one expiry; one whose expires_at is at or before decided_at gives
+//      ESCALATE, "hold under rule <id> expired <expires_at>; the finding stands". A kept HOLD carries the
+//      expiry forward, so every HOLD of a live value shares the first one's expiry, and once it passes every
+//      later pass on that value is ESCALATE.
 //   3. Default, when no rule governs the setting: the verb the checks alone give (ADOPT when every check
 //      holds and none was rejected, else ESCALATE) and the checks' own sentence. decided_by "default".
 //   Production is affected when a probe of the pass with status fail targets a name the object serves
@@ -78,7 +80,7 @@ export interface CopyCandidate {
 /** The probe rows of the pass: run_id null when the pass holds no probe run. */
 export interface ProbeView { run_id: string | null; rows: readonly { kind: string; target: string; status: string }[] }
 
-/** The earliest HOLD the ledger holds on the setting's live value, decided before this pass (PRIOR_HOLDS_SQL). */
+/** The latest HOLD the ledger holds on the setting's live value, decided before this pass (PRIOR_HOLDS_SQL). */
 export interface PriorHold { decided_at: string; expires_at: string; rule_id: string | null }
 
 export interface DecideInput {
@@ -163,14 +165,19 @@ function copyText(copies: readonly CopyCandidate[]): string {
   return `no valid copy (${plural(copies.length, "copy", "copies")} in the vault, latest validation ${results})`;
 }
 
-/** A HOLD the rule gave, against the setting's prior HOLD on the same live value. */
-function againstPriorHold(d: Decision, prior: PriorHold | null | undefined, decidedAt: string): Decision {
+/**
+ * A HOLD the rule gave, against the setting's prior HOLD on the same live value. A prior HOLD in force keeps its
+ * expiry: the rule's sentence is built again with that expiry, so the reason names one date.
+ */
+function againstPriorHold(input: DecideInput, rule: PolicyRule, d: Decision): Decision {
+  const prior = input.priorHold;
   if (d.verb !== "HOLD" || !prior) return d;
-  const rule = prior.rule_id ?? d.rule_id;
-  if (Date.parse(prior.expires_at) > Date.parse(decidedAt)) {
-    return { ...d, expires_at: prior.expires_at, reason: `held since ${prior.decided_at} until ${prior.expires_at} under rule ${rule}` };
+  const id = prior.rule_id ?? d.rule_id;
+  if (Date.parse(prior.expires_at) > Date.parse(input.decidedAt)) {
+    const kept = byRule(input, rule, prior.expires_at);
+    return { ...kept, expires_at: prior.expires_at, reason: `${kept.reason}; held since ${prior.decided_at} under rule ${id}` };
   }
-  return { ...d, verb: "ESCALATE", expires_at: null, reason: `hold under rule ${rule} expired ${prior.expires_at}; the finding stands` };
+  return { ...d, verb: "ESCALATE", expires_at: null, reason: `hold under rule ${id} expired ${prior.expires_at}; the finding stands` };
 }
 
 export function decide(input: DecideInput): Decision {
@@ -188,13 +195,15 @@ export function decide(input: DecideInput): Decision {
     };
   }
   if (!rule) return { verb: checks.verb, reason: checks.why, expires_at: null, decided_by: "default", rule_id: null };
-  return againstPriorHold(byRule(input, rule), input.priorHold, input.decidedAt);
+  return againstPriorHold(input, rule, byRule(input, rule));
 }
 
-/** Step 2 of the contract before the prior HOLD is weighed: the verb the rule gives. */
-function byRule(input: DecideInput, rule: PolicyRule): Decision {
+/**
+ * Step 2 of the contract before the prior HOLD is weighed: the verb the rule gives. until is the expiry a HOLD
+ * names and carries: decided_at plus the rule's hours, or the kept expiry of a prior HOLD in force.
+ */
+function byRule(input: DecideInput, rule: PolicyRule, until = holdUntil(input.decidedAt, rule.hold_max_hours)): Decision {
   const by = (verb: DispositionVerb, reason: string, expires_at: string | null = null): Decision => ({ verb, reason, expires_at, decided_by: "policy", rule_id: rule.rule_id });
-  const until = holdUntil(input.decidedAt, rule.hold_max_hours);
   const prod = production(input.probes, input.serves);
   const id = rule.rule_id;
   const cls = input.finding.class;

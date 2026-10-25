@@ -10,8 +10,9 @@
 // fingerprints through a MemoryLedger into the same sql.js engine, and the disposition lines are read back
 // from it through the DataLayer. With no lesson recorded and no policy_rule rows in the bundle every
 // disposition is the default's (decided_by default) and the verbs are ADOPT and ESCALATE. Every disposition
-// is decided at the bundle's own instant (src/data/instant.ts), so two runs over the same bundle print the
-// same finding, disposition and summary lines; the trace lines carry their own timestamps and latencies.
+// is decided at the bundle's own instant (src/data/instant.ts: the later of its latest run's finish and its latest
+// ledger row), so two runs over the same bundle print the same finding, disposition and summary lines; the trace
+// lines carry their own timestamps and latencies.
 import { config } from "../src/config.ts";
 import { DataLayer } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
@@ -38,17 +39,18 @@ tracer.emit({ agent: "collector", action: "observe", status: "ok", output_summar
 
 const memory = new TechnicianMemory({ storage: "local" });
 const layer = new DataLayer(engine);
-// decidedAt: the bundle's own instant (its latest run's finish), so every disposition and HOLD expiry is the same on every run;
-// lessons are recalled at the memory's clock.
-const pass = await runPass(layer, { tracer, world: new DriftWorld("sample"), memory, ledger: new MemoryLedger(engine), decidedAt: decisionInstant(bundle) });
+// decidedAt: the bundle's own instant (the later of its latest run's finish and its latest ledger row), so every disposition
+// and HOLD expiry is the same on every run; lessons are recalled at the memory's clock.
+const decidedAt = new Date(decisionInstant(bundle) ?? Date.now()).toISOString();
+const pass = await runPass(layer, { tracer, world: new DriftWorld("sample"), memory, ledger: new MemoryLedger(engine), decidedAt });
 
 for (const f of pass.findings) console.log(JSON.stringify(f));
 // The ledger's rows, read back through the DataLayer, in the order of the findings they decide: each the row under
-// the disposition_id the pass gives the finding (src/loop/pass.ts dispositionIdOf), which a recorded pass over the same
-// run may have written first; the bundle holds one row per finding and run of every recorded pass.
+// the disposition_id the pass gives the finding (src/loop/pass.ts dispositionIdOf, keyed on decidedAt), which a recorded
+// pass over the same runs at the same instant may have written first.
 const ledger = new Map(objects(await layer.run(DISPOSITIONS_SQL, {}, { limit: 100_000 })).map((d) => [d.disposition_id, d]));
 for (const f of pass.findings) {
-  const d = ledger.get(dispositionIdOf(f));
+  const d = ledger.get(dispositionIdOf(f, decidedAt));
   console.log(d
     ? `DISPOSITION ${d.finding_id} ${d.verb} by ${d.decided_by}${d.rule_id ? ` under ${d.rule_id}` : ""} expires ${d.expires_at || "-"}: ${d.reason}`
     : `DISPOSITION ${f.id} absent from the ledger`);

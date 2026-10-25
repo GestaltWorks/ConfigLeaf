@@ -238,10 +238,29 @@ describe("decide: the setting's prior HOLD on the same live value", () => {
   const held = (over: Partial<DecideInput> = {}) => input({ finding: { class: "proxied_without_real_ip" }, approved: null, rule: rule({ lock: 0, on_drift: "hold", criticality: "high", hold_max_hours: 72 }), ...over });
   const PRIOR = { decided_at: "2026-10-22T12:00:00.000Z", expires_at: "2026-10-25T12:00:00.000Z", rule_id: "rule-00000000000000a1" };
 
-  it("a HOLD whose expiry is after decided_at keeps HOLD with that expiry, naming since when and under which rule", () => {
+  /** The sentence the rule gives the finding at decided_at, with no prior HOLD. */
+  const OWN = "rule rule-00000000000000a1 (high) holds this proxied_without_real_ip finding until 2026-10-27T12:00:00.000Z";
+  /** The rule's sentence built with the prior HOLD's kept expiry. */
+  const KEPT = "rule rule-00000000000000a1 (high) holds this proxied_without_real_ip finding until 2026-10-25T12:00:00.000Z";
+
+  it("a HOLD whose expiry is after decided_at keeps HOLD with that expiry and the rule's own sentence built with it, naming since when and under which rule: one expiry in the reason", () => {
     expect(decide(held({ priorHold: PRIOR }))).toEqual({
       verb: "HOLD", decided_by: "policy", rule_id: "rule-00000000000000a1", expires_at: "2026-10-25T12:00:00.000Z",
-      reason: "held since 2026-10-22T12:00:00.000Z until 2026-10-25T12:00:00.000Z under rule rule-00000000000000a1",
+      reason: `${KEPT}; held since 2026-10-22T12:00:00.000Z under rule rule-00000000000000a1`,
+    });
+    expect(decide(held({ priorHold: PRIOR })).reason.match(/\d{4}-\d{2}-\d{2}T[\d:.]+Z/g)).toEqual(["2026-10-25T12:00:00.000Z", "2026-10-22T12:00:00.000Z"]);
+    expect(decide(held({ priorHold: null })).reason).toBe(OWN);
+  });
+
+  it("a kept drift HOLD and a kept rollback-rule HOLD name the kept expiry in the rule's sentence", () => {
+    const soon = { ...PRIOR, expires_at: "2026-10-24T14:00:00.000Z" };
+    expect(decide(input({ probes: ANSWERING, priorHold: soon }))).toEqual({
+      verb: "HOLD", decided_by: "policy", rule_id: "rule-00000000000000a1", expires_at: "2026-10-24T14:00:00.000Z",
+      reason: "live value drifted from approved a1b2c3d4e5f6 with no valid copy (none in the vault) and production answering (2 probes of its names ok in run-probe), so rule rule-00000000000000a1 holds it until 2026-10-24T14:00:00.000Z; held since 2026-10-22T12:00:00.000Z under rule rule-00000000000000a1",
+    });
+    expect(decide(input({ finding: { class: "proxied_without_real_ip" }, approved: null, rule: rule({ hold_max_hours: 4 }), priorHold: soon }))).toEqual({
+      verb: "HOLD", decided_by: "policy", rule_id: "rule-00000000000000a1", expires_at: "2026-10-24T14:00:00.000Z",
+      reason: "rule rule-00000000000000a1 restores a setting to its approved value; this proxied_without_real_ip finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-24T14:00:00.000Z; held since 2026-10-22T12:00:00.000Z under rule rule-00000000000000a1",
     });
   });
 
@@ -255,8 +274,8 @@ describe("decide: the setting's prior HOLD on the same live value", () => {
   });
 
   it("the prior HOLD's own rule is named; with none recorded, the rule deciding now", () => {
-    expect(decide(held({ priorHold: { ...PRIOR, rule_id: "rule-00000000000000b2" } })).reason).toBe("held since 2026-10-22T12:00:00.000Z until 2026-10-25T12:00:00.000Z under rule rule-00000000000000b2");
-    expect(decide(held({ priorHold: { ...PRIOR, rule_id: null } })).reason).toBe("held since 2026-10-22T12:00:00.000Z until 2026-10-25T12:00:00.000Z under rule rule-00000000000000a1");
+    expect(decide(held({ priorHold: { ...PRIOR, rule_id: "rule-00000000000000b2" } })).reason).toBe(`${KEPT}; held since 2026-10-22T12:00:00.000Z under rule rule-00000000000000b2`);
+    expect(decide(held({ priorHold: { ...PRIOR, rule_id: null } })).reason).toBe(`${KEPT}; held since 2026-10-22T12:00:00.000Z under rule rule-00000000000000a1`);
   });
 
   it("weighs a HOLD only: a verb other than HOLD the rule gives stands, and with no prior HOLD the rule's own expiry runs from decided_at", () => {

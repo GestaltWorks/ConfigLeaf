@@ -3,10 +3,12 @@
 //
 // Contract: plain text in six sections, each a heading and one line per fact: What (the finding's summary and
 // where it stands), Evidence (each check with its template, holds or fails and its row count; each check that
-// could not run with its reason; the exposure line; each probe of the object's names with its probe id), Decision
-// (verb, who decided, the rule and its terms, the reason, the expiry), Work done (each action: kind, status,
-// hashes before and after, vault commit, verification probe ids), Receipts (the model receipts of those actions)
-// and Ledger (disposition, finding, run and ticket ids). Hashes are 12 hex, commits 8. Every string here is
+// could not run with its reason; the exposure line; each probe of the object's names with its probe id; each line
+// of each action's record, under the action's id), Decision (verb, who decided, the rule and its terms, the reason,
+// the expiry), Work done (each action: kind, status, hashes before and after, vault commit, verification probe ids,
+// then the Actor's sentence for it), Receipts (the model receipts of those actions) and Ledger (disposition,
+// finding, run and ticket ids). A comment on a new action carries its Work done, its record as Evidence and its
+// Receipts. Hashes are 12 hex, commits 8. Every string here is
 // redacted text from the ledger and the pass; outgoing() in src/psa/index.ts runs the redactor and the deny-list
 // probe over the result before it leaves the process. A body is cut at BODY_MAX characters with a line saying so.
 // Measured 24 Oct 2026: the six sections in order on the first issue the step creates over the policy fixture
@@ -55,7 +57,12 @@ function whatLines(f: TicketFinding): string[] {
   ];
 }
 
-function evidenceLines(f: TicketFinding, probes: ProbeEvidence): string[] {
+/** Each line of each action's record, under the action's id: the checks, verdicts and probes it ran. */
+function recordLines(actions: readonly ActionView[]): string[] {
+  return actions.flatMap((a) => a.record.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => `- action ${a.action_id} (${a.kind}): ${l}`));
+}
+
+function evidenceLines(f: TicketFinding, probes: ProbeEvidence, actions: readonly ActionView[]): string[] {
   const out = ["### Evidence"];
   for (const c of f.checks) out.push(`- check ${c.template}: ${c.holds ? "holds" : "fails"}, ${c.rowCount} row(s). ${c.explanation}`);
   for (const r of f.rejected) out.push(`- check not run: ${r.reason}`);
@@ -67,6 +74,7 @@ function evidenceLines(f: TicketFinding, probes: ProbeEvidence): string[] {
   if (probes.run_id === null) out.push("- probes: no probe run in this pass");
   else if (!probes.rows.length) out.push(`- probes: no probe in ${probes.run_id} targets a name the object serves`);
   else for (const p of probes.rows) out.push(`- probe ${p.probe_id} ${p.kind} ${p.target}: ${p.status}; observed ${p.observed}; expected ${p.expected}`);
+  out.push(...recordLines(actions));
   return out;
 }
 
@@ -95,7 +103,7 @@ export function actionLine(a: ActionView): string {
 }
 
 function workLines(d: Disposition, actions: readonly ActionView[]): string[] {
-  return ["### Work done", ...(actions.length ? actions.map(actionLine) : [`- no action is recorded for disposition ${d.disposition_id}`])];
+  return ["### Work done", ...(actions.length ? actions.flatMap((a) => [actionLine(a), ...(a.reason.trim() ? [`  - ${a.reason.trim()}`] : [])]) : [`- no action is recorded for disposition ${d.disposition_id}`])];
 }
 
 function receiptLines(actions: readonly ActionView[]): string[] {
@@ -119,7 +127,7 @@ export interface BodyParts {
 export function ticketBody(p: BodyParts & { ticketId: string; type: TicketType; priority: PsaPriority }): string {
   return cut([
     ...whatLines(p.finding), "",
-    ...evidenceLines(p.finding, p.probes), "",
+    ...evidenceLines(p.finding, p.probes, p.actions), "",
     ...decisionLines(p.disposition, p.rule, { type: p.type, priority: p.priority }), "",
     ...workLines(p.disposition, p.actions), "",
     ...receiptLines(p.actions), "",
@@ -131,7 +139,10 @@ export function ticketBody(p: BodyParts & { ticketId: string; type: TicketType; 
 export function commentBody(p: BodyParts & { ticketId: string; previousVerb: string | null; action: ActionView | null }): string {
   const lines = [`Update from the pass decided ${p.disposition.decided_at}.`];
   if (p.previousVerb) lines.push("", `The decision moved from ${p.previousVerb} to ${p.disposition.verb}.`, "", ...decisionLines(p.disposition, p.rule));
-  if (p.action) lines.push("", ...workLines(p.disposition, [p.action]), "", ...receiptLines([p.action]));
+  if (p.action) {
+    const evidence = recordLines([p.action]);
+    lines.push("", ...workLines(p.disposition, [p.action]), ...(evidence.length ? ["", "### Evidence", ...evidence] : []), "", ...receiptLines([p.action]));
+  }
   lines.push("", ...ledgerLines(p.disposition, p.ticketId));
   return cut(lines.join("\n"));
 }

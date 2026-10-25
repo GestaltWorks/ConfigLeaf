@@ -20,7 +20,7 @@ const disposition = (over: Partial<Disposition> = {}): Disposition => {
     verb: "HOLD", reason: "The block trusts no real_ip range; held for 72 hours under the real_ip rule.", expires_at: "2026-10-27T07:59:00.000Z",
     decided_by: "policy", rule_id: "rule-e611622049c91a41", finding_id: "fnd-45d5f3f4a2eb0b2e", run_id: CONFD_RUN, decided_at: "2026-10-24T07:59:00.000Z", ...over,
   };
-  return { ...d, disposition_id: dispositionId(d.tenant_id, d.surface, d.host, d.object_id, d.setting_path, d.value_hash, d.finding_id, d.run_id) };
+  return { ...d, disposition_id: dispositionId(d.tenant_id, d.surface, d.host, d.object_id, d.setting_path, d.value_hash, d.finding_id, d.run_id, d.decided_at) };
 };
 
 describe("MemoryLedger (sql.js)", () => {
@@ -51,14 +51,17 @@ describe("MemoryLedger (sql.js)", () => {
     expect(r.rows).toEqual([["HOLD", live.obs_id]]);
   });
 
-  it("is idempotent on disposition_id: the same pass recorded again writes 0; a new value of the setting is a new decision; two rows under one id are refused", async () => {
+  it("is idempotent on disposition_id: the same pass recorded again writes 0; a new value of the setting, or a pass at another instant, is a new decision; two rows under one id are refused", async () => {
     expect(await ledger.record([disposition()])).toBe(0);
     const changed = disposition({ value_hash: `sha256:${"b".repeat(64)}`, verb: "ESCALATE", expires_at: null, reason: "The value changed since the last decision." });
     expect(changed.disposition_id).not.toBe(disposition().disposition_id);
     expect(await ledger.record([changed, changed])).toBe(1);
+    const later = disposition({ decided_at: "2026-10-27T08:00:00.000Z", verb: "ESCALATE", expires_at: null, reason: "hold under rule rule-e611622049c91a41 expired 2026-10-27T07:59:00.000Z; the finding stands" });
+    expect(later.disposition_id).not.toBe(disposition().disposition_id);
+    expect(await ledger.record([later])).toBe(1);
     await expect(ledger.record([disposition({ verb: "ADOPT" }), disposition({ verb: "ESCALATE" })])).rejects.toThrow(/two different rows share the key/);
     const n = await dl.run("SELECT COUNT(*) AS n FROM {{t:disposition}}");
-    expect(n.rows).toEqual([["2"]]);
+    expect(n.rows).toEqual([["3"]]);
   });
 
   it("refuses a timestamp outside the millisecond form and a column the table does not have", async () => {

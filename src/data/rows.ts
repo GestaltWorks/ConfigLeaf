@@ -199,6 +199,9 @@ export type ActionKind = "rollback_file" | "revert_record" | "fix" | "investigat
 /** not_judged: an investigation whose verdict the receipt gate refused, or whose judge never answered. */
 export type ActionStatus = "done" | "failed" | "refused" | "not_judged";
 
+/** The longest action.record the Actor writes and the Store takes, in characters. */
+export const ACTION_RECORD_MAX = 4000;
+
 export interface Action {
   action_id: string;
   tenant_id: string;
@@ -210,6 +213,8 @@ export interface Action {
   verification: string; // probe ids, comma-separated; "" when none
   receipts: string; // receipt ids, comma-separated; "" when none
   status: ActionStatus;
+  reason: string; // the one plain sentence the Actor gives; "" when none
+  record: string; // what ran, one sentence per line, each tied to its query, receipt or probe id; "" when none; at most ACTION_RECORD_MAX characters
   started_at: string;
   finished_at: string | null;
   disposition_id: string;
@@ -272,7 +277,7 @@ export const COLUMNS = {
   copy_validation: ["validation_id", "copy_id", "tenant_id", "validator", "result", "missing_dependencies", "output_redacted", "validated_at"],
   probe: ["probe_id", "run_id", "tenant_id", "kind", "target", "expected", "observed", "status", "latency_ms", "observed_at"],
   disposition: ["disposition_id", "tenant_id", "surface", "host", "object_id", "setting_path", "value_hash", "verb", "reason", "expires_at", "decided_by", "rule_id", "finding_id", "run_id", "decided_at"],
-  action: ["action_id", "tenant_id", "kind", "target", "before_hash", "after_hash", "vault_commit", "verification", "receipts", "status", "started_at", "finished_at", "disposition_id"],
+  action: ["action_id", "tenant_id", "kind", "target", "before_hash", "after_hash", "vault_commit", "verification", "receipts", "status", "reason", "record", "started_at", "finished_at", "disposition_id"],
   ticket: ["ticket_id", "tenant_id", "psa", "external_id", "url", "type", "priority", "status", "action_id", "finding_id", "created_at", "updated_at"],
   referent_fingerprint: ["obs_id", "dns_run_id", "fingerprint", "resolved_at"],
 } as const satisfies { [K in TableName]: readonly (keyof Rows[K])[] };
@@ -330,7 +335,7 @@ export const REDACT = {
   copy_validation: { missing_dependencies: "text", output_redacted: "text" },
   probe: { target: "text", expected: "text", observed: "text" },
   disposition: { host: "text", object_id: "text", reason: "text" },
-  action: { target: "text" },
+  action: { target: "text", reason: "text", record: "text" },
   ticket: { url: "text" },
   referent_fingerprint: {},
 } as const satisfies { [K in TableName]: Partial<Record<keyof Rows[K], "text" | "value">> };
@@ -372,7 +377,10 @@ export const probeId = (runId: string, kind: string, target: string): string => 
 /** One action of one kind on one disposition: the Actor acts once per (disposition, kind). */
 export const actionId = (tenantId: string, dispositionIdValue: string, kind: ActionKind): string => stableId("act", tenantId, dispositionIdValue, kind);
 
-/** One decision about one live value of one setting, for one finding, in one run. */
+/**
+ * One decision about one live value of one setting, for one finding, in one run, at one instant: every pass writes its
+ * own row, and a second pass at the same decided_at over the same runs writes none.
+ */
 export const dispositionId = (
-  tenantId: string, surface: string, host: string | null, objectId: string, settingPath: string, valueHash: string, findingId: string, runId: string,
-): string => stableId("disp", tenantId, surface, host, objectId, settingPath, valueHash, findingId, runId);
+  tenantId: string, surface: string, host: string | null, objectId: string, settingPath: string, valueHash: string, findingId: string, runId: string, decidedAt: string,
+): string => stableId("disp", tenantId, surface, host, objectId, settingPath, valueHash, findingId, runId, decidedAt);

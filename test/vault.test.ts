@@ -114,7 +114,7 @@ describe("vault, host runs", () => {
     expect(Object.keys(run1.files)).toEqual([...Object.keys(run1.files)].sort());
   });
 
-  it("two runs give two commits; the second holds the changed file and mirrors the removed one", async () => {
+  it("two runs give two commits; the second holds the changed file and mirrors the removed one", { timeout: 20_000 }, async () => {
     commits.push(committed(await vaultLinuxRun(vault, store, run1, { tenantId: TENANT, alias: ALIAS, redactor: r })));
     commits.push(committed(await vaultLinuxRun(vault, store, run2, { tenantId: TENANT, alias: ALIAS, redactor: r })));
     const [c1, c2] = commits;

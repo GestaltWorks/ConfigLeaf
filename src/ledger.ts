@@ -4,8 +4,9 @@
 // where the DataLayer reads it back as {{t:disposition}}.
 //
 // Contract: record() returns the rows written. Both backings are idempotent on disposition_id (rows.ts
-// dispositionId over tenant, surface, host, object, setting, live value, finding and run): recording the
-// same pass twice writes 0 rows the second time; two different rows under one id are refused. The Store
+// dispositionId over tenant, surface, host, object, setting, live value, finding, run and decided_at): recording
+// the same pass twice writes 0 rows the second time, and a pass at another instant writes rows of its own; two
+// different rows under one id are refused. The Store
 // passes host, object_id and reason through the redactor; the sql.js backing stores what it is given.
 
 import type { SqlJsEngine } from "./data/engines/sqljs.ts";

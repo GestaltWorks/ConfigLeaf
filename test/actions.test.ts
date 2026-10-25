@@ -18,16 +18,19 @@ import { aliasFromHosts, act, actLines, kindsFor, latestRuns, type ActResult } f
 import { FIX_REFUSED } from "../src/actions/investigate.ts";
 import { formatPlan, namedCommit, targetOf, type ActionOutcome } from "../src/actions/plan.ts";
 import { NGINX_PATH, WriteSessionError, parseSession, shQuote, writeScript } from "../src/actions/ssh.ts";
+import { dnsObservationRows, dnsRecordRow } from "../src/collectors/cloudflare.ts";
 import { pseudonymHost, readScript } from "../src/collectors/linux.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { DataLayer } from "../src/data/layer.ts";
-import { ACTIONS_SQL, objects, tenantActions } from "../src/data/queries.ts";
+import { ACTIONS_SQL, approvedMissing, driftVsApproved, objects, tenantActions } from "../src/data/queries.ts";
 import { actionId, dispositionId, type Action, type ActionKind, type Disposition } from "../src/data/rows.ts";
+import { DriftWorld } from "../src/engine/world.ts";
+import { runPass } from "../src/pipeline.ts";
 import { Store } from "../src/data/store.ts";
 import { tenantAppId } from "../src/gate.ts";
 import { Redactor } from "../src/redactor.ts";
 import { FakeModel } from "./fixtures/actions/fake-model.ts";
-import { ALIAS, APP, BLOG, HOST, SHOP, TENANT, ZONE_ID, buildBase, buildWorld, type Base, type World } from "./fixtures/actions/world.ts";
+import { ALIAS, APP, BLOG, HOST, SHOP, TENANT, ZONE, ZONE_ID, buildBase, buildWorld, type Base, type World } from "./fixtures/actions/world.ts";
 import policyBundle from "./fixtures/policy-bundle.json" with { type: "json" };
 
 const hex = (s: string | Buffer) => createHash("sha256").update(s).digest("hex");
@@ -309,7 +312,7 @@ describe("the Actor over the policy fixture", () => {
     await app(w);
     const sessions = w.host.scripts.length;
     const first = of(w, "ROLLBACK", APP);
-    const again: Disposition = { ...first, finding_id: "fnd-0000000000000001", disposition_id: dispositionId(first.tenant_id, first.surface, first.host, first.object_id, first.setting_path, first.value_hash, "fnd-0000000000000001", first.run_id) };
+    const again: Disposition = { ...first, finding_id: "fnd-0000000000000001", disposition_id: dispositionId(first.tenant_id, first.surface, first.host, first.object_id, first.setting_path, first.value_hash, "fnd-0000000000000001", first.run_id, first.decided_at) };
     w.engine.insertRows("disposition", [again]);
     const o = pick(await run(w, { only: ["rollback_file"] }), again, "rollback_file");
     expect(o.action.status).toBe("refused");
@@ -363,24 +366,58 @@ describe("the Actor over the policy fixture", () => {
     }
   });
 
-  it("approved but missing: a deleted record is created from the copy with POST; one whose name, type and content another record carries is refused", async () => {
+  it("approved but missing: a deleted record is created from the copy with POST, its approvals carried to the new id, so the next cycle raises nothing on either id", async () => {
     const v = await buildWorld(base, { drop: ["rec-c3"], cf: { nextId: "rec-c3-new" } });
     try {
       const src = of(v, "ROLLBACK", "rec-c3", "content");
-      const missing: Disposition = { ...src, run_id: "run-dns-1024", value_hash: "", disposition_id: dispositionId(TENANT, src.surface, null, "rec-c3", "content", "", src.finding_id, "run-dns-1024") };
+      const missing: Disposition = { ...src, run_id: "run-dns-1024", value_hash: "", disposition_id: dispositionId(TENANT, src.surface, null, "rec-c3", "content", "", src.finding_id, "run-dns-1024", src.decided_at) };
       v.engine.insertRows("disposition", [missing]);
       const res = await run(v, { only: ["revert_record"], runIds: ["run-dns-1024"] });
       const o = pick(res, missing, "revert_record");
       expect([o.action.status, o.action.before_hash, o.reason]).toEqual(["done", null, `re-created to the approved copy at vault commit ${v.commits["run-dns-1020"].slice(0, 8)}; the record read back equals the copy field by field`]);
       expect(v.cf.log.filter((l) => l.method !== "GET")).toEqual([{ method: "POST", path: `/zones/${ZONE_ID}/dns_records`, body: { type: "A", name: "mail.example.invalid", content: "198.51.100.12", ttl: 3600, proxied: false } }]);
       expect(o.record).toContain("before: record rec-c3 absent from zone example.invalid; POST created record rec-c3-new");
-      // the next cycle: the approval still names rec-c3, and rec-c3-new carries its name, type and content
-      const later: Disposition = { ...missing, run_id: "run-dns-1025", disposition_id: dispositionId(TENANT, src.surface, null, "rec-c3", "content", "", src.finding_id, "run-dns-1025") };
-      v.engine.insertRows("disposition", [later]);
-      const twin = pick(await run(v, { only: ["revert_record"], runIds: ["run-dns-1025"] }), later, "revert_record");
-      expect([twin.action.status, twin.reason]).toEqual(["refused", "record rec-c3 is absent and record rec-c3-new carries the same name, type and content; the approval names rec-c3, so the record is re-approved under rec-c3-new (npm run approve -- --record rec-c3-new)"]);
-      expect(v.cf.log.filter((l) => l.method === "POST")).toHaveLength(1);
-      // the record the run held, gone from the zone since: refused as changed
+
+      // the approvals carried at the action's finish: rec-c3's content approval to rec-c3-new, and rec-c3's absence approved
+      const approval = policyBundle.approved_setting.find((a) => a.object_id === "rec-c3")!;
+      const carried = objects(await v.layer.run("SELECT approval_id, object_id, setting_path, value_hash, approved_at, approved_by, note FROM {{t:approved_setting}} WHERE object_id IN ('rec-c3', 'rec-c3-new') AND approval_id <> {{p:old}} ORDER BY object_id, approval_id", { old: approval.approval_id }));
+      expect(carried.map((r) => [r.object_id, r.setting_path, r.value_hash, r.approved_at, r.approved_by, r.note])).toEqual([
+        ["rec-c3", "content", "", "2026-10-23T03:04:00.000Z", approval.approved_by, `carried to rec-c3-new by action ${o.action.action_id}`],
+        ["rec-c3-new", "content", approval.value_hash, "2026-10-23T03:04:00.000Z", approval.approved_by, `carried from rec-c3 by action ${o.action.action_id}`],
+      ]);
+      expect(o.record).toContain("2 approvals written: 1 of record rec-c3 carried to record rec-c3-new, and the absence of rec-c3 approved");
+      for (const r of carried) expect(o.record.some((l) => l.startsWith(`approval ${r.approval_id}: content `) && l.endsWith(r.note))).toBe(true);
+      // the row carries the reason and the record
+      const row = (await actions(v)).find((a) => a.action_id === o.action.action_id)!;
+      expect([row.reason, row.record]).toEqual([o.reason, o.record.join("\n")]);
+
+      // the next cycle: a DNS run of the zone as it stands, rec-c3-new in place of rec-c3
+      const at = "2026-10-25T02:05:00.000Z";
+      const live = v.cf.records.get(ZONE_ID)!;
+      const records = live.map((r) => dnsRecordRow(v.redactor, r, ZONE, { tenantId: TENANT, runId: "run-dns-1025", observedAt: at })!);
+      v.engine.insertRows("collection_run", [{ run_id: "run-dns-1025", tenant_id: TENANT, surface: "cloudflare.dns", host: null, started_at: at, finished_at: at, expected_count: records.length, observed_count: records.length, status: "complete" }]);
+      v.engine.insertRows("dns_record", records);
+      v.engine.insertRows("observation", live.flatMap((r, i) => dnsObservationRows(v.redactor, r, records[i])));
+      const ids = (rows: Record<string, string>[]): string[] => rows.map((r) => r.object_id).filter((id) => id === "rec-c3" || id === "rec-c3-new");
+      expect(ids(objects(await approvedMissing(v.layer, { tenant_id: TENANT, surface: "cloudflare.dns", host: "", run_id: "run-dns-1025" })))).toEqual([]);
+      expect(ids(objects(await driftVsApproved(v.layer, { tenant_id: TENANT, run_id: "run-dns-1025" })))).toEqual([]);
+      const next = await runPass(v.layer, { world: new DriftWorld("test_actions_next"), decidedAt: "2026-10-25T03:00:00.000Z" });
+      expect(next.findings.filter((f) => f.finding.object_id === "rec-c3" || f.finding.object_id === "rec-c3-new")).toEqual([]);
+    } finally {
+      v.cleanup();
+    }
+  });
+
+  it("approved but missing: a record whose name, type and content another record of the zone carries is refused; the record the run held, gone from the zone since, is refused as changed", async () => {
+    const v = await buildWorld(base, { drop: ["rec-c3"] });
+    try {
+      v.cf.records.get(ZONE_ID)!.push({ id: "rec-c3-twin", name: "mail.example.invalid", type: "A", content: "198.51.100.12", ttl: 300, proxied: false });
+      const src = of(v, "ROLLBACK", "rec-c3", "content");
+      const missing: Disposition = { ...src, run_id: "run-dns-1024", value_hash: "", disposition_id: dispositionId(TENANT, src.surface, null, "rec-c3", "content", "", src.finding_id, "run-dns-1024", src.decided_at) };
+      v.engine.insertRows("disposition", [missing]);
+      const twin = pick(await run(v, { only: ["revert_record"], runIds: ["run-dns-1024"] }), missing, "revert_record");
+      expect([twin.action.status, twin.reason]).toEqual(["refused", "record rec-c3 is absent and record rec-c3-twin carries the same name, type and content; the approval names rec-c3, so the record is re-approved under rec-c3-twin (npm run approve -- --record rec-c3-twin)"]);
+      expect(v.cf.log.filter((l) => l.method === "POST")).toHaveLength(0);
       const gone = pick(await run(v, { only: ["revert_record"], runIds: ["run-dns-1023"] }), src, "revert_record");
       expect([gone.action.status, gone.reason]).toEqual(["refused", "record rec-c3 was in run run-dns-1023 and is absent from the zone now: it changed since the decision, and nothing was written"]);
     } finally {
@@ -449,12 +486,12 @@ describe("ACTIONS_SQL", () => {
     try {
       const row = (id: string, tenant: string, kind: Action["kind"], status: Action["status"]): Action => ({
         action_id: id, tenant_id: tenant, kind, target: "linux.nginx host-7f1c /etc/nginx/conf.d/app.conf file", before_hash: kind === "fix" ? null : `sha256:${"a".repeat(64)}`,
-        after_hash: null, vault_commit: null, verification: "", receipts: "", status, started_at: "2026-10-23T03:04:00.000Z", finished_at: "2026-10-23T03:04:01.000Z", disposition_id: "disp-0000000000000001",
+        after_hash: null, vault_commit: null, verification: "", receipts: "", status, reason: `${kind} ${status}`, record: "", started_at: "2026-10-23T03:04:00.000Z", finished_at: "2026-10-23T03:04:01.000Z", disposition_id: "disp-0000000000000001",
       });
       engine.insertRows("action", [row("act-b", TENANT, "fix", "refused"), row("act-a", TENANT, "rollback_file", "failed"), row("act-c", "client-b", "investigate", "not_judged")]);
       const r = await new DataLayer(engine).run(ACTIONS_SQL, { tenant_id: TENANT });
-      expect(r.columns).toEqual(["action_id", "tenant_id", "kind", "target", "before_hash", "after_hash", "vault_commit", "verification", "receipts", "status", "started_at", "finished_at", "disposition_id"]);
-      expect(r.rows.map((x) => [x[0], x[2], x[4], x[9]])).toEqual([["act-a", "rollback_file", `sha256:${"a".repeat(64)}`, "failed"], ["act-b", "fix", "", "refused"]]);
+      expect(r.columns).toEqual(["action_id", "tenant_id", "kind", "target", "before_hash", "after_hash", "vault_commit", "verification", "receipts", "status", "reason", "record", "started_at", "finished_at", "disposition_id"]);
+      expect(r.rows.map((x) => [x[0], x[2], x[4], x[9], x[10]])).toEqual([["act-a", "rollback_file", `sha256:${"a".repeat(64)}`, "failed", "rollback_file failed"], ["act-b", "fix", "", "refused", "fix refused"]]);
     } finally {
       engine.close();
     }
@@ -483,7 +520,9 @@ describe.skipIf(!url)("Store.actionsOf against a throwaway schema", () => {
     await store.applySchema();
     const a = (id: string, disp: string): Action => ({
       action_id: id, tenant_id: TENANT, kind: "investigate", target: "cloudflare.dns rec-c3 content", before_hash: null, after_hash: null, vault_commit: null,
-      verification: "", receipts: "rcpt_test_1", status: "not_judged", started_at: "2026-10-23T03:04:00.000Z", finished_at: "2026-10-23T03:04:02.000Z", disposition_id: disp,
+      verification: "", receipts: "rcpt_test_1", status: "not_judged", reason: "no model is configured, so no verdict was asked for",
+      record: "judge not called: no model is configured\nno passing probe run within six hours of run run-dns-1023; production is unknown from the probes",
+      started_at: "2026-10-23T03:04:00.000Z", finished_at: "2026-10-23T03:04:02.000Z", disposition_id: disp,
     });
     expect(await store.insertActions([a("act-2", "disp-x"), a("act-1", "disp-x"), a("act-3", "disp-y")])).toBe(3);
     expect(await store.insertActions([a("act-1", "disp-x")])).toBe(0);

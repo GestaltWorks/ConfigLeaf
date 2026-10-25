@@ -8,7 +8,8 @@
 // re-collection (nine runs, 2,414 observations, the policy, 333 approvals, 112 vault copies and validations,
 // 111 probes), the Decider's five reads among the 66 cases: 132 of 132 equal. Measured live 24 Oct 2026 over the export
 // of the 21:21 UTC collection (14 runs, 3,766 observations, 154 backup items, 224 vault copies and validations, 222
-// probes), 68 cases: 136 of 136 equal.
+// probes), 68 cases: 136 of 136 equal. Measured live 25 Oct 2026 over the export that carries the 01:16 UTC cycle's
+// rows, 104 cases (25 over overlays, the eval's evidence cases masked): 209 of 209 tests, 104 of 104 cases equal.
 import { beforeAll, describe, expect, it } from "vitest";
 import { config } from "../src/config.ts";
 import { DataLayer, type Overlays, type Params } from "../src/data/layer.ts";
@@ -24,10 +25,15 @@ import {
   APPROVED_MISSING_SQL, DOC_ACTIONS_SQL, DOC_COPIES_SQL, DOC_DISPOSITIONS_OF_RUN_SQL, DOC_PROBES_SQL, DOC_PROBE_FAILURES_SQL, DOC_RUN_SHAPE_SQL, DOC_TICKETS_SQL,
   DOC_UNAPPROVED_SQL, DOC_ZONES_SQL, PRIOR_HOLDS_SQL,
 } from "../src/data/queries.ts";
+// the ticket step's reads (src/psa/step.ts) and the eval's (src/eval/queries.ts)
+import { TICKETS_SQL, TICKET_ACTIONS_SQL, TICKET_ZONES_SQL } from "../src/data/queries.ts";
+import { COLUMNS } from "../src/data/rows.ts";
 import { SCHEMA_TABLES } from "../src/data/schema.ts";
 import { CATALOGUE } from "../src/catalogue/templates.ts";
+import { EVAL_PARITY_CASES } from "../src/eval/queries.ts";
 import bundle from "../sample/bundle.json" with { type: "json" };
 import { CONFD_HOST, DNS_RUN, CONFD_RUN, QUEST_FILE, QUEST_HASH, SITES_HOST, SITES_RUN, SAMPLE, SAMPLE_ROWS, T } from "./fixtures/catalogue-params.ts";
+import { objects } from "../src/data/queries.ts";
 
 /** NOT NULL key columns per table, so ORDER BY is total and never depends on an engine's NULL ordering. */
 const ORDER: Record<string, string> = {
@@ -48,6 +54,8 @@ const ORDER: Record<string, string> = {
   ticket: "ticket_id",
   referent_fingerprint: "obs_id, dns_run_id",
 };
+/** The action table's columns in DDL order, the head of every derived action table below. */
+const ACTION_COLUMNS = COLUMNS.action.join(", ");
 
 /**
  * The export nulls value_redacted over 2 kB (store.ts VALUE_MAX_BYTES) while the datasource keeps the
@@ -163,14 +171,14 @@ FROM {{t:observation}} WHERE run_id = '${SITES_RUN}' AND setting_path = 'file'`,
 };
 /** One rollback_file action per file of the sites host's run, and one of another tenant, which the tenant's read leaves out. */
 const ACTIONS: Overlays = {
-  action: `SELECT action_id, tenant_id, kind, target, before_hash, after_hash, vault_commit, verification, receipts, status, started_at, finished_at, disposition_id FROM {{t:action}}
+  action: `SELECT ${ACTION_COLUMNS} FROM {{t:action}}
 UNION ALL
 SELECT obs_id AS action_id, tenant_id, 'rollback_file' AS kind, object_id AS target, value_hash AS before_hash, value_hash AS after_hash, '5a14a89d0123456789abcdef0123456789abcdef' AS vault_commit,
-       obs_id AS verification, '' AS receipts, 'done' AS status, observed_at AS started_at, observed_at AS finished_at, obs_id AS disposition_id
+       obs_id AS verification, '' AS receipts, 'done' AS status, 'restored to the approved copy' AS reason, obs_id AS record, observed_at AS started_at, observed_at AS finished_at, obs_id AS disposition_id
 FROM {{t:observation}} WHERE run_id = '${SITES_RUN}' AND setting_path = 'file'
 UNION ALL
 SELECT 'act-00000000000000c2' AS action_id, 'client-2' AS tenant_id, 'fix' AS kind, object_id AS target, value_hash AS before_hash, value_hash AS after_hash, '' AS vault_commit,
-       '' AS verification, '' AS receipts, 'refused' AS status, observed_at AS started_at, observed_at AS finished_at, obs_id AS disposition_id
+       '' AS verification, '' AS receipts, 'refused' AS status, 'no fix is allowed without a valid copy' AS reason, '' AS record, observed_at AS started_at, observed_at AS finished_at, obs_id AS disposition_id
 FROM {{t:observation}} WHERE obs_id = '${bundle.observation.find((o) => o.run_id === SITES_RUN && o.setting_path === "file")?.obs_id ?? ""}'`,
 };
 const copyParams =(host: string): Params => ({ tenant_id: T, surface: "linux.nginx", host, object_id: QUEST_FILE, setting_path: "file", approved_hash: QUEST_HASH });
@@ -182,6 +190,13 @@ const noFileBodies = (row: string[], columns: string[]): string[] => {
   const sp = columns.indexOf("setting_path");
   const vr = columns.indexOf("value_redacted");
   return sp >= 0 && vr >= 0 && row[sp] === "file" ? row.map((v, i) => (i === vr ? "" : v)) : row;
+};
+/** The eval cases' EVIDENCE_SQL: the export nulls value_redacted over 2 kB, so value is blank on `file` observation rows on both sides; the bodies compare by value_hash elsewhere. */
+const noEvidenceBodies = (row: string[], columns: string[]): string[] => {
+  const src = columns.indexOf("source");
+  const field = columns.indexOf("field");
+  const value = columns.indexOf("value");
+  return src >= 0 && field >= 0 && value >= 0 && row[src] === "observation" && row[field] === "file" ? row.map((v, i) => (i === value ? "" : v)) : row;
 };
 
 // ---- build B, the pipeline and the owner's document: approved_missing, the prior HOLD read, the document's reads ----
@@ -209,7 +224,15 @@ SELECT 'appr-parity-absent-record' AS approval_id, tenant_id, surface, host, 'pa
        '2026-10-24T23:00:00.000Z' AS approved_at, approved_by, note
 FROM {{t:approved_setting}} WHERE approval_id = '${RECORD_APPROVAL}'`,
 };
-/** Every file of the sites host's run held twice, at 08:00 and at 09:00 UTC: the earlier HOLD of each is the one PRIOR_HOLDS_SQL returns. */
+/** APPROVED_ABSENT with the absent record's absence approved after it (value_hash '', the Actor's carry): that key leaves approved_missing. */
+const APPROVED_ABSENT_RETIRED: Overlays = {
+  approved_setting: `${APPROVED_ABSENT.approved_setting}
+UNION ALL
+SELECT 'appr-parity-absent-record-retired' AS approval_id, tenant_id, surface, host, 'parity-absent-record' AS object_id, setting_path, '' AS value_hash,
+       '2026-10-24T23:30:00.000Z' AS approved_at, approved_by, 'carried to parity-new-record by action act-parity' AS note
+FROM {{t:approved_setting}} WHERE approval_id = '${RECORD_APPROVAL}'`,
+};
+/** Every file of the sites host's run held twice by two passes, at 08:00 and at 09:00 UTC: the later HOLD of each before the instant is the one PRIOR_HOLDS_SQL returns. */
 const HELD_TWICE: Overlays = {
   disposition: `${DISPOSITIONS.disposition}
 UNION ALL
@@ -219,14 +242,14 @@ FROM {{t:observation}} WHERE run_id = '${SITES_RUN}' AND setting_path = 'file'`,
 };
 /** One action per file of the sites host's run (done) and one more (failed), and one ticket per file. */
 const DOC_WORK: Overlays = {
-  action: `SELECT action_id, tenant_id, kind, target, before_hash, after_hash, vault_commit, verification, receipts, status, started_at, finished_at, disposition_id FROM {{t:action}}
+  action: `SELECT ${ACTION_COLUMNS} FROM {{t:action}}
 UNION ALL
 SELECT obs_id AS action_id, tenant_id, 'rollback_file' AS kind, object_id AS target, value_hash AS before_hash, value_hash AS after_hash, '5a14a89d0123456789abcdef0123456789abcdef' AS vault_commit,
-       obs_id AS verification, '' AS receipts, 'done' AS status, observed_at AS started_at, observed_at AS finished_at, obs_id AS disposition_id
+       obs_id AS verification, '' AS receipts, 'done' AS status, 'restored to the approved copy' AS reason, obs_id AS record, observed_at AS started_at, observed_at AS finished_at, obs_id AS disposition_id
 FROM {{t:observation}} WHERE run_id = '${SITES_RUN}' AND setting_path = 'file'
 UNION ALL
 SELECT 'act-parity-failed' AS action_id, tenant_id, 'rollback_file' AS kind, object_id AS target, value_hash AS before_hash, value_hash AS after_hash, '' AS vault_commit,
-       '' AS verification, '' AS receipts, 'failed' AS status, observed_at AS started_at, observed_at AS finished_at, obs_id AS disposition_id
+       '' AS verification, '' AS receipts, 'failed' AS status, 'nginx -t refused the copy' AS reason, '' AS record, observed_at AS started_at, observed_at AS finished_at, obs_id AS disposition_id
 FROM {{t:observation}} WHERE obs_id = '${bundle.observation.find((o) => o.run_id === SITES_RUN && o.setting_path === "file")?.obs_id ?? ""}'`,
   ticket: `SELECT ticket_id, tenant_id, psa, external_id, url, type, priority, status, action_id, finding_id, created_at, updated_at FROM {{t:ticket}}
 UNION ALL
@@ -248,20 +271,55 @@ const BUILD_B_CASES: Case[] = [
   { name: "approved_missing (dns, a record approved that no run holds)", sql: APPROVED_MISSING_SQL, params: { tenant_id: T, surface: "cloudflare.dns", host: "", run_id: DNS_RUN }, overlays: APPROVED_ABSENT, rows: missingOf("cloudflare.dns", "", DNS_RUN) + 1 },
   { name: "prior holds", sql: PRIOR_HOLDS_SQL, params: { tenant_id: T, decided_at: "2026-10-25T00:00:00.000Z" }, rows: noDispositions ? 0 : undefined },
   { name: "prior holds (one per sites file)", sql: PRIOR_HOLDS_SQL, params: { tenant_id: T, decided_at: "2026-10-25T00:00:00.000Z" }, overlays: DISPOSITIONS, rows: noDispositions ? SITES_FILES : undefined },
-  { name: "prior holds (each sites file held twice, the earlier stands)", sql: PRIOR_HOLDS_SQL, params: { tenant_id: T, decided_at: "2026-10-25T00:00:00.000Z" }, overlays: HELD_TWICE, rows: noDispositions ? SITES_FILES : undefined },
+  { name: "prior holds (each sites file held twice, the later stands)", sql: PRIOR_HOLDS_SQL, params: { tenant_id: T, decided_at: "2026-10-25T00:00:00.000Z" }, overlays: HELD_TWICE, rows: noDispositions ? SITES_FILES : undefined },
+  { name: "prior holds (each sites file held twice, an instant between the two: the earlier stands)", sql: PRIOR_HOLDS_SQL, params: { tenant_id: T, decided_at: "2026-10-24T08:30:00.000Z" }, overlays: HELD_TWICE, rows: noDispositions ? SITES_FILES : undefined },
   { name: "prior holds (an instant before every HOLD)", sql: PRIOR_HOLDS_SQL, params: { tenant_id: T, decided_at: "2026-10-24T07:00:00.000Z" }, overlays: HELD_TWICE, rows: noDispositions ? 0 : undefined },
+  { name: "approved_missing (dns, the absent record's absence approved after it)", sql: APPROVED_MISSING_SQL, params: { tenant_id: T, surface: "cloudflare.dns", host: "", run_id: DNS_RUN }, overlays: APPROVED_ABSENT_RETIRED, rows: missingOf("cloudflare.dns", "", DNS_RUN) },
   { name: "document: run shape", sql: DOC_RUN_SHAPE_SQL, params: { run_id: SITES_RUN }, rows: 1 },
   { name: "document: zones", sql: DOC_ZONES_SQL, params: { tenant_id: T, dns_run_id: DNS_RUN }, rows: new Set(bundle.dns_record.filter((d) => d.run_id === DNS_RUN).map((d) => d.zone)).size },
   { name: "document: head copies", sql: DOC_COPIES_SQL, params: { tenant_id: T }, rows: headCopies },
   { name: "document: unapproved settings (sites host)", sql: DOC_UNAPPROVED_SQL, params: { tenant_id: T, run_id: SITES_RUN }, rows: unapprovedOf(SITES_RUN) },
   { name: "document: unapproved settings (dns)", sql: DOC_UNAPPROVED_SQL, params: { tenant_id: T, run_id: DNS_RUN }, rows: unapprovedOf(DNS_RUN) },
   { name: "document: dispositions of a run (one per sites file)", sql: DOC_DISPOSITIONS_OF_RUN_SQL, params: { tenant_id: T, run_id: SITES_RUN }, overlays: DISPOSITIONS, rows: noDispositions ? SITES_FILES : undefined },
+  { name: "document: dispositions of a run (each sites file decided by two passes, the later stands)", sql: DOC_DISPOSITIONS_OF_RUN_SQL, params: { tenant_id: T, run_id: SITES_RUN }, overlays: HELD_TWICE, rows: noDispositions ? SITES_FILES : undefined },
   { name: "document: actions by kind and status", sql: DOC_ACTIONS_SQL, params: { tenant_id: T }, rows: groupsOf(tbl("action").filter((a) => a.tenant_id === T), ["kind", "status"]) },
   { name: "document: actions by kind and status (one per sites file, one failed)", sql: DOC_ACTIONS_SQL, params: { tenant_id: T }, overlays: DOC_WORK, rows: tbl("action").length === 0 ? 2 : undefined },
   { name: "document: tickets", sql: DOC_TICKETS_SQL, params: { tenant_id: T }, rows: tbl("ticket").filter((t) => t.tenant_id === T).length },
   { name: "document: tickets (one per sites file)", sql: DOC_TICKETS_SQL, params: { tenant_id: T }, overlays: DOC_WORK, rows: tbl("ticket").filter((t) => t.tenant_id === T).length + SITES_FILES },
   { name: "document: probes by kind and status", sql: DOC_PROBES_SQL, params: { tenant_id: T, run_id: PROBE_RUN }, rows: groupsOf(probesOf, ["kind", "status"]) },
   { name: "document: failing probes", sql: DOC_PROBE_FAILURES_SQL, params: { tenant_id: T, run_id: PROBE_RUN }, rows: probesOf.filter((p) => p.status === "fail").length },
+];
+
+// ---- the ticket step's reads (src/psa/step.ts) and the eval's (src/eval/queries.ts) ----
+const SITE_FILES = bundle.observation.filter((o) => o.run_id === SITES_RUN && o.setting_path === "file");
+/** One ticket and one disposition per file of the sites host's run; one action per file of both hosts' runs, the conf.d ones with no disposition. */
+const TICKET_OVERLAYS: Overlays = {
+  ticket: `SELECT ticket_id, tenant_id, psa, external_id, url, type, priority, status, action_id, finding_id, created_at, updated_at FROM {{t:ticket}}
+UNION ALL
+SELECT obs_id AS ticket_id, tenant_id, 'github' AS psa, '7' AS external_id, 'https://host-000000.com/owner/tickets/issues/7' AS url, 'incident' AS type, 'P3' AS priority,
+       'open' AS status, obs_id AS action_id, obs_id AS finding_id, observed_at AS created_at, observed_at AS updated_at
+FROM {{t:observation}} WHERE run_id = '${SITES_RUN}' AND setting_path = 'file'`,
+  disposition: `SELECT disposition_id, tenant_id, surface, host, object_id, setting_path, value_hash, verb, reason, expires_at, decided_by, rule_id, finding_id, run_id, decided_at FROM {{t:disposition}}
+UNION ALL
+SELECT obs_id AS disposition_id, tenant_id, surface, host, object_id, setting_path, value_hash, 'ROLLBACK' AS verb, 'rolled back under the file rule' AS reason, '' AS expires_at,
+       'policy' AS decided_by, 'rule-00000000000000a1' AS rule_id, obs_id AS finding_id, run_id, '2026-10-24T08:00:00.000Z' AS decided_at
+FROM {{t:observation}} WHERE run_id = '${SITES_RUN}' AND setting_path = 'file'`,
+  action: `SELECT ${ACTION_COLUMNS} FROM {{t:action}}
+UNION ALL
+SELECT obs_id AS action_id, tenant_id, 'rollback_file' AS kind, object_id AS target, value_hash AS before_hash, value_hash AS after_hash, '5a14a89d0123456789abcdef0123456789abcdef' AS vault_commit,
+       'probe-0000000000000001' AS verification, '' AS receipts, 'done' AS status, 'restored to the approved copy' AS reason, 'probe probe-0000000000000001: http ok' AS record,
+       observed_at AS started_at, observed_at AS finished_at, obs_id AS disposition_id
+FROM {{t:observation}} WHERE setting_path = 'file' AND host IS NOT NULL AND (run_id = '${SITES_RUN}' OR run_id = '${CONFD_RUN}')`,
+};
+/** The ticket rows the recorded bundle holds for the tenant (the export carries what the live cycle wrote). */
+const RECORDED_TICKETS = tbl("ticket").filter((t) => t.tenant_id === T);
+const TICKET_CASES: Case[] = [
+  { name: "tickets", sql: TICKETS_SQL, params: { tenant_id: T }, rows: RECORDED_TICKETS.length },
+  { name: "tickets (one per sites file)", sql: TICKETS_SQL, params: { tenant_id: T }, overlays: TICKET_OVERLAYS, rows: RECORDED_TICKETS.length + SITE_FILES.length },
+  { name: "tickets (another tenant)", sql: TICKETS_SQL, params: { tenant_id: "client-2" }, overlays: TICKET_OVERLAYS, rows: 0 },
+  { name: "ticket actions", sql: TICKET_ACTIONS_SQL, params: { tenant_id: T }, rows: 0 },
+  { name: "ticket actions (the conf.d actions have no disposition)", sql: TICKET_ACTIONS_SQL, params: { tenant_id: T }, overlays: TICKET_OVERLAYS, rows: SITE_FILES.length },
+  { name: "ticket zones", sql: TICKET_ZONES_SQL, params: { tenant_id: T, dns_run_id: DNS_RUN }, rows: bundle.dns_record.filter((r) => r.run_id === DNS_RUN).length },
 ];
 
 const CASES: Case[] = [
@@ -308,6 +366,8 @@ const CASES: Case[] = [
   { name: "actions", sql: ACTIONS_SQL, params: { tenant_id: T }, rows: rowsOf("action").filter((a) => a.tenant_id === T).length },
   { name: "actions (one per sites file, one of another tenant)", sql: ACTIONS_SQL, params: { tenant_id: T }, overlays: ACTIONS, rows: rowsOf("action").filter((a) => a.tenant_id === T).length + bundle.observation.filter((o) => o.run_id === SITES_RUN && o.setting_path === "file").length },
   ...BUILD_B_CASES,
+  ...TICKET_CASES,
+  ...EVAL_PARITY_CASES.map((c) => ({ ...c, mask: noEvidenceBodies })),
   ...CATALOGUE.map((t) => ({ name: `template ${t.id}`, sql: t.sql, params: SAMPLE[t.id], rows: t.id === "setting_matches_approved" ? QUEST_APPROVALS : SAMPLE_ROWS[t.id] })),
   // Every table, the eight of the design included: a bundle exported before they existed holds none of their rows, and the datasource then holds none either.
   ...SCHEMA_TABLES.map((t) => ({
@@ -349,4 +409,26 @@ describe("engine parity", () => {
       expect(b.total).toBe(a.total);
     });
   }
+});
+
+describe("the ticket step's reads over sample/bundle.json, on sql.js: the rows in key order, with the columns the step reads", () => {
+  it("TICKETS_SQL, TICKET_ACTIONS_SQL (the reason and the record included) and TICKET_ZONES_SQL", async () => {
+    const engine = await SqlJsEngine.create();
+    engine.loadBundle(bundle);
+    const sqljs = new DataLayer(engine);
+    expect(bundle.observation.some((o) => o.run_id === CONFD_RUN && o.setting_path === "file")).toBe(true);
+    const t = objects(await sqljs.withOverlays(TICKET_OVERLAYS).run(TICKETS_SQL, { tenant_id: T }, { limit: 10_000 }));
+    expect(t.map((r) => r.ticket_id)).toEqual([...SITE_FILES.map((o) => o.obs_id), ...RECORDED_TICKETS.map((r) => String(r.ticket_id))].sort());
+    expect(t[0]).toEqual({
+      ticket_id: t[0].ticket_id, tenant_id: T, psa: "github", external_id: "7", url: "https://host-000000.com/owner/tickets/issues/7", type: "incident", priority: "P3",
+      status: "open", action_id: t[0].ticket_id, finding_id: t[0].ticket_id, created_at: t[0].created_at, updated_at: t[0].created_at,
+    });
+    const a = objects(await sqljs.withOverlays(TICKET_OVERLAYS).run(TICKET_ACTIONS_SQL, { tenant_id: T }, { limit: 10_000 }));
+    expect(a.map((r) => r.finding_id)).toEqual(SITE_FILES.map((o) => o.obs_id).sort());
+    expect(new Set(a.map((r) => `${r.kind} ${r.status} ${r.verb} ${r.verification} | ${r.reason} | ${r.record}`))).toEqual(new Set(["rollback_file done ROLLBACK probe-0000000000000001 | restored to the approved copy | probe probe-0000000000000001: http ok"]));
+    const z = objects(await sqljs.run(TICKET_ZONES_SQL, { tenant_id: T, dns_run_id: DNS_RUN }, { limit: 10_000 }));
+    expect(z.map((r) => r.record_id)).toEqual(bundle.dns_record.filter((r) => r.run_id === DNS_RUN).map((r) => r.record_id).sort());
+    expect(z.every((r) => /^host-[0-9a-f]{6}\.[a-z]+$/.test(r.zone))).toBe(true);
+    engine.close();
+  });
 });

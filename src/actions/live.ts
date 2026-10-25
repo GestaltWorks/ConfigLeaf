@@ -6,7 +6,8 @@
 //
 // Contract: a dry run gets no Cloudflare client, no model, no sink and a probe function that probes nothing: it
 // prints its plan from the ledger, the policy, the approvals, the copies and the vault alone. An apply gets all of
-// them; the probe rows of a verification go into the Store as one probe run per action.
+// them; the probe rows of a verification go into the Store as one probe run of surface probe.verify per action, and the
+// Store is the sink of the action rows and of the approvals a re-created record carries.
 
 import { Nightshift } from "../adapters/nightshift.ts";
 import { Cloudflare } from "../collectors/cloudflare.ts";

@@ -336,7 +336,7 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
     const pass = res.pass!;
     // every finding of the pass is in the ledger under the id the pass gave it, decided at the given instant
     const ledger = new Map(objects(await layer.run(DISPOSITIONS_SQL)).map((d) => [d.disposition_id, d]));
-    for (const f of pass.findings) expect(ledger.get(dispositionIdOf(f))?.decided_at).toBe(AT);
+    for (const f of pass.findings) expect(ledger.get(dispositionIdOf(f, AT))?.decided_at).toBe(AT);
     expect(pass.kept).toBe(0);
     expect(pass.summary).toContain(`PASS: tenant ${TENANT}, decided at ${AT}: `);
     // the fixture world's bundle: the policy fixture plus the server_name rows of app.conf and blog.conf
@@ -350,14 +350,18 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
     expect(printed.at(-1)).toMatch(/^CYCLE: tenant client-a, dry run .*: 8 step\(s\): ok 4, skipped 4, failed 0, not run 0; completed;/);
   });
 
-  it("a second pass over the same runs keeps the ledger's rows and says so on each line", async () => {
+  it("a second pass over the same runs at a later instant writes a row per finding of its own; one more at that instant writes none and counts them kept", async () => {
     const later = "2026-10-23T05:00:00.000Z";
     const r = await passStep(layer, { tenant: TENANT, ledger: new MemoryLedger(engine), decidedAt: later, world: new DriftWorld("loop_test") });
-    expect(r.pass.ledger?.dispositions).toBe(0);
-    expect(r.kept).toBe(r.findings.length);
-    const lines = r.lines.slice(r.findings.length);
-    expect(lines.every((l) => / \[recorded 2026-10-23T03:00:00\.000Z by an earlier pass over run [^\]]+\]$/.test(l))).toBe(true);
-    expect(r.summary).toContain(`ledger: 0 disposition(s) and 0 referent fingerprint(s) written, ${r.findings.length} finding(s) on rows an earlier pass wrote`);
+    expect(r.pass.ledger?.dispositions).toBe(r.findings.length);
+    expect(r.kept).toBe(0);
+    const ledger = new Map(objects(await layer.run(DISPOSITIONS_SQL)).map((d) => [d.disposition_id, d]));
+    for (const f of r.findings) expect([ledger.get(dispositionIdOf(f, AT))?.decided_at, ledger.get(dispositionIdOf(f, later))?.decided_at]).toEqual([AT, later]);
+    expect(r.lines.slice(r.findings.length).every((l) => l.startsWith("DISPOSITION fnd-"))).toBe(true);
+    const again = await passStep(layer, { tenant: TENANT, ledger: new MemoryLedger(engine), decidedAt: later, world: new DriftWorld("loop_test") });
+    expect(again.pass.ledger?.dispositions).toBe(0);
+    expect(again.kept).toBe(again.findings.length);
+    expect(again.summary).toContain(`ledger: 0 disposition(s) and 0 referent fingerprint(s) written, ${again.findings.length} finding(s) on rows an earlier pass wrote`);
   });
 
   it("the document step writes nothing when the deny-list probe matches", async () => {

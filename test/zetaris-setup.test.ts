@@ -30,6 +30,8 @@ const step = (name: string, steps = setup.plan(ENV)) => steps.find((s) => s.name
 const TEN = ["collection", "setting", "referent", "backup_copy", "policy", "copy", "probe", "disposition", "action", "ticket"];
 const RULES = ["run_complete", "copy_validated", "action_verified"];
 const RUN_COMPLETE_EXPR = "observed_count IS NOT NULL AND expected_count IS NOT NULL AND observed_count >= expected_count AND status = 'complete'";
+/** action_verified, scoped to the write paths. */
+const ACTION_VERIFIED_EXPR = "kind NOT IN ('rollback_file','revert_record') OR status <> 'done' OR verification <> ''";
 
 /** The SELECT list's output names of an ACTIVATE statement: parenthesised groups removed, then the last word of each item. */
 function activatedColumns(sql: string): string[] {
@@ -124,7 +126,7 @@ describe("plan()", () => {
     expect(copy).toMatch(/FROM DRIFT\.vault_copy c LEFT JOIN \(SELECT v\.copy_id, v\.validator, v\.result, v\.validated_at FROM DRIFT\.copy_validation v WHERE NOT EXISTS \(SELECT 1 FROM DRIFT\.copy_validation w WHERE w\.copy_id = v\.copy_id AND .*\)\) l ON l\.copy_id = c\.copy_id$/);
     expect(step("activate probe", steps).sql).toMatch(/CAST\(latency_ms AS INT\) AS latency_ms, COALESCE\(observed_at, ''\) AS observed_at FROM DRIFT\.probe$/);
     expect(step("activate disposition", steps).sql).toMatch(/COALESCE\(reason, ''\) AS reason, expires_at, COALESCE\(decided_by, ''\) AS decided_by, rule_id, .* FROM DRIFT\.disposition$/);
-    expect(step("activate action", steps).sql).toMatch(/COALESCE\(verification, ''\) AS verification, COALESCE\(receipts, ''\) AS receipts, .* FROM DRIFT\.action$/);
+    expect(step("activate action", steps).sql).toMatch(/COALESCE\(verification, ''\) AS verification, COALESCE\(receipts, ''\) AS receipts, COALESCE\(status, ''\) AS status, COALESCE\(reason, ''\) AS reason, COALESCE\(record, ''\) AS record, .* FROM DRIFT\.action$/);
     expect(step("activate ticket", steps).sql).toMatch(/external_id, url, COALESCE\(type, ''\) AS type, .* FROM DRIFT\.ticket$/);
   });
 
@@ -133,12 +135,13 @@ describe("plan()", () => {
     expect(setup.DQ_RULES.map((r) => [r.name, r.table, r.expression])).toEqual([
       ["run_complete", "collection", RUN_COMPLETE_EXPR],
       ["copy_validated", "copy", "validated = 1"],
-      ["action_verified", "action", "status <> 'done' OR verification <> ''"],
+      ["action_verified", "action", ACTION_VERIFIED_EXPR],
     ]);
     expect(step("register dq run_complete", steps).sql).toBe(`REGISTER DQ run_complete TABLE ${USL}.collection AS ${RUN_COMPLETE_EXPR}`);
     expect(step("update dq run_complete", steps).sql).toBe(`UPDATE DQ run_complete TABLE ${USL}.collection SET NAME = run_complete, EXPRESSION = ${RUN_COMPLETE_EXPR}`);
     expect(step("register dq copy_validated", steps).sql).toBe(`REGISTER DQ copy_validated TABLE ${USL}.copy AS validated = 1`);
-    expect(step("register dq action_verified", steps).sql).toBe(`REGISTER DQ action_verified TABLE ${USL}.action AS status <> 'done' OR verification <> ''`);
+    expect(step("register dq action_verified", steps).sql).toBe(`REGISTER DQ action_verified TABLE ${USL}.action AS ${ACTION_VERIFIED_EXPR}`);
+    expect(step("update dq action_verified", steps).sql).toBe(`UPDATE DQ action_verified TABLE ${USL}.action SET NAME = action_verified, EXPRESSION = ${ACTION_VERIFIED_EXPR}`);
     for (const t of ["collection", "copy", "action"]) expect(step(`run dq ${t}`, steps)).toMatchObject({ sql: `RUN DQ TABLE ${USL}.${t}`, dqTable: t, show: true });
     expect(step("show lightning.metastore.drift.drift_usl", steps).sql).toBe(`SHOW NAMESPACES OR TABLES IN ${USL}`);
     for (const t of TEN) expect(step(`count ${t}`, steps).sql).toBe(`SELECT COUNT(*) AS n FROM ${USL}.${t}`);
@@ -345,6 +348,19 @@ describe("apply()", () => {
     // whitespace alone is no difference
     const spaced = await run((sql) => (sql.startsWith("LIST DQ USL") ? result(LIST_COLS, STATED.map((row) => [row[0], row[1], row[2], `  ${row[3].replaceAll(" ", "   ")} `])) : configured(sql)));
     expect(sent(spaced.client, /^(?:REGISTER|UPDATE) DQ/)).toEqual([]);
+  });
+
+  it("against the USL whose action entity lacks reason and record, and action_verified as first registered: REMOVE USL, COMPILE the ten, UPDATE action_verified to the write paths' scope", async () => {
+    const before = { ...CURRENT_MODEL, action: setup.USL_COLUMNS.action.filter((c) => c !== "reason" && c !== "record") };
+    const { r, client, status, out } = await run((sql) => {
+      if (sql.startsWith("LOAD USL")) return model(before);
+      if (sql.startsWith("LIST DQ USL")) return result(LIST_COLS, [...CONSTRAINTS, ...STATED.slice(0, 2), ["action_verified", "action", "Custom Data Quality", "status <> 'done' OR verification <> ''"]]);
+      return configured(sql);
+    });
+    expect(r.ok).toBe(true);
+    expect(out.find((l) => l.includes("09 load usl drift_usl"))).toContain("stale: 10 table(s); columns differ in action");
+    expect(status).toMatchObject({ "remove usl drift_usl": "ok", "compile usl drift_usl": "ok", "update dq run_complete": "skipped", "update dq action_verified": "ok" });
+    expect(sent(client, /^(?:REGISTER|UPDATE) DQ/)).toEqual([`UPDATE DQ action_verified TABLE ${USL}.action SET NAME = action_verified, EXPRESSION = ${ACTION_VERIFIED_EXPR}`]);
   });
 
   it("against a fresh instance: CREATE sent with the password, REGISTER after it, REFRESH skipped; no USL: COMPILE, and 'already exists' from it is skipped; the rules registered", async () => {

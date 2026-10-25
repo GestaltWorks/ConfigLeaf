@@ -4,6 +4,9 @@
 // fail whose target is a name the finding's object serves.
 //
 // Contract:
+//   - The surface is an option, "probe" by default: the pass reads surface probe alone for its probe run.
+//     The Actor's verification after a write (src/actions/act.ts probeNames) runs as surface probe.verify,
+//     one run per action over the names it restored.
 //   - Population first: the account's A, AAAA and CNAME records read live through the Cloudflare
 //     client (src/collectors/cloudflare.ts, read only), wildcard names left out (src/probe/rules.ts).
 //     expected_count = kinds x names (3 x names for a full run) is asserted through the sink's beginRun
@@ -228,6 +231,8 @@ export interface ProbeRunOptions {
   sink?: ProbeSink | null;
   concurrency?: number;
   timeoutMs?: number;
+  /** The run's surface: probe (the default), the pass's probe run; probe.verify for the Actor's probes after a write (src/actions/act.ts probeNames). */
+  surface?: string;
 }
 
 export interface ProbeRunResult {
@@ -256,8 +261,9 @@ export async function runProbes(opts: ProbeRunOptions): Promise<ProbeRunResult> 
   const red = (s: string): string => opts.redactor.text(redact(s));
   const errors: string[] = [];
   const startedAt = deps.now().toISOString();
+  const surface = opts.surface ?? "probe";
   const run: CollectionRun = {
-    run_id: runId(opts.tenantId, "probe", null, startedAt), tenant_id: opts.tenantId, surface: "probe", host: null,
+    run_id: runId(opts.tenantId, surface, null, startedAt), tenant_id: opts.tenantId, surface, host: null,
     started_at: startedAt, finished_at: null, expected_count: null, observed_count: null, status: "running",
   };
 

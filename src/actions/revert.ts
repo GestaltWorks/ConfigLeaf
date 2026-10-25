@@ -19,13 +19,21 @@
 //                  through src/probe follows and is recorded with the caveat that resolvers answer from cache until
 //                  the TTL passes, so its status leaves the action's alone. after_hash is the fingerprint of the
 //                  disposition's field on the record read back.
+//   carry          after a POST whose read back equals the copy: for each latest approval of the old record's
+//                  fields, an approved_setting row of the new record id with the same value_hash and approved_by,
+//                  note "carried from <old id> by action <action id>", and one of the old id with value_hash '',
+//                  note "carried to <new id> by action <action id>", which approves its absence
+//                  (APPROVED_MISSING_SQL leaves such a key out). Both at the action's finish, through the Actor's
+//                  sink; the record names each row by its approval_id. The next cycle holds the new record approved
+//                  and raises nothing on either id.
 //
 // Measured 24 Oct 2026: PATCH, POST, the twin refusal and the read back exercised against a fake fetch
-// (test/actions.test.ts); the Cloudflare account had received 0 writes from it.
+// (test/actions.test.ts); the Cloudflare account had received 0 writes from it. Measured 25 Oct 2026: the carry after a
+// POST against the fake fetch and the sql.js sink, and the detectors over the next DNS run raising nothing on either id.
 
 import { dnsObservationRows, dnsRecordRow, type CfRecord, type CfRecordBody, type CfZone } from "../collectors/cloudflare.ts";
 import { redactText } from "../collectors/linux.ts";
-import type { Disposition, Probe } from "../data/rows.ts";
+import { actionId, approvalId, type ApprovedSetting, type Disposition, type Probe } from "../data/rows.ts";
 import type { Redactor } from "../redactor.ts";
 import { CLOUDFLARE_REPO, treePath, type Vault } from "../vault/vault.ts";
 import {
@@ -41,11 +49,15 @@ export interface RecordApi {
   createRecord(zoneId: string, body: CfRecordBody): Promise<CfRecord>;
 }
 
+/** Where the approvals a re-created record carries go: the Actor's sink (the Store, or sql.js in a test); null in a dry run. */
+export interface ApprovalSink { insertApproved(rows: readonly ApprovedSetting[]): Promise<number> }
+
 export interface RevertDeps {
   reads: ActorReads;
   vault: Vault | null;
   records: RecordApi | null;
   probe: ProbeFn;
+  approvals?: ApprovalSink | null;
   redactor: Redactor;
   now: () => Date;
   tracer?: Emitter;
@@ -146,7 +158,7 @@ export function planRevert(d: Disposition, p: PreparedRevert): string[] {
     `target record ${d.object_id} (${p.redactedName}, ${p.record.type}) in zone ${p.redactedZone}, ${d.verb} under ${d.rule_id ?? "no rule"}`,
     p.inRun
       ? `PATCH the record's type, name, content, ttl and proxied to the approved copy at ${from}: ${d.setting_path} from ${h12(d.value_hash)} to ${h12(approval.value_hash)}`
-      : `POST a record with the approved copy's type, name, content, ttl and proxied from ${from}: run ${d.run_id} holds no record ${d.object_id}; a record of the same name, type and content in the zone is a refusal`,
+      : `POST a record with the approved copy's type, name, content, ttl and proxied from ${from}: run ${d.run_id} holds no record ${d.object_id}; a record of the same name, type and content in the zone is a refusal; once the read back equals the copy, the approvals of ${d.object_id} are carried to the new record's id and its absence is approved`,
     `then the record read back from the API and compared field by field with the copy; then one dns probe of ${p.redactedName}, which resolvers answer from cache until the TTL (${p.record.ttl ?? "auto"} s) passes`,
   ];
 }
@@ -226,5 +238,40 @@ export async function revertRecord(d: Disposition, p: PreparedRevert, deps: Reve
   for (const x of probes) record.push(`${probeSentence(x)}; resolvers answer from cache until the TTL (${p.record.ttl ?? "auto"} s) passes, so the API read above decides the status`);
   const verification = probes.map((x) => x.probe_id);
   if (diff.length) return end("failed", `written; the record read back differs from the copy in ${diff.join(", ")}`, { before, after, verification });
+  if (!current) await carryApprovals(d, id, deps, record);
   return end("done", `${current ? "reverted" : "re-created"} to the approved copy at vault commit ${c8(copy.git_commit)}; the record read back equals the copy field by field`, { before, after, verification });
+}
+
+/** The approved_setting rows that carry a re-created record's approvals from its old id to `newId` (see the header). */
+export function carriedApprovals(d: Disposition, newId: string, approvals: readonly { setting_path: string; value_hash: string; approved_by: string | null }[], at: string): ApprovedSetting[] {
+  const action = actionId(d.tenant_id, d.disposition_id, "revert_record");
+  const row = (objectId: string, settingPath: string, valueHash: string, approvedBy: string | null, note: string): ApprovedSetting => ({
+    approval_id: approvalId(d.tenant_id, null, objectId, settingPath, valueHash, at), tenant_id: d.tenant_id, surface: d.surface, host: null,
+    object_id: objectId, setting_path: settingPath, value_hash: valueHash, approved_at: at, approved_by: approvedBy, note,
+  });
+  return approvals.flatMap((a) => [
+    row(newId, a.setting_path, a.value_hash, a.approved_by, `carried from ${d.object_id} by action ${action}`),
+    row(d.object_id, a.setting_path, "", a.approved_by, `carried to ${newId} by action ${action}`),
+  ]);
+}
+
+async function carryApprovals(d: Disposition, newId: string, deps: RevertDeps, record: string[]): Promise<void> {
+  const latest = (await deps.reads.approvalsOfObject(d)).filter((a) => a.value_hash !== "");
+  const rows = carriedApprovals(d, newId, latest, deps.now().toISOString());
+  if (!deps.approvals) {
+    record.push(`the approvals of record ${d.object_id} stay on ${d.object_id}: the Actor holds no approval sink`);
+    return;
+  }
+  try {
+    const n = await deps.approvals.insertApproved(rows);
+    record.push(`${plural(n, "approval")} written: ${latest.length} of record ${d.object_id} carried to record ${newId}, and the absence of ${d.object_id} approved`);
+  } catch (e) {
+    record.push(`the approvals of record ${d.object_id} stay on ${d.object_id}; their write for record ${newId} failed: ${safe(deps.redactor, e)}`);
+    return;
+  }
+  for (const r of rows) {
+    record.push(r.value_hash
+      ? `approval ${r.approval_id}: ${r.setting_path} ${h12(r.value_hash)} of record ${r.object_id}, approved by ${r.approved_by ?? "no one named"}, ${r.note}`
+      : `approval ${r.approval_id}: ${r.setting_path} of record ${r.object_id} approved absent, ${r.note}`);
+  }
 }

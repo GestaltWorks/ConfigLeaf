@@ -88,8 +88,8 @@ const disposition = (r: Row): Disposition => ({
 
 const action = (r: Row): ActionView => ({
   action_id: r.action_id, tenant_id: r.tenant_id, kind: r.kind as ActionView["kind"], target: r.target, before_hash: nul(r.before_hash), after_hash: nul(r.after_hash),
-  vault_commit: nul(r.vault_commit), verification: r.verification, receipts: r.receipts, status: r.status, started_at: r.started_at, finished_at: nul(r.finished_at),
-  disposition_id: r.disposition_id, finding_id: r.finding_id, verb: r.verb,
+  vault_commit: nul(r.vault_commit), verification: r.verification, receipts: r.receipts, status: r.status, reason: r.reason, record: r.record,
+  started_at: r.started_at, finished_at: nul(r.finished_at), disposition_id: r.disposition_id, finding_id: r.finding_id, verb: r.verb,
 });
 
 const ticket = (r: Row): Ticket => ({

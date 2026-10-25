@@ -9,13 +9,14 @@
 //   - decidedAt is the given instant (ISO 8601 UTC, normalised to milliseconds) or the system clock; every disposition
 //     of the pass carries it and every HOLD expiry starts from it.
 //   - lines: one JSON object per finding of the tenant, then one DISPOSITION line per finding as the ledger holds it,
-//     read back through the same DataLayer (DISPOSITIONS_SQL) by the disposition_id the pass wrote; a row an earlier
-//     pass wrote under that id is printed with its own decided_at and, when its verb differs, this pass's verb. With no
-//     ledger the line carries the pass's own decision, marked as not recorded. summary: one line of counts.
+//     read back through the same DataLayer (DISPOSITIONS_SQL) by the disposition_id the pass wrote. The id carries the
+//     pass's decided_at (rows.ts dispositionId), so a row already stored under it is an earlier pass's at the same
+//     instant over the same runs, and kept counts those. With no ledger the line carries the pass's own decision,
+//     marked as not recorded. summary: one line of counts.
 //
-// Measured 24 Oct 2026: over the Actor's fixture world (test/loop.test.ts) 12 findings, each read back under its
-// disposition_id, and a second pass at a later instant writes 0 rows and marks all 12 lines; the first live pass with
-// the PgLedger is in scripts/pass.ts.
+// Measured 25 Oct 2026: over the Actor's fixture world (test/loop.test.ts) 12 findings, each read back under its
+// disposition_id; a second pass at a later instant writes 12 rows of its own, and one at the same instant writes 0
+// and counts 12 kept; the first live pass with the PgLedger is in scripts/pass.ts.
 
 import { DISPOSITIONS_SQL, listRuns, objects } from "../data/queries.ts";
 import type { DataLayer } from "../data/layer.ts";
@@ -66,9 +67,9 @@ export interface PassStep {
   summary: string;
 }
 
-/** The disposition_id the pass gives a finding (src/pipeline.ts): the ledger row it writes is keyed on it. */
-export const dispositionIdOf = (f: Finding): string =>
-  dispositionId(f.finding.tenant_id, f.finding.surface, f.finding.host, f.finding.object_id, f.finding.setting_path, f.finding.value_hash, f.id, f.finding.run_id);
+/** The disposition_id a pass decided at `decidedAt` gives a finding (src/pipeline.ts): the ledger row it writes is keyed on it. */
+export const dispositionIdOf = (f: Finding, decidedAt: string): string =>
+  dispositionId(f.finding.tenant_id, f.finding.surface, f.finding.host, f.finding.object_id, f.finding.setting_path, f.finding.value_hash, f.id, f.finding.run_id, decidedAt);
 
 const tally = (xs: readonly string[]): string =>
   [...xs.reduce((m, x) => m.set(x, (m.get(x) ?? 0) + 1), new Map<string, number>())].sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, n]) => `${k} ${n}`).join(", ") || "none";
@@ -92,18 +93,15 @@ export async function passStep(layer: DataLayer, opts: PassStepOptions): Promise
       lines.push(`DISPOSITION ${f.id} ${own.verb} by ${own.decided_by}${own.rule_id ? ` under ${own.rule_id}` : ""} expires ${own.expires_at || "-"}: ${own.reason} (not recorded: no ledger)`);
       continue;
     }
-    const d = stored.get(dispositionIdOf(f));
+    const d = stored.get(dispositionIdOf(f, decidedAt));
     if (!d) {
       lines.push(`DISPOSITION ${f.id} absent from the ledger`);
       continue;
     }
-    const earlier = d.decided_at !== decidedAt;
-    if (earlier) kept += 1;
-    const note = !earlier ? "" : d.verb === own.verb
-      ? ` [recorded ${d.decided_at} by an earlier pass over run ${d.run_id}]`
-      : ` [recorded ${d.decided_at} by an earlier pass over run ${d.run_id}; this pass decides ${own.verb}]`;
-    lines.push(`DISPOSITION ${d.finding_id} ${d.verb} by ${d.decided_by}${d.rule_id ? ` under ${d.rule_id}` : ""} expires ${d.expires_at || "-"}: ${d.reason}${note}`);
+    lines.push(`DISPOSITION ${d.finding_id} ${d.verb} by ${d.decided_by}${d.rule_id ? ` under ${d.rule_id}` : ""} expires ${d.expires_at || "-"}: ${d.reason}`);
   }
+  // The rows stored under this pass's ids beyond the ones it wrote are an earlier pass's at the same instant over the same runs.
+  if (stored && pass.ledger) kept = Math.max(0, findings.length - pass.ledger.dispositions);
 
   const tenantRuns = new Set(runs.map((r) => r.run_id));
   const gated = pass.gatedOut.filter((r) => tenantRuns.has(r));

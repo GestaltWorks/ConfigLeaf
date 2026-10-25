@@ -28,7 +28,8 @@
 //     equality; every read is one READ ONLY transaction and returns rows in natural-key order. One
 //     update: updateTicket, a ticket row's external_id, url, status and action_id by ticket_id with
 //     updated_at, the url redacted (the PSA step, src/psa/step.ts); ticketsOf reads one tenant's tickets; actionsOf the
-//     actions that carry out a list of dispositions (src/actions/).
+//     actions that carry out a list of dispositions (src/actions/). An action row's target, reason and record go
+//     through the redactor, and a record over rows.ts ACTION_RECORD_MAX (4000) characters is refused.
 //   - Error text is scrubbed (connection-string password, bearer tokens) before it leaves.
 //
 // The bundle half (toBundle, formatBundle, writeBundle) is how recorded collections become
@@ -46,7 +47,7 @@ import { Redactor, countLabels } from "../redactor.ts";
 import { SqlJsEngine } from "./engines/sqljs.ts";
 import { SCHEMA_SQL } from "./schema.ts";
 import {
-  COLUMNS, KEYS, REDACT, isTimestampColumn,
+  ACTION_RECORD_MAX, COLUMNS, KEYS, REDACT, isTimestampColumn,
   type Action, type ApprovedSetting, type AuditEvent, type BackupItem, type BackupSnapshot, type CollectionRun, type CopyValidation,
   type Disposition, type DnsRecord, type InventoryAsset, type Observation, type PolicyRule, type Probe, type ReferentFingerprint,
   type Rows, type RunStatus, type TableName, type Ticket, type VaultCopy,
@@ -330,6 +331,7 @@ export class Store {
         row[c] = v;
       }
       changed += redactRow(this.redactor, table, row);
+      if (table === "action" && typeof row.record === "string" && row.record.length > ACTION_RECORD_MAX) throw new StoreError(`action.record: at most ${ACTION_RECORD_MAX} characters, got ${row.record.length}`);
       const key = keyOf(table, row);
       const seen = out.get(key);
       if (seen && JSON.stringify(seen) !== JSON.stringify(row)) throw new StoreError(`${table}: two different rows share the key ${key.replaceAll("\u001f", " / ")}`);

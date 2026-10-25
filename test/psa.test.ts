@@ -1,18 +1,17 @@
 // The ticket adapter (src/psa/): the opening rules, the GitHub backend over a fake fetch (label bootstrap, create,
 // comment, close, status, the token read once, the deny-list refusal before any request), the plan and its
 // application (idempotency on the ticket row, the closing rules, a ticket closed in the PSA), the body, the
-// ticket step over the policy fixture through sql.js, the step's three queries (sql.js always, Zetaris with
-// PARITY_LIVE=true), the field map, the Store's updateTicket (with DATABASE_URL) and, with TICKETS_LIVE=true, one
-// smoke issue created, commented on and closed in DRIFT_TICKETS_REPO.
+// ticket step over the policy fixture through sql.js, the field map, the Store's updateTicket (with DATABASE_URL)
+// and, with TICKETS_LIVE=true, one smoke issue created, commented on and closed in DRIFT_TICKETS_REPO. The step's
+// three queries have their parity cases in test/parity.test.ts.
 import { randomBytes } from "node:crypto";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { FetchLike } from "../src/collectors/cloudflare.ts";
 import { config } from "../src/config.ts";
-import { DataLayer, type Overlays, type Params } from "../src/data/layer.ts";
+import { DataLayer } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
-import { ZetarisEngine } from "../src/data/engines/zetaris.ts";
-import { DISPOSITIONS_SQL, TICKETS_SQL, TICKET_ACTIONS_SQL, TICKET_ZONES_SQL, objects } from "../src/data/queries.ts";
+import { DISPOSITIONS_SQL, objects } from "../src/data/queries.ts";
 import { dispositionId, type Action, type Alert, type Disposition, type DispositionVerb, type PolicyRule, type PsaPriority, type Ticket } from "../src/data/rows.ts";
 import { Store } from "../src/data/store.ts";
 import { DriftWorld } from "../src/engine/world.ts";
@@ -27,9 +26,7 @@ import {
 import mapping from "../src/psa/mapping.json" with { type: "json" };
 import { MemoryTicketRows, applyTickets, ticketStep } from "../src/psa/step.ts";
 import { Redactor } from "../src/redactor.ts";
-import bundle from "../sample/bundle.json" with { type: "json" };
 import policyBundle from "./fixtures/policy-bundle.json" with { type: "json" };
-import { CONFD_RUN, DNS_RUN, SITES_RUN, T as SAMPLE_TENANT } from "./fixtures/catalogue-params.ts";
 
 const T = "client-a";
 const RUN = "run-nginx-7f1c-1023";
@@ -72,7 +69,7 @@ function finding(id: string, cls: TicketFinding["finding"]["class"], summary = `
 
 function disposition(f: TicketFinding, verb: DispositionVerb, r: PolicyRule | null, decidedAt = DECIDED1, run = RUN): Disposition {
   return {
-    disposition_id: dispositionId(T, "linux.nginx", HOST, APP, "file", H("d"), f.id, run) + (decidedAt === DECIDED1 ? "" : "-2"),
+    disposition_id: dispositionId(T, "linux.nginx", HOST, APP, "file", H("d"), f.id, run, decidedAt),
     tenant_id: T, surface: "linux.nginx", host: HOST, object_id: APP, setting_path: "file", value_hash: H("d"), verb,
     reason: `rule ${r?.rule_id ?? "none"} decides ${verb}`, expires_at: verb === "HOLD" ? "2026-10-25T20:00:00.000Z" : null,
     decided_by: r ? "policy" : "default", rule_id: r?.rule_id ?? null, finding_id: f.id, run_id: run, decided_at: decidedAt,
@@ -83,7 +80,7 @@ function act(d: Disposition, kind: Action["kind"], status: string, over: Partial
   return {
     action_id: `act-${kind}-${status}`, tenant_id: T, kind, target: APP, before_hash: H("d"), after_hash: status === "done" ? H("a") : H("d"),
     vault_commit: "5a14a89d0123456789abcdef0123456789abcdef", verification: status === "done" ? "probe-0000000000000001,probe-0000000000000002" : "",
-    receipts: kind === "investigate" ? "rcpt-0001" : "", status, started_at: "2026-10-24T20:01:00.000Z", finished_at: "2026-10-24T20:02:00.000Z",
+    receipts: kind === "investigate" ? "rcpt-0001" : "", status, reason: "", record: "", started_at: "2026-10-24T20:01:00.000Z", finished_at: "2026-10-24T20:02:00.000Z",
     disposition_id: d.disposition_id, finding_id: d.finding_id, verb: d.verb, ...over,
   };
 }
@@ -465,8 +462,8 @@ describe("ticketStep over the policy fixture (sql.js, a MemoryLedger, fake GitHu
     const rec = rollbackOf("rec-c3")!;
     expect([file?.surface, rec?.surface]).toEqual(["linux.nginx", "cloudflare.dns"]);
     const actions: Action[] = [
-      { action_id: "act-file-done", tenant_id: "client-a", kind: "rollback_file", target: file.object_id, before_hash: file.value_hash, after_hash: H("a"), vault_commit: "0123abcd4567", verification: "probe-0000000000000001", receipts: "", status: "done", started_at: "2026-10-23T03:30:00.000Z", finished_at: "2026-10-23T03:31:00.000Z", disposition_id: file.disposition_id },
-      { action_id: "act-rec-failed", tenant_id: "client-a", kind: "revert_record", target: rec.object_id, before_hash: rec.value_hash, after_hash: rec.value_hash, vault_commit: "89abcdef0123", verification: "", receipts: "", status: "failed", started_at: "2026-10-23T03:32:00.000Z", finished_at: "2026-10-23T03:33:00.000Z", disposition_id: rec.disposition_id },
+      { action_id: "act-file-done", tenant_id: "client-a", kind: "rollback_file", target: file.object_id, before_hash: file.value_hash, after_hash: H("a"), vault_commit: "0123abcd4567", verification: "probe-0000000000000001", receipts: "", status: "done", reason: "restored to the approved copy at vault commit 0123abcd", record: "after: the copy's bytes; nginx -t passed and nginx reloaded\nprobe probe-0000000000000001: http app.example.invalid ok (status 200)", started_at: "2026-10-23T03:30:00.000Z", finished_at: "2026-10-23T03:31:00.000Z", disposition_id: file.disposition_id },
+      { action_id: "act-rec-failed", tenant_id: "client-a", kind: "revert_record", target: rec.object_id, before_hash: rec.value_hash, after_hash: rec.value_hash, vault_commit: "89abcdef0123", verification: "", receipts: "", status: "failed", reason: "PATCH of record rec-c3 failed: Cloudflare 403", record: "", started_at: "2026-10-23T03:32:00.000Z", finished_at: "2026-10-23T03:33:00.000Z", disposition_id: rec.disposition_id },
     ];
     const two = await stepOver({ actions, tickets: one.rows.rows }, fake, "2026-10-23T05:00:00.000Z");
     expect(two.result.ops.filter((o) => o.op !== "skip").map((o) => [o.op, (o as Extract<TicketOp, { op: "create" }>).ticket.ticket_id, (o as Extract<TicketOp, { op: "create" }>).ticket.type])).toEqual([
@@ -479,80 +476,18 @@ describe("ticketStep over the policy fixture (sql.js, a MemoryLedger, fake GitHu
     expect(fake.issues.get(closedNo)!.title).toBe(`ROLLBACK drift_vs_approved: ${APP} on host-7f1c`);
     expect(fake.issues.get(openNo)!.title).toMatch(/^ROLLBACK drift_vs_approved: .+ on .+$/);
     expect(fake.issues.get(openNo)!.body).toContain("- action act-rec-failed: revert_record failed");
+    // Work done carries the Actor's sentence under each action, Evidence each line of its record under its id
+    const closedBody = fake.issues.get(closedNo)!.body;
+    expect(closedBody).toContain("\n  - restored to the approved copy at vault commit 0123abcd\n");
+    const evidence = closedBody.slice(closedBody.indexOf("### Evidence"), closedBody.indexOf("### Decision"));
+    expect(evidence).toContain("- action act-file-done (rollback_file): after: the copy's bytes; nginx -t passed and nginx reloaded\n- action act-file-done (rollback_file): probe probe-0000000000000001: http app.example.invalid ok (status 200)");
+    expect(fake.issues.get(openNo)!.body).toContain("\n  - PATCH of record rec-c3 failed: Cloudflare 403");
 
     const before = fake.calls.length;
     const three = await stepOver({ actions, tickets: two.rows.rows }, fake, "2026-10-23T06:00:00.000Z");
     expect(three.result.ops.map((o) => o.op)).toEqual(Array(three.pass.findings.length).fill("skip"));
     expect(fake.calls.length).toBe(before);
   });
-});
-
-describe("the ticket step's queries over sample/bundle.json", () => {
-  const files = bundle.observation.filter((o) => o.run_id === SITES_RUN && o.setting_path === "file");
-  const confdFiles = bundle.observation.filter((o) => o.run_id === CONFD_RUN && o.setting_path === "file");
-  /** One ticket and one disposition per file of the sites host's run; one action per file of both hosts' runs, the conf.d ones with no disposition. */
-  const OVERLAYS: Overlays = {
-    ticket: `SELECT ticket_id, tenant_id, psa, external_id, url, type, priority, status, action_id, finding_id, created_at, updated_at FROM {{t:ticket}}
-UNION ALL
-SELECT obs_id AS ticket_id, tenant_id, 'github' AS psa, '7' AS external_id, 'https://host-000000.com/owner/tickets/issues/7' AS url, 'incident' AS type, 'P3' AS priority,
-       'open' AS status, obs_id AS action_id, obs_id AS finding_id, observed_at AS created_at, observed_at AS updated_at
-FROM {{t:observation}} WHERE run_id = '${SITES_RUN}' AND setting_path = 'file'`,
-    disposition: `SELECT disposition_id, tenant_id, surface, host, object_id, setting_path, value_hash, verb, reason, expires_at, decided_by, rule_id, finding_id, run_id, decided_at FROM {{t:disposition}}
-UNION ALL
-SELECT obs_id AS disposition_id, tenant_id, surface, host, object_id, setting_path, value_hash, 'ROLLBACK' AS verb, 'rolled back under the file rule' AS reason, '' AS expires_at,
-       'policy' AS decided_by, 'rule-00000000000000a1' AS rule_id, obs_id AS finding_id, run_id, '2026-10-24T08:00:00.000Z' AS decided_at
-FROM {{t:observation}} WHERE run_id = '${SITES_RUN}' AND setting_path = 'file'`,
-    action: `SELECT action_id, tenant_id, kind, target, before_hash, after_hash, vault_commit, verification, receipts, status, started_at, finished_at, disposition_id FROM {{t:action}}
-UNION ALL
-SELECT obs_id AS action_id, tenant_id, 'rollback_file' AS kind, object_id AS target, value_hash AS before_hash, value_hash AS after_hash, '5a14a89d0123456789abcdef0123456789abcdef' AS vault_commit,
-       'probe-0000000000000001' AS verification, '' AS receipts, 'done' AS status, observed_at AS started_at, observed_at AS finished_at, obs_id AS disposition_id
-FROM {{t:observation}} WHERE setting_path = 'file' AND host IS NOT NULL AND (run_id = '${SITES_RUN}' OR run_id = '${CONFD_RUN}')`,
-  };
-  /** The ticket rows the recorded bundle holds for the tenant (the export carries what the live cycle wrote). */
-  const recorded = (bundle.ticket as { ticket_id: string; tenant_id: string }[]).filter((t) => t.tenant_id === SAMPLE_TENANT);
-  const CASES: { name: string; sql: string; params: Params; rows: number; overlays?: Overlays }[] = [
-    { name: "tickets", sql: TICKETS_SQL, params: { tenant_id: SAMPLE_TENANT }, rows: recorded.length },
-    { name: "tickets (one per sites file)", sql: TICKETS_SQL, params: { tenant_id: SAMPLE_TENANT }, overlays: OVERLAYS, rows: recorded.length + files.length },
-    { name: "tickets (another tenant)", sql: TICKETS_SQL, params: { tenant_id: "client-2" }, overlays: OVERLAYS, rows: 0 },
-    { name: "ticket actions", sql: TICKET_ACTIONS_SQL, params: { tenant_id: SAMPLE_TENANT }, rows: 0 },
-    { name: "ticket actions (the conf.d actions have no disposition)", sql: TICKET_ACTIONS_SQL, params: { tenant_id: SAMPLE_TENANT }, overlays: OVERLAYS, rows: files.length },
-    { name: "ticket zones", sql: TICKET_ZONES_SQL, params: { tenant_id: SAMPLE_TENANT, dns_run_id: DNS_RUN }, rows: bundle.dns_record.filter((r) => r.run_id === DNS_RUN).length },
-  ];
-  const live = process.env.PARITY_LIVE === "true" && config.zetaris.apiKey !== "";
-  let sqljs: DataLayer;
-  beforeAll(async () => {
-    const engine = await SqlJsEngine.create();
-    engine.loadBundle(bundle);
-    sqljs = new DataLayer(engine);
-  });
-  const on = (l: DataLayer, c: (typeof CASES)[number]): DataLayer => (c.overlays ? l.withOverlays(c.overlays) : l);
-
-  it("sql.js: the rows each query returns, in key order, with the columns the step reads", async () => {
-    expect(confdFiles.length).toBeGreaterThan(0);
-    for (const c of CASES) expect((await on(sqljs, c).run(c.sql, c.params, { limit: 10_000 })).rowCount, c.name).toBe(c.rows);
-    const t = objects(await sqljs.withOverlays(OVERLAYS).run(TICKETS_SQL, { tenant_id: SAMPLE_TENANT }, { limit: 10_000 }));
-    expect(t.map((r) => r.ticket_id)).toEqual([...files.map((o) => o.obs_id), ...recorded.map((r) => r.ticket_id)].sort());
-    expect(t[0]).toEqual({
-      ticket_id: t[0].ticket_id, tenant_id: SAMPLE_TENANT, psa: "github", external_id: "7", url: "https://host-000000.com/owner/tickets/issues/7", type: "incident", priority: "P3",
-      status: "open", action_id: t[0].ticket_id, finding_id: t[0].ticket_id, created_at: t[0].created_at, updated_at: t[0].created_at,
-    });
-    const a = objects(await sqljs.withOverlays(OVERLAYS).run(TICKET_ACTIONS_SQL, { tenant_id: SAMPLE_TENANT }, { limit: 10_000 }));
-    expect(a.map((r) => r.finding_id)).toEqual(files.map((o) => o.obs_id).sort());
-    expect(new Set(a.map((r) => `${r.kind} ${r.status} ${r.verb} ${r.verification}`))).toEqual(new Set(["rollback_file done ROLLBACK probe-0000000000000001"]));
-    const z = objects(await sqljs.run(TICKET_ZONES_SQL, { tenant_id: SAMPLE_TENANT, dns_run_id: DNS_RUN }, { limit: 10_000 }));
-    expect(z.map((r) => r.record_id)).toEqual(bundle.dns_record.filter((r) => r.run_id === DNS_RUN).map((r) => r.record_id).sort());
-    expect(z.every((r) => /^host-[0-9a-f]{6}\.[a-z]+$/.test(r.zone))).toBe(true);
-  });
-
-  for (const c of CASES) {
-    it.skipIf(!live)(`zetaris = sqljs: ${c.name}`, { timeout: 60_000 }, async () => {
-      const zetaris = new DataLayer(new ZetarisEngine());
-      const [a, b] = await Promise.all([on(sqljs, c).run(c.sql, c.params, { limit: 10_000 }), on(zetaris, c).run(c.sql, c.params, { agent: "parity", limit: 10_000 })]);
-      expect(b.columns).toEqual(a.columns);
-      expect(b.rows).toEqual(a.rows);
-      expect(b.total).toBe(a.total);
-    });
-  }
 });
 
 describe("src/psa/mapping.json, the field map of the absent adapters", () => {

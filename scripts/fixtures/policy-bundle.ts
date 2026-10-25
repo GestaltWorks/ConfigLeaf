@@ -7,9 +7,10 @@
 //   - approved_missing: /etc/nginx/conf.d/blog.conf on host-7f1c, approved at its 19 Oct bytes, observed in the 20
 //     Oct nginx run (whose counts become 4 of 4), committed to the vault in that run with an nginx-t validation ok,
 //     held by the newest backup, and absent from the 23 Oct run: the pass rolls it back from the copy.
-//   - two HOLD dispositions of an earlier pass: the found_but_different setting's (app.conf proxy_pass), decided 21
-//     Oct 03:00 UTC under the catch-all rule and in force until 24 Oct 03:00 UTC, and the proxy_split record's
-//     (rec-b2 proxied), decided 22 Oct 20:00 UTC under the proxied rule and expired at 23 Oct 00:00 UTC.
+//   - two HOLD dispositions of an earlier pass, the whole of the fixture's disposition table: the found_but_different
+//     setting's (app.conf proxy_pass), decided 21 Oct 03:00 UTC under the catch-all rule and in force until 24 Oct
+//     03:00 UTC, and the proxy_split record's (rec-b2 proxied), decided 22 Oct 20:00 UTC under the proxied rule and
+//     expired at 23 Oct 00:00 UTC.
 // Every other row stays as it stands; the tables it writes into are put in natural-key order (rows.ts KEYS), the
 // order they already hold. The file is written in the bundle format (src/data/store.ts formatBundle). --check writes
 // nothing and exits 1 when the committed fixture differs from what this would write. test/pipeline.test.ts holds the
@@ -98,7 +99,7 @@ function buildB(bundle: Bundle, rules: readonly PolicyRule[]): Partial<Record<Ta
   const hold = (f: typeof fbd | typeof split, surface: string, valueHash: string, runId: string, ruleId: string, criticality: string, at: { decided_at: string; expires_at: string }): Disposition => {
     const findingId = shortFindingId(world.findingId(f));
     return {
-      disposition_id: dispositionId(FIXTURE_TENANT, surface, f.host, f.object_id, f.setting_path, valueHash, findingId, runId), tenant_id: FIXTURE_TENANT, surface,
+      disposition_id: dispositionId(FIXTURE_TENANT, surface, f.host, f.object_id, f.setting_path, valueHash, findingId, runId, at.decided_at), tenant_id: FIXTURE_TENANT, surface,
       host: f.host, object_id: f.object_id, setting_path: f.setting_path, value_hash: valueHash, verb: "HOLD",
       reason: `rule ${ruleId} (${criticality}) holds this ${f.class} finding until ${at.expires_at}`, expires_at: at.expires_at, decided_by: "policy", rule_id: ruleId,
       finding_id: findingId, run_id: runId, decided_at: at.decided_at,
@@ -116,7 +117,7 @@ function buildB(bundle: Bundle, rules: readonly PolicyRule[]): Partial<Record<Ta
     backup_item: upsert(bundle, "backup_item", [backup]),
     vault_copy: upsert(bundle, "vault_copy", [copy]),
     copy_validation: upsert(bundle, "copy_validation", [validation]),
-    disposition: upsert(bundle, "disposition", holds),
+    disposition: upsert({ ...bundle, disposition: [] }, "disposition", holds),
   };
 }
 

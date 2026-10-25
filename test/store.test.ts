@@ -17,7 +17,7 @@ import { hero } from "../src/data/queries.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { SCHEMA_TABLES, TABLE_NAMES } from "../src/data/schema.ts";
 import {
-  COLUMNS, KEYS, REDACT, assetId, copyId, dispositionId, eventId, isTimestampColumn, obsId, probeId, ruleId, runId, snapshotId, stableId, validationId,
+  ACTION_RECORD_MAX, COLUMNS, KEYS, REDACT, assetId, copyId, dispositionId, eventId, isTimestampColumn, obsId, probeId, ruleId, runId, snapshotId, stableId, validationId,
   type AuditEvent, type DnsRecord, type InventoryAsset, type Observation, type TableName,
 } from "../src/data/rows.ts";
 import { Store, TABLES, formatBundle, scrub, toBundle, writeBundle, type Tables } from "../src/data/store.ts";
@@ -74,7 +74,7 @@ describe("rows.ts", () => {
     expect(KEYS.referent_fingerprint).toEqual(["obs_id", "dns_run_id"]);
     expect(Object.fromEntries(TABLES.slice(8).map((t) => [t, Object.keys(REDACT[t])]))).toEqual({
       policy_rule: ["object_glob", "setting_glob", "author", "note"], vault_copy: ["host", "object_id"], copy_validation: ["missing_dependencies", "output_redacted"],
-      probe: ["target", "expected", "observed"], disposition: ["host", "object_id", "reason"], action: ["target"], ticket: ["url"], referent_fingerprint: [],
+      probe: ["target", "expected", "observed"], disposition: ["host", "object_id", "reason"], action: ["target", "reason", "record"], ticket: ["url"], referent_fingerprint: [],
     });
     expect(COLUMNS.policy_rule.filter(isTimestampColumn)).toEqual(["since"]);
     expect(COLUMNS.disposition.filter(isTimestampColumn)).toEqual(["expires_at", "decided_at"]);
@@ -84,9 +84,12 @@ describe("rows.ts", () => {
     expect(copyId("run-1", "/etc/nginx/nginx.conf")).toBe(stableId("copy", "run-1", "/etc/nginx/nginx.conf"));
     expect(validationId("copy-1", "nginx-t", "2026-10-24T03:00:00.000Z")).toBe(stableId("val", "copy-1", "nginx-t", "2026-10-24T03:00:00.000Z"));
     expect(probeId("run-p", "http", "host-0a1b2c.com")).toBe(stableId("probe", "run-p", "http", "host-0a1b2c.com"));
-    const d = dispositionId("client-a", "linux.nginx", null, "/etc/nginx/nginx.conf", "file", `sha256:${"0".repeat(64)}`, "fnd-1", "run-1");
-    expect(d).toBe(stableId("disp", "client-a", "linux.nginx", null, "/etc/nginx/nginx.conf", "file", `sha256:${"0".repeat(64)}`, "fnd-1", "run-1"));
-    expect(dispositionId("client-a", "linux.nginx", null, "/etc/nginx/nginx.conf", "file", `sha256:${"1".repeat(64)}`, "fnd-1", "run-1")).not.toBe(d);
+    const at = "2026-10-24T03:00:00.000Z";
+    const d = dispositionId("client-a", "linux.nginx", null, "/etc/nginx/nginx.conf", "file", `sha256:${"0".repeat(64)}`, "fnd-1", "run-1", at);
+    expect(d).toBe(stableId("disp", "client-a", "linux.nginx", null, "/etc/nginx/nginx.conf", "file", `sha256:${"0".repeat(64)}`, "fnd-1", "run-1", at));
+    expect(dispositionId("client-a", "linux.nginx", null, "/etc/nginx/nginx.conf", "file", `sha256:${"1".repeat(64)}`, "fnd-1", "run-1", at)).not.toBe(d);
+    // every pass writes its own row: the same finding on the same run, decided at another instant, is another id
+    expect(dispositionId("client-a", "linux.nginx", null, "/etc/nginx/nginx.conf", "file", `sha256:${"0".repeat(64)}`, "fnd-1", "run-1", "2026-10-24T04:00:00.000Z")).not.toBe(d);
   });
 });
 
@@ -352,15 +355,20 @@ describe.skipIf(!url)("Store, live drift-pg (throwaway schema)", () => {
     expect(await store.insertProbes([probe])).toBe(1);
     expect(await store.insertProbes([probe])).toBe(0);
     const disp = {
-      disposition_id: dispositionId(A, "linux.nginx", "host-7f1c", "/etc/nginx/conf.d/app.conf", "file", H("d"), "fnd-0000000000000001", run), tenant_id: A, surface: "linux.nginx", host: "host-7f1c",
+      disposition_id: dispositionId(A, "linux.nginx", "host-7f1c", "/etc/nginx/conf.d/app.conf", "file", H("d"), "fnd-0000000000000001", run, "2026-10-23T02:21:00.000Z"), tenant_id: A, surface: "linux.nginx", host: "host-7f1c",
       object_id: "/etc/nginx/conf.d/app.conf", setting_path: "file", value_hash: H("d"), verb: "HOLD" as const, reason: "The vhost serving app.bluefin-logistics-zz9q.com drifted with no valid copy; held for 24 hours.",
       expires_at: "2026-10-24T02:21:00.000Z", decided_by: "policy" as const, rule_id: rules[0].rule_id, finding_id: "fnd-0000000000000001", run_id: run, decided_at: "2026-10-23T02:21:00.000Z",
     };
     expect(await store.insertDispositions([disp])).toBe(1);
     expect(await store.insertDispositions([disp])).toBe(0);
-    const action = { action_id: "act-0000000000000001", tenant_id: A, kind: "investigate" as const, target: "/etc/nginx/conf.d/app.conf", before_hash: H("d"), after_hash: null, vault_commit: null, verification: "", receipts: "", status: "refused" as const, started_at: "2026-10-23T02:22:00.000Z", finished_at: null, disposition_id: disp.disposition_id };
+    const action = {
+      action_id: "act-0000000000000001", tenant_id: A, kind: "investigate" as const, target: "/etc/nginx/conf.d/app.conf", before_hash: H("d"), after_hash: null, vault_commit: null, verification: "", receipts: "",
+      status: "refused" as const, reason: "finding fnd-0000000000000001 is raised by no pass over the current rows, so there is nothing to investigate", record: "", started_at: "2026-10-23T02:22:00.000Z", finished_at: null, disposition_id: disp.disposition_id,
+    };
     expect(await store.insertActions([action])).toBe(1);
     expect(await store.insertActions([action])).toBe(0);
+    // a record over ACTION_RECORD_MAX characters is refused before the transaction opens
+    await expect(store.insertActions([{ ...action, action_id: "act-0000000000000002", record: "x".repeat(ACTION_RECORD_MAX + 1) }])).rejects.toThrow(`action.record: at most ${ACTION_RECORD_MAX} characters`);
     const ticket = { ticket_id: "tkt-0000000000000001", tenant_id: A, psa: "github" as const, external_id: null, url: null, type: "change" as const, priority: "P1" as const, status: "open", action_id: action.action_id, finding_id: disp.finding_id, created_at: "2026-10-23T02:23:00.000Z", updated_at: "2026-10-23T02:23:00.000Z" };
     expect(await store.insertTickets([ticket])).toBe(1);
     expect(await store.insertTickets([ticket])).toBe(0);

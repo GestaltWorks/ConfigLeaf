@@ -86,12 +86,17 @@ describe("the document's reads, through sql.js over test/fixtures/policy-bundle.
     ]);
   });
 
-  it("DOC_DISPOSITIONS_OF_RUN_SQL: the dispositions on one run of the tenant, in verb, finding_id order", async () => {
-    const [fbd, split] = policyBundle.disposition;
+  it("DOC_DISPOSITIONS_OF_RUN_SQL: the latest disposition of each finding on one run of the tenant, in verb, finding_id order", async () => {
+    const fbd = policyBundle.disposition.find((d) => d.surface === "linux.nginx")!;
+    const split = policyBundle.disposition.find((d) => d.surface === "cloudflare.dns")!;
     expect((await q(DOC_DISPOSITIONS_OF_RUN_SQL, { tenant_id: A, run_id: "run-nginx-7f1c-1020" })).map((d) => [d.disposition_id, d.verb, d.expires_at])).toEqual([[fbd.disposition_id, "HOLD", fbd.expires_at]]);
     expect((await q(DOC_DISPOSITIONS_OF_RUN_SQL, { tenant_id: A, run_id: "run-dns-1020" })).map((d) => d.disposition_id)).toEqual([split.disposition_id]);
     expect(await q(DOC_DISPOSITIONS_OF_RUN_SQL, { tenant_id: A, run_id: "run-nginx-7f1c-1023" })).toEqual([]);
     expect(await q(DOC_DISPOSITIONS_OF_RUN_SQL, { tenant_id: "client-b", run_id: "run-dns-1020" })).toEqual([]);
+    // a later pass over the same run: its row stands for the finding, the earlier one is passed over
+    const twice = structuredClone(policyBundle);
+    twice.disposition.push({ ...fbd, disposition_id: "disp-later-pass-0001", verb: "ESCALATE", expires_at: null as never, reason: "hold expired", decided_at: "2026-10-24T04:00:00.000Z" });
+    expect((await q(DOC_DISPOSITIONS_OF_RUN_SQL, { tenant_id: A, run_id: "run-nginx-7f1c-1020" }, twice)).map((d) => [d.disposition_id, d.verb])).toEqual([["disp-later-pass-0001", "ESCALATE"]]);
   });
 
   it("DOC_ACTIONS_SQL and DOC_TICKETS_SQL: none in the fixture; the rows added here, counted by kind and status and listed by type and status", async () => {
@@ -121,8 +126,15 @@ function withWork(): Record<string, unknown> {
   const b: Record<string, unknown> = structuredClone(policyBundle);
   const act = (id: string, kind: string, status: string) => ({
     action_id: id, tenant_id: A, kind, target: "/etc/nginx/conf.d/app.conf", before_hash: null, after_hash: null, vault_commit: null, verification: "", receipts: "",
-    status, started_at: "2026-10-23T03:05:00.000Z", finished_at: "2026-10-23T03:06:00.000Z", disposition_id: "disp-0000000000000001",
+    status, reason: `${kind} ${status}`, record: "", started_at: "2026-10-23T03:05:00.000Z", finished_at: "2026-10-23T03:06:00.000Z", disposition_id: "disp-0000000000000001",
   });
+  // one verification probe run of the Actor's, after the pass's probe run: counted apart, never read as the pass's
+  const verify = { run_id: "run-probe-verify-0001", tenant_id: A, surface: "probe.verify", host: null, started_at: "2026-10-23T03:05:30.000Z", finished_at: "2026-10-23T03:05:31.000Z", expected_count: 1, observed_count: 1, status: "complete" };
+  b.collection_run = [...(b.collection_run as object[]), verify];
+  b.probe = [...(b.probe as object[]), {
+    probe_id: "probe-verify-0000001", run_id: verify.run_id, tenant_id: A, kind: "http", target: "app.example.invalid", expected: "answers (status below 500); cf-ray any",
+    observed: "status 200 server=nginx cf-ray absent", status: "ok", latency_ms: 12, observed_at: "2026-10-23T03:05:31.000Z",
+  }];
   b.action = [act("act-1", "rollback_file", "done"), act("act-2", "rollback_file", "done"), act("act-3", "rollback_file", "failed"), act("act-4", "investigate", "done"), { ...act("act-5", "fix", "refused"), tenant_id: "client-b" }];
   const tkt = (id: string, type: string, status: string, n: number) => ({
     ticket_id: id, tenant_id: A, psa: "github", external_id: String(n), url: `https://tickets.example.invalid/issues/${n}`, type, priority: "P1", status,
@@ -167,18 +179,15 @@ describe("the page over sample/bundle.json", () => {
     for (const f of pass.findings) expect(md).toContain(`- ${f.id} ${f.verb} ${f.finding.class}: `);
     const probeRun = runs.filter((r) => r.surface === "probe").sort((a, b) => (a.started_at < b.started_at ? -1 : 1)).at(-1)!;
     const probes = sample.probe.filter((p) => p.run_id === probeRun.run_id);
-    expect(md).toContain(`Probe run ${probeRun.run_id}, finished ${probeRun.finished_at}: ${probes.filter((p) => p.status === "fail").length} probes fail.`);
+    expect(md).toContain(`Probe runs passing the DQ gate: ${runs.filter((r) => r.surface === "probe").length} of surface probe, every served name probed for the pass, and ${runs.filter((r) => r.surface === "probe.verify").length} of surface probe.verify, the Actor's probes after a write.`);
+    expect(md).toContain(`Probe run ${probeRun.run_id} (surface probe), finished ${probeRun.finished_at}: ${probes.filter((p) => p.status === "fail").length} probes fail.`);
     for (const kind of ["dns", "http", "tls"]) expect(md).toContain(`| ${kind} | ${probes.filter((p) => p.kind === kind && p.status === "ok").length} | ${probes.filter((p) => p.kind === kind && p.status === "fail").length} |`);
-    // the latest decision on the pass's runs: a recorded pass's row where the bundle holds one under the finding's
-    // disposition_id (the ledger keeps the row it holds), the sample pass's own at the bundle's instant elsewhere
-    const passRuns = new Set(pass.findings.map((f) => f.finding.run_id));
-    const held = new Set(sample.disposition.map((d) => d.disposition_id));
-    const decided = [
-      ...sample.disposition.filter((d) => d.tenant_id === T && passRuns.has(d.run_id)).map((d) => d.decided_at),
-      ...pass.findings.filter((f) => !held.has(dispositionIdOf(f))).map(() => decisionInstant(sample)),
-    ].sort().at(-1);
-    expect(md.trimEnd().split("\n").at(-1)).toBe(`Decided at ${decided}.`);
-    expect([doc.decidedAt, doc.open]).toEqual([decided, pass.findings.length]);
+    // the latest decision on the pass's runs: the sample pass's own, at the bundle's instant, which is the latest decided_at the bundle holds
+    const at = decisionInstant(sample)!;
+    expect(at).toBe(sample.disposition.map((d) => d.decided_at).sort().at(-1));
+    expect(pass.findings.every((f) => dispositionIdOf(f, at).startsWith("disp-"))).toBe(true);
+    expect(md.trimEnd().split("\n").at(-1)).toBe(`Decided at ${at}.`);
+    expect([doc.decidedAt, doc.open]).toEqual([at, pass.findings.length]);
     // the Queries section is the queries it ran, and every one of them is in the portable subset the parity test covers
     expect(doc.queries.map((c) => c.name)).toEqual([
       "RUNS_SQL", "RUN_COMPLETE_SQL", "DOC_ZONES_SQL", "DOC_RUN_SHAPE_SQL", "DOC_COPIES_SQL", "LATEST_APPROVALS_SQL", "POLICY_RULES_SQL", "DOC_UNAPPROVED_SQL",
@@ -208,13 +217,16 @@ describe("the page over test/fixtures/policy-bundle.json with work recorded", ()
     expect(md).toContain("- 2026-10-24T03:00:00.000Z: 4 (changed_since_backup 2, drift_vs_approved 1, found_but_different 1)");
     expect(md).toContain(`ROLLBACK approved_missing: file in ${BLOG} on host-7f1c (linux.nginx, run run-nginx-7f1c-1023). approved `);
     // the fixture's two earlier HOLDs sit on the 20 Oct runs, which are not the latest
-    expect(md).not.toContain(policyBundle.disposition[0].disposition_id);
+    for (const d of policyBundle.disposition) expect(md).not.toContain(d.disposition_id);
     expect(md).toContain("Locked settings without an approved value: 1.");
     expect(md).toContain("- proxied in rec-c3 (cloudflare.dns), locked by rule-8e75e1d767980665");
     expect(section(md, "Work")).toContain("| rollback_file | failed | 1 |");
     expect(section(md, "Work")).toContain("| incident | open | 1 |");
     expect(section(md, "Work")).toContain("- incident P1 open: https://tickets.example.invalid/issues/1 (github #1, finding fnd-0000000000000001)");
     expect(section(md, "Probes")).toContain("- http: shop.example.invalid");
+    expect(section(md, "Probes")).toContain("Probe runs passing the DQ gate: 1 of surface probe, every served name probed for the pass, and 1 of surface probe.verify, the Actor's probes after a write.");
+    expect(section(md, "Probes")).toContain("Probe run run-probe-1023 (surface probe), finished ");
+    expect(section(md, "Estate")).not.toContain("probe.verify");
     expect(section(md, "Copies")).toContain("| records, zone example.invalid | 88d297bf | 1 | 1 | 0 | 0 | 0 |");
     expect(section(md, "Copies")).toContain("| host-7f1c (linux.nginx) | e4ad517b | 4 | 1 | 0 | 0 | 3 |");
     expect(md.trimEnd().split("\n").at(-1)).toBe(`Decided at ${AT}.`);

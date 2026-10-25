@@ -3,7 +3,8 @@
 // signed receipt that verifies, names the tier requested and passes custody (gate.ts gateWithCustody):
 //   selectChecks  the selection prompt (src/catalogue/select.ts selectionPrompt) to the selecting tier, its
 //                 reply through validateSelection, so valid and invalid choices are counted;
-//   judge         src/agents/judge.ts judgeClaim at the judging tier, with that tier's model ladder;
+//   judge         src/agents/judge.ts judgeClaim at the judging tier, with that tier's model ladder and the
+//                 receipt gate expecting that tier (JudgeInput.requestedTier: lightning for C2, ultra for C3);
 //   directVerdict the C4 baseline: the item's facts and up to 20 evidence rows to one tier, answered with one
 //                 of ADOPT, HOLD, ESCALATE and a sentence.
 // Recorder wraps the Nightshift client and the receipt finder of one configuration run, so every chat attempt
@@ -18,8 +19,11 @@
 // openrouter/nvidia/nemotron-3.5-lightning (lightning), 1,663 to 1,987 input and 3,430 to 5,588 output tokens, 21.9
 // to 43.3 s, 11 checks selected and 11 valid per configuration; 3 judge calls served
 // openrouter/nvidia/nemotron-3-ultra-550b-a55b:free (ultra), 3,249 to 3,629 input and 919 to 4,087 output tokens,
-// 6.9 to 68.3 s, 0 strikes. The receipt's prompt_preview holds the first 180 characters of the user message, from
-// the request line on.
+// 6.9 to 68.3 s, 0 strikes, under a judge max_tokens of 4,096; src/agents/judge.ts JUDGE_MAX_TOKENS is 8,192.
+// The receipt's prompt_preview holds the first 180 characters of the user message, from the request line on.
+// Measured 25 Oct 2026 offline (test/eval.test.ts, a stub model with receipts signed in the test, six items): C2 with
+// Lightning as the falsifier judge, every judge call requested and served lightning at max_tokens 8,192 and counted by
+// the gate, the stub's refuting SELECT striking all 10 claims it judged.
 
 import { Nightshift, verifyReceipt, type ChatMessage, type ChatResult, type SignedReceipt } from "../adapters/nightshift.ts";
 import { judgeClaim, MAX_EVIDENCE_ROWS, type Evidence, type JudgeInput, type JudgeModel, type JudgeVerdict } from "../agents/judge.ts";
@@ -193,11 +197,12 @@ export async function judge(
   ctx: ModelCallContext, layer: DataLayer, claim: string, evidence: Evidence, findingId: string | null, tier: ModelTier,
 ): Promise<{ verdict: JudgeVerdict; calls: CallRecord[] }> {
   const mark = ctx.recorder.mark();
-  // requestedTier: the tier the receipt gate inside judgeClaim expects (see the open item on src/agents/judge.ts).
-  const input = {
+  // requestedTier: the tier the receipt gate inside judgeClaim expects, so C2's Lightning judge counts on a Lightning receipt.
+  const models = ladder(tier);
+  const input: JudgeInput = {
     claim, evidenceRows: evidence, layer, nightshift: ctx.recorder.nightshift, receipts: ctx.recorder.receipts, tracer: ctx.tracer,
-    requestedModels: ladder(tier), requestedTier: tier, tenantId: ctx.tenantId,
-  } as JudgeInput;
+    requestedModels: models, requestedTier: tier, model: models[0], tenantId: ctx.tenantId,
+  };
   const verdict = await judgeClaim(input);
   const counted = verdict.status === "stands" || verdict.status === "refuted" || verdict.status === "invalid_output";
   const calls = ctx.recorder.settle(mark, { kind: "judge", item: ctx.item, finding: findingId, tier }, { ok: counted && verdict.signatureOk === true, reason: verdict.reason });

@@ -13,25 +13,28 @@
 //   Approvals      the objects and settings with an approval of record (LATEST_APPROVALS_SQL), and the settings of
 //                  the latest passing runs that a locked rule governs with no approved value (DOC_UNAPPROVED_SQL per
 //                  run, POLICY_RULES_SQL, src/policy/resolve.ts).
-//   Findings open  the dispositions on the latest passing runs (DOC_DISPOSITIONS_OF_RUN_SQL per run): by class and
-//                  verb, the drift from approved values, the HOLD expiries, then one line per finding with its reason.
+//   Findings open  the latest disposition of each finding on the latest passing runs (DOC_DISPOSITIONS_OF_RUN_SQL per
+//                  run; every pass writes its own row): by class and verb, the drift from approved values, the HOLD
+//                  expiries, then one line per finding with its reason.
 //                  The ledger row carries the finding id; its class is the class the pass raises it under at render
 //                  time (`classes`, from src/pipeline.ts runPass over the same layer), and a disposition whose
 //                  finding that pass leaves unraised is counted apart.
 //   Work           the actions by kind and status (DOC_ACTIONS_SQL), the tickets by type and status with their
 //                  urls (DOC_TICKETS_SQL).
-//   Probes         the latest passing probe run, its probes by kind and status (DOC_PROBES_SQL) and the failing
-//                  names by kind (DOC_PROBE_FAILURES_SQL).
+//   Probes         the passing probe runs counted by surface, probe (the pass's, every served name) and probe.verify
+//                  (the Actor's, after a write); the latest passing run of surface probe, its probes by kind and
+//                  status (DOC_PROBES_SQL) and the failing names by kind (DOC_PROBE_FAILURES_SQL).
 //   Queries        each query the document ran, its runs and the rows it returned.
 //   last line      the decision instant: the latest decided_at of the open dispositions.
 // Every collected text in the tables is redacted before it is stored, so the page carries pseudonyms only.
 //
-// Measured 24 Oct 2026 over sample/bundle.json with the sample pass's 27 dispositions in its ledger
-// (test/document.test.ts, examples/document.md): 14 runs, all passing; 2 hosts and 6 zones; 112 copies at the
-// heads; 333 approvals; 0 locked settings without an approved value; 27 findings open, HOLD 27; 0 actions and 0
-// tickets; probe run run-b247c87d34f38d71 with 20 failing probes; decided at 2026-10-24T21:21:22.897Z; 32 queries.
-// The same day through Zetaris over the DRIFT datasource: the same Estate, Copies, Approvals and Probes sections,
-// line for line, and no disposition on the latest passing runs; 32 queries.
+// Measured 25 Oct 2026 over sample/bundle.json, its 81 ledger rows of three live passes in the ledger and the sample
+// pass writing 0 (test/document.test.ts, examples/document.md): 19 runs, all passing; 2 hosts and 6 zones; 112 copies at
+// the heads; 333 approvals; 0 locked settings without an approved value; 27 findings open, HOLD 27, the latest
+// disposition of each on the 23:35 UTC runs, the 01:16 UTC pass's; 0 actions and 1 ticket; probe runs 3 of surface probe
+// and 0 of probe.verify, the latest, run-30f5647b8b9c5dff, with 20 failing probes; decided at 2026-10-25T01:16:49.394Z,
+// the bundle's instant; 37 queries, 152 lines. On 24 Oct 2026 through Zetaris over the DRIFT datasource: the same Estate,
+// Copies, Approvals and Probes sections, line for line, as the render over the bundle of that day.
 
 import type { DataLayer, Params } from "../data/layer.ts";
 import {
@@ -67,7 +70,10 @@ export interface DocumentResult {
 
 /** Rows a document read returns at most; a read that returns more fails rather than print a cut number. */
 const MAX_ROWS = 100_000;
-const SURFACES_WITH_FINDINGS = (surface: string): boolean => surface !== "probe" && surface !== "cloudflare.audit";
+/** The pass's probe run of every served name, and the Actor's verification after a write (src/probe/run.ts, src/actions/act.ts). */
+const PROBE_SURFACE = "probe";
+const VERIFY_SURFACE = "probe.verify";
+const SURFACES_WITH_FINDINGS = (surface: string): boolean => surface !== PROBE_SURFACE && surface !== VERIFY_SURFACE && surface !== "cloudflare.audit";
 const h8 = (h: string): string => h.replace(/^sha256:/, "").slice(0, 8);
 const dash = (s: string | undefined | null): string => (s ? s : "-");
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
@@ -108,7 +114,7 @@ export async function renderDocument(layer: DataLayer, opts: DocumentOptions): P
   const latest = [...latestOf.values()].sort((a, b) => cmp(a.surface, b.surface) || cmp(a.host, b.host));
   const observed = latest.filter((r) => SURFACES_WITH_FINDINGS(r.surface));
   const dnsRun = latest.find((r) => r.surface === "cloudflare.dns");
-  const probeRun = latest.find((r) => r.surface === "probe");
+  const probeRun = latest.find((r) => r.surface === PROBE_SURFACE);
 
   line(`# Configuration document: ${tenant}`, "");
   line(`What the agent holds for ${tenant}, read through one data layer${opts.source ? ` (${opts.source})` : ""} when this page is rendered. Every number is a count of the rows, or a value of a row, that the queries listed at the end return.`, "");
@@ -219,13 +225,15 @@ export async function renderDocument(layer: DataLayer, opts: DocumentOptions): P
 
   // ---- Probes ----
   line("## Probes", "");
+  const ofSurface = (s: string): number => passing.filter((r) => r.surface === s).length;
+  line(`Probe runs passing the DQ gate: ${ofSurface(PROBE_SURFACE)} of surface ${PROBE_SURFACE}, every served name probed for the pass, and ${ofSurface(VERIFY_SURFACE)} of surface ${VERIFY_SURFACE}, the Actor's probes after a write.`, "");
   if (!probeRun) line(`No probe run of ${tenant} passes the DQ gate.`, "");
   else {
     const byKind = await q("DOC_PROBES_SQL", DOC_PROBES_SQL, { tenant_id: tenant, run_id: probeRun.run_id });
     const failing = await q("DOC_PROBE_FAILURES_SQL", DOC_PROBE_FAILURES_SQL, { tenant_id: tenant, run_id: probeRun.run_id });
     const kinds = [...new Set(byKind.map((k) => k.kind))].sort(cmp);
     const num = (kind: string, status: string): string => byKind.find((k) => k.kind === kind && k.status === status)?.n ?? "0";
-    line(`Probe run ${probeRun.run_id}, finished ${dash(probeRun.finished_at)}: ${plural(failing.length, "probe fails", "probes fail")}.`, "");
+    line(`Probe run ${probeRun.run_id} (surface ${PROBE_SURFACE}), finished ${dash(probeRun.finished_at)}: ${plural(failing.length, "probe fails", "probes fail")}.`, "");
     line(...table(["kind", "ok", "fail"], kinds.map((k) => [k, num(k, "ok"), num(k, "fail")])), "");
     if (failing.length) line("The failing names:", "", ...groupBy(failing, (f) => f.kind).map(([kind, rows]) => `- ${kind}: ${[...new Set(rows.map((f) => f.target))].sort(cmp).join(", ")}`), "");
   }

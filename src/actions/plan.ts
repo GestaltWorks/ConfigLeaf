@@ -13,14 +13,15 @@
 //   - A plan is lines of redacted text: what would be written where, from which vault commit, and which checks and probes
 //     follow. It carries hashes as 12 hex and commits as 8; the bytes of files and records stay in the vault.
 //   - An outcome is the action row plus one plain sentence (reason) and the record: plain sentences, each tied to the
-//     query id, probe id or receipt id it rests on where one exists. The action table holds the row; the reason and
-//     the record go to the trace and to the caller (the ticket step reads them in the same process).
+//     query id, probe id or receipt id it rests on where one exists. The row carries both, the record one sentence per
+//     line and cut at rows.ts ACTION_RECORD_MAX characters, so the ticket step and the owner read them from the action
+//     table; the trace and the caller get them too.
 
 import type { CopyCandidate } from "../policy/decide.ts";
 import { validCopy } from "../policy/decide.ts";
 import type { Redactor } from "../redactor.ts";
 import type { TraceEvent } from "../trace.ts";
-import { actionId, type Action, type ActionKind, type ActionStatus, type Disposition, type DispositionVerb, type Probe, type ProbeKind } from "../data/rows.ts";
+import { ACTION_RECORD_MAX, actionId, type Action, type ActionKind, type ActionStatus, type Disposition, type DispositionVerb, type Probe, type ProbeKind } from "../data/rows.ts";
 
 export type Row = Record<string, string>;
 
@@ -49,9 +50,12 @@ export function actionOf(r: Row): Action {
   return {
     action_id: r.action_id, tenant_id: r.tenant_id, kind: r.kind as ActionKind, target: r.target, before_hash: nul(r.before_hash), after_hash: nul(r.after_hash),
     vault_commit: nul(r.vault_commit), verification: r.verification, receipts: r.receipts, status: r.status as ActionStatus,
-    started_at: r.started_at, finished_at: nul(r.finished_at), disposition_id: r.disposition_id,
+    reason: r.reason ?? "", record: r.record ?? "", started_at: r.started_at, finished_at: nul(r.finished_at), disposition_id: r.disposition_id,
   };
 }
+
+/** The record lines as the action row's record: one per line, cut at ACTION_RECORD_MAX characters. */
+export const recordText = (lines: readonly string[]): string => lines.join("\n").slice(0, ACTION_RECORD_MAX);
 
 export const h12 = (h: string | null | undefined): string => (h ? h.replace(/^sha256:/, "").slice(0, 12) : "-");
 export const c8 = (c: string | null | undefined): string => (c ? c.slice(0, 8) : "-");
@@ -73,6 +77,8 @@ export interface Approval { approval_id: string; value_hash: string; approved_at
 /** The reads every kind makes, cached per Actor run (src/actions/act.ts). */
 export interface ActorReads {
   approvalOf(d: Disposition): Promise<Approval | null>;
+  /** The latest approval of every setting of the disposition's object (surface, host, object_id), in setting_path order. */
+  approvalsOfObject(d: Disposition): Promise<(Approval & { setting_path: string })[]>;
   copiesOf(d: Disposition, approvedHash: string): Promise<CopyCandidate[]>;
   observationsOf(runId: string): Promise<Row[]>;
   /** The actions already recorded on this target, any disposition, oldest first. */
@@ -138,7 +144,7 @@ export function outcome(d: Disposition, kind: ActionKind, f: OutcomeFields): Act
       action_id: actionId(d.tenant_id, d.disposition_id, kind), tenant_id: d.tenant_id, kind, target: targetOf(d),
       before_hash: f.before_hash ?? null, after_hash: f.after_hash ?? null, vault_commit: f.vault_commit ?? null,
       verification: [...new Set(f.verification ?? [])].join(","), receipts: [...new Set(f.receipts ?? [])].join(","),
-      status: f.status, started_at: f.started_at, finished_at: f.finished_at, disposition_id: d.disposition_id,
+      status: f.status, reason: f.reason, record: recordText(f.record ?? []), started_at: f.started_at, finished_at: f.finished_at, disposition_id: d.disposition_id,
     },
     reason: f.reason,
     record: f.record ?? [],

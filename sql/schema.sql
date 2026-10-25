@@ -147,7 +147,7 @@ CREATE TABLE IF NOT EXISTS probe (
 );
 -- The ledger: one row per finding per pass, about the live value the decision is about.
 CREATE TABLE IF NOT EXISTS disposition (
-  disposition_id TEXT PRIMARY KEY,   -- stableId("disp", tenant_id, surface, host, object_id, setting_path, value_hash, finding_id, run_id)
+  disposition_id TEXT PRIMARY KEY,   -- stableId("disp", tenant_id, surface, host, object_id, setting_path, value_hash, finding_id, run_id, decided_at): one row per pass
   tenant_id      TEXT NOT NULL,
   surface        TEXT NOT NULL,
   host           TEXT,
@@ -174,7 +174,9 @@ CREATE TABLE IF NOT EXISTS action (
   vault_commit   TEXT,
   verification   TEXT NOT NULL,      -- probe ids, comma-separated; '' when none
   receipts       TEXT NOT NULL,      -- receipt ids, comma-separated; '' when none
-  status         TEXT NOT NULL,      -- done | failed | refused
+  status         TEXT NOT NULL,      -- done | failed | refused | not_judged
+  reason         TEXT NOT NULL,      -- the one plain sentence the Actor gives; '' when none
+  record         TEXT NOT NULL,      -- executed checks, verdicts and probes, one per line, each tied to its id; '' when none; at most 4000 characters, redacted
   started_at     TEXT NOT NULL,
   finished_at    TEXT,
   disposition_id TEXT NOT NULL

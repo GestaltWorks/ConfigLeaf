@@ -58,7 +58,7 @@
 //            finding's class, the setting's approval, the vault copies of the approved value with their
 //            latest validation and the probes of the pass on the names the object serves; approved_missing
 //            is weighed as drift_vs_approved is, against the live value "". A HOLD the rule gives meets the
-//            earliest HOLD the ledger holds on the same live value (PRIOR_HOLDS_SQL, read once per tenant
+//            latest HOLD the ledger holds on the same live value (PRIOR_HOLDS_SQL, read once per tenant
 //            with rules, decided before this pass): in force, the HOLD keeps that expiry; expired, ESCALATE.
 //            Without a governing rule the verbs and the decide line are the default's. [stoprule] Between checks the
 //            stop rule (src/stoprule.ts) may end checking early; [exposure] for a finding on a DNS record
@@ -68,19 +68,24 @@
 //            on the finding and a trace line naming the lesson; one that has lapsed re-raises the finding
 //            as ESCALATE ("exception lapsed"), whatever the checks or the policy say. The checks still run
 //            and are recorded either way. [ledger] Given a Ledger, the pass records one disposition per
-//            finding (src/ledger.ts) and, in the observe step, one referent_fingerprint per dns_name
+//            finding, keyed on its live value, its run and the pass's decided_at (src/ledger.ts, rows.ts
+//            dispositionId), and, in the observe step, one referent_fingerprint per dns_name
 //            observation of each passing host run (src/data/fingerprint.ts). One decider line per pass
 //            counts the settings a locked rule governs that have no approved value, and the verbs.
 //   judge    skipped and traced as such: model: none; [stoprule] or "verdict cannot move" when the
 //            withdraw rule says no judge call would be worth spending, or when an exception settled it.
 //
-// Measured 24 Oct 2026 on sample/bundle.json (26 policy rules, 333 approvals, 224 vault copies, two probe runs, no
-// disposition): 27 findings, HOLD 27 by policy; approved_missing over the three latest passing runs finds 0 (every
-// approved object of the 19:56 UTC runs is in the 21:21 UTC runs); the prior-HOLD read returns 0 rows; 0 locked
-// settings without an approved value; the finding, disposition and summary lines are the ones the pass printed
-// before approved_missing and the prior HOLD were read. On test/fixtures/policy-bundle.json (test/pipeline.test.ts):
-// 11 findings, ADOPT 2, HOLD 4, ESCALATE 1, ROLLBACK 3, FIX 1; blog.conf's approved_missing is ROLLBACK from its
-// copy, the HOLD in force keeps its expiry and the expired one is ESCALATE.
+// Measured 25 Oct 2026 on sample/bundle.json (19 runs, 26 policy rules, 333 approvals, 336 vault copies, three probe
+// runs, the 81 ledger rows of the live passes of 24 Oct 23:21 and 23:36 UTC and 25 Oct 01:16 UTC), decided at its
+// instant 2026-10-25T01:16:49.394Z: 27 findings, HOLD 27 by policy; approved_missing over the three latest passing runs
+// finds 0 (every approved object of the 19:56 UTC runs is in the 23:35 UTC runs); the prior-HOLD read returns 23 rows,
+// the 23:36 UTC pass's HOLD of each live value the 27 findings rest on, and every HOLD keeps the expiry carried from the
+// 23:21 UTC pass (26 at 2026-10-27T23:21:06.870Z, the proxy_split at 2026-10-25T03:21:06.870Z); 0 locked settings
+// without an approved value; the ledger writes 0 dispositions (the bundle holds the 01:16 UTC rows under the same ids)
+// and 0 referent fingerprints. On test/fixtures/policy-bundle.json
+// (test/pipeline.test.ts): 11 findings, ADOPT 2, HOLD 4, ESCALATE 1, ROLLBACK 3, FIX 1; blog.conf's approved_missing is
+// ROLLBACK from its copy, the HOLD in force keeps its expiry and the expired one is ESCALATE; passes over the same runs
+// at later instants write 11 rows each, and the first past the kept expiry records the found_but_different ESCALATE.
 
 import { createHash } from "node:crypto";
 import { defaultChecks, type FindingSummary, type RejectedCheck } from "./catalogue/select.ts";
@@ -311,7 +316,7 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     return held ? namesIn(held) : [];
   };
 
-  // [policy] The earliest HOLD of each live value of the tenant's settings decided before this pass (PRIOR_HOLDS_SQL), read once
+  // [policy] The latest HOLD of each live value of the tenant's settings decided before this pass (PRIOR_HOLDS_SQL), read once
   // per tenant with rules: a HOLD comes from a rule only. Keyed on surface, host, object, setting and live value.
   const holdsByTenant = new Map<string, Map<string, PriorHold>>();
   const holdKey = (x: { surface: string; host: string | null; object_id: string; setting_path: string; value_hash: string }): string =>
@@ -466,7 +471,7 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     const disposition: DispositionNote = { verb, reason: why, expires_at: decision.expires_at, decided_by: decision.decided_by, rule_id: decision.rule_id };
     // [ledger] one row per finding per pass, about the live value the decision is about.
     dispositions.push({
-      disposition_id: dispositionId(finding.tenant_id, finding.surface, finding.host, finding.object_id, finding.setting_path, finding.value_hash, id, finding.run_id),
+      disposition_id: dispositionId(finding.tenant_id, finding.surface, finding.host, finding.object_id, finding.setting_path, finding.value_hash, id, finding.run_id, decidedAt),
       tenant_id: finding.tenant_id, surface: finding.surface, host: finding.host, object_id: finding.object_id, setting_path: finding.setting_path,
       value_hash: finding.value_hash, ...disposition, finding_id: id, run_id: finding.run_id, decided_at: decidedAt,
     });
