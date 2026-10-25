@@ -1,10 +1,21 @@
 // The terminal view of npm run cycle, pass, act, tickets and watch: what a reader takes in at a glance. One header,
 // one row per step with its time, an indented line under the pass for each finding the agent moves on (ROLLBACK, FIX,
-// ESCALATE) and under act for each action, then one done line. The trace keeps every other fact, run ids included.
+// ESCALATE) and under act for each action, a cycle's "what happened" block, then one done line. The trace keeps every
+// other fact, run ids included.
 //
 // Contract:
-//   - Header: "drift-agent · <command> · tenant <id> · <YYYY-MM-DD HH:MM> UTC · <mode>", the mode one of "dry run",
-//     "applied", "recorded" (a pass that writes the ledger) or "watch every <n> min".
+//   - Header: "drift-agent · <command> · tenant <id> · <YYYY-MM-DD HH:MM> UTC · <mode>", the mode one of MODE's
+//     "dry run, nothing changed" and "applying changes", "recorded" (a pass that writes the ledger) or "watch every
+//     <n> min".
+//   - Finding classes read in plain words (CLASS_LABEL, one map for the screen, the document and the replay page): the
+//     pass's tally line, wrapped onto further indented lines at the width, and each finding line, the verb first, then
+//     the class's words, then the object. An action line names its kind as the ledger does (rollback_file,
+//     revert_record), then the object in plain words ("DNS record <name>", "<dir>/<file> on <host>").
+//   - What happened (whatHappened, a cycle's screen only): between the last row and the done line, at most STORY_MAX
+//     sentences of one line each, built from the pass's findings, the act step's outcomes or plan and the tickets
+//     step's operations: one per action, one for the tickets closed as resolved, one for the findings with a
+//     technician, one for the findings adopted and held; "Nothing changed on the estate" when act ran or was skipped
+//     and nothing moved. Omitted under --quiet.
 //   - Row: two spaces, the step name in 9 columns, a space, the subject in 13 columns (wider when a subject the table
 //     is given up front is longer: a redacted host alias), a space, the detail as phrases joined by " · ", and the
 //     duration to one decimal, right-aligned to the width: the terminal's columns less one, up to 120, when stdout is
@@ -27,18 +38,21 @@
 
 import type { ActResult } from "../actions/act.ts";
 import type { ActionOutcome, PlanItem } from "../actions/plan.ts";
+import type { FindingClass } from "../catalogue/templates.ts";
+import type { Action } from "../data/rows.ts";
 import type { Finding, Verb } from "../pipeline.ts";
 import type { TicketOp } from "../psa/index.ts";
 import type { TicketOutcome } from "../psa/step.ts";
 import type { HookResult } from "../vault/hook.ts";
-import type { PassStep } from "./pass.ts";
+import { dispositionIdOf, type PassStep } from "./pass.ts";
 
 export type Tone = "bold" | "strong" | "red" | "yellow" | "green" | "dim";
 export interface Span { text: string; tone: Tone }
 export type Seg = string | Span;
 /** One phrase of a detail: plain text, or text with coloured spans in it. */
 export type Phrase = Seg | readonly Seg[];
-export interface SubLine { label?: Phrase; parts: readonly Phrase[] }
+/** One line under a row; `wrap` carries its parts onto further lines at the width, each starting where the first does. */
+export interface SubLine { label?: Phrase; parts: readonly Phrase[]; wrap?: boolean }
 export interface StepView {
   /** The subject column; absent, the detail starts there. */
   subject?: string;
@@ -63,6 +77,24 @@ const INDENT = " ".repeat(2 + STEP_WIDTH + 1);
 
 /** Plain text at 90 columns, the rows and the done line. */
 export const PLAIN: PresentOptions = { color: false, width: PLAIN_WIDTH, verbose: false, quiet: false };
+
+/** The header's mode for a run that writes to the hosts and the zones, and for one that plans only. */
+export const MODE = { applied: "applying changes", dryRun: "dry run, nothing changed" } as const;
+
+/** Each finding class in plain words: the screen's tally and finding lines, the owner's document and the replay page. */
+export const CLASS_LABEL: Readonly<Record<FindingClass, string>> = {
+  proxied_without_real_ip: "proxied name, origin trusts no Cloudflare range",
+  orphan_record: "DNS record with no site behind it",
+  orphan_vhost: "site with no DNS record",
+  found_but_different: "unchanged setting, its target moved",
+  drift_vs_approved: "drifted from the approved value",
+  approved_missing: "approved setting missing",
+  changed_since_backup: "changed since the last backup",
+  proxy_split: "name and its www treated differently by the proxy",
+  dns_change: "DNS target moved",
+};
+/** A class in plain words; any other class as it is. */
+export const classLabel = (c: string): string => (CLASS_LABEL as Readonly<Record<string, string>>)[c] ?? c;
 
 /** The options for this process's stdout: colour and width from the terminal, verbose and quiet from the flags. */
 export function presentOptions(flags: { verbose?: boolean; quiet?: boolean } = {}, out: { isTTY?: boolean; columns?: number } = process.stdout, env: NodeJS.ProcessEnv = process.env): PresentOptions {
@@ -172,9 +204,25 @@ export class Table {
     const w = Math.max(view.labelWidth ?? 0, ...labels.map((l) => l?.plain.length ?? 0));
     sub.forEach((s, i) => {
       const l = labels[i];
-      out.push(`${INDENT}${l ? `${l.ansi}${" ".repeat(w - l.plain.length + 2)}` : ""}${this.join(s.parts).ansi}`);
+      const lead = `${INDENT}${l ? `${l.ansi}${" ".repeat(w - l.plain.length + 2)}` : ""}`;
+      if (!s.wrap) { out.push(`${lead}${this.join(s.parts).ansi}`); return; }
+      // the parts in order, as many to a line as the width holds, at least one
+      const at = INDENT.length + (l ? w + 2 : 0);
+      const lines: Phrase[][] = [];
+      for (const p of s.parts) {
+        const last = lines.at(-1);
+        if (last && at + this.join([...last, p]).plain.length <= this.o.width) last.push(p);
+        else lines.push([p]);
+      }
+      lines.forEach((ps, k) => out.push(`${k ? " ".repeat(at) : lead}${this.join(ps).ansi}`));
     });
     return out;
+  }
+
+  /** The cycle's "what happened" block: a heading and one sentence a line; an empty list for an empty block. */
+  story(sentences: readonly string[]): string[] {
+    if (!sentences.length) return [];
+    return [paint("what happened", "bold", this.o.color), ...sentences.map((s) => `  ${oneLine(this.clean(s))}`)];
   }
 
   skipped(step: string, subject?: string, alias = false): string {
@@ -258,12 +306,19 @@ export function findingWhere(s: Finding["finding"], withSetting: boolean): strin
   return `${tail(s.object_id)}${setting}${s.host ? ` on ${s.host}` : ""}`;
 }
 
+/** A finding's object in plain words: "DNS record <name>", or a file as its last two segments on its host; the setting in brackets when asked for. */
+export function findingObject(s: Finding["finding"], withSetting = false): string {
+  if (s.surface === "cloudflare.dns") return `DNS record ${s.dns_name || s.object_id}${withSetting && s.setting_path ? ` (${s.setting_path})` : ""}`;
+  const setting = withSetting && s.setting_path && s.setting_path !== "file" ? ` (${s.setting_path})` : "";
+  return `${tail(s.object_id)}${setting}${s.host ? ` on ${s.host}` : ""}`;
+}
+
 /** A Decider's reason in its few words: the expiry that ran out, the copy and production it weighed. */
 export function reasonClauses(reason: string): string[] {
   const held = reason.match(/hold under rule \S+ expired (\S+?);/);
-  if (held) return [`hold expired ${shortUtc(held[1])}`];
+  if (held) return [`the hold ran out at ${shortUtc(held[1])}, a technician owns it`];
   const lapsed = reason.match(/exception lapsed: \S+ expired (\S+?);/);
-  if (lapsed) return [`exception lapsed ${shortUtc(lapsed[1])}`];
+  if (lapsed) return [`the accepted exception ran out at ${shortUtc(lapsed[1])}, a technician owns it`];
   const out: string[] = [];
   if (/no valid copy/.test(reason)) out.push("no valid copy");
   const affected = reason.match(/production affected \((\d+) failing probes?/);
@@ -273,31 +328,29 @@ export function reasonClauses(reason: string): string[] {
   return out.length ? out : [clause(reason)];
 }
 
-/** One line under the pass row: ROLLBACK with what drifted and the copy it restores; FIX and ESCALATE with the class and why. */
+/** One line under the pass row, the verb first, then the class in plain words, then the object: ROLLBACK with the copy it restores; FIX and ESCALATE with why. */
 export function findingLine(f: Finding): SubLine {
   const s = f.finding;
   const r = f.disposition.reason;
-  if (f.verb !== "ROLLBACK") return { label: [verbSpan(f.verb)], parts: [`${s.class} ${findingWhere(s, false)}`, ...reasonClauses(r)] };
-  const drift = r.match(/drifted from approved ([0-9a-f]{8})/);
-  const gone = r.match(/approved ([0-9a-f]{8})[0-9a-f]* is absent from the run/);
+  if (f.verb !== "ROLLBACK") return { label: [verbSpan(f.verb)], parts: [classLabel(s.class), findingWhere(s, false), ...reasonClauses(r)] };
   const copy = r.match(/vault commit ([0-9a-f]{8}) holds the approved copy, validated (\w+) with (\d+) gaps?/);
   return {
     label: [verbSpan(f.verb)],
     parts: [
-      findingWhere(s, true),
-      drift ? `drifted from approved ${drift[1]}` : gone ? `approved ${gone[1]} absent` : s.class,
+      classLabel(s.class),
+      findingObject(s, true),
       ...(copy ? [`copy ${copy[1]} validated ${copy[2] === "ok_with_gaps" ? `ok with ${count(Number(copy[3]), "gap")}` : copy[2]}`] : []),
     ],
   };
 }
 
-/** pass: the findings by verb; under it the classes, then one line per ROLLBACK, FIX and ESCALATE. */
+/** pass: the findings by verb; under it the classes in plain words, then one line per ROLLBACK, FIX and ESCALATE. */
 export function passView(p: Pick<PassStep, "findings">): StepView {
   const fs = p.findings;
   const parts: Phrase[] = VERB_ORDER.map((v) => [v, fs.filter((f) => f.verb === v).length] as const).filter(([, n]) => n > 0).map(([v, n]) => [verbSpan(v), ` ${thousands(n)}`]);
   const sub: SubLine[] = [];
   const classes = tallyDesc(fs.map((f) => f.finding.class));
-  if (classes.length) sub.push({ parts: classes.map(([c, n]) => `${c} ${thousands(n)}`) });
+  if (classes.length) sub.push({ parts: classes.map(([c, n]) => `${classLabel(c)} ${thousands(n)}`), wrap: true });
   const moving = MOVING.flatMap((v) => fs.filter((f) => f.verb === v));
   for (const f of moving.slice(0, FINDING_LINES)) sub.push(findingLine(f));
   if (moving.length > FINDING_LINES) sub.push({ parts: [`${thousands(moving.length - FINDING_LINES)} more in the trace`] });
@@ -349,8 +402,36 @@ export function refuseClause(reason: string): string {
 
 const hashes = (before: string | null, after: string | null): string => `${before ? hex8(before) : "absent"} → ${after ? hex8(after) : "absent"}`;
 
-/** One line under the act row for an applied action. `all` gives an investigation its verb: FIX when a fix follows it on the same disposition. */
-export function outcomeLine(o: ActionOutcome, all: readonly ActionOutcome[] = [o]): SubLine {
+/** The findings of a pass and, when known, the instant it decided at: what names an action's object. */
+export type PassFindings = Pick<PassStep, "findings"> & { decidedAt?: string };
+
+/** The setting a finding is about as an action's target names it (src/actions/plan.ts targetOf). */
+const targetKey = (s: Finding["finding"]): string => `${s.surface} ${s.host ? `${s.host} ` : ""}${s.object_id} ${s.setting_path}`;
+
+/** The pass's finding an action or a plan item is for: by the disposition id the pass gave it, else by the action's target, a moving verb first. */
+export function findingFor(pass: PassFindings | undefined, dispositionId: string, target?: string): Finding | undefined {
+  if (!pass) return undefined;
+  const { findings, decidedAt } = pass;
+  const byId = decidedAt ? findings.find((f) => dispositionIdOf(f, decidedAt) === dispositionId) : undefined;
+  if (byId || target === undefined) return byId;
+  const same = findings.filter((f) => targetKey(f.finding) === target);
+  return same.find((f) => MOVING.includes(f.verb)) ?? same[0];
+}
+
+/** An action's object in plain words: its finding's, else read off its target ("<surface> [<host>] <object> <setting>"). */
+export function actionObject(a: Pick<Action, "target" | "disposition_id">, pass?: PassFindings): string {
+  const f = findingFor(pass, a.disposition_id, a.target);
+  if (f) return findingObject(f.finding);
+  const w = a.target.split(" ");
+  if (w[0] === "cloudflare.dns" && w.length >= 2) return `DNS record ${w[1]}`;
+  return w.length >= 3 ? `${tail(w[2])} on ${w[1]}` : a.target;
+}
+
+/**
+ * One line under the act row for an applied action. `all` gives an investigation its verb: FIX when a fix follows it
+ * on the same disposition. A rollback_file or revert_record names its object, from `pass` when given.
+ */
+export function outcomeLine(o: ActionOutcome, all: readonly ActionOutcome[] = [o], pass?: PassFindings): SubLine {
   const a = o.action;
   const took = seconds(Date.parse(a.finished_at ?? a.started_at) - Date.parse(a.started_at));
   const st = statusSpan(a.status);
@@ -362,11 +443,12 @@ export function outcomeLine(o: ActionOutcome, all: readonly ActionOutcome[] = [o
     return { label, parts: [[verbSpan(v)], m ? `${count(Number(m[1]), "check")}, judge ${m[2]}` : clause(o.reason), count(a.receipts.split(",").filter(Boolean).length, "receipt"), [st, ` ${took}`]] };
   }
   if (a.kind === "fix") return { label, parts: [[st], a.status === "refused" ? refuseClause(o.reason) : clause(o.reason)] };
-  if (a.status === "failed") return { label, parts: [[st], failClause(o.reason)] };
-  if (a.status === "refused") return { label, parts: [[st], refuseClause(o.reason)] };
-  const steps = a.kind === "rollback_file" ? ["nginx -t ok", "reloaded"] : [/^re-created/.test(o.reason) ? "re-created, read back equal" : "read back equal"];
+  const object = actionObject(a, pass);
+  if (a.status === "failed") return { label, parts: [object, [st], failClause(o.reason)] };
+  if (a.status === "refused") return { label, parts: [object, [st], refuseClause(o.reason)] };
+  const steps = a.kind === "rollback_file" ? ["nginx -t ok", "reloaded"] : [/^re-created/.test(o.reason) ? "re-created, provider confirms" : "provider confirms"];
   const end: Phrase[] = a.status === "done" ? [probeTally(o.record, a.verification), [st, ` ${took}`]] : [[st], a.status === "unverified" ? unverifiedWhy(o.reason) : clause(o.reason)];
-  return { label, parts: [hashes(a.before_hash, a.after_hash), ...steps, ...end] };
+  return { label, parts: [object, hashes(a.before_hash, a.after_hash), ...steps, ...end] };
 }
 
 /** What a plan item is about, from its first line. */
@@ -404,14 +486,14 @@ export function planLine(p: PlanItem, all: readonly PlanItem[] = [p]): SubLine {
   return { label: p.kind, parts: [planTarget(p), ...(commit ? [commit] : []), then] };
 }
 
-/** act: the actions done (applied) or planned (dry run), one line each. */
-export function actView(res: Pick<ActResult, "apply" | "plan" | "outcomes" | "acted">): StepView {
+/** act: the actions done (applied) or planned (dry run), one line each; `pass` names the objects of the applied ones. */
+export function actView(res: Pick<ActResult, "apply" | "plan" | "outcomes" | "acted">, pass?: PassFindings): StepView {
   const items = res.apply ? res.outcomes.length : res.plan.length;
   const already: Phrase[] = res.acted.length ? [`${count(res.acted.length, "action")} already recorded`] : [];
   if (!items) return { parts: ["nothing to do", ...already] };
   return {
     parts: [res.apply ? count(items, "action") : `${count(items, "action")} planned`, ...already],
-    sub: res.apply ? res.outcomes.map((o) => outcomeLine(o, res.outcomes)) : res.plan.map((p) => planLine(p, res.plan)),
+    sub: res.apply ? res.outcomes.map((o) => outcomeLine(o, res.outcomes, pass)) : res.plan.map((p) => planLine(p, res.plan)),
     labelWidth: "rollback_file".length,
   };
 }
@@ -453,4 +535,180 @@ export function summaryView(step: string, summary: string, subject?: string, ali
   const m = summary.match(/^([A-Za-z]+)(?::\S+(?: \S+)?)?: /);
   const lead = m && m[1].toLowerCase() === step.split(/[: ]/)[0].toLowerCase() ? m[0].length : 0;
   return { subject, alias, parts: [summary.slice(lead)] };
+}
+
+// ---- what happened ----------------------------------------------------------------------------------------------
+
+/** What the act step did (applied) or planned (dry run). */
+export type ActFacts = Pick<ActResult, "apply" | "plan" | "outcomes">;
+/** What the tickets step did or planned: its operations and their outcomes, index for index. */
+export interface TicketFacts { ops: readonly TicketOp[]; outcomes: readonly TicketOutcome[] }
+
+export interface StoryInput {
+  pass: PassFindings;
+  /** The act step's result; null when act gave none. */
+  act: ActFacts | null;
+  /** Act ran to its end or was skipped: only then can the block say that nothing changed. */
+  actSettled: boolean;
+  /** The tickets step's result; null when tickets gave none. */
+  tickets: TicketFacts | null;
+}
+
+/** The most sentences the block holds. */
+export const STORY_MAX = 5;
+
+interface Move { op: Exclude<TicketOp, { op: "skip" }>; out: TicketOutcome }
+const UNTIL = "stays open until a pass finds it at its approved value";
+const ROLLBACK_KINDS: readonly string[] = ["rollback_file", "revert_record"];
+const ADOPTED_UNDER: Readonly<Record<string, string>> = { operator: "the technician's exceptions", policy: "policy rules", default: "the default checks" };
+const list = (xs: readonly string[]): string => (xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs.at(-1)}`);
+const isAre = (n: number): string => (n === 1 ? "is" : "are");
+
+const movesOf = (t: TicketFacts | null): Move[] =>
+  t ? t.ops.flatMap((op, i) => (op.op === "skip" || !t.outcomes[i] ? [] : [{ op, out: t.outcomes[i] }])) : [];
+
+const ticketName = (m: Move): string => {
+  const ext = m.out.external_id ?? m.op.ticket.external_id;
+  return ext ? `ticket #${ext}` : "a new ticket";
+};
+
+/** Where a ticket stands, as a clause; `opened` is what follows its name once it is created. */
+function ticketState(m: Move, opened: string): string {
+  const name = ticketName(m);
+  if (m.out.status === "closed") return `${name} is closed`;
+  if (m.out.status === "synced") return `${name} is closed in the PSA`;
+  if (m.out.status === "created") return `${name} ${opened}`;
+  if (m.out.status === "commented") return `${name} carries the update`;
+  if (m.out.status === "planned") return `${name} ${m.op.op === "close" ? "is due to close" : m.op.op === "create" ? "is drafted" : "is due a comment"} (tickets dry run)`;
+  return `${name} is ${m.out.status}`;
+}
+
+/** What a rollback is about: a record or a file that drifted, or one that went missing. */
+function rollbackSubject(kind: string, f: Finding | undefined, reason = ""): string {
+  const missing = f?.finding.class === "approved_missing" || /^re-created/.test(reason);
+  if (kind === "revert_record") return missing ? "An approved DNS record went missing" : "A DNS record drifted from its approved value";
+  return missing ? "An approved vhost file went missing" : "A vhost file drifted from its approved copy";
+}
+
+/** What an investigation is about: a FIX (production affected) or an ESCALATE under a rule that investigates. */
+function investigateSubject(fix: boolean, f: Finding | undefined): string {
+  const what = f ? ` (${classLabel(f.finding.class)})` : "";
+  if (!fix) return `A finding${what} needs a technician`;
+  return f && /no valid copy/.test(f.disposition.reason) ? "An approved setting with no valid copy affected production" : `A finding${what} affected production`;
+}
+
+/** The verification probes an action's record names as ok; the verification ids when the record names none. */
+function okProbes(o: ActionOutcome): number {
+  const rows = o.record.map((l) => l.match(PROBE_LINE)).filter((m): m is RegExpMatchArray => m !== null);
+  return rows.length ? rows.filter((m) => m[3] === "ok").length : o.action.verification.split(",").filter(Boolean).length;
+}
+
+function rollbackSentence(o: ActionOutcome, f: Finding | undefined, m: Move | undefined): string {
+  const a = o.action;
+  const subject = rollbackSubject(a.kind, f, o.reason);
+  const record = a.kind === "revert_record";
+  const restored = record ? "the agent restored it from the vault copy, the provider confirmed it" : "the agent restored it, nginx reloaded";
+  const ticket = (opened: string): string => (m ? `, and ${ticketState(m, opened)}` : "");
+  if (a.status === "done") return `${subject}; ${restored}${record ? "" : `, ${count(okProbes(o), "probe")} passed`}${ticket("is open")}.`;
+  if (a.status === "unverified") return `${subject}; ${restored}, and the change could not be verified from outside${m ? `; ${ticketState(m, UNTIL)}` : ""}.`;
+  if (a.status === "failed") return `${subject}; the restore failed (${failClause(o.reason)})${ticket("is open for a technician")}.`;
+  return `${subject}; the agent left it as it is (${refuseClause(o.reason)})${ticket("is open for a technician")}.`;
+}
+
+function investigateSentence(inv: ActionOutcome, fix: boolean, f: Finding | undefined, m: Move | undefined): string {
+  const subject = investigateSubject(fix, f);
+  const s = inv.action.status;
+  const did = s === "done" ? "the agent investigated with Nemotron"
+    : s === "not_judged" ? `the agent ran its checks (${clause(inv.reason)})`
+    : `the investigation stopped (${s === "refused" ? refuseClause(inv.reason) : clause(inv.reason)})`;
+  if (!m) return `${subject}; ${did}.`;
+  if (m.out.status === "created") return `${subject}; ${did} and opened ${ticketName(m)} for a technician.`;
+  return `${subject}; ${did}, and ${ticketState(m, "is open for a technician")}.`;
+}
+
+/** A dry run's sentence for one plan item; a fix goes with its investigation. */
+function planSentence(p: PlanItem, all: readonly PlanItem[], f: Finding | undefined): string | null {
+  if (p.kind === "fix") return null;
+  const text = p.lines.join("\n");
+  const subject = p.kind === "investigate"
+    ? investigateSubject(all.some((x) => x.kind === "fix" && x.disposition_id === p.disposition_id) || /, FIX under /.test(p.lines[0] ?? ""), f)
+    : rollbackSubject(p.kind, f, /^POST /m.test(text) ? "re-created" : "");
+  if (p.refused) return `${subject}; a run with --apply leaves it as it is (${refuseClause(p.refused)}).`;
+  if (p.kind === "investigate") return `${subject}; a run with --apply investigates it with Nemotron and opens a ticket for a technician.`;
+  const from = text.match(/(?:from|at) vault commit ([0-9a-f]{8})/)?.[1];
+  return `${subject}; a run with --apply restores it from ${from ? `vault copy ${from}` : "the vault copy"}${p.kind === "rollback_file" ? " and reloads nginx" : ""}.`;
+}
+
+/** One sentence per action (an investigation and its fix are one), or per planned action in a dry run; the ticket moves they account for. */
+function actionSentences(act: ActFacts, pass: PassFindings, moves: readonly Move[]): { sentences: string[]; used: Set<Move> } {
+  const used = new Set<Move>();
+  if (!act.apply) return { sentences: act.plan.flatMap((p) => planSentence(p, act.plan, findingFor(pass, p.disposition_id)) ?? []), used };
+  const sentences: string[] = [];
+  for (const o of act.outcomes) {
+    const a = o.action;
+    const group = act.outcomes.filter((x) => x.action.disposition_id === a.disposition_id);
+    if (a.kind === "fix" && group.some((x) => x.action.kind === "investigate")) continue;
+    const f = findingFor(pass, a.disposition_id, a.target);
+    const ids = group.map((x) => x.action.action_id);
+    const m = moves.find((x) => (x.op.ticket.action_id !== null && ids.includes(x.op.ticket.action_id)) || (f !== undefined && x.op.ticket.finding_id === f.id));
+    if (m) used.add(m);
+    if (ROLLBACK_KINDS.includes(a.kind)) sentences.push(rollbackSentence(o, f, m));
+    else if (a.kind === "investigate") sentences.push(investigateSentence(o, group.some((x) => x.action.kind === "fix"), f, m));
+    else sentences.push(`The agent's ${a.kind} is ${a.status.replace(/_/g, " ")} (${clause(o.reason)}).`);
+  }
+  return { sentences, used };
+}
+
+/** The tickets of earlier actions and holds the step closes because the pass finds their settings at their approved values. */
+function resolvedSentence(moves: readonly Move[]): string | null {
+  const rs = moves.filter((m) => m.op.op === "close" && / is resolved in the pass/.test(m.op.reason) && ["closed", "synced", "planned"].includes(m.out.status));
+  if (!rs.length) return null;
+  const one = rs.length === 1;
+  const kinds = [...new Set(rs.map((m) => (m.op.ticket.type === "change" ? "rollback" : "hold")))];
+  const planned = rs.every((m) => m.out.status === "planned");
+  const refs = list(rs.map((m) => `#${m.out.external_id ?? m.op.ticket.external_id}`));
+  const from = one ? `an earlier ${kinds[0]}` : `earlier ${list(kinds.map((k) => `${k}s`))}`;
+  const state = planned ? `${isAre(rs.length)} due to close` : `${isAre(rs.length)} closed`;
+  const why = one ? "the setting holds its approved value" : "their settings hold their approved values";
+  return `${one ? "Ticket" : "Tickets"} ${refs} from ${from} ${state}: ${why}${planned ? " (tickets dry run)" : ""}.`;
+}
+
+/** The pass's ESCALATE findings: the ones a technician owns. */
+function escalationSentence(fs: readonly Finding[]): string | null {
+  const esc = fs.filter((f) => f.verb === "ESCALATE");
+  if (!esc.length) return null;
+  if (esc.length === 1) return `1 finding is with a technician: ${classLabel(esc[0].finding.class)} at ${findingWhere(esc[0].finding, false)}.`;
+  return `${count(esc.length, "finding")} are with a technician: ${tallyDesc(esc.map((f) => classLabel(f.finding.class))).map(([l, n]) => `${l} (${thousands(n)})`).join("; ")}.`;
+}
+
+/** The pass's ADOPT and HOLD findings: what stands as it is. */
+function standingSentence(fs: readonly Finding[]): string | null {
+  const adopt = fs.filter((f) => f.verb === "ADOPT");
+  const hold = fs.filter((f) => f.verb === "HOLD");
+  const parts: string[] = [];
+  if (adopt.length) {
+    const under = tallyDesc(adopt.map((f) => ADOPTED_UNDER[f.disposition.decided_by] ?? f.disposition.decided_by));
+    const lead = `${count(adopt.length, "finding")} ${isAre(adopt.length)} adopted`;
+    parts.push(under.length === 1 ? `${lead} under ${under[0][0]}` : `${lead}, ${list(under.map(([w, n]) => `${thousands(n)} under ${w}`))}`);
+  }
+  if (hold.length) parts.push(`${adopt.length ? thousands(hold.length) : count(hold.length, "finding")} ${isAre(hold.length)} held with an expiry`);
+  return parts.length ? `${parts.join("; ")}.` : null;
+}
+
+/**
+ * The cycle's "what happened" block, sentence by sentence, from the step results and nothing else: the actions (or
+ * "Nothing changed on the estate" when act settled and neither act nor tickets moved), the tickets closed as
+ * resolved, the findings with a technician, the findings adopted and held. At most STORY_MAX sentences: past it, the
+ * last action sentence counts the rest.
+ */
+export function whatHappened(i: StoryInput): string[] {
+  const fs = i.pass.findings;
+  const moves = movesOf(i.tickets);
+  const acted = i.act ? actionSentences(i.act, i.pass, moves) : { sentences: [], used: new Set<Move>() };
+  const rest = [resolvedSentence(moves.filter((m) => !acted.used.has(m))), escalationSentence(fs), standingSentence(fs)].filter((s): s is string => s !== null);
+  const nothing = fs.length ? "Nothing changed on the estate; every finding stands as before." : "Nothing changed on the estate; the pass found every setting in order.";
+  const lead = acted.sentences.length || moves.length || !i.actSettled ? acted.sentences : [nothing];
+  const room = STORY_MAX - rest.length;
+  const more = lead.length - room + 1;
+  return [...(lead.length > room ? [...lead.slice(0, room - 1), `${count(more, "more action")} ${isAre(more)} listed under act.`] : lead), ...rest];
 }

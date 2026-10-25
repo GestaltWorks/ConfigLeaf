@@ -31,7 +31,7 @@ import { DriftWorld } from "../src/engine/world.ts";
 import { MemoryLedger } from "../src/ledger.ts";
 import { runPass } from "../src/pipeline.ts";
 import { TENANT } from "../src/policy/schema.ts";
-import { Table, presentOptions, ticketsView } from "../src/loop/present.ts";
+import { MODE, Table, presentOptions, ticketsView } from "../src/loop/present.ts";
 import { labelledRows } from "../src/loop/steps.ts";
 import { FileTracer, LabelTracer } from "../src/loop/trace.ts";
 import { GithubIssues } from "../src/psa/github.ts";
@@ -81,7 +81,7 @@ const table = new Table(present, (s) => labels.text(redact(s)));
 const opLines: string[] = [];
 const print = (l: string): void => { if (present.verbose) opLines.push(labels.text(l)); };
 const t0 = Date.now();
-console.log(table.header({ command: "tickets", tenant, at: new Date(t0), mode: dryRun ? (config.sampleMode ? `dry run over ${args.bundle ?? "sample/bundle.json"}` : "dry run") : "applied" }));
+console.log(table.header({ command: "tickets", tenant, at: new Date(t0), mode: dryRun ? (config.sampleMode ? `dry run over ${args.bundle ?? "sample/bundle.json"}` : MODE.dryRun) : MODE.applied }));
 
 let store: Store | undefined;
 let engine: SqlJsEngine | undefined;

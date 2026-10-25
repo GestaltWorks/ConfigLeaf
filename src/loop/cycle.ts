@@ -13,7 +13,9 @@
 //     document.
 //   - The screen is the table of src/loop/present.ts: the header, then as each step ends its row (and the lines under
 //     it) from the step's view, its summary when it gives none; a skipped step's row says so, a failing step's row is
-//     red with its reason and the rows end there; the done line names the trace. --verbose prints
+//     red with its reason and the rows end there; once the pass has run, the "what happened" block (present.ts
+//     whatHappened, from the pass's findings and the act and tickets steps' results) comes before the done line; the
+//     done line names the trace. The header's mode is present.ts MODE's, applied or dry run. --verbose prints
 //     after each step's rows its full line, "cycle: [i/n] <step> <status> in <s> s: <summary>", and after the done
 //     line the CYCLE summary line; --quiet prints the header and the done line only. A collect:linux row's subject
 //     is the alias as given (a LINUX_HOSTS key, as the step's name carries it); every other text passes `scrub`.
@@ -27,7 +29,7 @@
 import { redact } from "../config.ts";
 import type { Tracer } from "../trace.ts";
 import type { PassStep } from "./pass.ts";
-import { PLAIN, Table, passView, summaryView, type PresentOptions, type StepView } from "./present.ts";
+import { MODE, PLAIN, Table, passView, summaryView, whatHappened, type ActFacts, type PresentOptions, type StepView, type TicketFacts } from "./present.ts";
 
 export const SKIPPABLE = ["collect", "probe", "validate", "act", "tickets", "document"] as const;
 export type Skippable = (typeof SKIPPABLE)[number];
@@ -51,6 +53,10 @@ export interface StepReport {
   detail?: string[];
   /** The step's row on the screen (src/loop/present.ts); absent, the row carries the summary. */
   view?: StepView;
+  /** act: what the Actor did or planned, for the "what happened" block. */
+  act?: ActFacts;
+  /** tickets: the ticket step's operations and outcomes, for the "what happened" block. */
+  tickets?: TicketFacts;
 }
 
 /** One vault commit a collect step made this cycle. */
@@ -86,7 +92,7 @@ export interface CycleIO {
   scrub?: (s: string) => string;
   /** Colour, width, verbose, quiet; plain at 90 columns when absent. */
   present?: PresentOptions;
-  /** The header's command and mode; "cycle" and "dry run" or "applied" when absent. */
+  /** The header's command and mode; "cycle" and MODE's dry run or applied when absent. */
   header?: { command?: string; mode?: string };
   /** The trace file the done line names. */
   trace?: string;
@@ -128,7 +134,7 @@ export async function runCycle(opts: CycleOptions, steps: CycleSteps, io: CycleI
   const lines: StepLine[] = [];
   let stopped = null as CycleResult["stopped"];
   const t0 = clock();
-  print(table.header({ command: io.header?.command ?? "cycle", tenant: opts.tenant, at: new Date(t0), mode: io.header?.mode ?? (opts.apply ? "applied" : "dry run") }));
+  print(table.header({ command: io.header?.command ?? "cycle", tenant: opts.tenant, at: new Date(t0), mode: io.header?.mode ?? (opts.apply ? MODE.applied : MODE.dryRun) }));
 
   const show = (step: string, status: StepStatus, summary: string, ms: number, view?: StepView): void => {
     if (present.quiet) return;
@@ -196,8 +202,14 @@ export async function runCycle(opts: CycleOptions, steps: CycleSteps, io: CycleI
     return r.ok && !r.pass ? { ...r, ok: false, reason: "the pass step returned no result" } : r;
   });
   const pass = passed?.pass ?? null;
-  for (const [name, fn] of [["act", steps.act], ["tickets", steps.tickets], ["document", steps.document]] as const) {
-    await step(name, name, () => fn.call(steps, pass!));
+  const acted = await step("act", "act", () => steps.act(pass!));
+  const ticketed = await step("tickets", "tickets", () => steps.tickets(pass!));
+  await step("document", "document", () => steps.document(pass!));
+
+  if (pass && !present.quiet) {
+    const act = lines.find((l) => l.step === "act")?.status;
+    const story = whatHappened({ pass, act: acted?.act ?? null, actSettled: act === "ok" || act === "skipped", tickets: ticketed?.tickets ?? null });
+    for (const l of table.story(story)) print(l);
   }
 
   const ms = clock() - t0;

@@ -1,16 +1,19 @@
 // The terminal view (src/loop/present.ts) over fixed step results: the columns and the time at the width, thousands,
-// colour on a TTY and off under NO_COLOR, the finding lines for each verb, the action lines for each status, the
-// ticket lines, a failing row and the done lines, the redactor over every text, and --verbose through runCycle.
+// colour on a TTY and off under NO_COLOR, the classes in plain words and the tally wrapped at the width, the finding
+// lines for each verb, the action lines for each status, the ticket lines, a failing row and the done lines, the
+// redactor over every text, the "what happened" sentences for each case, and --verbose and --quiet through runCycle.
 // Offline and deterministic: every result is built here, with fixture names only.
 import { describe, expect, it } from "vitest";
 import type { ActionOutcome, PlanItem } from "../src/actions/plan.ts";
+import { FINDING_CLASSES } from "../src/catalogue/templates.ts";
 import type { Action, ActionKind, ActionStatus, Ticket } from "../src/data/rows.ts";
 import { runCycle, type CycleSteps, type StepReport } from "../src/loop/cycle.ts";
 import {
-  FINDING_LINES, PLAIN, Table, actView, clause, cloudflareView, count, documentView, findingLine, hex8, linuxView, passView, presentOptions, probeView,
-  seconds, shortUtc, thousands, ticketsView, utcMinute, validateView, withoutRunIds, type PresentOptions,
+  CLASS_LABEL, FINDING_LINES, MODE, PLAIN, STORY_MAX, Table, actView, classLabel, clause, cloudflareView, count, documentView, findingLine, hex8, linuxView,
+  passView, presentOptions, probeView, seconds, shortUtc, thousands, ticketsView, utcMinute, validateView, whatHappened, withoutRunIds, type PresentOptions,
+  type StoryInput, type TicketFacts,
 } from "../src/loop/present.ts";
-import type { PassStep } from "../src/loop/pass.ts";
+import { dispositionIdOf, type PassStep } from "../src/loop/pass.ts";
 import type { Finding, Verb } from "../src/pipeline.ts";
 import type { TicketOp } from "../src/psa/index.ts";
 import type { TicketOutcome } from "../src/psa/step.ts";
@@ -80,10 +83,13 @@ describe("presentOptions", () => {
 
 // ---- a clean dry run, step by step ----------------------------------------------------------------------------
 
+/** The finding under another id, decided by another hand. */
+const as = (f: Finding, id: string, decidedBy: Finding["disposition"]["decided_by"] = f.disposition.decided_by): Finding => ({ ...f, id, disposition: { ...f.disposition, decided_by: decidedBy } });
+
 const escalate = finding("ESCALATE", "proxy_split", "hold under rule rule-1 expired 2026-10-25T03:21:06.870Z; the finding stands");
 const cleanPass = {
   findings: [
-    ...Array.from({ length: 20 }, () => finding("ADOPT", "proxied_without_real_ip", "accepted exception lesson-1 holds until 2026-11-01T00:00:00.000Z")),
+    ...Array.from({ length: 20 }, () => as(finding("ADOPT", "proxied_without_real_ip", "accepted exception lesson-1 holds until 2026-11-01T00:00:00.000Z"), "fnd-0000000000000001", "operator")),
     ...Array.from({ length: 3 }, () => finding("HOLD", "orphan_record", "rule rule-2 (low) holds this orphan_record finding until 2026-10-26T00:00:00.000Z")),
     ...Array.from({ length: 3 }, () => finding("ADOPT", "orphan_vhost", "rule rule-3 (low) adopts this orphan_vhost finding", NGINX)),
     escalate,
@@ -104,7 +110,7 @@ describe("the table over a clean dry run", () => {
 
   it("prints the header, one row per step in its columns with its time at column 90, and the done line", () => {
     const screen = [
-      t.header({ command: "cycle", tenant: "client-1", at: new Date("2026-10-25T15:38:05.430Z"), mode: "dry run" }),
+      t.header({ command: "cycle", tenant: "client-1", at: new Date("2026-10-25T15:38:05.430Z"), mode: MODE.dryRun }),
       ...t.row("collect", cloudflareView({ records: 58, zones: 6, audit: 1036, hook: committed("0a1b2c3d4e5f60718293a4b5c6d7e8f901234567") }), 5756),
       ...t.row("collect", linuxView("fixture-host", { files: 24, blocks: 46, settings: 761, hook: committed("1a2b3c4d5e6f") }), 3259),
       ...t.row("probe", probeView({ names: 37, rows: probes }), 9815),
@@ -116,14 +122,16 @@ describe("the table over a clean dry run", () => {
       t.done({ ms: 112711, steps: 9, trace: "logs/cycle_test.jsonl" }),
     ];
     expect(screen).toEqual([
-      "drift-agent · cycle · tenant client-1 · 2026-10-25 15:38 UTC · dry run",
+      "drift-agent · cycle · tenant client-1 · 2026-10-25 15:38 UTC · dry run, nothing changed",
       at("  collect   cloudflare    58 records in 6 zones · audit 1,036 rows · vault 0a1b2c3d", "5.8 s"),
       at("  collect   fixture-host  24 files · 46 blocks · 761 settings · vault 1a2b3c4d", "3.3 s"),
       at("  probe     37 names      http 27 ok · dns 34 ok · tls 30 ok · 20 failing", "9.8 s"),
       at("  validate  3 copies      nginx-t ok with gaps ×2 · cf-schema 42 ok, 16 with gaps", "3.5 s"),
       at("  pass      27 findings   ADOPT 23 · HOLD 3 · ESCALATE 1", "68.6 s"),
-      "            proxied_without_real_ip 20 · orphan_record 3 · orphan_vhost 3 · proxy_split 1",
-      "            ESCALATE  proxy_split www.example.invalid · hold expired 25 Oct 03:21 UTC",
+      "            proxied name, origin trusts no Cloudflare range 20",
+      "            DNS record with no site behind it 3 · site with no DNS record 3",
+      "            name and its www treated differently by the proxy 1",
+      "            ESCALATE  name and its www treated differently by the proxy · www.example.invalid · the hold ran out at 25 Oct 03:21 UTC, a technician owns it",
       at("  act       nothing to do", "0.4 s"),
       at("  tickets   nothing to send · 1 open", "1.1 s"),
       at("  document  document.md · 181 lines", "16.9 s"),
@@ -150,6 +158,60 @@ describe("the table over a clean dry run", () => {
     expect(t.row("validate", validateView(null), 0)[0]).toBe(at("  validate  no new vault commit · nothing validated", "0.0 s"));
     expect(t.row("validate", validateView({ heads: 3, nginx: ["ok", "fail"], rows: [{ validator: "cf-schema", result: "fail" }], errors: 1 }), 0)[0])
       .toBe(at("  validate  3 copies      nginx-t ok, fail · cf-schema 1 fail · 1 repository not validated", "0.0 s"));
+  });
+});
+
+// ---- the classes in plain words -------------------------------------------------------------------------------
+
+describe("the classes in plain words", () => {
+  it("holds one label for every class the pass raises, and keeps a class it does not know as it is", () => {
+    expect(Object.keys(CLASS_LABEL).sort()).toEqual([...FINDING_CLASSES].sort());
+    expect(CLASS_LABEL).toEqual({
+      proxied_without_real_ip: "proxied name, origin trusts no Cloudflare range",
+      orphan_record: "DNS record with no site behind it",
+      orphan_vhost: "site with no DNS record",
+      found_but_different: "unchanged setting, its target moved",
+      drift_vs_approved: "drifted from the approved value",
+      approved_missing: "approved setting missing",
+      changed_since_backup: "changed since the last backup",
+      proxy_split: "name and its www treated differently by the proxy",
+      dns_change: "DNS target moved",
+    });
+    expect(classLabel("some_new_class")).toBe("some_new_class");
+  });
+
+  // the classes of the measured screen of 25 Oct 2026 16:49 UTC, in the tally's order: by count, then by class
+  const measured = {
+    findings: [
+      ...Array.from({ length: 20 }, () => finding("ADOPT", "proxied_without_real_ip", "")), ...Array.from({ length: 3 }, () => finding("HOLD", "orphan_record", "")),
+      ...Array.from({ length: 3 }, () => finding("ADOPT", "orphan_vhost", "", NGINX)), ...Array.from({ length: 2 }, () => finding("HOLD", "found_but_different", "")),
+      finding("ROLLBACK", "drift_vs_approved", ""), escalate,
+    ],
+  };
+
+  it("wraps the tally onto further lines in the subject's column at the width, the parts in order, each line within it", () => {
+    const parts = [
+      "proxied name, origin trusts no Cloudflare range 20", "DNS record with no site behind it 3", "site with no DNS record 3",
+      "unchanged setting, its target moved 2", "drifted from the approved value 1", "name and its www treated differently by the proxy 1",
+    ];
+    const tally = (width: number): string[] => new Table({ ...PLAIN, width }).row("pass", passView(measured), null).slice(1, -2);
+    expect(tally(120)).toEqual([
+      "            proxied name, origin trusts no Cloudflare range 20 · DNS record with no site behind it 3",
+      "            site with no DNS record 3 · unchanged setting, its target moved 2 · drifted from the approved value 1",
+      "            name and its www treated differently by the proxy 1",
+    ]);
+    expect(tally(90)).toEqual([
+      "            proxied name, origin trusts no Cloudflare range 20",
+      "            DNS record with no site behind it 3 · site with no DNS record 3",
+      "            unchanged setting, its target moved 2 · drifted from the approved value 1",
+      "            name and its www treated differently by the proxy 1",
+    ]);
+    for (const w of [90, 120]) {
+      expect(tally(w).every((l) => l.length <= w && l.startsWith(" ".repeat(12)) && l[12] !== " ")).toBe(true);
+      expect(tally(w).map((l) => l.trim()).join(" · ")).toBe(parts.join(" · "));
+    }
+    // one line when it fits
+    expect(new Table({ ...PLAIN, width: 300 }).row("pass", passView(measured), null)[1]).toBe(`            ${parts.join(" · ")}`);
   });
 });
 
@@ -185,35 +247,35 @@ describe("the finding lines under the pass row", () => {
   const t = new Table(PLAIN);
   const line = (f: Finding): string => t.row("pass", { parts: [], sub: [findingLine(f)], labelWidth: 8 }, null)[1];
 
-  it("a ROLLBACK names the object, what drifted and the copy it restores", () => {
+  it("a ROLLBACK names, after the verb, what drifted in plain words, the object and the copy it restores", () => {
     expect(line(finding("ROLLBACK", "drift_vs_approved", "live value drifted from approved 3f565467a831; vault commit 5dde7698 holds the approved copy, validated ok with 0 gaps, so rule rule-1 rolls it back to that copy", NGINX)))
-      .toBe("            ROLLBACK  conf.d/word-aaaaaa.conf on host-aaaaaa · drifted from approved 3f565467 · copy 5dde7698 validated ok");
+      .toBe("            ROLLBACK  drifted from the approved value · conf.d/word-aaaaaa.conf on host-aaaaaa · copy 5dde7698 validated ok");
     expect(line(finding("ROLLBACK", "approved_missing", "approved 0123456789ab is absent from the run; vault commit 89abcdef holds the approved copy, validated ok_with_gaps with 16 gaps, so rule rule-1 restores it from that copy", NGINX)))
-      .toBe("            ROLLBACK  conf.d/word-aaaaaa.conf on host-aaaaaa · approved 01234567 absent · copy 89abcdef validated ok with 16 gaps");
+      .toBe("            ROLLBACK  approved setting missing · conf.d/word-aaaaaa.conf on host-aaaaaa · copy 89abcdef validated ok with 16 gaps");
     expect(line(finding("ROLLBACK", "drift_vs_approved", "live value drifted from approved ad2e4ad71240; vault commit 0a1b2c3d holds the approved copy, validated ok with 0 gaps, so rule rule-1 rolls it back to that copy", { setting_path: "content", dns_name: "mail.example.invalid" })))
-      .toBe("            ROLLBACK  mail.example.invalid content · drifted from approved ad2e4ad7 · copy 0a1b2c3d validated ok");
+      .toBe("            ROLLBACK  drifted from the approved value · DNS record mail.example.invalid (content) · copy 0a1b2c3d validated ok");
   });
 
-  it("a FIX and an ESCALATE name the class, the object and why in a few words", () => {
+  it("a FIX and an ESCALATE name the class in plain words, the object and why in a few words", () => {
     expect(line(finding("FIX", "drift_vs_approved", "live value drifted from approved 3f565467a831 with no valid copy (1 copy in the vault, latest validation fail) and production affected (2 failing probes in run-0000000000000002: http a.example.invalid, tls a.example.invalid), so rule rule-1 investigates, fixes where allowed, documents and opens a ticket", NGINX)))
-      .toBe("            FIX       drift_vs_approved conf.d/word-aaaaaa.conf on host-aaaaaa · no valid copy · production affected, 2 failing probes");
-    expect(line(escalate)).toBe("            ESCALATE  proxy_split www.example.invalid · hold expired 25 Oct 03:21 UTC");
+      .toBe("            FIX       drifted from the approved value · conf.d/word-aaaaaa.conf on host-aaaaaa · no valid copy · production affected, 2 failing probes");
+    expect(line(escalate)).toBe("            ESCALATE  name and its www treated differently by the proxy · www.example.invalid · the hold ran out at 25 Oct 03:21 UTC, a technician owns it");
     expect(line(finding("ESCALATE", "drift_vs_approved", "live value drifted from approved 3f565467a831 with no valid copy (none in the vault) and no probe run in this pass, so production is unknown and rule rule-1 sends it to a technician", NGINX)))
-      .toBe("            ESCALATE  drift_vs_approved conf.d/word-aaaaaa.conf on host-aaaaaa · no valid copy · production unknown");
+      .toBe("            ESCALATE  drifted from the approved value · conf.d/word-aaaaaa.conf on host-aaaaaa · no valid copy · production unknown");
     expect(line(finding("ESCALATE", "orphan_record", "exception lapsed: lesson-1 expired 2026-10-20T00:00:00.000Z; re-raised to the technician, the checks alone would say ADOPT")))
-      .toBe("            ESCALATE  orphan_record www.example.invalid · exception lapsed 20 Oct 00:00 UTC");
+      .toBe("            ESCALATE  DNS record with no site behind it · www.example.invalid · the accepted exception ran out at 20 Oct 00:00 UTC, a technician owns it");
     expect(line(finding("ESCALATE", "orphan_record", "2 of 3 checks fail; the default policy escalates")))
-      .toBe("            ESCALATE  orphan_record www.example.invalid · 2 of 3 checks fail");
+      .toBe("            ESCALATE  DNS record with no site behind it · www.example.invalid · 2 of 3 checks fail");
   });
 
   it("ADOPT and HOLD stay in the counts; the lines run ROLLBACK, FIX, ESCALATE, the labels padded alike, and past the cap one line counts the rest", () => {
     const view = passView({ findings: [escalate, finding("ADOPT", "orphan_vhost", ""), finding("HOLD", "orphan_record", ""), finding("FIX", "orphan_vhost", "rule rule-4 investigates this orphan_vhost finding with production affected (1 failing probe in run-x: http a), and fixes where allowed", NGINX), finding("ROLLBACK", "drift_vs_approved", "", NGINX)] });
     const rows = t.row("pass", view, null);
     expect(rows[0]).toBe("  pass      5 findings    ROLLBACK 1 · FIX 1 · ADOPT 1 · HOLD 1 · ESCALATE 1");
-    expect(rows.slice(2).map((l) => l.slice(12, 22))).toEqual(["ROLLBACK  ", "FIX       ", "ESCALATE  "]);
+    expect(rows.slice(-3).map((l) => l.slice(12, 22))).toEqual(["ROLLBACK  ", "FIX       ", "ESCALATE  "]);
     expect(rows.join("\n")).not.toMatch(/ADOPT  |HOLD  /);
     // the label column stays put when the longest verb is absent
-    expect(t.row("pass", passView({ findings: [escalate] }), null)[2]).toBe("            ESCALATE  proxy_split www.example.invalid · hold expired 25 Oct 03:21 UTC");
+    expect(t.row("pass", passView({ findings: [escalate] }), null)[2]).toBe("            ESCALATE  name and its www treated differently by the proxy · www.example.invalid · the hold ran out at 25 Oct 03:21 UTC, a technician owns it");
     expect(t.row("act", actView({ apply: true, plan: [], acted: [], outcomes: [outcome("fix", "refused", "no fix is allowed without a valid copy")] }), null)[1])
       .toBe("            fix            refused · no fix is allowed without a valid copy");
     const many = passView({ findings: Array.from({ length: FINDING_LINES + 3 }, () => escalate) });
@@ -240,31 +302,37 @@ describe("the action lines under the act row", () => {
     const rows = t.row("act", actView({ apply: true, plan: [], outcomes: [done, unverified, failed, probesFail, refused], acted: [] }), 9000);
     expect(rows).toEqual([
       at("  act       5 actions", "9.0 s"),
-      "            rollback_file  4de29277 → 3f565467 · nginx -t ok · reloaded · 3 probes ok, cf-ray present · done 2.3 s",
-      "            rollback_file  4de29277 → 3f565467 · nginx -t ok · reloaded · unverified · no probe knew its names",
-      "            rollback_file  failed · nginx -t refused the copy",
-      "            rollback_file  failed · 1 of 2 probes fail",
-      "            rollback_file  refused · changed since the decision",
+      "            rollback_file  conf.d/word-aaaaaa.conf on host-aaaaaa · 4de29277 → 3f565467 · nginx -t ok · reloaded · 3 probes ok, cf-ray present · done 2.3 s",
+      "            rollback_file  conf.d/word-aaaaaa.conf on host-aaaaaa · 4de29277 → 3f565467 · nginx -t ok · reloaded · unverified · no probe knew its names",
+      "            rollback_file  conf.d/word-aaaaaa.conf on host-aaaaaa · failed · nginx -t refused the copy",
+      "            rollback_file  conf.d/word-aaaaaa.conf on host-aaaaaa · failed · 1 of 2 probes fail",
+      "            rollback_file  conf.d/word-aaaaaa.conf on host-aaaaaa · refused · changed since the decision",
     ]);
   });
 
-  it("a record revert, an investigation with its verb, and the fix it refuses", () => {
+  it("a record revert names its record from the pass (its target without one), the provider's confirmation; an investigation its verb, and the fix it refuses", () => {
+    const RECORD = "cloudflare.dns rec-0001 content";
+    const pass = { findings: [finding("ROLLBACK", "drift_vs_approved", "", { setting_path: "content", dns_name: "mail.example.invalid" })] };
     const revert = outcome("revert_record", "done", "reverted to the approved copy at vault commit 0a1b2c3d; the record read back equals the copy field by field", {
-      before_hash: "sha256:b2e7a764f9c0", after_hash: "sha256:ad2e4ad71240", verification: "probe-4", ms: 1200,
+      target: RECORD, before_hash: "sha256:b2e7a764f9c0", after_hash: "sha256:ad2e4ad71240", verification: "probe-4", ms: 1200,
       record: ["probe probe-4: dns mail.example.invalid ok (status 200); resolvers answer from cache until the TTL (3600 s) passes"],
     });
-    const revertUnverified = outcome("revert_record", "unverified", "reverted to the approved copy at vault commit 0a1b2c3d; the record read back equals the copy field by field; no dns probe of mail.example.invalid ran (the account holds no A, AAAA or CNAME record of this name)", { before_hash: "sha256:b2e7a764f9c0", after_hash: "sha256:ad2e4ad71240" });
+    const revertUnverified = outcome("revert_record", "unverified", "reverted to the approved copy at vault commit 0a1b2c3d; the record read back equals the copy field by field; no dns probe of mail.example.invalid ran (the account holds no A, AAAA or CNAME record of this name)", { target: RECORD, before_hash: "sha256:b2e7a764f9c0", after_hash: "sha256:ad2e4ad71240" });
+    const recreated = outcome("revert_record", "done", "re-created to the approved copy at vault commit 0a1b2c3d; the record read back equals the copy field by field", { target: RECORD, after_hash: "sha256:ad2e4ad71240", verification: "probe-5", ms: 900 });
     const inv = outcome("investigate", "done", "investigated: 4 checks ran (3 hold, 1 fail); the judge's verdict counted: stands", { receipts: "rcpt_a,rcpt_b", ms: 87_000 });
     const fix = outcome("fix", "refused", "no fix is allowed without a valid copy; investigated and ticketed");
     const lone = outcome("investigate", "not_judged", "no model is configured, so no verdict was asked for", { disposition_id: "dsp-2" });
-    const rows = t.row("act", actView({ apply: true, plan: [], outcomes: [revert, revertUnverified, inv, fix, lone], acted: [] }), null);
+    const rows = t.row("act", actView({ apply: true, plan: [], outcomes: [revert, revertUnverified, recreated, inv, fix, lone], acted: [] }, pass), null);
     expect(rows.slice(1)).toEqual([
-      "            revert_record  b2e7a764 → ad2e4ad7 · read back equal · 1 probe ok · done 1.2 s",
-      "            revert_record  b2e7a764 → ad2e4ad7 · read back equal · unverified · no probe knew its name",
+      "            revert_record  DNS record mail.example.invalid · b2e7a764 → ad2e4ad7 · provider confirms · 1 probe ok · done 1.2 s",
+      "            revert_record  DNS record mail.example.invalid · b2e7a764 → ad2e4ad7 · provider confirms · unverified · no probe knew its name",
+      "            revert_record  DNS record mail.example.invalid · absent → ad2e4ad7 · re-created, provider confirms · 1 probe ok · done 0.9 s",
       "            investigate    FIX · 4 checks, judge stands · 2 receipts · done 87.0 s",
       "            fix            refused · no fix is allowed without a valid copy",
       "            investigate    ESCALATE · not judged · no model is configured, so no verdict was asked for",
     ]);
+    expect(t.row("act", actView({ apply: true, plan: [], outcomes: [revert], acted: [] }), null)[1])
+      .toBe("            revert_record  DNS record rec-0001 · b2e7a764 → ad2e4ad7 · provider confirms · 1 probe ok · done 1.2 s");
   });
 
   it("colours each status: done green, failed red, unverified and not judged yellow, refused dim", () => {
@@ -374,10 +442,157 @@ describe("a failing step and the done lines", () => {
   });
 });
 
+// ---- what happened --------------------------------------------------------------------------------------------------
+
+describe("the what-happened block", () => {
+  const story = (o: Pick<StoryInput, "pass"> & Partial<StoryInput>): string[] => whatHappened({ act: null, actSettled: true, tickets: null, ...o });
+  const applied = (...outcomes: ActionOutcome[]): StoryInput["act"] => ({ apply: true, plan: [], outcomes });
+  const ticket = (type: Ticket["type"], ext: string | null, over: Partial<Ticket> = {}): Ticket => ({
+    ticket_id: "tkt-1", tenant_id: "t1", psa: "github", external_id: ext, url: null, type, priority: "P1", status: "open", action_id: null, finding_id: "fnd-x", created_at: "", updated_at: "", ...over,
+  });
+  const create = (t: Ticket): TicketOp => ({ op: "create", ticket: t, draft: { title: "x", labels: [], body: "" }, existing: false, close: null, note: null, reason: "r" });
+  const close = (t: Ticket, reason: string): TicketOp => ({ op: "close", ticket: t, body: "", reason });
+  const out = (op: TicketOp["op"], status: TicketOutcome["status"], ext: string | null): TicketOutcome => ({ op, ticket_id: "tkt-1", external_id: ext, status, line: "" });
+  const skip: [TicketOp, TicketOutcome] = [{ op: "skip", finding_id: "fnd-1", reason: "ADOPT opens no ticket" }, out("skip", "skipped", null)];
+  const tickets = (...pairs: [TicketOp, TicketOutcome][]): TicketFacts => ({ ops: pairs.map(([op]) => op), outcomes: pairs.map(([, o]) => o) });
+  const resolved = (ext: string, type: Ticket["type"] = "change"): TicketOp => close(ticket(type, ext, { ticket_id: `tkt-${ext}`, finding_id: `fnd-old-${ext}` }), `finding fnd-old-${ext} is resolved in the pass over run-a, run-b`);
+  const okProbe = (n: number): string => `probe probe-${n}: http www.example.invalid ok (status 200 server=cloudflare cf-ray present)`;
+
+  const RECORD = "cloudflare.dns rec-0001 content";
+  const recordDrift = as(finding("ROLLBACK", "drift_vs_approved", "live value drifted from approved 9291bd74aaaa; vault commit 5ef406fc holds the approved copy, validated ok with 0 gaps, so rule rule-1 rolls it back to that copy", { setting_path: "content", dns_name: "mail.example.invalid" }), "fnd-0000000000000002");
+  const fileDrift = as(finding("ROLLBACK", "drift_vs_approved", "live value drifted from approved 3f565467a831; vault commit 5dde7698 holds the approved copy, validated ok with 0 gaps, so rule rule-1 rolls it back to that copy", NGINX), "fnd-0000000000000004");
+  const revertDone = outcome("revert_record", "done", "reverted to the approved copy at vault commit 5ef406fc; the record read back equals the copy field by field", {
+    action_id: "act-revert", target: RECORD, before_hash: "sha256:8faef4a3", after_hash: "sha256:9291bd74", verification: "probe-1", ms: 2600,
+  });
+
+  it("the measured cycle of 25 Oct 2026 16:49 UTC: a revert done and closed, a ticket resolved, an escalation, the findings that stand", () => {
+    const pass = {
+      findings: [
+        ...Array.from({ length: 20 }, () => as(finding("ADOPT", "proxied_without_real_ip", ""), "fnd-1", "operator")),
+        ...Array.from({ length: 3 }, () => as(finding("ADOPT", "orphan_vhost", "", NGINX), "fnd-1", "operator")),
+        ...Array.from({ length: 3 }, () => finding("HOLD", "orphan_record", "")), ...Array.from({ length: 2 }, () => finding("HOLD", "found_but_different", "")),
+        recordDrift, as(escalate, "fnd-0000000000000003"),
+      ],
+    };
+    const sentences = story({
+      pass, act: applied(revertDone),
+      tickets: tickets([create(ticket("change", null, { action_id: "act-revert", finding_id: recordDrift.id })), out("create", "closed", "6")], [resolved("5"), out("close", "closed", "5")], skip),
+    });
+    expect(sentences).toEqual([
+      "A DNS record drifted from its approved value; the agent restored it from the vault copy, the provider confirmed it, and ticket #6 is closed.",
+      "Ticket #5 from an earlier rollback is closed: the setting holds its approved value.",
+      "1 finding is with a technician: name and its www treated differently by the proxy at www.example.invalid.",
+      "23 findings are adopted under the technician's exceptions; 5 are held with an expiry.",
+    ]);
+    // the block: a heading, one sentence a line, every text through the redactor
+    const t = new Table(PLAIN, (s) => s.replace(/www\.example\.invalid/g, "host-000000.invalid"));
+    expect(t.story(sentences)).toEqual(["what happened", ...sentences.map((s) => `  ${s.replace("www.example.invalid", "host-000000.invalid")}`)]);
+    expect(t.story(sentences).join("\n")).not.toContain("www.example.invalid");
+    expect(t.story([])).toEqual([]);
+    expect(new Table({ ...PLAIN, color: true }).story(["x"])[0]).toBe(`${ESC}[1mwhat happened${ESC}[0m`);
+  });
+
+  it("a rollback done, unverified, failed and refused; a file that went missing; a revert unverified", () => {
+    const pass = { findings: [fileDrift] };
+    const done = outcome("rollback_file", "done", "restored to the approved copy at vault commit 5dde7698; nginx -t passed, nginx reloaded, 3 probes ok", {
+      action_id: "act-file", before_hash: BEFORE, after_hash: AFTER, verification: "probe-1,probe-2,probe-3", record: [okProbe(1), okProbe(2), okProbe(3)],
+    });
+    const closed = tickets([create(ticket("change", null, { action_id: "act-file" })), out("create", "closed", "7")]);
+    expect(story({ pass, act: applied(done), tickets: closed })).toEqual([
+      "A vhost file drifted from its approved copy; the agent restored it, nginx reloaded, 3 probes passed, and ticket #7 is closed.",
+    ]);
+    const unverified = outcome("rollback_file", "unverified", "written and reloaded; no probe of www.example.invalid ran (the account holds no record of these names)", { action_id: "act-file", before_hash: BEFORE, after_hash: AFTER });
+    expect(story({ pass, act: applied(unverified), tickets: tickets([create(ticket("change", null, { action_id: "act-file" })), out("create", "created", "8")]) })).toEqual([
+      "A vhost file drifted from its approved copy; the agent restored it, nginx reloaded, and the change could not be verified from outside; ticket #8 stays open until a pass finds it at its approved value.",
+    ]);
+    const failed = outcome("rollback_file", "failed", "nginx -t refused the copy: [emerg] unknown directive; the previous bytes were written back", { action_id: "act-file" });
+    expect(story({ pass, act: applied(failed), tickets: tickets([create(ticket("change", null, { action_id: "act-file" })), out("create", "created", "10")]) })).toEqual([
+      "A vhost file drifted from its approved copy; the restore failed (nginx -t refused the copy), and ticket #10 is open for a technician.",
+    ]);
+    const refused = outcome("rollback_file", "refused", "the live file is 9999aaaabbbb and the run recorded 4de292773ac4: it changed since the decision, and nothing was written");
+    expect(story({ pass, act: applied(refused) })).toEqual(["A vhost file drifted from its approved copy; the agent left it as it is (changed since the decision)."]);
+    const missing = { findings: [as(finding("ROLLBACK", "approved_missing", "", NGINX), "fnd-0000000000000006")] };
+    expect(story({ pass: missing, act: applied({ ...done, record: [okProbe(1)] }) })).toEqual(["An approved vhost file went missing; the agent restored it, nginx reloaded, 1 probe passed."]);
+    const revertUnverified = outcome("revert_record", "unverified", "reverted to the approved copy at vault commit 5ef406fc; the record read back equals the copy field by field; no dns probe ran", { target: RECORD });
+    expect(story({ pass: { findings: [recordDrift] }, act: applied(revertUnverified) })).toEqual([
+      "A DNS record drifted from its approved value; the agent restored it from the vault copy, the provider confirmed it, and the change could not be verified from outside.",
+    ]);
+  });
+
+  it("an investigation and the fix it refuses are one sentence; an investigation alone goes to a technician", () => {
+    const fixFinding = as(finding("FIX", "drift_vs_approved", "live value drifted from approved 3f565467a831 with no valid copy (1 copy in the vault, latest validation fail) and production affected (2 failing probes in run-x: http a, tls a), so rule rule-1 investigates, fixes where allowed, documents and opens a ticket", NGINX), "fnd-0000000000000005");
+    const inv = outcome("investigate", "done", "investigated: 4 checks ran (3 hold, 1 fail); the judge's verdict counted: stands", { action_id: "act-inv", disposition_id: "dsp-5", receipts: "rcpt_a,rcpt_b" });
+    const fix = outcome("fix", "refused", "no fix is allowed without a valid copy; investigated and ticketed", { action_id: "act-fix", disposition_id: "dsp-5" });
+    const incident = tickets([create(ticket("incident", null, { action_id: "act-fix", finding_id: fixFinding.id })), out("create", "created", "9")]);
+    expect(story({ pass: { findings: [fixFinding] }, act: applied(inv, fix), tickets: incident })).toEqual([
+      "An approved setting with no valid copy affected production; the agent investigated with Nemotron and opened ticket #9 for a technician.",
+    ]);
+    const vhost = as(finding("ESCALATE", "orphan_vhost", "rule rule-4 investigates this orphan_vhost finding with production answering (2 probes of its names ok in run-x), so it goes to a technician", NGINX), "fnd-0000000000000007");
+    const lone = outcome("investigate", "not_judged", "no model is configured, so no verdict was asked for", { disposition_id: "dsp-7" });
+    expect(story({ pass: { findings: [vhost] }, act: applied(lone) })).toEqual([
+      "A finding (site with no DNS record) needs a technician; the agent ran its checks (no model is configured, so no verdict was asked for).",
+      "1 finding is with a technician: site with no DNS record at conf.d/word-aaaaaa.conf on host-aaaaaa.",
+    ]);
+  });
+
+  it("nothing to do: nothing changed, with what stands; nothing said when act gave no result", () => {
+    expect(story({ pass: cleanPass, act: applied(), tickets: tickets(skip) })).toEqual([
+      "Nothing changed on the estate; every finding stands as before.",
+      "1 finding is with a technician: name and its www treated differently by the proxy at www.example.invalid.",
+      "23 findings are adopted, 20 under the technician's exceptions and 3 under policy rules; 3 are held with an expiry.",
+    ]);
+    expect(story({ pass: { findings: [] }, act: applied() })).toEqual(["Nothing changed on the estate; the pass found every setting in order."]);
+    // act skipped: settled, and nothing it could have changed
+    expect(story({ pass: { findings: [] } })).toEqual(["Nothing changed on the estate; the pass found every setting in order."]);
+    // act failed or stopped short: the block keeps to the findings
+    expect(story({ pass: { findings: [] }, actSettled: false })).toEqual([]);
+    expect(story({ pass: { findings: [finding("HOLD", "orphan_record", "")] }, actSettled: false })).toEqual(["1 finding is held with an expiry."]);
+  });
+
+  it("the escalations by class, and the tickets resolved, closed or due to close", () => {
+    const esc = { findings: [as(escalate, "fnd-a"), as(escalate, "fnd-b"), finding("ESCALATE", "orphan_record", "2 of 3 checks fail")] };
+    expect(story({ pass: esc, actSettled: false })).toEqual([
+      "3 findings are with a technician: name and its www treated differently by the proxy (2); DNS record with no site behind it (1).",
+    ]);
+    const none = { findings: [] };
+    expect(story({ pass: none, act: applied(), tickets: tickets([resolved("5"), out("close", "closed", "5")], [resolved("3", "incident"), out("close", "closed", "3")]) })).toEqual([
+      "Tickets #5 and #3 from earlier rollbacks and holds are closed: their settings hold their approved values.",
+    ]);
+    expect(story({ pass: none, act: { apply: false, plan: [], outcomes: [] }, tickets: tickets([resolved("5"), out("close", "planned", null)]) })).toEqual([
+      "Ticket #5 from an earlier rollback is due to close: the setting holds its approved value (tickets dry run).",
+    ]);
+  });
+
+  it("a dry run says what --apply does for each planned action, naming the finding the pass gave it", () => {
+    const decidedAt = "2026-10-25T16:49:00.000Z";
+    const fixFinding = as(finding("FIX", "drift_vs_approved", "live value drifted from approved 3f565467a831 with no valid copy (none in the vault) and production affected (1 failing probe in run-x: http a), so rule rule-1 investigates, fixes where allowed, documents and opens a ticket", NGINX), "fnd-0000000000000008");
+    const plan: PlanItem[] = [
+      { action_id: "act-1", kind: "rollback_file", disposition_id: "dsp-1", lines: ["target /etc/nginx/conf.d/word-aaaaaa.conf on host-aaaaaa (ssh alias fixture-host), ROLLBACK under rule-1", "write 2,807 bytes (sha256 3f565467a831) from vault commit 5dde7698 (copy cpy-1) over the live file"] },
+      { action_id: "act-2", kind: "revert_record", disposition_id: "dsp-2", lines: ["target record rec-0001 (mail.example.invalid, A) in zone example.invalid, ROLLBACK under rule-1", "PATCH the record to the approved copy at vault commit 0a1b2c3d (copy cpy-2)"] },
+      { action_id: "act-3", kind: "rollback_file", disposition_id: "dsp-3", lines: ["target linux.nginx host-aaaaaa /etc/nginx/conf.d/word-bbbbbb.conf file, ROLLBACK under rule-1"], refused: "the setting has no approval on record now; the Decider named commit 5dde7698 against one" },
+      { action_id: "act-4", kind: "investigate", disposition_id: dispositionIdOf(fixFinding, decidedAt), lines: ["finding fnd-1: file in /etc/nginx/conf.d/word-aaaaaa.conf on host-aaaaaa, FIX under rule-1"] },
+      { action_id: "act-5", kind: "fix", disposition_id: dispositionIdOf(fixFinding, decidedAt), lines: ["after the investigation: no fix is allowed without a valid copy"], refused: "no fix is allowed without a valid copy; investigated and ticketed" },
+    ];
+    expect(story({ pass: { findings: [fixFinding], decidedAt }, act: { apply: false, plan, outcomes: [] } })).toEqual([
+      "A vhost file drifted from its approved copy; a run with --apply restores it from vault copy 5dde7698 and reloads nginx.",
+      "A DNS record drifted from its approved value; a run with --apply restores it from vault copy 0a1b2c3d.",
+      "A vhost file drifted from its approved copy; a run with --apply leaves it as it is (the setting has no approval on record now).",
+      "An approved setting with no valid copy affected production; a run with --apply investigates it with Nemotron and opens a ticket for a technician.",
+    ]);
+  });
+
+  it("holds at most five sentences: past them the last action sentence counts the rest", () => {
+    const refused = (i: number): ActionOutcome => outcome("rollback_file", "refused", "it changed since the decision", { action_id: `act-${i}`, disposition_id: `dsp-${i}` });
+    const sentences = story({ pass: { findings: [finding("ADOPT", "orphan_vhost", "", NGINX)] }, act: applied(...Array.from({ length: 6 }, (_, i) => refused(i))) });
+    expect(sentences).toHaveLength(STORY_MAX);
+    expect(sentences.slice(3)).toEqual(["3 more actions are listed under act.", "1 finding is adopted under policy rules."]);
+  });
+});
+
 // ---- --verbose through the cycle ----------------------------------------------------------------------------------
 
-describe("--verbose through runCycle", () => {
-  it("appends each step's full line after its short one, and the CYCLE line after the done line", async () => {
+describe("--verbose and --quiet through runCycle", () => {
+  it("appends each step's full line after its short one, the what-happened block before the done line, and the CYCLE line after it", async () => {
     const ok = (summary: string, view?: StepReport["view"]): StepReport => ({ ok: true, summary, view });
     const steps: CycleSteps = {
       collectCloudflare: async () => ({ ...ok("collect:cloudflare: dns 58/58 complete", cloudflareView({ records: 1036, zones: 6, audit: 12, hook: committed("abcdef0123456789") })), commits: [] }),
@@ -394,20 +609,36 @@ describe("--verbose through runCycle", () => {
     const present: PresentOptions = { ...PLAIN, verbose: true };
     const res = await runCycle({ tenant: "t1", apply: false, aliases: [], skip: new Set(["probe", "validate", "act", "tickets", "document"] as const) }, steps, { print: (l) => printed.push(l), clock: () => (ms += 500), present });
     expect(printed.slice(0, 4)).toEqual([
-      "drift-agent · cycle · tenant t1 · 1970-01-01 00:00 UTC · dry run",
+      "drift-agent · cycle · tenant t1 · 1970-01-01 00:00 UTC · dry run, nothing changed",
       at("  collect   cloudflare    1,036 records in 6 zones · audit 12 rows · vault abcdef01", "0.5 s"),
       "cycle: [1/7] collect:cloudflare ok in 0.5 s: collect:cloudflare: dns 58/58 complete",
       "  probe     skipped",
     ]);
     expect(printed[4]).toBe("cycle: [2/7] probe skipped in 0.0 s: skipped (--skip probe)");
     const pass = printed.findIndex((l) => l.startsWith("  pass "));
-    expect(printed.slice(pass, pass + 4)).toEqual([
+    expect(printed.slice(pass, pass + 6)).toEqual([
       at("  pass      27 findings   ADOPT 23 · HOLD 3 · ESCALATE 1", "0.5 s"),
-      "            proxied_without_real_ip 20 · orphan_record 3 · orphan_vhost 3 · proxy_split 1",
-      "            ESCALATE  proxy_split www.example.invalid · hold expired 25 Oct 03:21 UTC",
+      "            proxied name, origin trusts no Cloudflare range 20",
+      "            DNS record with no site behind it 3 · site with no DNS record 3",
+      "            name and its www treated differently by the proxy 1",
+      "            ESCALATE  name and its www treated differently by the proxy · www.example.invalid · the hold ran out at 25 Oct 03:21 UTC, a technician owns it",
       "cycle: [4/7] pass ok in 0.5 s: PASS: tenant t1",
+    ]);
+    // act skipped: nothing changed; the block sits between the last row and the done line
+    expect(printed.slice(-7, -2)).toEqual([
+      "cycle: [7/7] document skipped in 0.0 s: skipped (--skip document)",
+      "what happened",
+      "  Nothing changed on the estate; every finding stands as before.",
+      "  1 finding is with a technician: name and its www treated differently by the proxy at www.example.invalid.",
+      "  23 findings are adopted, 20 under the technician's exceptions and 3 under policy rules; 3 are held with an expiry.",
     ]);
     expect(printed.at(-2)).toMatch(/^done · 7 steps · 5 skipped · \d+\.\d s$/);
     expect(printed.at(-1)).toBe(res.summary);
+    // --quiet: the header and the done line only
+    const quiet: string[] = [];
+    await runCycle({ tenant: "t1", apply: true, aliases: [], skip: new Set(["probe", "validate", "act", "tickets", "document"] as const) }, steps, { print: (l) => quiet.push(l), clock: () => (ms += 500), present: { ...PLAIN, quiet: true } });
+    expect(quiet).toHaveLength(2);
+    expect(quiet[0]).toBe("drift-agent · cycle · tenant t1 · 1970-01-01 00:00 UTC · applying changes");
+    expect(quiet[1]).toMatch(/^done · 7 steps · 5 skipped · /);
   });
 });

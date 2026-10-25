@@ -4,8 +4,9 @@
 // {{t:x}} is DRIFT.x, the judged data layer), the PgLedger over the Store (DATABASE_URL; --schema for another
 // search_path) for the tenant's dispositions and referent fingerprints, the technician's lessons read from the store
 // DRIFT_MEMORY_DIR names (read only), the trace to logs/pass_<base36 ms>.jsonl. Prints the cycle's pass section
-// (src/loop/present.ts): the header (mode "recorded", or "dry run" with --no-ledger), the pass row with its findings
-// by verb, the classes and one line per ROLLBACK, FIX and ESCALATE, and the done line naming the trace. --verbose
+// (src/loop/present.ts): the header (mode "recorded", or "dry run, nothing changed" with --no-ledger), the pass row
+// with its findings by verb, the classes in plain words and one line per ROLLBACK, FIX and ESCALATE, and the done
+// line naming the trace. --verbose
 // adds the full output: one JSON object per finding of the tenant, one DISPOSITION line per finding as the ledger
 // holds it (read back through Zetaris), the PASS summary line and the trace file; --quiet prints the header and the
 // done line. --decided-at dates every disposition and starts every HOLD expiry (default: the system clock).
@@ -28,7 +29,7 @@ import { Store } from "../src/data/store.ts";
 import { TechnicianMemory } from "../src/engine/memory.ts";
 import { PgLedger } from "../src/ledger.ts";
 import { passStep } from "../src/loop/pass.ts";
-import { Table, passView, presentOptions } from "../src/loop/present.ts";
+import { MODE, Table, passView, presentOptions } from "../src/loop/present.ts";
 import { FileTracer } from "../src/loop/trace.ts";
 import { TENANT } from "../src/policy/schema.ts";
 import { Redactor } from "../src/redactor.ts";
@@ -71,7 +72,7 @@ const trace = tracer.logFile.replace(/\\/g, "/");
 const present = presentOptions(args);
 const table = new Table(present, (s) => redactor.text(redact(s)));
 const t0 = Date.now();
-console.log(table.header({ command: "pass", tenant, at: new Date(t0), mode: record ? "recorded" : "dry run" }));
+console.log(table.header({ command: "pass", tenant, at: new Date(t0), mode: record ? "recorded" : MODE.dryRun }));
 let store: Store | null = null;
 try {
   store = record ? Store.fromEnv({ schema: args.schema }) : null;

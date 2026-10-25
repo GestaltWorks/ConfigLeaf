@@ -72,12 +72,14 @@ describe("runCycle over fake steps", () => {
     expect(res.steps.map((s) => `${s.step} ${s.status}`)).toEqual(stepNames(["a1", "a2"]).map((s) => `${s} ok`));
     expect(res.stopped).toBeNull();
     // the table: the header, one row per step from its summary (the pass's from its result), each time at column 90
-    expect(printed[0]).toBe("drift-agent · cycle · tenant t1 · 1970-01-01 00:00 UTC · dry run");
+    expect(printed[0]).toBe("drift-agent · cycle · tenant t1 · 1970-01-01 00:00 UTC · dry run, nothing changed");
     expect(printed[1]).toBe(`${"  collect   cloudflare    fine".padEnd(85)}0.1 s`);
     expect(printed[2]).toBe(`${"  collect   a1            fine".padEnd(85)}0.1 s`);
     expect(printed[6]).toBe(`${"  pass      0 findings".padEnd(85)}0.1 s`);
     expect(printed[9]).toBe(`${"  document  fine".padEnd(85)}0.1 s`);
-    expect(printed.slice(1, -1).every((l) => l.length === 90)).toBe(true);
+    expect(printed.slice(1, 10).every((l) => l.length === 90)).toBe(true);
+    // the what-happened block between the last row and the done line
+    expect(printed.slice(10, -1)).toEqual(["what happened", "  Nothing changed on the estate; the pass found every setting in order."]);
     expect(printed.at(-1)).toMatch(/^done · 9 steps · \d+\.\d s$/);
     expect(printed.join("\n")).not.toMatch(/cycle: \[|CYCLE:/);
     expect(res.summary).toMatch(/^CYCLE: tenant t1, dry run \(act plans and writes nothing to a host or a zone; --apply performs it\): 9 step\(s\): ok 9, skipped 0, failed 0, not run 0; completed; \d+\.\d s$/);
@@ -95,7 +97,7 @@ describe("runCycle over fake steps", () => {
     expect(res.steps.map((s) => s.status)).toEqual(["skipped", "skipped", "skipped", "ok", "ok", "ok", "skipped", "ok"]);
     expect(res.steps[0].summary).toBe("skipped (--skip collect)");
     expect(res.summary).toMatch(/^CYCLE: tenant t1, applied \(act carries out its plan\): 8 step\(s\): ok 4, skipped 4, failed 0, not run 0; completed;/);
-    expect(printed[0]).toMatch(/ · applied$/);
+    expect(printed[0]).toMatch(/ · applying changes$/);
     expect(printed.slice(1, 4)).toEqual(["  collect   cloudflare    skipped", "  collect   a1            skipped", "  probe     skipped"]);
     expect(printed[7]).toBe("  tickets   skipped");
     expect(printed.at(-1)).toMatch(/^done · 8 steps · 4 skipped · \d+\.\d s$/);
@@ -422,19 +424,21 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
     expect(res.steps[7].summary).toMatch(/^document: document\.md written for client-a, \d+ lines, \d+ finding\(s\) open, \d+ queries; deny-list probe 0 of 1 label\(s\); decided at 2026-10-23T03:00:00\.000Z$/);
     expect(readFileSync(out, "utf8")).toContain(TENANT);
     expect(res.summary).toMatch(/^CYCLE: tenant client-a, dry run .*: 8 step\(s\): ok 4, skipped 4, failed 0, not run 0; completed;/);
-    // the screen: the pass row with its verbs, the classes and a line per ROLLBACK, FIX and ESCALATE; act's five planned actions
+    // the screen: the pass row with its verbs, the classes in plain words and a line per ROLLBACK, FIX and ESCALATE; act's five planned actions
     const screen = printed.map((l) => l.replace(/ +\d+\.\d s$/, ""));
     const at = screen.findIndex((l) => l.startsWith("  pass "));
-    expect(screen.slice(at, at + 7)).toEqual([
+    expect(screen.slice(at, at + 9)).toEqual([
       "  pass      12 findings   ROLLBACK 3 · FIX 1 · ADOPT 2 · HOLD 5 · ESCALATE 1",
-      "            drift_vs_approved 5 · changed_since_backup 3 · found_but_different 2 · approved_missing 1 · proxy_split 1",
-      expect.stringMatching(/^            ROLLBACK  conf\.d\/app\.conf on host-7f1c · drifted from approved [0-9a-f]{8} · copy [0-9a-f]{8} validated ok$/),
-      expect.stringMatching(/^            ROLLBACK  conf\.d\/blog\.conf on host-7f1c · approved [0-9a-f]{8} absent · copy [0-9a-f]{8} validated ok$/),
-      expect.stringMatching(/^            ROLLBACK  mail\.example\.invalid content · drifted from approved ad2e4ad7 · copy [0-9a-f]{8} validated ok$/),
-      "            FIX       drift_vs_approved conf.d/shop.conf on host-7f1c · no valid copy · production affected, 1 failing probe",
-      "            ESCALATE  proxy_split www.example.invalid · hold expired 23 Oct 00:00 UTC",
+      "            drifted from the approved value 5 · changed since the last backup 3",
+      "            unchanged setting, its target moved 2 · approved setting missing 1",
+      "            name and its www treated differently by the proxy 1",
+      expect.stringMatching(/^            ROLLBACK  drifted from the approved value · conf\.d\/app\.conf on host-7f1c · copy [0-9a-f]{8} validated ok$/),
+      expect.stringMatching(/^            ROLLBACK  approved setting missing · conf\.d\/blog\.conf on host-7f1c · copy [0-9a-f]{8} validated ok$/),
+      expect.stringMatching(/^            ROLLBACK  drifted from the approved value · DNS record mail\.example\.invalid \(content\) · copy [0-9a-f]{8} validated ok$/),
+      "            FIX       drifted from the approved value · conf.d/shop.conf on host-7f1c · no valid copy · production affected, 1 failing probe",
+      "            ESCALATE  name and its www treated differently by the proxy · www.example.invalid · the hold ran out at 23 Oct 00:00 UTC, a technician owns it",
     ]);
-    expect(screen.slice(at + 7, at + 13)).toEqual([
+    expect(screen.slice(at + 9, at + 15)).toEqual([
       "  act       5 actions planned",
       expect.stringMatching(/^            rollback_file  conf\.d\/app\.conf on host-7f1c · from vault [0-9a-f]{8} · then nginx -t, reload, 1 probe$/),
       expect.stringMatching(/^            rollback_file  conf\.d\/blog\.conf on host-7f1c · from vault [0-9a-f]{8} · then nginx -t, reload, 1 probe$/),
@@ -442,7 +446,16 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
       "            investigate    FIX · conf.d/shop.conf on host-7f1c · checks, then the judge",
       "            fix            refused on --apply · no fix is allowed without a valid copy",
     ]);
-    expect(screen.at(-2)).toMatch(/^  document  document\.md · \d+ lines$/);
+    // the what-happened block after the document row: what --apply does for the planned actions, at most five sentences
+    const doc = screen.findIndex((l) => /^  document  document\.md · \d+ lines$/.test(l));
+    expect(screen.slice(doc + 1, -1)).toEqual([
+      "what happened",
+      expect.stringMatching(/^  A vhost file drifted from its approved copy; a run with --apply restores it from vault copy [0-9a-f]{8} and reloads nginx\.$/),
+      expect.stringMatching(/^  An approved vhost file went missing; a run with --apply restores it from vault copy [0-9a-f]{8} and reloads nginx\.$/),
+      "  2 more actions are listed under act.",
+      "  1 finding is with a technician: name and its www treated differently by the proxy at www.example.invalid.",
+      "  2 findings are adopted under policy rules; 5 are held with an expiry.",
+    ]);
     expect(printed.at(-1)).toMatch(/^done · 8 steps · 4 skipped · \d+\.\d s$/);
   });
 

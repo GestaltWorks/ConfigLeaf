@@ -28,7 +28,7 @@ import { ZetarisEngine } from "../src/data/engines/zetaris.ts";
 import { decisionInstant } from "../src/data/instant.ts";
 import { Store } from "../src/data/store.ts";
 import { MemoryLedger } from "../src/ledger.ts";
-import { Table, actView, presentOptions } from "../src/loop/present.ts";
+import { MODE, Table, actView, presentOptions } from "../src/loop/present.ts";
 import { FileTracer } from "../src/loop/trace.ts";
 import { runPass } from "../src/pipeline.ts";
 import { TENANT } from "../src/policy/schema.ts";
@@ -79,7 +79,7 @@ const trace = tracer.logFile.replace(/\\/g, "/");
 const present = presentOptions(args);
 const table = new Table(present, (s) => redactor.text(redact(s)));
 const t0 = Date.now();
-console.log(table.header({ command: "act", tenant, at: new Date(t0), mode: apply ? "applied" : config.sampleMode ? "dry run over sample/bundle.json" : "dry run" }));
+console.log(table.header({ command: "act", tenant, at: new Date(t0), mode: apply ? MODE.applied : config.sampleMode ? "dry run over sample/bundle.json" : MODE.dryRun }));
 let store: Store | null = null;
 const verbose: string[] = [];
 try {

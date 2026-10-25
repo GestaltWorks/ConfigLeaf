@@ -30,7 +30,8 @@
 //                       countLabels) over the page, then the file; ok when the page is written.
 // Every summary passes the tenant's redactor. Each step's view (src/loop/present.ts) is its row on the screen, built
 // from the same results the summary is; the cycle passes every text of it through the redactor again as it prints,
-// the collect:linux subject aside: the ssh alias as LINUX_HOSTS names it.
+// the collect:linux subject aside: the ssh alias as LINUX_HOSTS names it. act and tickets also hand the cycle their
+// results (StepReport act, tickets) for its "what happened" block; act's view names each object from the pass.
 //
 // Measured 24 Oct 2026: test/loop.test.ts drives each step with fakes and the pass, act, tickets and document steps
 // over sql.js with test/fixtures/policy-bundle.json; the live cycle is measured in scripts/cycle.ts.
@@ -162,11 +163,12 @@ export async function validateStep(commits: readonly NewCommit[], o: { tenant: s
 export async function actStep(pass: PassStep, o: { apply: boolean; deps: ActorDeps; redactor: Redactor }): Promise<StepReport> {
   const runIds = [...new Set(pass.findings.map((f) => f.finding.run_id))].sort();
   if (!runIds.length) {
-    return { ok: true, summary: `act: ${o.apply ? "applied" : "dry run"}: the pass raised no finding for tenant ${pass.tenant}; 0 actions planned`, view: actView({ apply: o.apply, plan: [], outcomes: [], acted: [] }) };
+    const none = { apply: o.apply, plan: [], outcomes: [], acted: [] };
+    return { ok: true, summary: `act: ${o.apply ? "applied" : "dry run"}: the pass raised no finding for tenant ${pass.tenant}; 0 actions planned`, view: actView(none), act: none };
   }
   const res = await act({ tenantId: pass.tenant, apply: o.apply, runIds }, o.deps);
   const verbs = Object.entries(res.scope.verbs).map(([v, n]) => `${v} ${n}`).join(", ") || "none";
-  return { ok: true, summary: o.redactor.text(`${actSummary(res)}; scope ${res.scope.dispositions} disposition(s) of ${res.scope.runs.length} run(s) (${verbs}), ledger ${res.ledger} of the tenant`), view: actView(res) };
+  return { ok: true, summary: o.redactor.text(`${actSummary(res)}; scope ${res.scope.dispositions} disposition(s) of ${res.scope.runs.length} run(s) (${verbs}), ledger ${res.ledger} of the tenant`), view: actView(res, pass), act: res };
 }
 
 /**
@@ -190,7 +192,7 @@ export async function ticketsStep(layer: DataLayer, pass: PassStep, o: { adapter
   // each operation's line goes to the trace (one line per operation); stdout carries the step's summary
   const r = await ticketStep(layer, pass.pass, adapter, rows, { tenant: pass.tenant, dryRun: o.dryRun, redactor: o.redactor, deny: o.deny, tracer, now: o.now, print: () => undefined });
   const bad = r.outcomes.filter((x) => x.status === "failed" || x.status === "refused");
-  return { ok: bad.length === 0, summary: o.labels.text(r.summary), reason: bad.length ? o.labels.text(bad.map((x) => x.line).join("; ")) : undefined, view: ticketsView(r, o.dryRun) };
+  return { ok: bad.length === 0, summary: o.labels.text(r.summary), reason: bad.length ? o.labels.text(bad.map((x) => x.line).join("; ")) : undefined, view: ticketsView(r, o.dryRun), tickets: r };
 }
 
 /** document: the owner's page from SQL, through the deny-list probe, to `out`. */

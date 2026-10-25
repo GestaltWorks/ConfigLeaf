@@ -5,8 +5,9 @@
 // the pass (with the PgLedger), act (dry run unless --apply), tickets, document (document.md at the repository root,
 // gitignored). Each step runs the module its own command runs, in this process; the first failing step stops the
 // cycle with its reason. The screen is one table (src/loop/present.ts): a header, a row per step as it ends with its
-// time, a line under the pass for each ROLLBACK, FIX and ESCALATE and under act for each action, and a done line
-// naming the trace. --verbose adds each step's full line after its row; --quiet prints the header and the done line.
+// time, a line under the pass for each ROLLBACK, FIX and ESCALATE and under act for each action, the "what happened"
+// block in a few plain sentences, and a done line naming the trace. --verbose adds each step's full line after its
+// row; --quiet prints the header and the done line.
 // The cycle's trace, every step's lines included, goes to logs/cycle_<base36 ms>.jsonl. --skip takes a comma list or
 // repeats. --tickets-dry-run plans the tickets and sends nothing. --apply carries out the Actor's plan on the hosts
 // and the zones.
@@ -24,6 +25,11 @@
 // names in 8.0 s, validate 3 copies, pass 27 findings (ADOPT 23, HOLD 3, ESCALATE 1, one ESCALATE line, the
 // proxy_split hold expired 25 Oct 03:21 UTC) in 60.6 s, act nothing to do, tickets would close #5 (resolved),
 // document 189 lines; done in 103.4 s, the trace logs/cycle_mvo1qgai.jsonl.
+// Measured 25 Oct 2026 at 17:13 UTC, the same command with the classes in plain words: the header "dry run, nothing
+// changed", the pass's tally on three lines at 90 columns, the ESCALATE line with the hold's end at 25 Oct 03:21 UTC,
+// act nothing to do, tickets nothing to send (1 open), document 191 lines, then the what-happened block in three
+// sentences (nothing changed on the estate, 1 finding with a technician, 23 adopted and 3 held); the table in 19
+// lines, done in 119.4 s, the trace logs/cycle_mvo37iao.jsonl.
 
 import { parseArgs } from "node:util";
 import { redact } from "../src/config.ts";
