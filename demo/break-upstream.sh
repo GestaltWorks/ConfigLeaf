@@ -3,7 +3,7 @@
 # agent watches, the same way a careless edit would, then let the next cycle find it and roll it back.
 #
 #   demo/break-upstream.sh <ssh alias> <vhost file> <old port> <new port>
-#   demo/break-upstream.sh host-redacted /etc/nginx/conf.d/example.conf 3000 3009
+#   demo/break-upstream.sh web-01 /etc/nginx/conf.d/example.conf 3000 3009
 #
 # What it does on the host, over one ssh session with the operator's own key: reads the file, replaces
 # ":<old port>" with ":<new port>" on its proxy_pass lines, writes the result back through sudo -n tee,

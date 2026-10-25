@@ -5,8 +5,8 @@
 // line per finding as the ledger holds it under the finding's disposition_id, then one summary.
 //
 // The Decider consults the technician's memory (src/engine/memory.ts, the vendored H-MEM reference in the
-// directory DRIFT_MEMORY_DIR names, .world/memory when it is blank), opened read only: a lesson recorded with
-// `npm run answer` changes the verb of the finding it scopes on the next run of this script, until it expires,
+// directory DRIFT_MEMORY_DIR names, examples/memory, the committed store, when it is blank), opened read only: a
+// lesson recorded with `npm run answer` changes the verb of the finding it scopes on the next run of this script, until it expires,
 // and the store is left as it was. The pass records its dispositions and referent
 // fingerprints through a MemoryLedger into the same sql.js engine, and the disposition lines are read back
 // from it through the DataLayer. With no lesson recorded and no policy_rule rows in the bundle every

@@ -45,12 +45,42 @@ document is rendered from SQL; `npm run cycle` runs every step once, `npm run wa
 7. **Act behind `--apply`.** The Actor turns a ROLLBACK into `rollback_file` or `revert_record` and a FIX into `investigate`, then `fix`, and verifies every write with probes. Without `--apply` it prints the plan and writes nothing.
 8. **Ticket and document.** The ticket step opens, comments on and closes GitHub issues by verb and by the rule's `alert`. The owner's document renders one markdown page per tenant from 14 named queries.
 
+### The agents
+
+Every trace line names the agent that wrote it (`agent`, `src/trace.ts`), and a query line names the agent that sent
+the query. The agents of the committed traces, of `npm run sample` and of the eval:
+
+| agent | what it does | module |
+|---|---|---|
+| `collector` | The Cloudflare collector's run line (zones, records and the audit log, each population asserted before the first row); in sample mode, the load of `sample/bundle.json` into sql.js. | `src/collectors/cloudflare.ts`, `scripts/collect-cloudflare.ts`, `scripts/sample.ts` |
+| `collector.linux` | One SSH session of fixed reads per host, and the run it stored, its population asserted before the first row. | `src/collectors/linux.ts`, `scripts/collect-linux.ts` |
+| `vault` | Commits each complete run to its vault repository, one line per run. | `src/vault/hook.ts` |
+| `observer` | Reads the collection runs, gates each with `run_complete`, and loads every observation of a passing host run, with what its DNS names resolve to, into the World Model. | `src/pipeline.ts`, `src/engine/world.ts` |
+| `detector` | Runs the hero query, the survey and the three detectors, and raises each finding with its class. | `src/pipeline.ts`, its SQL in `src/data/queries.ts` |
+| `checker` | Runs the precondition checks of the finding's class from the catalogue, each a SELECT, and skips the rest under the stop rule. | `src/pipeline.ts` over `src/catalogue/` (`templates.ts`, the defaults in `select.ts`) and `src/stoprule.ts` |
+| `judge` | Asks Nemotron for one SELECT that returns rows only when the claim is false, guards and runs it, and counts the verdict through the receipt gate; in a pass with no model its line reads `skipped`. | `src/agents/judge.ts` |
+| `selector` | The eval's Lightning call that picks and parameterises checks from the catalogue, in C1 to C3. | `src/eval/models.ts` |
+| `decider` | Reads the policy rules and the prior HOLDs, recalls the technician's lessons, gives the verb with its reason and records the exposure line. | `src/pipeline.ts`, `src/policy/decide.ts`, `src/engine/world.ts` |
+| `actor` | Plans and carries out `rollback_file`, `revert_record`, `investigate` and `fix`, and verifies each write by probe; Lightning's selection inside `investigate` is traced under this name. | `src/actions/` |
+| `psa` | Opens, comments on and closes GitHub issues by the ticket rules. | `src/psa/` |
+| `documenter` | Runs the 14 named queries of the owner's document. | `src/document/render.ts` |
+| `loop` | The pass's run list, its ledger read-back and its summary line. | `src/loop/pass.ts` |
+| `cycle` | One line per step of a cycle with the step's time, and the cycle's summary. | `src/loop/cycle.ts` |
+
+`npm run preflight` writes the pass's lines under the agent `preflight`, the pass's own agent in `target_agent`.
+
 ## Run it
 
-Sample mode needs no credentials and no model; it runs the real pass over the redacted export, `sample/bundle.json`:
+Requirements:
+
+- Node 22 or later and npm. `npm install` brings the four runtime libraries, `openai`, `pg`, `sql.js` and `zod`; sample mode needs nothing more.
+- For live mode: Docker for `npm run validate:copies` (the `nginx:1.27` image; on Windows the Docker engine in the WSL distribution `Ubuntu-24.04`) and openssl on the PATH; PostgreSQL for the app store (`DATABASE_URL`); `ssh`, with the `LINUX_HOSTS` aliases in its ssh_config, and a Cloudflare read token; the `gh` CLI, signed in, for the GitHub Issues PSA; Zetaris, the local bundle, its REST API on `localhost:8888`, with an API key ([Zetaris](#zetaris)); and Meterless Nightshift, the installed runtime, OpenAI-compatible on `127.0.0.1:8088`, with its runtime token file ([Meterless](#meterless)). The organisers' Participant Setup Guide describes both installs.
+
+Sample mode needs no credentials, no model and no `.env`; it runs the real pass over the redacted export,
+`sample/bundle.json`:
 
 ```bash
-npm install && cp .env.example .env
+npm install
 SAMPLE_MODE=true npm run sample                         # the whole pass over the recorded rows
 SAMPLE_MODE=true npm run preflight -- --proposal examples/proposals/a-unproxy-www.json   # GO, NO-GO, GO-IF or ESCALATE for one change
 SAMPLE_MODE=true npm run document -- --tenant client-1  # the owner's document -> examples/document.md
@@ -64,15 +94,23 @@ npm test
 
 `npm run sample` prints a JSON trace line per step, a JSON object per finding with its short id (`fnd-` plus 16 hex,
 what `npm run answer` takes), a `DISPOSITION` line per finding and a summary; the trace also lands in `logs/`,
-gitignored. The technician's lessons come from the directory `DRIFT_MEMORY_DIR` names: `.env.example` sets
-`examples/memory`, the committed store of the operator's 23 accepted exceptions, so a clean clone and CI decide with
-them; blank, it is `.world/memory`, gitignored. On 25 Oct 2026 the sample pass prints ADOPT 23 under those
-exceptions, HOLD 3 and ESCALATE 1.
+gitignored. The technician's lessons come from the directory `DRIFT_MEMORY_DIR` names. Blank, it is `examples/memory`
+in sample mode and for `npm run examples` and `npm run site`: the committed store of the operator's 23 accepted
+exceptions, so a clone with no `.env` decides with them and `npm run site` rebuilds `docs/` byte-identical; CI sets
+the same directory. Blank for the live commands, it is `.world/memory`, gitignored, and `.env.example` sets
+`examples/memory`. On 25 Oct 2026 the sample pass prints ADOPT 23 under those exceptions, HOLD 3 and ESCALATE 1.
 
-Live runs read `.env`, each key described in `.env.example`: `DATABASE_URL`, `ZETARIS_API_KEY`, `ZETARIS_PG_HOST`,
-`CLOUDFLARE_API_TOKEN`, `LINUX_HOSTS`, `DRIFT_VAULT_DIR`, `DRIFT_POLICY_FILE`, `DRIFT_MEMORY_DIR`, `DRIFT_TICKETS_REPO`,
-`REDACT_SALT`, `REDACT_WORDS`, `EXPORT_DENY_WORDS`; the Nightshift and GitHub tokens are read at run time. In cycle
-order, after the one-time setup:
+The committed inputs and their outputs sit under [examples/](examples/), each described in
+[examples/README.md](examples/README.md): the three cases `examples/<case>/` (`proxy-split`, `wildcard-no-real-ip`,
+`orphans`), each a `bundle.json` in and the `findings.json` the pass computed over it out; the four proposals in
+`examples/proposals/`, each a `*.json` in and its `*.verdict.json` out; and [examples/traces/](examples/traces/), two
+redacted traces, the lab's investigation with Nemotron and the act-three cycle on the production estate, 18:08 to
+18:16 UTC on 25 Oct 2026 with `--apply`.
+
+Live mode starts with `cp .env.example .env` and its keys filled in, each described in [.env.example](.env.example):
+`DATABASE_URL`, `ZETARIS_API_KEY`, `ZETARIS_PG_HOST`, `CLOUDFLARE_API_TOKEN`, `LINUX_HOSTS`, `DRIFT_VAULT_DIR`,
+`DRIFT_POLICY_FILE`, `DRIFT_MEMORY_DIR`, `DRIFT_TICKETS_REPO`, `REDACT_SALT`, `REDACT_WORDS`, `EXPORT_DENY_WORDS`; the
+Nightshift and GitHub tokens are read at run time. In cycle order, after the one-time setup:
 
 ```bash
 npm run zetaris:setup                                   # once: the DRIFT datasource, the ten-entity USL, three DQ rules
@@ -99,9 +137,9 @@ Measured on the operator's estate, tenant `client-1`, and the writes on the lab 
 
 | Command | Proves | Measured |
 |---|---|---|
-| `npm test` | Every module against fixtures, fakes and a throwaway Postgres schema; the live halves run behind their flags. | 935 tests in 36 files: 822 pass and 113 wait on a live flag, 25 Oct 2026. |
+| `npm test` | Every module against fixtures, fakes and a throwaway Postgres schema; the live halves run behind their flags. | 1,023 tests in 40 files on the operator's machine: 910 pass and 113 wait for their live flags (107 for `PARITY_LIVE`, 3 for `VALIDATE_LIVE`, 1 each for `EVAL_LIVE`, `PROBE_LIVE` and `TICKETS_LIVE`), 25 Oct 2026. |
 | `PARITY_LIVE=true npx vitest run test/parity.test.ts` | Every query the agent runs returns the same columns, rows and totals on sql.js and on Zetaris over the same rows. | 107 of 107 cases equal over the export of the 13:53 UTC cycle, 17,364 observation rows read whole on both engines, 25 Oct 2026. |
-| `SAMPLE_MODE=true npm run sample` | The whole pass over `sample/bundle.json`, with no credentials and no model. | 80 runs, 14,174 observations, 27 findings: ADOPT 23 under the operator's accepted exceptions, HOLD 3 and ESCALATE 1 by policy, decided at 2026-10-25T14:17:53.416Z; two runs byte-identical, 25 Oct 2026. |
+| `SAMPLE_MODE=true npm run sample` | The whole pass over `sample/bundle.json`, with no credentials, no model and no `.env`, deciding with the committed lessons in `examples/memory`. | 80 runs, 14,174 observations, 27 findings: ADOPT 23 under the operator's accepted exceptions, HOLD 3 and ESCALATE 1 by policy, decided at 2026-10-25T14:17:53.416Z; two runs byte-identical, 25 Oct 2026. |
 | `npm run collect:cloudflare`, `npm run collect:linux` | The collectors read the live estate in full, each population asserted before the first row. | 58 of 58 records in 6 zones, 1,014 of 1,014 audit rows, 24 of 24 and 14 of 14 vhost files, at 13:53 UTC, 25 Oct 2026. |
 | `npm run vault:status` | Every complete run is one commit in a per-host or per-account git repository. | 3 repositories of 11, 12 and 12 commits, 58, 32 and 22 files at the heads, 25 Oct 2026. |
 | `npm run validate:copies` | Each newest vault commit restores to a tree `nginx -t` accepts and each record copy passes its schema, every missing dependency named. | both nginx trees ok_with_gaps (16 and 13 gaps), records 42 ok and 16 ok_with_gaps, 0 fail, 24 Oct 2026. |
@@ -113,10 +151,10 @@ Measured on the operator's estate, tenant `client-1`, and the writes on the lab 
 | `npm run cycle` | One cycle of the loop, every step once, the first failing step stopping it; the screen counts the queries it sends through Zetaris. | 9 of 9 steps ok in 101.5 s, a dry run, the 13:53 UTC cycle of 25 Oct 2026. On the lab at 18:28 UTC, a dry run with collect, probe and validate skipped: the pass sent 398 Lightning SQL queries over `DRIFT` (26,155 rows, 0 failed) and the cycle 434 (27,043 rows, 0 failed), each count equal to the query lines of its trace, 25 Oct 2026. |
 | `npm run watch` | The cycle on a schedule, each cycle traced to its own file. | 7 cycles every 45 minutes from 09:23 to 13:53 UTC, a dry run: 9 of 9 steps ok in each, 75.0 to 101.5 s a cycle, 101.5 s the last, 0 failed, 25 Oct 2026. |
 | `npm run tickets` | One GitHub issue per ticket row, opened, commented on and closed by the ticket rules. | the smoke opened, commented on and closed issue #1 and a cycle opened issue #2 for the `proxy_split` HOLD, 24 Oct 2026; the first cycle after that HOLD expired commented on #2, 25 Oct 2026. On the lab, issue #3 opened as the FIX's incident with the investigation under Evidence and stays open, and issue #4 opened and closed as the rollback's change with its verification probe, 25 Oct 2026. `sample/bundle.json` carries the three ticket rows, #2 on the estate and #3 and #4 on the lab, each URL redacted. |
-| `npm run document` | The owner's document: one page per tenant from 14 named queries, through the deny-list probe before it is written. | 27 findings open, ADOPT 23, HOLD 3 and ESCALATE 1, decided at 2026-10-25T14:17:53.416Z; `examples/document.md` byte-identical on a second render, 25 Oct 2026. |
+| `npm run document` | The owner's document: one page per tenant from 14 named queries, through the deny-list probe before it is written. | Under `SAMPLE_MODE=true`: 27 findings open, ADOPT 23, HOLD 3 and ESCALATE 1, decided at 2026-10-25T14:17:53.416Z; `examples/document.md` byte-identical on a second render, 25 Oct 2026. |
 | `npm run eval -- --set dev --configs C0 --runs 2` | The pre-registered eval of [eval/PROTOCOL.md](eval/PROTOCOL.md). | C0 on the 15 development items under `policy/hackathon.json` version 2: 11 scored, 11 with a verdict, agreement 9 of 9 (Wilson 95% 0.701 to 1.000), 0 of 9 labelled no read yes, 0 differences between runs, 25 Oct 2026. |
 | `npm run receipts:verify -- eval/results/2026-10-25T09-25-44Z`, `npm run receipts:verify -- lab` | The runtime's signed receipt for each receipted model call, published beside the call record that names it and checked offline with no `.env` and no network: the Ed25519 signature, the served model and tier, `app` `drift-agent-<tenant>`, `request_id`, `cache.status` and the preview the gate read. | The development run: 383 of 389 call records carry a receipt, and the other 6, C2 judge calls, carry none, every route of the failover ladder failing (the last with a 502) and the gate refusing them; of the 383 receipts, 380 are published with 380 of 380 signatures verified and 3 are withheld by the export's probe and listed in `receipts-withheld.json`; 0 served model, tier, app or cache mismatches; 368 counted calls whose preview opens with the request line, and the 12 custody refusals of C4 as recorded. The lab: 3 of 3 verified under `drift-agent-lab-1`. One signing key throughout, the key of the 23 Oct probe receipts, 25 Oct 2026. CI runs it over every committed `receipts.json` on every push to main and every pull request ([ci.yml](.github/workflows/ci.yml)). |
-| `npm run site` | The replay page, built from [examples/](examples/), the repository's SQL and the newest [eval/results/](eval/results/) (`--results` names another): every finding with every check re-run to its recorded count before anything is published, the owner's document as its Document tab, "Where each answer comes from" as its Sources tab, both rendered to HTML at build time, and the [Nemotron tab](docs/index.html#nemotron): the eval's calls, requested and served, and every judge SELECT recorded with a row count re-guarded and re-run over the recording, the build refused on any count that differs. | 9 findings (ADOPT 4, HOLD 3, ESCALATE 2), 33 checks re-run equal, the 181-line document decided at 2026-10-25T14:17:53.416Z, the 9 class rows; the Nemotron tab over `eval/results/2026-10-25T09-25-44Z` (dev): 389 calls, 383 receipts verified, 0 substitutions, 162 judge SELECTs, 161 re-run equal and the recorded text of 1 (C2 run 2, P10) refused by the engine; 276,297 bytes of the 300,000-byte budget, a rebuild byte-identical, 25 Oct 2026. |
+| `npm run site` | The replay page, built from [examples/](examples/), the committed lessons in `examples/memory`, the repository's SQL and the newest [eval/results/](eval/results/) (`--results` names another): every finding with every check re-run to its recorded count before anything is published, the owner's document as its Document tab, "Where each answer comes from" as its Sources tab, both rendered to HTML at build time, and the [Nemotron tab](docs/index.html#nemotron): the eval's calls, requested and served, and every judge SELECT recorded with a row count re-guarded and re-run over the recording, the build refused on any count that differs. | 9 findings (ADOPT 4, HOLD 3, ESCALATE 2), 33 checks re-run equal, the 181-line document decided at 2026-10-25T14:17:53.416Z, the 9 class rows; the Nemotron tab over `eval/results/2026-10-25T09-25-44Z` (dev): 389 calls, 383 receipts verified, 0 substitutions, 162 judge SELECTs, 161 re-run equal and the recorded text of 1 (C2 run 2, P10) refused by the engine; 276,297 bytes of the 300,000-byte budget, a rebuild byte-identical, 25 Oct 2026. |
 | `npm run conformance`, `npm run conformance:hmem` | The vendored Meterless suites pass: the World Model suite runs through `src/engine/world.ts`, and the H-MEM suite runs through the reference class that `src/engine/memory.ts` re-exports. | World Model 8 of 8; H-MEM 13 of 13 and the `TechnicianMemory` wrapper check, 25 Oct 2026; and in CI on every push to main and every pull request ([ci.yml](.github/workflows/ci.yml)). |
 | `npm run spike:nightshift` | Nightshift serves Lightning and Ultra by explicit id, signs a receipt for each call that verifies offline, and tracks the app as a job whose event stream replays its turns. | 9 of 9 PASS: 142 model ids listed, Lightning in 3,107 ms and Ultra in 1,625 ms on their OpenRouter routes, 100 of 100 listed receipts verified, this run's 2 receipts in the list, 65 turn events replayed, 25 Oct 2026. |
 | `npm run zetaris:setup` | The idempotent setup of the `DRIFT` datasource, the ten-entity USL and its three DQ rules. | 42 statements, 0 failed; `run_complete` 121 of 121 runs valid, 25 Oct 2026 19:02 UTC. |
@@ -161,8 +199,9 @@ versioned `policy_rule` rows. A rule matches a tenant, a surface and two globs a
 
 Version 2's 15 rules are in [DESIGN.md](DESIGN.md): vhost files, `nginx.conf` and a record's `content` and `proxied`
 are critical and locked; copies beside live files are adopted; the rest is held. On 25 Oct 2026 the sample pass adopts
-23 findings under the operator's accepted exceptions, which outrank the rules, holds the 3 `orphan_record` findings
-under the catch-all until 2026-10-27T23:21:06.870Z, and gives the `proxy_split` ESCALATE, its 4-hour hold expired.
+23 findings under the operator's accepted exceptions, the committed lessons in `examples/memory`, which outrank the
+rules, holds the 3 `orphan_record` findings under the catch-all until 2026-10-27T23:21:06.870Z, and gives the
+`proxy_split` ESCALATE, its 4-hour hold expired.
 
 ## The vault and validation
 
@@ -186,7 +225,9 @@ so the same name is the same pseudonym in every table, which the cross-source jo
 is an HMAC under that salt; `file` rows keep the plain sha256 to match the tarball copy. Labels are configuration: a
 new product or brand needs an entry before the next collection. The probe is code: the bundle export, the owner's
 document, the replay page, the eval's results and every ticket stop on any `REDACT_WORDS` or `EXPORT_DENY_WORDS` entry
-standing alone, and `test/leak.test.ts` runs the same probe over the committed tree.
+standing alone. `test/leak.test.ts` runs the same probe over the committed tree, the `LINUX_HOSTS` aliases added to
+the list, wherever the deny list is present: on the operator's machine, where it lives in `.env`. CI carries no deny
+list ([ci.yml](.github/workflows/ci.yml)), so there the file skips with one line.
 
 ## Probes
 
@@ -199,7 +240,10 @@ standing alone, and `test/leak.test.ts` runs the same probe over the committed t
 A served name whose only match is a wildcard of its zone is probed under that wildcard, whose proxied flag sets the
 `cf-ray` and dns expectations (`matchName` in `src/probe/rules.ts`, the rule the Actor's verification shares); on 25
 Oct 2026 that added 2 of the 22 names the vault's host heads serve to the 37, the file of ticket #5 among them, all 6
-probes ok.
+probes ok. The tickets live in the PSA repository the operator configures (`DRIFT_TICKETS_REPO`), and the committed
+files carry their numbers where a trace or document line names them: #2 and #7 in the act-three trace in
+[examples/traces/](examples/traces/), #2 in [examples/document.md](examples/document.md); #5 is in the trace of the
+15:53 UTC cycle, kept in `logs/` on the operator's machine.
 
 Production is affected when a probe of the pass's probe run fails on a name the finding's object serves, answering
 when all of them pass, and unknown with none; after a write the Actor probes again (surface `probe.verify`). On 24 Oct
@@ -272,6 +316,11 @@ come from one collection run on 24 Oct 2026, where a deleted record has no row.
 
 ## Zetaris
 
+Zetaris runs as the local Docker bundle the organisers' Participant Setup Guide describes, its Lightning SQL REST API
+on `localhost:8888` (`ZETARIS_REST_URL`). The agent sends an API key created by an admin in the Zetaris UI
+(Management > API tokens) and set as `ZETARIS_API_KEY`: `npm run zetaris:setup` needs a key of an admin role, and the
+agent's own query path is SELECT-only ([.env.example](.env.example)).
+
 The app Postgres is registered in Zetaris as the `DRIFT` datasource; the collectors and the ledger write to Postgres,
 and every query of a live pass runs through Zetaris Lightning SQL over REST. `npm run zetaris:setup` builds the
 `drift_usl` semantic layer of ten entities (`collection`, `setting`, `referent`, `backup_copy`, `policy`, `copy`,
@@ -308,13 +357,19 @@ holds every observation of a passing run, the referent fingerprints FOUND-BUT-DI
 line's open edges; its conformance suite passes 8 of 8 through that module. H-MEM (`memory.ts`) holds the technician's
 lessons: `npm run answer` records an exception or an answer on one finding's scope with a tenant, an expiry and
 provenance, and the Decider recalls it by exact scope key, an exception in force giving ADOPT until its expiry and a
-lapsed one ESCALATE. Lessons live in the directory `DRIFT_MEMORY_DIR` names (`.world/memory`, gitignored, when it is
-blank); every pass opens the store read only, and `npm run answer` is the one writer. The store is committed under
+lapsed one ESCALATE. Lessons live in the directory `DRIFT_MEMORY_DIR` names (when it is blank, `examples/memory` in
+sample mode and for `npm run examples` and `npm run site`, and `.world/memory`, gitignored, for the live commands);
+every pass opens the store read only, and `npm run answer` is the one writer. The store is committed under
 `examples/memory`: on 25 Oct 2026 the operator accepted 23 exceptions, one per `proxied_without_real_ip` and
 `orphan_vhost` finding of the recorded estate, in his words "Personal estate, known and intentional: proxied names
 without real_ip and the leftover records are not a production risk.", each until 2026-11-30T00:00:00Z, and all 23
 are in force on the recorded estate. The vendored H-MEM suite passes 13 of 13.
-Nightshift, the Meterless runtime, serves Nemotron and signs a receipt for every successful call.
+
+Nightshift, the Meterless runtime, serves Nemotron and signs a receipt for every successful call. It is installed from
+meterless.ai and serves an OpenAI-compatible API on `127.0.0.1:8088` (`METERLESS_BASE_URL`). The agent reads its
+bearer token from `METERLESS_RUNTIME_TOKEN`, or, when that is blank, from the file the runtime writes,
+`%LOCALAPPDATA%\ai.meterless.runtime\proxy-token`; the provider keys (OpenRouter, NVIDIA) live in Nightshift alone
+([.env.example](.env.example)).
 
 Each command and the engine or endpoint it calls; the pass's calls sit in `runPass` (`src/pipeline.ts`):
 
@@ -385,7 +440,7 @@ left it after the run and the redactor read the alias in `bs2.host` as a host na
 
 ## Limits
 
-- The write paths run behind `--apply` only, and on 25 Oct 2026 they ran for real on the lab estate (`lab/README.md`, tenant `lab-1`): `rollback_file` reached `done` at 09:53 UTC, verified by probe `probe-36eb2c1bba298a2a` with the probe population from `PROBE_TARGETS_OVERRIDE`, since the lab's names sit in no zone; a FIX ran `investigate` with Nemotron Lightning and Ultra and its `fix` was refused without a valid copy; the 05:47 UTC rollback, run without the override, found no record of the lab's names in the account and is `unverified`. On the operator's own estate the Actor has written four times, all on 25 Oct 2026 in the operator's rehearsal: a `rollback_file` on a vhost at 15:55 UTC, `unverified` by its own probe because the name rides a wildcard record (the next pass found the approved value live and closed its ticket); a `revert_record` through the provider at 16:50 UTC, `done` with the provider confirming the value; and an `investigate` with Nemotron Lightning and Ultra followed by a refused `fix` at 18:10 to 18:16 UTC on a setting with no valid copy, which opened an incident.
+- The write paths run behind `--apply` only, and on 25 Oct 2026 they ran for real on the lab estate (`lab/README.md`, tenant `lab-1`): `rollback_file` reached `done` at 09:53 UTC, verified by probe `probe-36eb2c1bba298a2a` with the probe population from `PROBE_TARGETS_OVERRIDE`, since the lab's names sit in no zone; a FIX ran `investigate` with Nemotron Lightning and Ultra and its `fix` was refused without a valid copy; the 05:47 UTC rollback, run without the override, found no record of the lab's names in the account and is `unverified`. On the operator's own estate the Actor has written four times, all on 25 Oct 2026 in the operator's rehearsal: a `rollback_file` on a vhost at 15:55 UTC, `unverified` by its own probe because the name rides a wildcard record (the next pass found the approved value live and closed its ticket); a `revert_record` through the provider at 16:50 UTC, `done` with the provider confirming the value; and an `investigate` with Nemotron Lightning and Ultra followed by a refused `fix` at 18:10 to 18:16 UTC on a setting with no valid copy, which opened incident #7. The trace of that cycle, 18:08 to 18:16 UTC, is committed redacted in [examples/traces/](examples/traces/) beside the lab's investigation: Lightning's selection on receipt `rcpt_req_9jmhddr1`, the checks, Ultra's verdict on receipt `rcpt_req_no31rwfn`, the refused `fix` and the incident.
 - One tenant, two hosts, six zones, one policy file, one machine and one PSA backend, GitHub Issues (HaloPSA, ConnectWise and Autotask are a field map): `npm run watch` schedules cycles while its process lives, and a GitHub issue is the one notification.
 - The receipted model calls before the eval's three-run development pass are the 9 of the eval smoke and the 3 of the lab's two investigations, 25 Oct 2026; the held-out set runs once, on 26 October, after the feature freeze.
 - The hero classes find nothing on the recorded estate, where every name a vhost serves lands on an inventory host; pre-flight raises two hero findings in simulation, and `test/fixtures/authored-bundle.json` carries the full story for the tests.

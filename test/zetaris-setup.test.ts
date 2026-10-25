@@ -3,7 +3,8 @@
 // DDL, the activation SELECTs and DQ_RULES, staleness() of a USL model, the password kept out of every
 // string that is printed, traced or redact()ed, apply() over a scripted client (an instance already set up,
 // the four-table USL of 24 Oct, a rule listed with another expression, a fresh instance, one that fails),
-// and the adapter's allowMultiStatement and redaction against a stubbed fetch.
+// and the adapter's allowMultiStatement and redaction against a stubbed fetch, and the engine every query trace event
+// names (zetaris or sqljs).
 // The env is stubbed before config loads, so the real .env key and DATABASE_URL never enter this file.
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import type { QueryResult } from "../src/adapters/zetaris.ts";
@@ -368,7 +369,7 @@ describe("apply()", () => {
     expect(out.find((l) => l.includes("33 count collection"))).toMatch(/^ok\s+33 count collection\s+= 12 {2}\(\d+ ms\)$/);
     expect(out.at(-1)).toMatch(/^ZETARIS SETUP: 42 statements, 32 ok, 10 skipped, 0 failed, \d+\.\d s$/);
     expect(tracer.events).toHaveLength(42);
-    expect(tracer.events.every((e) => e.agent === "zetaris-setup" && e.action === "query" && e.model_requested === "none")).toBe(true);
+    expect(tracer.events.every((e) => e.agent === "zetaris-setup" && e.action === "query" && e.engine === "zetaris" && e.model_requested === "none")).toBe(true);
     expect(tracer.events[1]).toMatchObject({ status: "skipped", input_summary: "CREATE DATASOURCE DRIFT (credentials redacted)", output_summary: "DRIFT exists" });
   });
 
@@ -516,5 +517,26 @@ describe("Zetaris adapter", () => {
     await z.query(long, { tracer });
     expect(tracer.events.map((e) => e.status)).toEqual(["failed", "ok"]);
     expect(JSON.stringify(tracer.events)).not.toContain(PW.slice(0, 6));
+  });
+
+  it("every query trace event names the engine that answered: zetaris through ZetarisEngine, sqljs through SqlJsEngine, failed queries included", async () => {
+    const { DataLayer } = await import("../src/data/layer.ts");
+    const { ZetarisEngine } = await import("../src/data/engines/zetaris.ts");
+    const { SqlJsEngine } = await import("../src/data/engines/sqljs.ts");
+    const { CountingEngine } = await import("../src/data/engines/counting.ts");
+    const sql = "SELECT run_id FROM {{t:collection_run}} WHERE tenant_id = {{p:t}}";
+    const tracer = new MemTracer("t_engine", { model: "none" });
+    vi.stubGlobal("fetch", ok());
+    await new DataLayer(new CountingEngine(new ZetarisEngine())).run(sql, { t: "client-a" }, { tracer, agent: "pass" });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ message: "table not found" }), { status: 400 })));
+    await expect(new DataLayer(new ZetarisEngine()).run(sql, { t: "client-a" }, { tracer })).rejects.toThrow(ZetarisError);
+    const lite = await SqlJsEngine.create();
+    await new DataLayer(new CountingEngine(lite)).run(sql, { t: "client-a" }, { tracer, agent: "pass" });
+    await expect(lite.run("SELECT nope FROM collection_run", { tracer })).rejects.toThrow(/sqljs/);
+    expect(tracer.events.map((e) => [e.action, e.engine, e.status])).toEqual([
+      ["query", "zetaris", "ok"], ["query", "zetaris", "failed"], ["query", "sqljs", "ok"], ["query", "sqljs", "failed"],
+    ]);
+    expect(tracer.events[0].input_summary).toContain("DRIFT.collection_run");
+    expect(tracer.events[2].input_summary).toContain("FROM collection_run WHERE");
   });
 });

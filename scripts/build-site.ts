@@ -57,8 +57,9 @@
 // the file and the position in the list, never the label.
 //
 // The pass over each slice and the full sample pass read the technician's lessons from the store DRIFT_MEMORY_DIR
-// names (BuildOptions.memoryDir; read only) and decide at the bundle's instant or the latest lesson's, as npm run
-// examples and npm run sample do, so an exception in force decides here as it decided there.
+// names (BuildOptions.memoryDir; read only; examples/memory, the committed store, when it is blank) and decide at
+// the bundle's instant or the latest lesson's, as npm run examples and npm run sample do, so an exception in force
+// decides here as it decided there.
 //
 // Deterministic: no clock in the output, no machine path, so the committed docs/ is exactly the build of the
 // committed examples and the committed eval results (test/site.test.ts asserts it). File hashes are over LF text,
@@ -73,7 +74,7 @@ import { z } from "zod";
 import { MAX_LIMIT, guardRefutation } from "../src/agents/judge.ts";
 import { bindParams, type FindingSummary } from "../src/catalogue/select.ts";
 import { renderTemplate, templateById } from "../src/catalogue/templates.ts";
-import { config } from "../src/config.ts";
+import { config, memoryDir } from "../src/config.ts";
 import { DataLayer, type Param, type Params } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { ZetarisEngine } from "../src/data/engines/zetaris.ts";
@@ -224,7 +225,7 @@ export interface BuildOptions {
   allowStale?: boolean;
   /** The owner's document the Document tab shows; default examples/document.md. */
   documentPath?: string;
-  /** The technician's lessons every pass of the build reads (opened read only); default DRIFT_MEMORY_DIR. */
+  /** The technician's lessons every pass of the build reads (opened read only); default DRIFT_MEMORY_DIR, the committed examples/memory when that is blank (a sample build). */
   memoryDir?: string;
   /** The eval results directory the Nemotron tab is built from; default the lexically newest under eval/results holding planted.json and C*-run*.json. */
   resultsDir?: string;
@@ -957,7 +958,7 @@ export async function buildSite(opts: BuildOptions = {}): Promise<BuildResult> {
 
   const dirs = exampleDirs(examplesDir);
   if (!dirs.length) throw new SiteError(`no example under ${examplesDir} has both bundle.json and findings.json`);
-  const memory = new TechnicianMemory({ storage: "read", directory: opts.memoryDir });
+  const memory = new TechnicianMemory({ storage: "read", directory: opts.memoryDir ?? memoryDir(undefined, true) });
 
   let sample: SampleSummary | null = null;
   let full: Map<string, Finding> | null = null;

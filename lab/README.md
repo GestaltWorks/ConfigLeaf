@@ -35,10 +35,11 @@ PROBE_TARGETS_OVERRIDE=lab.example=127.0.0.1:18080 npm run act -- --tenant lab-1
 
 Node's `loadEnvFile` leaves variables already set alone, so the prefix wins over `.env`. `MSYS_NO_PATHCONV=1` keeps
 Git Bash from rewriting `=/var/backups/export` into `C:/Program Files/Git/var/backups/export` (measured). Git's own
-ssh reads the key; Windows OpenSSH refuses it for the permissions `lab/.keys/` inherits on `D:`.
+ssh reads the key; Windows OpenSSH refuses it for the permissions `lab/.keys/` inherits on `D:`. A relative
+`LINUX_SSH_CONFIG` resolves against the working directory, the repository root every npm script runs from.
 
 ```bash
-export MSYS_NO_PATHCONV=1 LINUX_HOSTS=drift-lab=/var/backups/export LINUX_SSH_CONFIG=D:/Projects/drift-agent/lab/ssh_config.local
+export MSYS_NO_PATHCONV=1 LINUX_HOSTS=drift-lab=/var/backups/export LINUX_SSH_CONFIG=lab/ssh_config.local
 npm run collect:linux -- --host drift-lab --tenant lab-1
 npm run approve -- --tenant lab-1 --host drift-lab --all
 npm run validate:copies -- --tenant lab-1

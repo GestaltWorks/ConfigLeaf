@@ -19,7 +19,7 @@
 //               applies to another.
 //
 // Lessons live in the directory DRIFT_MEMORY_DIR names (state.json, ledger.jsonl; src/config.ts), --memory-dir
-// for one command: .world/memory when it is blank, gitignored; examples/memory is the committed store a clean clone
+// for one command: when it is blank, .world/memory (gitignored), or examples/memory in sample mode, the committed store a clean clone
 // and CI decide with. Recording and --forget write the store; --list only reads it. Free text (reason, question,
 // answer, --by) goes through the redactor before it is stored; the printed lesson is the stored one.
 
@@ -55,7 +55,7 @@ const USAGE = [
   '  npm run answer -- --finding <id> --question "..." --answer "..." [--until <ISO 8601 UTC>] [--scope host|name|address] [--by <role>]',
   "  npm run answer -- --list [--tenant <id>]",
   '  npm run answer -- --forget <lesson id> [--reason "..."]',
-  "  options: --bundle sample/bundle.json  --memory-dir <dir>   (the store's directory; DRIFT_MEMORY_DIR by default, .world/memory when that is blank)",
+  "  options: --bundle sample/bundle.json  --memory-dir <dir>   (the store's directory; DRIFT_MEMORY_DIR by default; blank: .world/memory, examples/memory in sample mode)",
 ].join("\n");
 
 const fail = (msg: string, code = 2): never => {

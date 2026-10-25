@@ -4,6 +4,7 @@
 
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 try {
@@ -58,8 +59,8 @@ const Schema = z.object({
   // policy/hackathon.json, the default.
   DRIFT_POLICY_FILE: z.string().default("policy/hackathon.json"),
   // The directory of the technician's lessons, the H-MEM store (state.json, ledger.jsonl): npm run answer writes it,
-  // every pass reads it. Blank = .world/memory, gitignored; a committed directory makes a clean clone and CI decide
-  // with the same lessons.
+  // every pass reads it. Blank = .world/memory, gitignored (examples/memory, the committed store, in sample mode and for
+  // npm run examples and npm run site); a committed directory makes a clean clone and CI decide with the same lessons.
   DRIFT_MEMORY_DIR: z.string().default(""),
   // The command that runs nginx -t over a vault commit materialised in a temp directory, with {dir} for that
   // directory. Blank = the platform default (NGINX_T_DEFAULT below: docker, through WSL on Windows).
@@ -76,7 +77,7 @@ const raw = Schema.parse(process.env);
 const EXPORT_DIR = /^\/[A-Za-z0-9._\/-]+$/;
 const ALIAS = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
-/** "host-redacted=/var/backups/export,other=/home/x/backup-export" -> alias -> export dir. Throws on a shape the read script would not accept. */
+/** "web-01=/var/backups/export,other=/home/x/backup-export" -> alias -> export dir. Throws on a shape the read script would not accept. */
 export function parseLinuxHosts(s: string): Record<string, { exportDir: string }> {
   const out: Record<string, { exportDir: string }> = {};
   for (const entry of s.split(",").map((e) => e.trim()).filter(Boolean)) {
@@ -130,9 +131,19 @@ export function nginxTCommand(platform: NodeJS.Platform = process.platform, conf
 /** Where the technician's lessons live when DRIFT_MEMORY_DIR is blank: under .world/, which .gitignore keeps out of the repository. */
 export const DEFAULT_MEMORY_DIR = ".world/memory";
 
-/** DRIFT_MEMORY_DIR trimmed, else DEFAULT_MEMORY_DIR; relative to the working directory, as every npm script runs from the repository root. */
-export function memoryDir(configured: string = raw.DRIFT_MEMORY_DIR): string {
-  return configured.trim() || DEFAULT_MEMORY_DIR;
+/**
+ * Where they live in sample mode when DRIFT_MEMORY_DIR is blank: the committed store, examples/memory under the
+ * repository root (this file's parent's parent), so a clean clone with no .env decides with the lessons the
+ * committed examples and docs/ were built with.
+ */
+export const SAMPLE_MEMORY_DIR = path.join(path.dirname(path.dirname(fileURLToPath(import.meta.url))), "examples", "memory");
+
+/**
+ * DRIFT_MEMORY_DIR trimmed, else SAMPLE_MEMORY_DIR in sample mode and DEFAULT_MEMORY_DIR otherwise; a relative value
+ * resolves against the working directory, as every npm script runs from the repository root.
+ */
+export function memoryDir(configured: string = raw.DRIFT_MEMORY_DIR, sample: boolean = raw.SAMPLE_MODE === "true"): string {
+  return configured.trim() || (sample ? SAMPLE_MEMORY_DIR : DEFAULT_MEMORY_DIR);
 }
 
 /** The Nightshift runtime writes its bearer token to a file; fall back to it when the env var is blank. */
@@ -175,7 +186,7 @@ export const config = {
   vaultDir: raw.DRIFT_VAULT_DIR.trim(),
   /** DRIFT_POLICY_FILE, default policy/hackathon.json. */
   policyFile: raw.DRIFT_POLICY_FILE.trim() || "policy/hackathon.json",
-  /** DRIFT_MEMORY_DIR, default .world/memory: the store TechnicianMemory opens (src/engine/memory.ts). */
+  /** DRIFT_MEMORY_DIR, default .world/memory (examples/memory in sample mode): the store TechnicianMemory opens (src/engine/memory.ts). */
   memoryDir: memoryDir(),
   /** DRIFT_NGINX_T as configured; "" = the platform default (nginxTCommand). */
   nginxT: raw.DRIFT_NGINX_T.trim(),

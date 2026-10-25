@@ -23,8 +23,9 @@
 // Each directory gets bundle.json (the slice, in the house format) and findings.json (the pass's findings).
 // Directory names say what the case is, never which zone it is: the bundle pseudonymises the zone, and a
 // folder named after it would undo that for every row of the zone. Every pass reads the technician's lessons
-// from the store DRIFT_MEMORY_DIR names (read only) and decides at the slice's own instant, or at the instant the
-// latest lesson was taught when that is later (src/data/instant.ts decisionInstantWith), as the sample pass does,
+// from the store DRIFT_MEMORY_DIR names (read only; examples/memory, the committed store, when it is blank) and
+// decides at the slice's own instant, or at the instant the latest lesson was taught when that is later
+// (src/data/instant.ts decisionInstantWith), as the sample pass does,
 // so an exception in force decides a slice's finding as it decides the full pass's, and a re-run with the same
 // store gives the same findings.json.
 
@@ -32,6 +33,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { memoryDir } from "../src/config.ts";
 import { DataLayer } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { decisionInstant, decisionInstantWith } from "../src/data/instant.ts";
@@ -181,7 +183,8 @@ function toBundleFile(ex: Example): BundleFile {
 const invoked = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href.toLowerCase() : "";
 if (invoked === import.meta.url.toLowerCase()) {
   const { values: args } = parseArgs({ options: { out: { type: "string", default: "examples" } } });
-  const memory = new TechnicianMemory({ storage: "read" });
+  // A sample build over the recorded bundle: DRIFT_MEMORY_DIR blank reads the committed store (examples/memory), as SAMPLE_MODE does.
+  const memory = new TechnicianMemory({ storage: "read", directory: memoryDir(undefined, true) });
   const taught = memory.lessons().map((l) => l.recordedAt);
   for (const ex of await buildExamples()) {
     const file = toBundleFile(ex);

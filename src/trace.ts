@@ -33,6 +33,8 @@ export interface TraceEvent {
   receipt_id?: string;
   signature_ok?: boolean;
   query_id?: string;
+  /** On every query event: the DataLayer engine that answered, Zetaris Lightning SQL (live) or sql.js (sample, tests). */
+  engine?: "zetaris" | "sqljs";
   tokens_in?: number;
   tokens_out?: number;
   latency_ms?: number;

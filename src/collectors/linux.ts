@@ -636,7 +636,7 @@ export function toRows(f: Fetched, opts: ToRowsOptions): { rows: CollectedRows; 
   }
 
   // The unit name goes through the redactor too: a timer named after a zone or a product (<brand>-ingest.timer, measured on
-  // host-redacted) would otherwise carry the label into setting_path, which the Store leaves as written.
+  // web-02) would otherwise carry the label into setting_path, which the Store leaves as written.
   for (const t of f.timers?.entries ?? []) obs("systemd", `timer[${rtext(t.unit)}]`, t.activates);
 
   for (const ip of [...f.ip4, ...f.ip6]) {

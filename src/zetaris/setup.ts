@@ -607,7 +607,7 @@ export async function apply(deps: ApplyDeps = {}): Promise<ApplyResult> {
 
   const record = (i: number, s: Step, res: StepResult, ev: Partial<Omit<TraceEvent, "ts" | "trace_id">> = {}) => {
     results.push(res);
-    deps.tracer?.emit({ agent: AGENT, action: "query", status: res.status, input_summary: (s.traceAs ?? s.sql).slice(0, 160), output_summary: res.status === "failed" ? undefined : res.note, latency_ms: res.ms, ...ev });
+    deps.tracer?.emit({ agent: AGENT, action: "query", engine: "zetaris", status: res.status, input_summary: (s.traceAs ?? s.sql).slice(0, 160), output_summary: res.status === "failed" ? undefined : res.note, latency_ms: res.ms, ...ev });
     const label = `${String(i + 1).padStart(2, "0")} ${s.name}`;
     out(`${res.status.padEnd(7)} ${label.padEnd(44)} ${res.note}${res.ms !== undefined ? `  (${res.ms} ms)` : ""}`);
   };

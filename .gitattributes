@@ -5,3 +5,16 @@ ops/sudoers/* text eol=lf
 # The lab's files go into a Linux container and run in WSL (lab/README.md): LF whatever the checkout.
 lab/** text eol=lf
 demo/** text eol=lf
+# Tests hash these files or splice "\n" into their text (test/eval.test.ts seeds the split from the bytes of
+# eval/labels.json; test/nginx.test.ts, test/validate.test.ts and test/vault.test.ts read the nginx fixtures byte for
+# byte), and the sample pass, the examples and the replay page are built from them. A CRLF checkout on Windows
+# (core.autocrlf=true) would change those bytes: LF whatever the checkout.
+test/fixtures/** text eol=lf
+scripts/fixtures/** text eol=lf
+eval/** text eol=lf
+examples/** text eol=lf
+sample/** text eol=lf
+policy/** text eol=lf
+# npm run site writes docs/ with LF, as npm run examples and npm run document write examples/: pinned, a rebuild on a
+# Windows checkout is byte-identical to the files checked out and git status stays clean.
+docs/** text eol=lf
