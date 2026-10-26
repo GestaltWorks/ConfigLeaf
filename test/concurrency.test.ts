@@ -28,6 +28,7 @@ import policyBundle from "./fixtures/policy-bundle.json" with { type: "json" };
 import recorded from "./fixtures/recorded-bundle.json" with { type: "json" };
 import sample from "../sample/bundle.json" with { type: "json" };
 import { MemTracer } from "./fixtures/mem-tracer.ts";
+import { mailWorld } from "./fixtures/m365/world.ts";
 
 type Bundle = Readonly<Record<string, unknown>>;
 
@@ -469,6 +470,18 @@ describe("the pass at concurrency 1 and 4: every finding, disposition, ledger ro
       expect(four.trace).toEqual(one.trace);
     });
   }
+
+  it("over the Microsoft 365 fixture under the policy: the mail records detector's four ESCALATEs and its lines, the same at 1 and 4", async () => {
+    const { bundle } = await mailWorld({ policy: true });
+    const opts = { decidedAt: AT };
+    const [one, four] = [await passAt(bundle, 1, { opts }), await passAt(bundle, 4, { opts })];
+    if (!one.ok || !four.ok) throw new Error("a pass over the Microsoft 365 fixture failed");
+    expect(one.result.findings.map((f) => [f.finding.class, f.verb])).toEqual(Array(4).fill(["m365_mail_record", "ESCALATE"]));
+    expect(four.result).toEqual(one.result);
+    expect(four.dispositions).toEqual(one.dispositions);
+    expect(four.trace).toEqual(one.trace);
+    expect(one.trace.filter((e) => e.action === "detect" && e.input_summary?.startsWith("m365_mail_record ")).length).toBe(1);
+  });
 
   it("over the policy fixture with a change_window read that fails: the one not_checked line, where the first finding that weighs a window asks", async () => {
     const failing = (e: SqlJsEngine): Engine => ({ name: e.name, qualify: (t) => e.qualify(t), run: async (sql, o) => { if (sql.includes("FROM change_window")) throw new DataLayerError("no such table: change_window"); return e.run(sql, o); } });

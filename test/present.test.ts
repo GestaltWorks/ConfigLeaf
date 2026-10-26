@@ -298,6 +298,7 @@ describe("the classes in plain words", () => {
       approved_missing: "approved setting missing",
       changed_since_backup: "changed since the last backup",
       proxy_split: "name and its www treated differently by the proxy",
+      m365_mail_record: "mail record Microsoft 365 requires, missing or different in DNS",
       dns_change: "DNS target moved",
     });
     expect(classLabel("some_new_class")).toBe("some_new_class");
