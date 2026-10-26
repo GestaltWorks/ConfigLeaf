@@ -8,6 +8,10 @@ if (!model) {
   process.exit(2);
 }
 const n = Number(nArg ?? 6);
+if (!Number.isInteger(n) || n < 1 || n > 50) {
+  console.error("n must be a whole number from 1 to 50");
+  process.exit(2);
+}
 const ns = new Nightshift();
 const ask = { role: "user" as const, content: 'Reply with only this JSON and nothing else: {"ok":true}' };
 let ok = 0;
@@ -21,7 +25,9 @@ for (let i = 0; i < n; i++) {
     ms.push(Date.now() - t0);
     if (i === 0) console.log(`routed=${r.modelRouted}`);
   } catch (e: any) {
-    fails.push(String(e.detail ?? e.message).slice(0, 80));
+    // Only the failure's kind is printed (e.g. "<route>_empty_response"), never an upstream body that could echo a header.
+    const kind = String(e.detail ?? e.message).match(/^[A-Za-z0-9/._:-]+_[a-z_]+/);
+    fails.push(kind ? kind[0] : "failed");
   }
 }
 ms.sort((a, b) => a - b);
