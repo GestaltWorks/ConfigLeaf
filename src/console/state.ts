@@ -430,7 +430,7 @@ export function decisionsOfLedger(open: readonly OpenDisposition[], windowHolds:
 
 export type Status = "in order" | "drifted" | "held" | "with a technician" | "adopted";
 export const STATUSES: readonly Status[] = ["with a technician", "drifted", "held", "adopted", "in order"];
-const STATUS_OF: Readonly<Record<Verb, Status>> = { ESCALATE: "with a technician", FIX: "with a technician", ROLLBACK: "drifted", HOLD: "held", ADOPT: "adopted" };
+export const STATUS_OF: Readonly<Record<Verb, Status>> = { ESCALATE: "with a technician", FIX: "with a technician", ROLLBACK: "drifted", HOLD: "held", ADOPT: "adopted" };
 export type Lock = "locked" | "open" | "window";
 
 export interface SettingObject {
