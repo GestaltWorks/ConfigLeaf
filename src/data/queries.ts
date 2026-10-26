@@ -53,6 +53,29 @@ export function runComplete(dl: DataLayer, runId: string, opts?: RunOptions): Pr
   return dl.run(RUN_COMPLETE_SQL, { run_id: runId }, opts);
 }
 
+/**
+ * The DQ gate over every run of a tenant in one read: RUN_COMPLETE_SQL's predicate, the tenant in place of the run.
+ * Rows are the tenant's runs that fail it. The pass gates with this (src/pipeline.ts), so the gate costs one query per
+ * tenant however many runs the history holds, where RUN_COMPLETE_SQL cost one per run.
+ */
+export const FAILING_RUNS_SQL = `SELECT c.run_id, c.tenant_id, c.surface, c.host, c.expected_count, c.observed_count, c.status
+FROM {{t:collection_run}} c
+WHERE c.tenant_id = {{p:tenant_id}}
+  AND (c.observed_count < c.expected_count OR c.status <> 'complete'
+    OR c.expected_count IS NULL OR c.observed_count IS NULL
+    OR (c.surface LIKE 'linux.%' AND c.expected_count > (SELECT COUNT(*) FROM {{t:observation}} x WHERE x.run_id = c.run_id)))
+ORDER BY c.run_id`;
+
+/**
+ * The run ids of a tenant that fail the DQ gate. Only rows of `tenantId` count, so a filter the engine widened could
+ * add no other tenant's run; every row satisfies a failure condition of the predicate on its own.
+ */
+export async function failingRuns(dl: DataLayer, tenantId: string, opts?: RunOptions): Promise<Set<string>> {
+  const r = await dl.run(FAILING_RUNS_SQL, { tenant_id: tenantId }, { limit: 100_000, ...opts });
+  if (r.total > r.rowCount) throw new Error(`failingRuns: ${r.total} failing runs for ${tenantId}, ${r.rowCount} read`);
+  return new Set(objects(r).filter((x) => x.tenant_id === tenantId).map((x) => x.run_id));
+}
+
 /** Every collection run, oldest first; the pass groups them by tenant, surface and host. */
 export const RUNS_SQL = `SELECT run_id, tenant_id, surface, host, started_at, finished_at, expected_count, observed_count, status
 FROM {{t:collection_run}}

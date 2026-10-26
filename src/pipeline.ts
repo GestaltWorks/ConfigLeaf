@@ -3,7 +3,7 @@
 // SQL through the DataLayer, or a World Model query over what that SQL returned; nothing maps an
 // input to an answer.
 //
-//   gate     runComplete for every collection run. A failing run is traced not_checked and feeds
+//   gate     failingRuns, one read per tenant, then a check line for every collection run. A failing run is traced not_checked and feeds
 //            nothing below: not the World Model, not the hero query, not a finding. The audit log has
 //            no run_id on its rows (audit_event is keyed by the vendor's event id so overlapping pulls
 //            dedupe), so its gate works on the checks instead: when a tenant's latest cloudflare.audit
@@ -110,7 +110,7 @@ import { fingerprintRows } from "./data/fingerprint.ts";
 import { DataLayerError, type DataLayer } from "./data/layer.ts";
 import {
   approvedCopies, approvedMissing, auditSpan, changeWindows, changedSinceBackup, driftVsApproved, hero, latestApprovals, listRuns, objects, observationsOf, orphanRecords, orphanVhosts,
-  policyRules, priorHolds, probesOfRun, proxiedWithoutRealIp, proxySplit, runComplete, wildcardWithoutRealIp,
+  failingRuns, policyRules, priorHolds, probesOfRun, proxiedWithoutRealIp, proxySplit, wildcardWithoutRealIp,
 } from "./data/queries.ts";
 import { dispositionId, type ChangeWindow, type DecidedBy, type Disposition, type DispositionVerb, type PolicyRule } from "./data/rows.ts";
 import type { ExceptionLesson, TechnicianMemory } from "./engine/memory.ts";
@@ -604,21 +604,25 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     };
   };
 
-  // gate
+  // gate: one read per tenant (failingRuns), then each run's check line in run order, as one task
   const gatedOut = new Set<string>();
-  const gate = (r: Row): Task => async (t) => {
-    const g = await runComplete(layer, r.run_id, { tracer: t, agent: "observer" });
-    t?.emit({
-      agent: "observer", action: "check", status: g.total > 0 ? "not_checked" : "ok",
-      input_summary: `run_complete ${r.run_id}`,
-      output_summary: `${r.surface}${r.host ? ` ${r.host}` : ""}: ${r.observed_count}/${r.expected_count} ${r.status}`,
-      detail: g.total > 0 ? `run ${r.run_id} fails the DQ gate; its observations feed no finding` : undefined,
-    });
+  const tenantsOfRuns = [...new Set(runs.map((r) => r.tenant_id))].sort();
+  const gate: Task = async (t) => {
+    const failing = new Set<string>();
+    for (const tenant of tenantsOfRuns) for (const id of await failingRuns(layer, tenant, { tracer: t, agent: "observer" })) failing.add(id);
+    for (const r of runs) {
+      t?.emit({
+        agent: "observer", action: "check", status: failing.has(r.run_id) ? "not_checked" : "ok",
+        input_summary: `run_complete ${r.run_id}`,
+        output_summary: `${r.surface}${r.host ? ` ${r.host}` : ""}: ${r.observed_count}/${r.expected_count} ${r.status}`,
+        detail: failing.has(r.run_id) ? `run ${r.run_id} fails the DQ gate; its observations feed no finding` : undefined,
+      });
+    }
     return () => {
-      if (g.total > 0) gatedOut.add(r.run_id);
+      for (const r of runs) if (failing.has(r.run_id)) gatedOut.add(r.run_id);
     };
   };
-  await inTurn([...[...new Set(runs.map((r) => r.tenant_id))].sort().map(readRules), ...runs.map(gate)]);
+  await inTurn([...tenantsOfRuns.map(readRules), gate]);
   const passing = runs.filter((r) => !gatedOut.has(r.run_id));
   passingRuns = passing;
   // The audit surface's gate: audit_event rows carry no run_id, so a failing audit run withholds the audit templates per tenant.
