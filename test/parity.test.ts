@@ -478,7 +478,8 @@ describe("engine parity", () => {
   }
 });
 
-describe("the ticket step's reads over sample/bundle.json, on sql.js: the rows in key order, with the columns the step reads", () => {
+// The blocks below load sample/bundle.json into sql.js each time: a few seconds alone, more under the full suite.
+describe("the ticket step's reads over sample/bundle.json, on sql.js: the rows in key order, with the columns the step reads", { timeout: 30_000 }, () => {
   it("TICKETS_SQL, TICKET_ACTIONS_SQL (the reason and the record included) and TICKET_ZONES_SQL", async () => {
     const engine = await SqlJsEngine.create();
     engine.loadBundle(bundle);
@@ -500,7 +501,7 @@ describe("the ticket step's reads over sample/bundle.json, on sql.js: the rows i
   });
 });
 
-describe("the document's inventory read over sample/bundle.json, on sql.js: the counts the Estate line prints", () => {
+describe("the document's inventory read over sample/bundle.json, on sql.js: the counts the Estate line prints", { timeout: 30_000 }, () => {
   it("DOC_INVENTORY_SQL: the rows a host's latest run saw, the older rows kept, and zero for a host with none", async () => {
     const engine = await SqlJsEngine.create();
     engine.loadBundle(bundle);
@@ -518,7 +519,7 @@ describe("the document's inventory read over sample/bundle.json, on sql.js: the 
   });
 });
 
-describe("the prior HOLD read over sample/bundle.json, on sql.js: a change window's HOLD is no rule's", () => {
+describe("the prior HOLD read over sample/bundle.json, on sql.js: a change window's HOLD is no rule's", { timeout: 30_000 }, () => {
   it("PRIOR_HOLDS_SQL over the rule's HOLDs and a later window HOLD of each sites file returns what it returns over the rule's alone", async () => {
     const engine = await SqlJsEngine.create();
     engine.loadBundle(bundle);
@@ -533,7 +534,7 @@ describe("the prior HOLD read over sample/bundle.json, on sql.js: a change windo
   });
 });
 
-describe("the file tables over the committed store and policy, on sql.js: exception_in_force at one decision instant", () => {
+describe("the file tables over the committed store and policy, on sql.js: exception_in_force at one decision instant", { timeout: 30_000 }, () => {
   it("the ADOPT under a lesson in force joins it; one naming no lesson, one after the expiry and one of another tenant do not; the HOLD is left out", async () => {
     const files = fileRows({ memoryDir: SAMPLE_MEMORY_DIR, policyFile: "policy/hackathon.json" });
     expect(files.lesson).toHaveLength(23);

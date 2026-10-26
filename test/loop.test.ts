@@ -607,7 +607,8 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
     expect(r.summary).toContain("ledger: none, nothing recorded");
   });
 
-  it("runs as one cycle with collect, probe and validate skipped: the pass records, act plans, tickets plan, the document is written", async () => {
+  // A whole cycle over the policy fixture with the sql.js engine: about 4.5 s alone, longer under the full suite.
+  it("runs as one cycle with collect, probe and validate skipped: the pass records, act plans, tickets plan, the document is written", { timeout: 30_000 }, async () => {
     const out = path.join(dir, "document.md");
     const tracer = new MemTracer("loop_test", { model: "none" });
     const printed: string[] = [];
