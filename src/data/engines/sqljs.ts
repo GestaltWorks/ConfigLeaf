@@ -166,7 +166,11 @@ export class SqlJsEngine implements Engine {
     return this.db.getRowsModified();
   }
 
-  /** Run exactly one statement. Same refusal as the Zetaris adapter: a trailing semicolon is stripped, a second statement is refused; a ';' inside a literal is data. */
+  /**
+   * Run exactly one statement. Same refusal as the Zetaris adapter: a trailing semicolon is stripped, a second statement is refused; a ';' inside a literal is data.
+   * Nothing in it awaits, so a statement runs whole from prepare to free: the concurrent pass's overlapping calls (PASS_CONCURRENCY) run one statement
+   * at a time on one engine, each as it would alone (test/concurrency.test.ts).
+   */
   async run(sql: string, opts: RunOptions = {}): Promise<QueryResult> {
     const clean = sql.trim().replace(/;+\s*$/, "");
     if (/;\s*\S/.test(stripLiterals(clean))) throw new DataLayerError("one statement per call");
