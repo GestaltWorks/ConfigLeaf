@@ -61,7 +61,24 @@ export interface PassJudge {
    * decides the others' findings; src/loop/pass.ts sets its tenant here, whose findings alone it reports. Absent: every finding.
    */
   tenant?: string;
+  /** The most model calls the pass makes, in finding order; JUDGE_MAX_CALLS (default 64) when absent. */
+  maxCalls?: number;
 }
+
+/**
+ * The pass summary's judge clause for a pass given no judge, one text per cause: sample mode, which runs no model, or a live
+ * caller that wired none. A judge that is off or has no model is a judge, and its tally says so (judgeClause).
+ */
+export const noJudgeClause = (sampleMode: boolean = config.sampleMode): string => (sampleMode ? "model: none (sample mode)" : "model: none (no judge wired)");
+
+/** The skipped judge line's detail for a finding past the pass's call cap: the decision stands, not judged. */
+export const capReached = (max: number): string => `judge cap reached: ${max} model call(s) this pass (JUDGE_MAX_CALLS); not judged, the decision stands`;
+
+/**
+ * The trace's default model for a live command: none unless the judge has a Nightshift to call or the command writes (--apply),
+ * which calls models of its own. scripts/pass.ts and src/loop/live.ts both build their tracer with it.
+ */
+export const traceModel = (judge: PassJudge | null | undefined, apply = false): { model?: string } => (apply || judge?.nightshift ? {} : { model: "none" });
 
 /** The skipped judge line's detail for a finding of another tenant than the one the judge is for. */
 export const otherTenant = (finding: string, judged: string): string => `not judged in this pass: the finding is tenant ${finding}'s, the pass judges tenant ${judged}'s`;
@@ -266,7 +283,7 @@ export async function judgeFinding(
     agent: "judge", action: "judge", status: outcome === "not_counted" ? "not_judged" : "ok",
     model_requested: models[0], ...(judgement.served_model ? { model_routed: judgement.served_model } : {}),
     ...(judgement.receipt_id ? { receipt_id: judgement.receipt_id } : {}), ...(judgement.verified === null ? {} : { signature_ok: judgement.verified }),
-    input_summary: finding.summary.slice(0, 160),
+    input_summary: (scrub(finding.summary) ?? "").slice(0, 160),
     output_summary: `${outcome === "not_counted" ? "judge not counted" : outcome}: ${reason}; ${effect}`,
     detail: judgeDetail(judgement),
   });

@@ -18,7 +18,7 @@
 
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { liveJudge } from "../agents/falsifier.ts";
+import { liveJudge, traceModel } from "../agents/falsifier.ts";
 import { HOSTS } from "../collectors/linux.ts";
 import { config, redact } from "../config.ts";
 import { DataLayer } from "../data/layer.ts";
@@ -76,7 +76,7 @@ export function liveShared(): LiveShared {
 export async function liveCycle(o: LiveCycleOptions, shared: LiveShared): Promise<{ result: CycleResult; traceFile: string; traceLines: number }> {
   // The pass's judge: Nemotron 3 Ultra through Nightshift, as the eval's C3; with no runtime token or URL, a judge that counts nothing.
   const judge = liveJudge();
-  const tracer = new FileTracer(`cycle_${Date.now().toString(36)}`, o.apply || judge?.nightshift ? {} : { model: "none" });
+  const tracer = new FileTracer(`cycle_${Date.now().toString(36)}`, traceModel(judge, o.apply));
   const { redactor } = shared;
   const deny = [...new Set([...config.redactWords, ...config.exportDenyWords])];
   const counting = new CountingEngine(new ZetarisEngine());

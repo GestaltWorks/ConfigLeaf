@@ -37,7 +37,7 @@
 
 import { randomBytes } from "node:crypto";
 import { parseArgs } from "node:util";
-import { liveJudge } from "../src/agents/falsifier.ts";
+import { liveJudge, traceModel } from "../src/agents/falsifier.ts";
 import { config, redact } from "../src/config.ts";
 import { DataLayer } from "../src/data/layer.ts";
 import { CountingEngine } from "../src/data/engines/counting.ts";
@@ -87,7 +87,7 @@ const tenant = args.tenant;
 const redactor = new Redactor(config.redactSalt || randomBytes(16).toString("hex"), config.redactWords);
 // The eval's C3 judge on every finding the withdraw rule leaves open; with no runtime token or URL each is "judge not counted: no model configured".
 const judge = liveJudge();
-const tracer = new FileTracer(`pass_${Date.now().toString(36)}`, judge?.nightshift ? {} : { model: "none" });
+const tracer = new FileTracer(`pass_${Date.now().toString(36)}`, traceModel(judge));
 const trace = tracer.logFile.replace(/\\/g, "/");
 const present = presentOptions(args);
 const table = new Table(present, (s) => redactor.text(redact(s)));

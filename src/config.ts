@@ -84,6 +84,8 @@ const Schema = z.object({
   // refute each finding the withdraw rule leaves open; off, no model call, and each such finding is "judge not counted:
   // judge off". Blank is on. Independent of --apply. Sample mode runs no model whatever this says.
   DRIFT_JUDGE: z.string().default("on"),
+  // The most judge model calls one pass makes; the findings past it keep their decision, each traced with why. Default 64.
+  JUDGE_MAX_CALLS: z.string().default("64"),
   LOG_DIR: z.string().default("logs"),
 });
 
@@ -174,6 +176,23 @@ export function parseJudgeSwitch(s: string): "on" | "off" {
   return t;
 }
 
+/** JUDGE_MAX_CALLS as a number: a whole number, 0 for no judge call at all, blank for the default 64. Throws on any other value. */
+export function parseJudgeMaxCalls(s: string): number {
+  const t = s.trim() || "64";
+  if (!/^(0|[1-9]\d*)$/.test(t)) throw new Error(`JUDGE_MAX_CALLS: a whole number, got ${JSON.stringify(s)}`);
+  return Number(t);
+}
+
+/** JUDGE_MAX_CALLS as every process reads it at startup: an invalid value is one plain line on stderr and exit 2. */
+function judgeMaxCallsOrExit(s: string): number {
+  try {
+    return parseJudgeMaxCalls(s);
+  } catch (e) {
+    process.stderr.write(`${(e as Error).message}\n`);
+    process.exit(2);
+  }
+}
+
 /** DRIFT_JUDGE as every process reads it at startup: an invalid value is one plain line on stderr and exit 2, never a stack trace. */
 function judgeSwitchOrExit(s: string): "on" | "off" {
   try {
@@ -257,6 +276,8 @@ export const config = {
   passConcurrency: passConcurrencyOrExit(raw.PASS_CONCURRENCY),
   /** DRIFT_JUDGE, parsed; default on: the live pass runs the eval's C3 judge. */
   judge: judgeSwitchOrExit(raw.DRIFT_JUDGE),
+  /** JUDGE_MAX_CALLS, parsed; default 64 judge model calls a pass. */
+  judgeMaxCalls: judgeMaxCallsOrExit(raw.JUDGE_MAX_CALLS),
   logDir: raw.LOG_DIR,
 } as const;
 

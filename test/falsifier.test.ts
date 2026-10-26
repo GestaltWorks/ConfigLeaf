@@ -13,11 +13,11 @@ import { describe, expect, it } from "vitest";
 import type { SignedReceipt } from "../src/adapters/nightshift.ts";
 import { JUDGE_MAX_TOKENS, SYSTEM_PROMPT, type JudgeModel, type JudgeStatus } from "../src/agents/judge.ts";
 import {
-  MAX_CELL, PROMPT_LIMIT, applyVerdict, cutEvidence, cutText, fitEvidence, userChars, judgeClause, judgeDetail, judgeFinding, liveJudge, modelName, otherTenant, outcomeOf, tallyText, ultraLadder,
+  MAX_CELL, PROMPT_LIMIT, applyVerdict, capReached, noJudgeClause, traceModel, cutEvidence, cutText, fitEvidence, userChars, judgeClause, judgeDetail, judgeFinding, liveJudge, modelName, otherTenant, outcomeOf, tallyText, ultraLadder,
   type JudgeOutcome, type LiveJudgeSettings, type PassJudge, type PassJudgement,
 } from "../src/agents/falsifier.ts";
 import { defaultChecks, type FindingSummary } from "../src/catalogue/select.ts";
-import { config, parseJudgeSwitch } from "../src/config.ts";
+import { config, parseJudgeMaxCalls, parseJudgeSwitch } from "../src/config.ts";
 import { DataLayer, type Engine } from "../src/data/layer.ts";
 import { SqlJsEngine, type Bundle } from "../src/data/engines/sqljs.ts";
 import { decisionInstant } from "../src/data/instant.ts";
@@ -64,6 +64,8 @@ interface Answer {
   tamper?: boolean;
   /** The receipt's hmem, as Nightshift's memory records an injection. */
   hmem?: unknown;
+  /** The receipt names this app in place of the one the call went out under. */
+  app?: string;
   /** No receipt is filed for the answer. */
   noReceipt?: boolean;
 }
@@ -103,7 +105,7 @@ function stubNightshift(answer: (claim: string) => Answer = () => ({})) {
       const receiptId = `rcpt_${h}`;
       const requestId = `req_${h}`;
       const receipt = signed({
-        receipt_id: receiptId, request_id: requestId, app: o.appId, routing: { winner: model }, phases: [{ model, phase: "final_synthesis" }], winning_route: { model },
+        receipt_id: receiptId, request_id: requestId, app: a.app ?? o.appId, routing: { winner: model }, phases: [{ model, phase: "final_synthesis" }], winning_route: { model },
         cache: { status: "miss" }, requested_mode: "meterless/auto", status: "ok", hmem: a.hmem ?? null,
       });
       if (!a.noReceipt) receipts.set(receiptId, a.tamper ? { ...receipt, body: { ...receipt.body, receipt: { ...receipt.body.receipt, status: "altered" } } } : receipt);
@@ -660,5 +662,70 @@ describe("the pass step, its row and the ticket", () => {
     expect(isJudged({})).toBe(false);
     const plain = ticketBody({ finding: { ...f, judge: "skipped" }, disposition: d, rule: null, actions: [], probes: { run_id: null, rows: [] }, ticketId: "tkt-1", type: "incident", priority: "P2" });
     expect(plain).not.toContain("- judge");
+  });
+});
+
+// ------------------------------------------------------------------------------------------------ the review of 692d1bb
+
+describe("the judge's call cap, the tallies after a verdict, custody, and the no-judge texts", () => {
+  it("makes at most JUDGE_MAX_CALLS model calls, the first findings in finding order at 1 and 4; those past it keep their decision and say why", { timeout: 120_000 }, async () => {
+    const without = await passOver(policyBundle);
+    const at = async (concurrency: number) => {
+      const s = stubNightshift();
+      const r = await passOver(policyBundle, { judge: { ...s.judge, maxCalls: 2 }, concurrency });
+      return { ...r, calls: s.judgeCalls().length };
+    };
+    const [one, four] = [await at(1), await at(4)];
+    expect([one.calls, four.calls]).toEqual([2, 2]);
+    const open = one.result.findings.filter((f) => !f.judgeWithheld);
+    expect(open.length).toBeGreaterThan(2);
+    expect(open.slice(0, 2).every((f) => f.judge !== "skipped")).toBe(true);
+    expect(open.slice(2).every((f) => f.judge === "skipped")).toBe(true);
+    expect(passJudgeLines(one.tracer).filter((e) => e.status === "skipped" && e.detail === capReached(2))).toHaveLength(open.length - 2);
+    // a rule's decision stands, judged or past the cap
+    expect(one.dispositions).toEqual(without.dispositions);
+    expect(four.result).toEqual(one.result);
+    expect(four.trace).toEqual(one.trace);
+    // 0 makes no call; the setting is a whole number, 64 when blank
+    const none = stubNightshift();
+    await passOver(policyBundle, { judge: { ...none.judge, maxCalls: 0 } });
+    expect(none.judgeCalls()).toHaveLength(0);
+    expect([parseJudgeMaxCalls(""), parseJudgeMaxCalls("0"), parseJudgeMaxCalls(" 12 ")]).toEqual([64, 0, 12]);
+    for (const bad of ["-1", "1.5", "many", "07"]) expect(() => parseJudgeMaxCalls(bad)).toThrow(/^JUDGE_MAX_CALLS: a whole number/);
+    expect(config.judgeMaxCalls).toBe(64);
+  });
+
+  it("after the judge's verdicts, the verbs and deciders the pass prints are those the ledger holds, row for row", { timeout: 60_000 }, async () => {
+    const r = await passOver(recorded, { judge: stubNightshift().judge });
+    // the judge acted: struck claims carry C3's sentence in place of the checks' reason
+    expect(r.result.findings.some((f) => judged(f)?.outcome === "struck")).toBe(true);
+    const rows = r.dispositions.filter((d) => d.decided_at === AT);
+    expect(rows.map((d) => [d.finding_id, d.verb, d.decided_by, d.reason])).toEqual(r.result.findings.map((f) => [f.id, f.verb, f.disposition.decided_by, f.disposition.reason]));
+    const count = (xs: string[]) => xs.reduce<Record<string, number>>((m, x) => ({ ...m, [x]: (m[x] ?? 0) + 1 }), {});
+    const verbs = count(rows.map((d) => d.verb));
+    const by = count(rows.map((d) => d.decided_by));
+    expect(Object.fromEntries(Object.entries(r.result.verbs).filter(([, n]) => n > 0))).toEqual(verbs);
+    const printed = ["ADOPT", "HOLD", "ESCALATE", "ROLLBACK", "FIX"].filter((v) => verbs[v]).map((v) => `${v} ${verbs[v]}`).join(", ");
+    const line = r.tracer.events.find((e) => e.input_summary === "policy")!.detail!;
+    expect(line).toContain(`verbs ${printed}; decided by policy ${by.policy ?? 0}, operator ${by.operator ?? 0}, default ${by.default ?? 0};`);
+  });
+
+  it("a receipt filed under another app fails custody: every judgement is not counted and every decision stands", { timeout: 60_000 }, async () => {
+    const without = await passOver(authored);
+    const r = await passOver(authored, { judge: stubNightshift(() => ({ app: "someone-else" })).judge });
+    expect(r.result.findings.length).toBeGreaterThan(0);
+    expect(r.result.findings.every((f) => judged(f)?.outcome === "not_counted")).toBe(true);
+    expect(r.dispositions).toEqual(without.dispositions);
+  });
+
+  it("names why no model ran: sample mode, no judge wired, a judge that is off; the trace's default model in one place", () => {
+    expect(noJudgeClause(true)).toBe("model: none (sample mode)");
+    expect(noJudgeClause(false)).toBe("model: none (no judge wired)");
+    expect(judgeClause({ model: "m", judged: 3, struck: 0, held: 0, not_counted: 3, unavailable: "judge off: DRIFT_JUDGE is off" })).toBe("judge not counted: judge off: DRIFT_JUDGE is off, 3 finding(s)");
+    const { judge } = stubNightshift();
+    expect(traceModel(judge)).toEqual({});
+    expect(traceModel({ nightshift: null, receipts: null, unavailable: "judge off" })).toEqual({ model: "none" });
+    expect(traceModel(null)).toEqual({ model: "none" });
+    expect(traceModel(null, true)).toEqual({});
   });
 });

@@ -110,7 +110,7 @@
 
 import { createHash } from "node:crypto";
 // The live judge, the eval's C3 (src/agents/falsifier.ts).
-import { addToTally, judgeClause, judgeFinding, otherTenant, zeroTally, type JudgeTally, type PassJudge, type PassJudgement } from "./agents/falsifier.ts";
+import { addToTally, capReached, judgeClause, judgeFinding, noJudgeClause, otherTenant, zeroTally, type JudgeTally, type PassJudge, type PassJudgement } from "./agents/falsifier.ts";
 import { defaultChecks, type FindingSummary, type RejectedCheck } from "./catalogue/select.ts";
 import { CATALOGUE, runCheck, type CheckResult, type FindingClass } from "./catalogue/templates.ts";
 import { HeldTracer, OrderedTrace, SharedReads, checkLimit, closing, inOrder, type Commit, type Task } from "./concurrency.ts";
@@ -318,6 +318,28 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
   const recalled: MemoryCounters | null = memory ? { lessons: memory.lessons().length, applied: 0, lapsed: 0 } : null;
   // The judge's tally, added to at each finding's commit; none when the pass runs no model.
   const judged: JudgeTally | undefined = opts.judge ? zeroTally(opts.judge) : undefined;
+  // The judge's call cap (JUDGE_MAX_CALLS), counted in finding order at any PASS_CONCURRENCY: each finding's task takes a turn
+  // when it starts, learns how many calls the findings before it took once they know, and passes its own count on before its
+  // call goes out, so the calls still overlap; a task that ends without deciding passes the count on unchanged.
+  const maxCalls = opts.judge?.maxCalls ?? config.judgeMaxCalls;
+  let callsSoFar: Promise<number> = Promise.resolve(0);
+  const callTurn = () => {
+    const before = callsSoFar;
+    let pass!: (n: number) => void;
+    callsSoFar = new Promise<number>((resolve) => { pass = resolve; });
+    let passed = false;
+    return {
+      /** Whether this finding may call: `calling` false passes the count on as it is. */
+      take: async (calling: boolean): Promise<boolean> => {
+        const n = await before;
+        const ok = calling && n < maxCalls;
+        passed = true;
+        pass(n + (ok ? 1 : 0));
+        return ok;
+      },
+      done: () => { if (!passed) void before.then((n) => { passed = true; pass(n); }); },
+    };
+  };
   // Every disposition of the pass carries one decided_at; the rows go to the ledger at the end.
   const decidedAt = new Date(opts.decidedAt ?? Date.now()).toISOString();
   const dispositions: Disposition[] = [];
@@ -407,7 +429,7 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
    * its disposition, and stores its exposure edge. `approved` is the setting's latest approval, which a drift_vs_approved and an
    * approved_missing row carry.
    */
-  const assess = async (finding: FindingSummary, view: WorldView | undefined, approved: ApprovedValue | null, t: HeldTracer | undefined): Promise<Commit> => {
+  const assess = async (finding: FindingSummary, view: WorldView | undefined, approved: ApprovedValue | null, t: HeldTracer | undefined, turn: ReturnType<typeof callTurn>): Promise<Commit> => {
     // Recalled before the first await: the findings' tasks start in finding order, so the memory's ledger logs the recalls
     // in the order a pass one finding at a time makes them.
     const recall = memory?.recall(finding, opts.at);
@@ -573,9 +595,14 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
       let judgement: PassJudgement | undefined;
       const judge = opts.judge;
       const mine = judge !== undefined && (judge.tenant === undefined || judge.tenant === finding.tenant_id);
-      if (judge && mine && !withdraw.withdraw) ({ disposition, judgement } = await judgeFinding(layer, finding, decided, judge, t));
+      const eligible = judge !== undefined && mine && !withdraw.withdraw;
+      // a model call goes out only when the judge has a Nightshift to call; past the cap the finding keeps its decision
+      const calls = Boolean(judge?.nightshift && judge.receipts);
+      const capped = eligible && calls && !(await turn.take(true));
+      if (!eligible || !calls) turn.done();
+      if (judge && eligible && !capped) ({ disposition, judgement } = await judgeFinding(layer, finding, decided, judge, t));
       else {
-        const skipped = withdraw.withdraw ? withdraw.reason : judge?.tenant !== undefined && !mine ? otherTenant(finding.tenant_id, judge.tenant) : "model: none (sample)";
+        const skipped = withdraw.withdraw ? withdraw.reason : capped ? capReached(maxCalls) : judge?.tenant !== undefined && !mine ? otherTenant(finding.tenant_id, judge.tenant) : "model: none (sample)";
         t?.emit({ agent: "judge", action: "judge", status: "skipped", input_summary: finding.summary.slice(0, 160), detail: skipped });
       }
       const exception: ExceptionNote | undefined = lesson
@@ -965,7 +992,10 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
 
   // check, decide, judge: every finding a task, its lines where its detector reported it, its commit in the order reported.
   const queue = reported.slice(0, failedAt + 1).flat();
-  await inTurn(queue.map((q): Task => (t) => assess(q.finding, q.view, q.approved, t)), (i) => queue[i].lines);
+  await inTurn(queue.map((q): Task => (t) => {
+    const turn = callTurn();
+    return assess(q.finding, q.view, q.approved, t, turn).finally(turn.done);
+  }), (i) => queue[i].lines);
   if (detected) throw detected.error;
 
   // The settings of the pass's latest passing runs that a locked rule governs and that have no approved value on
@@ -1014,7 +1044,7 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     detail: `${rulesRead} policy rule(s) read; verbs ${VERBS.filter((v) => verbs[v] > 0).map((v) => `${v} ${verbs[v]}`).join(", ") || "none"}; `
       + `decided by policy ${decidedBy("policy")}, operator ${decidedBy("operator")}, default ${decidedBy("default")}; `
       + `${probeRuns.length ? `probe run(s) ${probeRuns.join(", ")}` : NO_PROBE_RUN}; `
-      + `${written === null ? "no ledger" : `ledger: ${written} disposition(s) and ${fingerprints} referent fingerprint(s) written`}; ${judged ? judgeClause(judged) : "model: none"}`,
+      + `${written === null ? "no ledger" : `ledger: ${written} disposition(s) and ${fingerprints} referent fingerprint(s) written`}; ${judged ? judgeClause(judged) : noJudgeClause()}`,
   });
   return {
     runs: runs.length, gatedOut: [...gatedOut], observed, findings, verifier, memory: recalled,
