@@ -85,7 +85,10 @@
 // locked count per tenant. A task reads; what it writes (the World Model, the ledger, the pass's lists) runs in the order
 // a pass one task at a time runs it, and so do its trace lines, held until every line before them is written. A read
 // several findings need (a probe run's rows, a tenant's change windows, a record's exposure, a tenant's audit span, a DNS
-// run's observations) runs once, its lines where the first finding in order asks for it. The detectors read the World
+// run's observations) runs once, its lines where the first finding in order asks for it, under that ask's agent, and each
+// later ask is one line naming its own agent and the read it reused. A failure anywhere fails the pass: the dispositions go
+// to the ledger only after every step, so a pass that throws records none (the observe step's referent fingerprints,
+// written as it runs, are keyed, and the next pass writes none twice). The detectors read the World
 // Model's fingerprints, which the decide step's exposure edges never touch, so every detector runs before the first
 // finding is checked. At any PASS_CONCURRENCY the findings, dispositions, ledger rows and trace lines are those of 1,
 // line for line apart from timestamps, latencies and query ids (test/concurrency.test.ts).
@@ -100,7 +103,7 @@
 import { createHash } from "node:crypto";
 import { defaultChecks, type FindingSummary, type RejectedCheck } from "./catalogue/select.ts";
 import { CATALOGUE, runCheck, type CheckResult, type FindingClass } from "./catalogue/templates.ts";
-import { HeldTracer, OrderedTrace, SharedReads, checkLimit, inOrder, type Commit, type Task } from "./concurrency.ts";
+import { HeldTracer, OrderedTrace, SharedReads, checkLimit, closing, inOrder, type Commit, type Task } from "./concurrency.ts";
 import { config } from "./config.ts";
 import { fingerprintRows } from "./data/fingerprint.ts";
 import { DataLayerError, type DataLayer } from "./data/layer.ts";
@@ -324,7 +327,7 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     const run = own ? nearestRun(passingRuns, own, "probe") : undefined;
     if (!run) return NO_PROBES;
     // the probe run is the finding's tenant's, so its run id alone names the read
-    const rows = await shared.read(`probe ${run.run_id}`, t, async (lines) =>
+    const rows = await shared.read(`probe ${run.run_id}`, t, "decider", async (lines) =>
       objects(await probesOfRun(layer, { tenant_id: finding.tenant_id, run_id: run.run_id }, { tracer: lines, agent: "decider" })).map((p) => ({ kind: p.kind, target: p.target, status: p.status })));
     return { run_id: run.run_id, rows };
   };
@@ -358,7 +361,7 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
   // closed: the error goes to the Decider, which escalates every such drift a rule would roll back or fix this pass
   // (src/policy/decide.ts step 3). With opts.windowTable false no window can be open, and none is read.
   const windowsFor = (tenant: string, t: HeldTracer | undefined): Promise<{ rows: ChangeWindow[]; error: string | null }> =>
-    shared.read(`change_window ${tenant}`, t, async (lines) => {
+    shared.read(`change_window ${tenant}`, t, "decider", async (lines) => {
       if (opts.windowTable === false) {
         lines?.emit({ agent: "decider", action: "check", status: "skipped", input_summary: `change_window ${tenant}`, output_summary: "the datasource lists no change_window table: no window is open; npm run zetaris:setup registers it" });
         return { rows: [], error: null };
@@ -518,63 +521,55 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     });
     // The decide step records the exposure line: SQL dates it, once per record and field, the World Model keeps it as an
     // open edge, stored at the commit. Its lines are held at this place: the ok line is traced only once the commit has
-    // stored the edge, and a store that throws traces a failed line there and nothing after it.
+    // stored the edge, and a store that throws traces a failed line there and nothing after it. The held lines are closed on
+    // every path: by the commit (closing, src/concurrency.ts) once it is handed back, or here when anything throws before.
     const edgeLines = t?.hold();
     let storeEdge: (() => Promise<void>) | undefined;
-    let exposure: ExposureLine | undefined;
     try {
-      exposure = await recordExposure(layer, world, finding, {
-        tracer: edgeLines, cache: (key, measure) => shared.read(`exposure ${key}`, edgeLines, measure), defer: (store) => { storeEdge = store; },
+      const exposure = await recordExposure(layer, world, finding, {
+        tracer: edgeLines, cache: (key, measure) => shared.read(`exposure ${key}`, edgeLines, "decider", measure), defer: (store) => { storeEdge = store; },
       });
-    } finally {
-      // nothing to store (not dated, or the read failed): the lines held here are all there will be
-      if (!storeEdge) edgeLines?.close();
-    }
-    // Withdraw before the judge: no judge call is spent on a verdict that cannot move or a claim its own checks contradict;
-    // nor on a verdict the technician's exception settled, in force or lapsed.
-    const withdraw = applied
-      ? { withdraw: true, reason: `${VERDICT_CANNOT_MOVE}: accepted exception ${applied.id} holds until ${applied.expiresAt}; the technician's acceptance, not a judge, settles it` }
-      : lapsed
-        ? { withdraw: true, reason: `${VERDICT_CANNOT_MOVE}: exception ${lapsed.id} lapsed ${lapsed.expiresAt}; the finding goes back to the technician whatever a judge answers` }
-        : shouldWithdraw({ findingClass: cls, checks, rejected: rejected.length });
-    if (withdraw.withdraw) verifier.withdrawn_judge += 1;
-    if (withdraw.contradictedBy) {
-      t?.emit({ agent: "checker", action: "critique", target_agent: "detector", status: "ok", input_summary: `${cls} ${setting}`, output_summary: withdraw.reason, detail: "model: none" });
-      t?.emit({ agent: "detector", action: "revise", status: "ok", input_summary: `${cls} ${setting}`, output_summary: "finding withdrawn before judge", detail: withdraw.reason });
-    }
-    t?.emit({ agent: "judge", action: "judge", status: "skipped", input_summary: finding.summary.slice(0, 160), detail: withdraw.withdraw ? withdraw.reason : "model: none (sample)" });
-    const exception: ExceptionNote | undefined = lesson
-      ? { lesson: lesson.id, status: applied ? "applied" : "lapsed", expires_at: lesson.expiresAt, scope_key: lesson.scopeKey, reason: lesson.reason, accepted_by: lesson.provenance.by, accepted_at: lesson.recordedAt }
-      : undefined;
-    const id = shortFindingId(world.findingId(finding));
-    const disposition: DispositionNote = {
-      verb, reason: why, expires_at: decision.expires_at, decided_by: decision.decided_by, rule_id: decision.rule_id, ...(decision.window_id ? { window_id: decision.window_id } : {}),
-    };
-    // One row per finding per pass, about the live value the decision is about.
-    const row: Disposition = {
-      disposition_id: dispositionId(finding.tenant_id, finding.surface, finding.host, finding.object_id, finding.setting_path, finding.value_hash, id, finding.run_id, decidedAt),
-      tenant_id: finding.tenant_id, surface: finding.surface, host: finding.host, object_id: finding.object_id, setting_path: finding.setting_path,
-      value_hash: finding.value_hash, ...disposition, finding_id: id, run_id: finding.run_id, decided_at: decidedAt,
-    };
-    const assessed: Finding = {
-      id,
-      finding, verb, disposition, ...(view ? { world: view } : {}), checks, rejected, judge: "skipped",
-      ...(earlyStop ? { earlyStop } : {}), ...(withdraw.withdraw ? { judgeWithheld: withdraw.reason } : {}), ...(exposure ? { exposure } : {}),
-      ...(exception ? { exception } : {}),
-    };
-    return async () => {
-      if (storeEdge) {
-        try {
-          await storeEdge();
-        } catch (e) {
-          edgeLines?.fail();
-          throw e;
-        }
-        edgeLines?.close();
+      // Withdraw before the judge: no judge call is spent on a verdict that cannot move or a claim its own checks contradict;
+      // nor on a verdict the technician's exception settled, in force or lapsed.
+      const withdraw = applied
+        ? { withdraw: true, reason: `${VERDICT_CANNOT_MOVE}: accepted exception ${applied.id} holds until ${applied.expiresAt}; the technician's acceptance, not a judge, settles it` }
+        : lapsed
+          ? { withdraw: true, reason: `${VERDICT_CANNOT_MOVE}: exception ${lapsed.id} lapsed ${lapsed.expiresAt}; the finding goes back to the technician whatever a judge answers` }
+          : shouldWithdraw({ findingClass: cls, checks, rejected: rejected.length });
+      if (withdraw.withdraw) verifier.withdrawn_judge += 1;
+      if (withdraw.contradictedBy) {
+        t?.emit({ agent: "checker", action: "critique", target_agent: "detector", status: "ok", input_summary: `${cls} ${setting}`, output_summary: withdraw.reason, detail: "model: none" });
+        t?.emit({ agent: "detector", action: "revise", status: "ok", input_summary: `${cls} ${setting}`, output_summary: "finding withdrawn before judge", detail: withdraw.reason });
       }
-      dispositions.push(row);
-      findings.push(assessed);
-    };
+      t?.emit({ agent: "judge", action: "judge", status: "skipped", input_summary: finding.summary.slice(0, 160), detail: withdraw.withdraw ? withdraw.reason : "model: none (sample)" });
+      const exception: ExceptionNote | undefined = lesson
+        ? { lesson: lesson.id, status: applied ? "applied" : "lapsed", expires_at: lesson.expiresAt, scope_key: lesson.scopeKey, reason: lesson.reason, accepted_by: lesson.provenance.by, accepted_at: lesson.recordedAt }
+        : undefined;
+      const id = shortFindingId(world.findingId(finding));
+      const disposition: DispositionNote = {
+        verb, reason: why, expires_at: decision.expires_at, decided_by: decision.decided_by, rule_id: decision.rule_id, ...(decision.window_id ? { window_id: decision.window_id } : {}),
+      };
+      // One row per finding per pass, about the live value the decision is about.
+      const row: Disposition = {
+        disposition_id: dispositionId(finding.tenant_id, finding.surface, finding.host, finding.object_id, finding.setting_path, finding.value_hash, id, finding.run_id, decidedAt),
+        tenant_id: finding.tenant_id, surface: finding.surface, host: finding.host, object_id: finding.object_id, setting_path: finding.setting_path,
+        value_hash: finding.value_hash, ...disposition, finding_id: id, run_id: finding.run_id, decided_at: decidedAt,
+      };
+      const assessed: Finding = {
+        id,
+        finding, verb, disposition, ...(view ? { world: view } : {}), checks, rejected, judge: "skipped",
+        ...(earlyStop ? { earlyStop } : {}), ...(withdraw.withdraw ? { judgeWithheld: withdraw.reason } : {}), ...(exposure ? { exposure } : {}),
+        ...(exception ? { exception } : {}),
+      };
+      return closing(edgeLines, async () => {
+        await storeEdge?.();
+        dispositions.push(row);
+        findings.push(assessed);
+      });
+    } catch (e) {
+      edgeLines?.close();
+      throw e;
+    }
   };
 
   runs = objects(await listRuns(layer, { tracer, agent: "observer" }));
@@ -732,7 +727,7 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
 
   // survey
   const auditReach = (tenant: string, t: HeldTracer | undefined): Promise<string | null> =>
-    shared.read(`audit_span ${tenant}`, t, async (lines) => nul(objects(await auditSpan(layer, tenant, { tracer: lines, agent: "detector" }))[0]?.first_at ?? ""));
+    shared.read(`audit_span ${tenant}`, t, "detector", async (lines) => nul(objects(await auditSpan(layer, tenant, { tracer: lines, agent: "detector" }))[0]?.first_at ?? ""));
   const surveyOpts = (t: HeldTracer | undefined) => ({ tracer: t, agent: "detector" });
 
   const latestDns = new Map<string, Row>();
@@ -811,10 +806,11 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
 
   // Drift from the latest approval and change since the newest backup, over the latest run of each (tenant,
   // surface, host) that passed the gate, then drift over each tenant's latest passing DNS run (one observation per record field).
-  // A DNS run's observations, read once: the detectors ask as agent detector and the locked count, a step later, as decider,
-  // so whichever task of a step starts the read names the agent a pass one task at a time names.
+  // A DNS run's observations, read once: the detectors ask as agent detector and the locked count, a step later, as decider.
+  // The read's lines name the agent of the first ask in task order, and each later ask is one line naming its own agent
+  // (src/concurrency.ts SharedReads), whichever task happened to start the read.
   const dnsObservations = (runId: string, agent: string, t: HeldTracer | undefined): Promise<Row[]> =>
-    shared.read(`observations ${runId}`, t, async (lines) => objects(await observationsOf(layer, runId, { tracer: lines, agent })));
+    shared.read(`observations ${runId}`, t, agent, async (lines) => objects(await observationsOf(layer, runId, { tracer: lines, agent })));
   const driftFinding = (row: Row, run: Row, dnsRunId: string | null, recordName: string | null): FindingSummary => {
     const isRecord = row.surface === "cloudflare.dns";
     const what = isRecord ? `${row.setting_path} of record ${row.object_id}${recordName ? ` (${recordName})` : ""}` : `${row.setting_path} in ${row.object_id}${row.host ? ` on ${row.host}` : ""}`;

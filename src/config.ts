@@ -72,7 +72,7 @@ const Schema = z.object({
   PROBE_TARGETS_OVERRIDE: z.string().default(""),
   // How many of the pass's reads run at a time (src/pipeline.ts, src/concurrency.ts): the reads before the detectors and the
   // findings' checks and decisions, each finding's checks still one after another. Every decision, ledger row and trace line is
-  // the same at any value; 1 runs the reads one after another, as the pass did before.
+  // the same at any value; 1 runs the reads one after another, as the pass did before. At most 16 (MAX_PASS_CONCURRENCY).
   PASS_CONCURRENCY: z.string().default("4"),
   LOG_DIR: z.string().default("logs"),
 });
@@ -133,11 +133,28 @@ export function nginxTCommand(platform: NodeJS.Platform = process.platform, conf
   return configured.trim() || (platform === "win32" ? NGINX_T_DEFAULT.win32 : NGINX_T_DEFAULT.other);
 }
 
-/** PASS_CONCURRENCY as a number: a whole number of at least 1, blank for the default 4. Throws on any other value. */
+/** The most reads a pass runs at once: each one more is one more query in flight against the datasource. */
+export const MAX_PASS_CONCURRENCY = 16;
+
+/** PASS_CONCURRENCY as a number: a whole number from 1 to MAX_PASS_CONCURRENCY, blank for the default 4. Throws on any other value. */
 export function parsePassConcurrency(s: string): number {
   const t = s.trim() || "4";
   if (!/^[1-9]\d*$/.test(t)) throw new Error(`PASS_CONCURRENCY: a whole number of at least 1, got ${JSON.stringify(s)}`);
-  return Number(t);
+  const n = Number(t);
+  if (n > MAX_PASS_CONCURRENCY) {
+    throw new Error(`PASS_CONCURRENCY: at most ${MAX_PASS_CONCURRENCY}, got ${n}; each read in flight is one more query against the datasource at once`);
+  }
+  return n;
+}
+
+/** PASS_CONCURRENCY as every process reads it at startup: an invalid value is one plain line on stderr and exit 2, a usage error, never a stack trace. */
+function passConcurrencyOrExit(s: string): number {
+  try {
+    return parsePassConcurrency(s);
+  } catch (e) {
+    process.stderr.write(`${(e as Error).message}\n`);
+    process.exit(2);
+  }
 }
 
 /** Where the technician's lessons live when DRIFT_MEMORY_DIR is blank: under .world/, which .gitignore keeps out of the repository. */
@@ -205,7 +222,7 @@ export const config = {
   /** PROBE_TARGETS_OVERRIDE, parsed; [] = the probe population is the Cloudflare account's records. */
   probeOverride: parseProbeOverride(raw.PROBE_TARGETS_OVERRIDE),
   /** PASS_CONCURRENCY, parsed; default 4, 1 = one read at a time. */
-  passConcurrency: parsePassConcurrency(raw.PASS_CONCURRENCY),
+  passConcurrency: passConcurrencyOrExit(raw.PASS_CONCURRENCY),
   logDir: raw.LOG_DIR,
 } as const;
 

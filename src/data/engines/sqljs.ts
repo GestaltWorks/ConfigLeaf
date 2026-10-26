@@ -62,6 +62,7 @@ export class SqlJsEngine implements Engine {
 
   private constructor(private readonly db: Database) {}
 
+  // Decided, not incidental: a plain Error, never a DataLayerError, so an overlap fails the whole pass loudly instead of a check recording a rejection and carrying on.
   private refuseOverlap(what: string): void {
     if (this.running) throw new Error(`sqljs: ${what} while another statement was running on this engine; run() must not await between prepare and free`);
   }

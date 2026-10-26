@@ -477,7 +477,9 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
     const before = counting.tally();
     const r = await passStep(new DataLayer(counting), { tenant: TENANT, ledger: null, decidedAt: AT, world: new DriftWorld("loop_test"), tracer });
     const sent = tallySince(before, counting.tally());
-    const queries = tracer.events.filter((e) => e.action === "query");
+    // a later ask of a shared read is a query line skipped, naming who reused it: nothing was sent for it
+    const queries = tracer.events.filter((e) => e.action === "query" && e.status !== "skipped");
+    expect(tracer.events.filter((e) => e.action === "query" && e.status === "skipped" && e.input_summary?.startsWith("reused ")).length).toBeGreaterThan(0);
     expect(sent.queries).toBeGreaterThan(10);
     expect(sent.queries).toBe(queries.length);
     expect(sent.rows).toBe(queries.reduce((n, e) => n + Number(/^(\d+) rows$/.exec(e.output_summary ?? "")?.[1]), 0));
