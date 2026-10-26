@@ -5,7 +5,9 @@
 // line per finding as the ledger holds it under the finding's disposition_id, then one CAUSE line per finding
 // the explain step explains, then one ADOPTIONS line (the DQ rule exception_in_force over the pass's ADOPTs under an
 // exception: the drift_usl.adoption SQL over the ledger and the lesson table, which sql.js holds beside the bundle as
-// Zetaris holds LESSONS.lesson, with the rule table from the policy file), then one summary, then one REPORT line: the owner's report (src/document/report.ts) for
+// Zetaris holds LESSONS.lesson, with the rule table from the policy file), then one DNS INVENTORY line (the DQ rule
+// dns_inventory_current is not read: it reads the DNS API live through Zetaris, and the bundle holds no live source),
+// then one summary, then one REPORT line: the owner's report (src/document/report.ts) for
 // the tenant of the bundle's latest DNS run, rendered from the owner's document's rows over the same engine after the
 // explain step and written to examples/report.html once it passes the deny-list probe (src/document/sample.ts
 // sampleReport: no clock, trace or tip in it, so npm run document in sample mode writes the same bytes).
@@ -48,6 +50,7 @@ import { MemoryLedger } from "../src/ledger.ts";
 import { dispositionIdOf } from "../src/loop/pass.ts";
 import { VERBS, runPass } from "../src/pipeline.ts";
 import { Tracer } from "../src/trace.ts";
+import { REST_DB } from "../src/zetaris/setup.ts";
 import bundle from "../sample/bundle.json" with { type: "json" };
 
 if (!config.sampleMode) {
@@ -101,6 +104,8 @@ const recorded = pass.ledger ? `; ledger: ${pass.ledger.dispositions} dispositio
 // exception_in_force over this pass's ADOPTs, the drift_usl.adoption SQL on sql.js: the ledger joined to the lessons.
 const adoption = objects(await layer.run(ADOPTION_CHECK_SQL, { decided_at: decidedAt }, { tracer, agent: "sample" }))[0];
 console.log(`ADOPTIONS: ${adoption.adoptions} ADOPT decided under an accepted exception, ${adoption.in_force} joined to a lesson in force at the decision instant (exception_in_force over the disposition and lesson tables)`);
+// dns_inventory_current reads the DNS API now, through Zetaris's REST datasource; the bundle is a recording, with no live source.
+console.log(`DNS INVENTORY: DQ dns_inventory_current not read in sample mode: drift_usl.dns_live reads the Cloudflare DNS API live through the Zetaris REST datasource ${REST_DB}, and sample/bundle.json holds no live source`);
 console.log(`SAMPLE: ${pass.runs} collection runs, ${pass.gatedOut.length} failed the DQ gate (${pass.gatedOut.join(", ") || "none"}), ${pass.observed} observations in the World Model, ${pass.findings.length} finding(s): ${described.join("; ") || "none"}; judge skipped (model: none)${mem}; verbs: ${verbs}; policy rules ${pass.rules}, locked settings without an approved value ${pass.locked}${recorded}${explain}`);
 
 // The owner's report for the tenant of the bundle's latest DNS run (client-1), from the page's rows over this engine.

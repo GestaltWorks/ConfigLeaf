@@ -6,7 +6,9 @@
 // DRIFT_MEMORY_DIR names (read only), the trace to logs/pass_<base36 ms>.jsonl. Prints the cycle's pass section
 // (src/loop/present.ts): the header (mode "recorded", or "dry run, nothing changed" with --no-ledger), the pass row
 // with its findings by verb, the Lightning SQL it sent and the DQ rule exception_in_force over its adoptions (with
-// --no-ledger, the latest recorded pass's), the classes in plain words and one line per ROLLBACK, FIX and ESCALATE, and the done
+// --no-ledger, the latest recorded pass's), then the DQ rule dns_inventory_current over the records the Cloudflare DNS
+// API returns now through Zetaris's REST datasource CLOUDFLARE (for a tenant with a DNS run), the classes in plain
+// words and one line per ROLLBACK, FIX and ESCALATE, and the done
 // line naming the trace. --verbose
 // adds the full output: one JSON object per finding of the tenant, one DISPOSITION line per finding as the ledger
 // holds it (read back through Zetaris), the PASS summary line and the trace file; --quiet prints the header and the
@@ -19,7 +21,10 @@
 // 0 failed the DQ gate, 3,186 observations, 27 findings (orphan_record 3, orphan_vhost 3, proxied_without_real_ip 20,
 // proxy_split 1), HOLD 27 by policy, 443 trace lines, 34.9 s; at 23:21 UTC, the first pass with the PgLedger, the same
 // findings and verbs, 27 dispositions and 315 referent fingerprints written to the app Postgres, all 27 read back
-// through Zetaris, decided at 2026-10-24T23:21:06.870Z, 444 trace lines, 34.2 s.
+// through Zetaris, decided at 2026-10-24T23:21:06.870Z, 444 trace lines, 34.2 s. On 26 Oct 2026 at 03:49 UTC with
+// --no-ledger: 27 findings (ADOPT 23, HOLD 3, ESCALATE 1), 458 queries, 29,640 rows, 0 failed, "DQ exception_in_force
+// 23 of 23 adoptions of the pass recorded at 2026-10-26 01:14 UTC", "DQ dns_inventory_current 58 of 58 live records",
+// 97.8 s.
 
 import { randomBytes } from "node:crypto";
 import { parseArgs } from "node:util";

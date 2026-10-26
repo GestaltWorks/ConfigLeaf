@@ -44,8 +44,10 @@
 //     "file tables refreshed" when the pass put the lessons and the rules again (yellow "file tables not refreshed"
 //     when the put failed, nothing when the copy was current), then, when the pass read it (src/loop/pass.ts AdoptionCheck), "DQ exception_in_force <n> of <n> adoptions" (red when
 //     fewer hold than were read; " of the pass recorded at <YYYY-MM-DD HH:MM> UTC" after a pass with no ledger; yellow
-//     "not read" when the read failed); given the cycle's tally, the done line names "<n> Zetaris queries, <n> failed"
-//     before the trace.
+//     "not read" when the read failed), then, when the pass read it (src/loop/pass.ts DnsInventoryCheck), "DQ
+//     dns_inventory_current <n> of <n> live records" (red when fewer hold than the DNS API returns: the provider changed
+//     since the last complete DNS run; yellow "not read" when the read failed); given the cycle's tally, the done line
+//     names "<n> Zetaris queries, <n> failed" before the trace.
 //   - The callers print the old full line after a step's rows under --verbose (the old formatters stay) and only the
 //     header and the done line under --quiet.
 //
@@ -61,7 +63,7 @@ import type { Finding, Verb } from "../pipeline.ts";
 import type { TicketOp } from "../psa/index.ts";
 import type { TicketOutcome } from "../psa/step.ts";
 import type { HookResult } from "../vault/hook.ts";
-import { dispositionIdOf, type AdoptionCheck, type PassStep } from "./pass.ts";
+import { dispositionIdOf, type AdoptionCheck, type DnsInventoryCheck, type PassStep } from "./pass.ts";
 
 export type Tone = "bold" | "strong" | "red" | "yellow" | "green" | "dim";
 export interface Span { text: string; tone: Tone }
@@ -378,6 +380,13 @@ function adoptionSeg(a: AdoptionCheck): Seg {
   return a.inForce < a.adoptions ? { text, tone: "red" } : text;
 }
 
+/** The pass's read of dns_inventory_current: "DQ dns_inventory_current 58 of 58 live records", red when one fails, yellow when not read. */
+function dnsSeg(d: DnsInventoryCheck): Seg {
+  if ("error" in d) return { text: `DQ ${d.rule} not read`, tone: "yellow" };
+  const text = `DQ ${d.rule} ${thousands(d.current)} of ${count(d.live, "live record")}`;
+  return d.current < d.live ? { text, tone: "red" } : text;
+}
+
 /** The file tables' refresh when it put the files or failed: "file tables refreshed", yellow "file tables not refreshed"; null when the copy was current. */
 function filesSeg(r: NonNullable<PassStep["files"]>): Seg | null {
   if (r.status === "current") return null;
@@ -386,16 +395,16 @@ function filesSeg(r: NonNullable<PassStep["files"]>): Seg | null {
 
 /**
  * pass: the findings by verb; under it, given `zetaris`, the queries the pass sent through Zetaris (and, when the pass
- * read it, the DQ rule exception_in_force over its adoptions), then the classes in plain words, then one line per
- * ROLLBACK, FIX and ESCALATE.
+ * read them, the DQ rule exception_in_force over its adoptions and dns_inventory_current over the live records), then
+ * the classes in plain words, then one line per ROLLBACK, FIX and ESCALATE.
  */
-export function passView(p: Pick<PassStep, "findings"> & Partial<Pick<PassStep, "adoptions" | "files">>, zetaris?: ZetarisFacts): StepView {
+export function passView(p: Pick<PassStep, "findings"> & Partial<Pick<PassStep, "adoptions" | "dns" | "files">>, zetaris?: ZetarisFacts): StepView {
   const fs = p.findings;
   const parts: Phrase[] = VERB_ORDER.map((v) => [v, fs.filter((f) => f.verb === v).length] as const).filter(([, n]) => n > 0).map(([v, n]) => [verbSpan(v), ` ${thousands(n)}`]);
   const sub: SubLine[] = [];
   if (zetaris) {
     const files = p.files ? filesSeg(p.files) : null;
-    sub.push({ parts: [`Zetaris Lightning SQL over ${zetaris.datasource}`, count(zetaris.queries, "query", "queries"), count(zetaris.rows, "row"), [failedSeg(zetaris.failed)], ...(files ? [[files]] : []), ...(p.adoptions ? [[adoptionSeg(p.adoptions)]] : [])], wrap: true });
+    sub.push({ parts: [`Zetaris Lightning SQL over ${zetaris.datasource}`, count(zetaris.queries, "query", "queries"), count(zetaris.rows, "row"), [failedSeg(zetaris.failed)], ...(files ? [[files]] : []), ...(p.adoptions ? [[adoptionSeg(p.adoptions)]] : []), ...(p.dns ? [[dnsSeg(p.dns)]] : [])], wrap: true });
   }
   const classes = tallyDesc(fs.map((f) => f.finding.class));
   if (classes.length) sub.push({ parts: classes.map(([c, n]) => `${classLabel(c)} ${thousands(n)}`), wrap: true });

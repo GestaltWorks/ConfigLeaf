@@ -1,17 +1,20 @@
 // Idempotent Zetaris setup: the DRIFT datasource over the app Postgres, the LESSONS and RULES Lightning databases
 // over files in the Zetaris filestore (the technician's memory store and the policy file, src/data/files.ts), the
-// drift_usl Unified Semantic Layer over the three (fourteen tables) and five DQ rules on it. plan() lists the steps
+// CLOUDFLARE Lightning database over the Cloudflare DNS API (one REST table per zone and page, read live), the
+// drift_usl Unified Semantic Layer over the four (fifteen tables) and six DQ rules on it. plan() lists the steps
 // in the order they run, apply() runs them one at a time. uslRows() and uslMarkdown() read the layer's table off
 // USL_DDL, activation() and DQ_RULES: each entity, the tables its activation SELECT reads, its keys and its DQ rule
 // with the rule's expression. npm run sources -- --usl prints it, and the README and the replay page's Sources tab carry it.
 //
-// The fourteen tables: collection (collection_run), setting (observation; source_kind for source), referent (each
+// The fifteen tables: collection (collection_run), setting (observation; source_kind for source), referent (each
 // dns_name observation joined to the records of its name), backup_copy (backup_item joined to its snapshot),
 // policy (policy_rule), copy (vault_copy with its latest copy_validation and a validated flag), probe,
 // disposition, action (the Actor's rows, the reason and the record among them), ticket, cause (finding_cause,
-// the explainer's rows; cause_class for class), lesson (LESSONS.lesson), rule (RULES.rule) and adoption (every ADOPT
+// the explainer's rows; cause_class for class), lesson (LESSONS.lesson), rule (RULES.rule), adoption (every ADOPT
 // decided under an accepted exception, DRIFT.disposition LEFT JOINed to the LESSONS.lesson its reason names: the
-// catalogue's ADOPTION_SQL). The five rules:
+// catalogue's ADOPTION_SQL) and dns_live (every record the DNS API returns now, CLOUDFLARE.zone_<zone id> exploded,
+// LEFT JOINed to the last complete cloudflare.dns run of DRIFT.collection_run and to that run's DRIFT.dns_record row
+// of the same record id). The six rules:
 //   run_complete     on collection: observed_count IS NOT NULL AND expected_count IS NOT NULL AND
 //                    observed_count >= expected_count AND status = 'complete'
 //   copy_validated   on copy: validated = 1
@@ -23,6 +26,10 @@
 //   exception_in_force on adoption: lesson_id IS NOT NULL AND lesson_kind = 'exception' AND lesson_recorded_at <=
 //                    decided_at AND decided_at < lesson_expires_at; the lesson an ADOPT names was in force when it
 //                    was decided
+//   dns_inventory_current on dns_live: held_type <> '' AND held_type = live_type AND held_proxied = live_proxied;
+//                    every record live at the provider is a record of the last complete DNS run, with the same type
+//                    and proxied flag. A row that fails means the provider changed since that run: the agent's
+//                    picture of the zone is stale until the next collection.
 //
 // Contract:
 //   - The file sources: every run writes ledger.json (the store's H-MEM ledger, entry for entry), lessons.json and
@@ -56,9 +63,23 @@
 //   - Zetaris reaches the Postgres at ZETARIS_PG_HOST (host[:port], 5432 when absent): measured
 //     drift-pg:5432 from the driver container, 127.0.0.1:15432 from Windows. Only the user, password and
 //     database come from DATABASE_URL.
-//   - Admin-only statements (CREATE/REGISTER/REFRESH DATASOURCE, CREATE LIGHTNING DATABASE and FILESTORE TABLE, DROP
-//     LIGHTNING DATABASE TABLE, COMPILE/REMOVE/ACTIVATE USL, REGISTER/UPDATE DQ) need an admin-role key; the agent's
-//     own key only SELECTs.
+//   - Admin-only statements (CREATE/REGISTER/REFRESH DATASOURCE, CREATE LIGHTNING DATABASE, FILESTORE TABLE and REST
+//     TABLE, DROP LIGHTNING DATABASE TABLE, COMPILE/REMOVE/ACTIVATE USL, REGISTER/UPDATE DQ) need an admin-role key;
+//     the agent's own key only SELECTs.
+//   - The REST source: before the plan is built, liveZones() reads the zones the read token sees and each zone's record
+//     count from the DNS API (the collector's own GETs, src/collectors/cloudflare.ts), and the plan holds one REST
+//     table per zone and page of RECORDS_PER_PAGE records: zone_<zone id> for page 1, zone_<zone id>_p<n> after it. A
+//     zone with no record gets no table. SHOW LIGHTNING TABLES CLOUDFLARE decides each CREATE LIGHTNING REST TABLE: a
+//     table listed over its endpoint is kept, one listed over another is dropped and created again, an absent one is
+//     created. The tables are not cached: a REST table fetches its endpoint on every query, and dns_live is the provider
+//     now, at each read; a cached table would hold the records of the instant it was cached. A table keeps the header
+//     it was created with, so after the token is rotated its tables are dropped by hand (DROP LIGHTNING DATABASE
+//     TABLE CLOUDFLARE.<table>) and the next run creates them again.
+//   - The CREATE LIGHTNING REST TABLE statements carry CLOUDFLARE_API_TOKEN in their Authorization header and are built
+//     in memory when sent, as CREATE DATASOURCE is: plan() holds "Bearer <redacted>", each trace line reads "CREATE
+//     LIGHTNING REST TABLE <table> FROM CLOUDFLARE (token redacted)", and every message is scrubbed of the literal
+//     token before it is printed or traced. Zones are matched by Cloudflare's zone id and records by its record id:
+//     ids are not pseudonymised, names and contents are, so no join here reads a name or a content.
 //
 // Measured on 2.4.3.1: the USL DDL validator rejects a column named source and a table named reference with
 // a generic "Invalid DDL statement", hence source_kind and referent; class is unmeasured and the cause entity
@@ -108,8 +129,24 @@
 // copy_validated 2380 / 2079 / 301, action_verified 18 / 16 / 2, cause_evidenced 5 / 5 / 0, exception_in_force on
 // adoption 184 / 184 / 0 (8 recorded client-1 passes of 23 ADOPTs each), the adoption entity's lesson_id foreign key
 // 184 / 184 / 0; counts lesson 23, rule 15, adoption 184, LESSONS.ledger 23.
+//
+// Measured live 26 Oct 2026, 03:37 to 03:48 UTC, the REST source: TEST REST REQUEST with HEADER (Authorization "Bearer
+// <token>") answered 200 from the DNS API (Zetaris echoes the header as "Bearer***" and the token's last six characters,
+// so the setup never runs it). CREATE LIGHTNING REST TABLE over /zones/{id}/dns_records?per_page=500&page=1 infers
+// errors, messages, result (an array of structs: id, name, type, content, proxied, ttl and the rest) and result_info;
+// SHOW LIGHTNING TABLES lists the endpoint as source_table and table_type rest; a second CREATE answers 'A table named
+// "zone_<id>" already exists in database "CLOUDFLARE".' LATERAL VIEW explode(result) needs AS before its alias (without
+// it, r.id does not resolve). The six zones the read token sees, 58 records, one page each: the union of the six tables
+// LEFT JOINed to the last complete DNS run and its dns_record rows returned 58 rows, 58 current, in 2.7 to 3.9 s
+// uncached, each query fetching the six endpoints again. Then the setup: the fourteen-table USL stale ("lacks
+// dns_live"), CLOUDFLARE and its six tables created, REMOVE USL, COMPILE of the fifteen, REGISTER for all six rules: 90
+// statements, 68 ok, 22 skipped, 0 failed, 44.4 s (the zone read before them 1.7 s); again at once, 53 ok, 37 skipped,
+// 0 failed, 38.1 s. RUN DQ: run_complete 157 / 157 / 0, copy_validated 2641 / 2303 / 338, action_verified 18 / 16 / 2,
+// cause_evidenced 10 / 10 / 0, exception_in_force 230 / 230 / 0, dns_inventory_current on dns_live 58 / 58 / 0 in 15.6
+// s, its record_id key 58 / 58 / 0 and its run_id foreign key 58 / 58 / 0; count dns_live 58, the zones report 58.
 
 import { Zetaris, type QueryResult } from "../adapters/zetaris.ts";
+import { API, Cloudflare, RECORDS_PER_PAGE } from "../collectors/cloudflare.ts";
 import { config, redact } from "../config.ts";
 import { ADOPTION_SQL, EXCEPTION_IN_FORCE, FILE_DATASOURCES, fileTableDef } from "../data/files.ts";
 import { TABLE_NAMES } from "../data/schema.ts";
@@ -125,9 +162,12 @@ const IDENT = /^[A-Za-z][A-Za-z0-9_]*$/;
 const PG_IDENT = /^[A-Za-z0-9_-]+$/;
 
 /**
- * The USL's eleven tables, column lines in DDL order. The first four are the collected estate; policy is
+ * The USL's tables, column lines in DDL order. The first four are the collected estate; policy is
  * policy_rule; copy is vault_copy with its latest copy_validation; probe, disposition, action (reason and
- * record included) and ticket are their datasource tables; cause is finding_cause, class named cause_class.
+ * record included) and ticket are their datasource tables; cause is finding_cause, class named cause_class;
+ * lesson, rule and adoption are over the file tables; dns_live is the DNS API's records now against the last
+ * complete DNS run: live_proxied and held_proxied are 1, 0, or -1 when the flag is absent, held_type '' when the
+ * run lacks the record, so the rule compares NOT NULL columns.
  */
 const USL_DDL = {
   collection: [
@@ -324,6 +364,17 @@ const USL_DDL = {
     "lesson_recorded_at varchar(40)",
     "lesson_expires_at varchar(40)",
   ],
+  dns_live: [
+    "record_id varchar(64) NOT NULL PRIMARY KEY",
+    "tenant_id varchar(64) NOT NULL",
+    "zone_id varchar(64) NOT NULL",
+    "live_type varchar(16) NOT NULL",
+    "live_proxied int NOT NULL",
+    "run_id varchar(128) FOREIGN KEY REFERENCES collection(run_id)",
+    "run_started_at varchar(40)",
+    "held_type varchar(16) NOT NULL",
+    "held_proxied int NOT NULL",
+  ],
 } as const;
 
 export type UslTable = keyof typeof USL_DDL;
@@ -340,6 +391,12 @@ export const COMPILE_USL = `COMPILE USL IF NOT EXISTS ${USL_NAME} DEPLOY NAMESPA
 export interface DqRule { name: string; table: UslTable; expression: string }
 
 /**
+ * dns_inventory_current over plain columns: the last complete DNS run holds the record (held_type is '' when it does
+ * not), with the type and the proxied flag the DNS API returns now. The pass reads the same text (src/loop/pass.ts).
+ */
+export const DNS_INVENTORY_CURRENT = "held_type <> '' AND held_type = live_type AND held_proxied = live_proxied";
+
+/**
  * The DQ rules. run_complete states RUN_COMPLETE_SQL's self-report half (src/data/queries.ts): both counts
  * present, the observed count at least the asserted one, status complete, so a run that never asserted
  * its population fails here as it fails the pass's gate. copy_validated: the copy's latest validation is
@@ -351,6 +408,8 @@ export interface DqRule { name: string; table: UslTable; expression: string }
  * least one audit_event or action id; evidence_ids is a JSON array as text, '[]' when it names none, so the rule
  * compares plain columns. exception_in_force (src/data/files.ts EXCEPTION_IN_FORCE): every ADOPT decided under an
  * accepted exception joins, across DRIFT and LESSONS, to a lesson that was in force at the decision instant.
+ * dns_inventory_current (DNS_INVENTORY_CURRENT): every record the DNS API returns now, joined across CLOUDFLARE and
+ * DRIFT on Cloudflare's record id, is a record of the last complete DNS run with the same type and proxied flag.
  */
 export const DQ_RULES: readonly DqRule[] = [
   { name: "run_complete", table: "collection", expression: "observed_count IS NOT NULL AND expected_count IS NOT NULL AND observed_count >= expected_count AND status = 'complete'" },
@@ -358,9 +417,10 @@ export const DQ_RULES: readonly DqRule[] = [
   { name: "action_verified", table: "action", expression: "kind NOT IN ('rollback_file','revert_record') OR status IN ('failed','refused','not_judged') OR verification <> ''" },
   { name: "cause_evidenced", table: "cause", expression: "cause_class = 'unknown' OR evidence_ids <> '[]'" },
   { name: "exception_in_force", table: "adoption", expression: EXCEPTION_IN_FORCE },
+  { name: "dns_inventory_current", table: "dns_live", expression: DNS_INVENTORY_CURRENT },
 ];
 /** The tables RUN DQ runs on, one statement each. */
-export const DQ_TABLES: readonly UslTable[] = ["collection", "copy", "action", "cause", "adoption"];
+export const DQ_TABLES: readonly UslTable[] = ["collection", "copy", "action", "cause", "adoption", "dns_live"];
 export const DQ_RULE = "run_complete";
 
 /** How an entity's rows are formed from its tables, for each entity whose rows are other than one table's rows under its own column names. */
@@ -373,7 +433,49 @@ const USL_FORMED: Partial<Record<UslTable, string>> = {
   lesson: "one row per lesson of the technician's memory store, the Meterless H-MEM store the Decider recalls from, as `lessons.json` in the Zetaris filestore",
   rule: "one row per rule of the policy file, as `rules.json` in the Zetaris filestore; `lock` as `locked`, `hold_max_hours` as `hold_hours`, `note` as `description`",
   adoption: "each `disposition` decided ADOPT by the operator, under an accepted exception, LEFT JOINed across the two datasources to the `LESSONS.lesson` row its reason names, on the tenant and the lesson id",
+  dns_live: "each record the DNS API returns at the query, the `result` array of every `CLOUDFLARE.zone_<zone id>` REST table exploded (one table per zone and page), LEFT JOINed across the datasources to the last complete `cloudflare.dns` run of `collection_run` and to that run's `dns_record` row of the same Cloudflare record id; ids are joined on, never a name or a content",
 };
+
+// ---- the REST source: the Cloudflare DNS API as the CLOUDFLARE Lightning database ---------------------------------
+
+/** The Lightning database the DNS API is registered as, and its description (DESCRIBE BY takes letters, digits, spaces and _ . - , only). */
+export const REST_DB = "CLOUDFLARE";
+export const REST_DB_DESCRIBE = "Cloudflare DNS API, the records of each zone live at the provider";
+const ZONE_ID = /^[0-9a-f]{32}$/;
+
+/** A zone the read token sees, by Cloudflare's zone id, and the records the API reports for it. */
+export interface LiveZone { id: string; records: number }
+
+/** One REST table: a page of one zone's records. */
+export interface RestTable { table: string; zoneId: string; page: number; endpoint: string }
+
+/** One table per zone and page of RECORDS_PER_PAGE records, in zone order; none for a zone with no record. Throws on a zone id that is not 32 hex digits. */
+export function restTables(zones: readonly LiveZone[]): RestTable[] {
+  return zones.flatMap((z) => {
+    if (!ZONE_ID.test(z.id)) throw new SetupError(`a Cloudflare zone id is 32 hex digits, got ${JSON.stringify(z.id)}`);
+    if (!Number.isInteger(z.records) || z.records < 0) throw new SetupError(`zone ${z.id}: the record count must be a whole number, got ${z.records}`);
+    const pages = Math.ceil(z.records / RECORDS_PER_PAGE);
+    return Array.from({ length: pages }, (_, i) => ({
+      table: i === 0 ? `zone_${z.id}` : `zone_${z.id}_p${i + 1}`, zoneId: z.id, page: i + 1,
+      endpoint: `${API}/zones/${z.id}/dns_records?per_page=${RECORDS_PER_PAGE}&page=${i + 1}`,
+    }));
+  });
+}
+
+/** The zones the token sees and their record counts, read from the DNS API (GET /zones, then per_page=1 per zone, as the collector asserts its population). */
+export async function liveZones(token: string = config.cloudflare.token): Promise<LiveZone[]> {
+  const cf = new Cloudflare({ token });
+  const out: LiveZone[] = [];
+  for (const z of await cf.listZones()) out.push({ id: z.id, records: await cf.countRecords(z.id) });
+  return out;
+}
+
+/** The REST table the docs name for every zone: uslRows() reads dns_live's activation over it. */
+const DOC_REST: readonly RestTable[] = [{ table: "zone_<zone id>", zoneId: "<zone id>", page: 1, endpoint: "" }];
+
+function createRestTable(t: RestTable, token: string): string {
+  return `CREATE LIGHTNING REST TABLE ${t.table} FROM ${REST_DB} REQUEST (endpoint "${t.endpoint}", method "GET", http_encoding "URLENCODED", response_type "JSON", insecure_ssl "false") HEADER (Authorization "Bearer ${token}") BODY ()`;
+}
 
 /** A file table of the setup: its Lightning database, its name there, the file in FILESTORE_DIR it reads and, when the setup holds it to them, its columns. */
 export interface FileSource { db: string; table: string; file: string; columns?: readonly string[] }
@@ -408,17 +510,17 @@ export interface UslRow {
   rule?: DqRule;
 }
 
-/** A table an activation names: DRIFT.<table>, LESSONS.<table> or RULES.<table>. */
-const SOURCE_TABLE = new RegExp(`\\b(DRIFT|${LIGHTNING_DBS.map((d) => d.name).join("|")})\\.(\\w+)`, "g");
+/** A table an activation names: DRIFT.<table>, LESSONS.<table>, RULES.<table> or CLOUDFLARE.<table> (zone_<zone id> in the docs). */
+const SOURCE_TABLE = new RegExp(`\\b(DRIFT|${[...LIGHTNING_DBS.map((d) => d.name), REST_DB].join("|")})\\.(\\w+(?:<[^>]*>)?)`, "g");
 
-/** One row per USL entity, in DDL order, read off USL_DDL, activation() over the DRIFT datasource and DQ_RULES. */
+/** One row per USL entity, in DDL order, read off USL_DDL, activation() over the DRIFT datasource (and DOC_REST) and DQ_RULES. */
 export function uslRows(): UslRow[] {
   return USL_TABLES.map((entity) => {
     const lines = USL_DDL[entity] as readonly string[];
     const name = (l: string): string => l.split(" ")[0];
     return {
       entity,
-      builtFrom: [...new Set([...activation(entity, "DRIFT").matchAll(SOURCE_TABLE)].map((m) => (m[1] === "DRIFT" ? m[2] : `${m[1]}.${m[2]}`)))],
+      builtFrom: [...new Set([...activation(entity, "DRIFT", DOC_REST).matchAll(SOURCE_TABLE)].map((m) => (m[1] === "DRIFT" ? m[2] : `${m[1]}.${m[2]}`)))],
       formed: USL_FORMED[entity] ?? "",
       primaryKey: name(lines.find((l) => l.includes(" PRIMARY KEY"))!),
       foreignKeys: lines.flatMap((l) => {
@@ -442,7 +544,7 @@ export function uslMarkdown(): string {
     r.rule ? code(r.rule.expression) : "",
   ];
   return [
-    `${code(USL_NAME)} in ${code(NAMESPACE)} is the semantic layer over three datasources: ${code("DRIFT")}, the app Postgres; ${code(FILE_DATASOURCES.lesson)}, the technician's memory store; ${code(FILE_DATASOURCES.rule)}, the policy file. It holds ${rows.length} entities, each activated as one SELECT over the tables it is built from (${code("activation()")} in ${code("src/zetaris/setup.ts")}), a table of ${code("DRIFT")} by its name and a file table as ${code("<datasource>.<table>")}, and ${DQ_RULES.length} DQ rules, each an expression RUN DQ tests on every row of its entity.`,
+    `${code(USL_NAME)} in ${code(NAMESPACE)} is the semantic layer over four datasources: ${code("DRIFT")}, the app Postgres; ${code(FILE_DATASOURCES.lesson)}, the technician's memory store; ${code(FILE_DATASOURCES.rule)}, the policy file; ${code(REST_DB)}, the Cloudflare DNS API, which Zetaris reads itself at each query. It holds ${rows.length} entities, each activated as one SELECT over the tables it is built from (${code("activation()")} in ${code("src/zetaris/setup.ts")}), a table of ${code("DRIFT")} by its name and a file or REST table as ${code("<datasource>.<table>")}, and ${DQ_RULES.length} DQ rules, each an expression RUN DQ tests on every row of its entity.`,
     "",
     "| entity | built from | key | DQ rule | expression |",
     "|---|---|---|---|---|",
@@ -461,10 +563,22 @@ export interface SetupEnv {
   /** host[:port] as the Zetaris driver container reaches the same Postgres. */
   pgHost: string;
   datasource: string;
+  /** CLOUDFLARE_API_TOKEN, the read token the REST tables send in their Authorization header. */
+  cloudflareToken: string;
+  /** The zones the token sees (liveZones()); plan() needs them, apply() reads them when absent. */
+  zones?: readonly LiveZone[];
 }
 
 export function envFromProcess(): SetupEnv {
-  return { databaseUrl: process.env.DATABASE_URL ?? "", pgHost: config.zetaris.pgHost, datasource: config.zetaris.datasource };
+  return { databaseUrl: process.env.DATABASE_URL ?? "", pgHost: config.zetaris.pgHost, datasource: config.zetaris.datasource, cloudflareToken: config.cloudflare.token };
+}
+
+/** The token, checked: set, and with no quote, backslash or whitespace (it goes into a double-quoted option value). Messages never carry it. */
+function restToken(env: SetupEnv): string {
+  const t = env.cloudflareToken ?? "";
+  if (!t) throw new SetupError("CLOUDFLARE_API_TOKEN is not set: the CLOUDFLARE REST tables send it to the DNS API");
+  if (/["\\\s]/.test(t)) throw new SetupError("CLOUDFLARE_API_TOKEN holds a double quote, backslash or whitespace; it goes into a double-quoted Zetaris option value");
+  return t;
 }
 
 /**
@@ -473,18 +587,20 @@ export function envFromProcess(): SetupEnv {
  * of sql/schema.sql. tables_registered: the source existed and lists every one. usl_present: the namespace
  * lists drift_usl. usl_stale: LOAD USL reports other tables or columns than COMPILE_USL. usl_absent: no
  * drift_usl at the start, or removed this run. dq_rule_absent / dq_rule_differs: LIST DQ USL does not list
- * step.rule, or lists it with another expression.
+ * step.rule, or lists it with another expression. rest_table_stale / rest_table_absent: SHOW LIGHTNING TABLES
+ * CLOUDFLARE lists step.rest over another endpoint, or does not list it (or it was dropped this run).
  */
 export type When =
   | "datasource_absent" | "datasource_present" | "tables_missing" | "tables_registered"
   | "lightning_db_absent" | "file_table_listed" | "file_table_stale" | "file_table_absent"
+  | "rest_table_stale" | "rest_table_absent"
   | "usl_present" | "usl_stale" | "usl_absent" | "dq_rule_absent" | "dq_rule_differs";
 
 export interface Step {
   name: string;
-  /** The statement as printed. For CREATE DATASOURCE the password is "<redacted>". */
+  /** The statement as printed. For CREATE DATASOURCE the password is "<redacted>", for CREATE LIGHTNING REST TABLE the token. */
   sql: string;
-  /** The statement as sent, built in memory when it runs. Only CREATE DATASOURCE has one. */
+  /** The statement as sent, built in memory when it runs: CREATE DATASOURCE and each CREATE LIGHTNING REST TABLE. */
   secret?: () => string;
   /** The trace line's input_summary instead of sql, for a statement that carries credentials. */
   traceAs?: string;
@@ -495,10 +611,14 @@ export interface Step {
   db?: string;
   /** The file table a file_table_* condition or a file_columns probe is about. */
   file?: FileSource;
+  /** The REST table a rest_table_* condition is about. */
+  rest?: RestTable;
   /** Not a statement: put the files into the filestore (ApplyDeps.put), then go on. */
   copy?: true;
   /** What the result tells the steps after it. */
-  probe?: "datasources" | "datasource_tables" | "lightning_dbs" | "file_tables" | "file_columns" | "usl" | "usl_model" | "dq_rules";
+  probe?: "datasources" | "datasource_tables" | "lightning_dbs" | "file_tables" | "file_columns" | "rest_tables" | "usl" | "usl_model" | "dq_rules";
+  /** A count step's expected rows: what the zones reported, printed beside the count. */
+  expect?: number;
   /** An "already exist" error from this step means the datasource existed. */
   marksDatasource?: true;
   /** A success from this step means the USL is gone (REMOVE USL). */
@@ -539,8 +659,17 @@ function createDatasource(ds: string, t: PgTarget, password: string): string {
 /** COALESCE(c, '') AS c for each NOT NULL varchar, the bare column for a nullable one. */
 const keep = (cols: string): string => cols.split(/\s+/).filter(Boolean).map((c) => (c.startsWith("?") ? c.slice(1) : `COALESCE(${c}, '') AS ${c}`)).join(", ");
 
-/** The activation query per USL table: exactly the declared columns, NOT NULL varchars wrapped in COALESCE, ints CAST. */
-export function activation(table: UslTable, ds: string): string {
+/**
+ * The last complete DNS run: the cloudflare.dns run run_complete passes with the greatest started_at, then the greater
+ * run_id. run_complete's own expression over the run and over each later candidate, so "complete" is the rule's.
+ */
+function lastCompleteDnsRun(ds: string): string {
+  const complete = (a: string): string => DQ_RULES.find((r) => r.name === "run_complete")!.expression.replace(/\b(observed_count|expected_count|status)\b/g, `${a}.$1`);
+  return `SELECT c.run_id, c.tenant_id, c.started_at FROM ${ds}.collection_run c WHERE c.surface = 'cloudflare.dns' AND ${complete("c")} AND NOT EXISTS (SELECT 1 FROM ${ds}.collection_run w WHERE w.surface = 'cloudflare.dns' AND ${complete("w")} AND (w.started_at > c.started_at OR (w.started_at = c.started_at AND w.run_id > c.run_id)))`;
+}
+
+/** The activation query per USL table: exactly the declared columns, NOT NULL varchars wrapped in COALESCE, ints CAST. dns_live reads the REST tables given. */
+export function activation(table: UslTable, ds: string, rest: readonly RestTable[] = []): string {
   switch (table) {
     case "collection":
       return `SELECT COALESCE(run_id, '') AS run_id, COALESCE(tenant_id, '') AS tenant_id, COALESCE(surface, '') AS surface, host, COALESCE(started_at, '') AS started_at, CAST(expected_count AS INT) AS expected_count, CAST(observed_count AS INT) AS observed_count, COALESCE(status, '') AS status FROM ${ds}.collection_run`;
@@ -572,14 +701,27 @@ export function activation(table: UslTable, ds: string): string {
     case "adoption":
       // The catalogue's own SQL (src/data/files.ts), one line, its tables named as Zetaris names them: the cross-source join.
       return squash(ADOPTION_SQL.replace("{{t:disposition}}", `${ds}.disposition`).replace("{{t:lesson}}", `${FILE_DATASOURCES.lesson}.lesson`));
+    case "dns_live": {
+      // Each REST table's result array, one row per record; the zone id is a literal (32 hex digits, or the docs' placeholder).
+      if (!rest.length) throw new SetupError("dns_live reads at least one CLOUDFLARE REST table: the token sees no zone with a record");
+      const live = rest.map((t) => `SELECT r.id AS record_id, '${t.zoneId}' AS zone_id, r.type AS type, r.proxied AS proxied FROM ${REST_DB}.${t.table} LATERAL VIEW explode(result) AS r`).join(" UNION ALL ");
+      return `SELECT COALESCE(l.record_id, '') AS record_id, COALESCE(k.tenant_id, '') AS tenant_id, COALESCE(l.zone_id, '') AS zone_id, COALESCE(l.type, '') AS live_type, CAST(CASE WHEN l.proxied THEN 1 WHEN NOT l.proxied THEN 0 ELSE -1 END AS INT) AS live_proxied, k.run_id AS run_id, k.started_at AS run_started_at, COALESCE(d.type, '') AS held_type, CAST(COALESCE(d.proxied, -1) AS INT) AS held_proxied FROM (${live}) l LEFT JOIN (${lastCompleteDnsRun(ds)}) k ON 1 = 1 LEFT JOIN ${ds}.dns_record d ON d.run_id = k.run_id AND d.record_id = l.record_id`;
+    }
   }
 }
 
-/** The ordered statements. Throws SetupError when DATABASE_URL or ZETARIS_PG_HOST cannot build the datasource. */
+/**
+ * The ordered statements. Throws SetupError when DATABASE_URL or ZETARIS_PG_HOST cannot build the datasource, when
+ * CLOUDFLARE_API_TOKEN is blank or unquotable, or when env.zones is absent (liveZones() reads it) or holds no record.
+ */
 export function plan(env: SetupEnv = envFromProcess()): Step[] {
   const ds = env.datasource;
   if (!IDENT.test(ds)) throw new SetupError("ZETARIS_DATASOURCE must be an unquoted identifier");
   const t = pgTarget(env);
+  const token = restToken(env);
+  if (!env.zones) throw new SetupError("the Cloudflare zones are not read: liveZones() reads them before the plan is built");
+  const rest = restTables(env.zones);
+  const records = env.zones.reduce((n, z) => n + z.records, 0);
   const dqTable = (r: DqRule) => `${USL}.${r.table}`;
   return [
     { name: "show datasources", sql: "SHOW DATASOURCES", probe: "datasources" },
@@ -602,13 +744,22 @@ export function plan(env: SetupEnv = envFromProcess()): Step[] {
       { name: `drop ${keyOf(f)}`, sql: `DROP LIGHTNING DATABASE TABLE ${keyOf(f)}`, when: "file_table_stale", file: f },
       { name: `create ${keyOf(f)}`, sql: `CREATE LIGHTNING FILESTORE TABLE ${f.table} FROM ${f.db} FORMAT JSON OPTIONS (path "${pathOf(f)}")`, when: "file_table_absent", file: f },
     ]),
+    { name: `create lightning database ${REST_DB}`, sql: `CREATE LIGHTNING DATABASE ${REST_DB} DESCRIBE BY "${REST_DB_DESCRIBE}"`, when: "lightning_db_absent", db: REST_DB },
+    { name: `list ${REST_DB} tables`, sql: `SHOW LIGHTNING TABLES ${REST_DB}`, probe: "rest_tables", db: REST_DB },
+    ...rest.flatMap((r): Step[] => [
+      { name: `drop ${REST_DB}.${r.table}`, sql: `DROP LIGHTNING DATABASE TABLE ${REST_DB}.${r.table}`, when: "rest_table_stale", rest: r },
+      {
+        name: `create ${REST_DB}.${r.table}`, sql: createRestTable(r, "<redacted>"), secret: () => createRestTable(r, token),
+        traceAs: `CREATE LIGHTNING REST TABLE ${r.table} FROM ${REST_DB} (token redacted)`, when: "rest_table_absent", rest: r,
+      },
+    ]),
     { name: "namespace lightning.metastore", sql: "CREATE NAMESPACE IF NOT EXISTS lightning.metastore" },
     { name: `namespace ${NAMESPACE}`, sql: `CREATE NAMESPACE IF NOT EXISTS ${NAMESPACE}` },
     { name: `list ${NAMESPACE}`, sql: `SHOW NAMESPACES OR TABLES IN ${NAMESPACE}`, probe: "usl" },
     { name: `load usl ${USL_NAME}`, sql: `LOAD USL ${USL_NAME} NAMESPACE ${NAMESPACE}`, when: "usl_present", probe: "usl_model" },
     { name: `remove usl ${USL_NAME}`, sql: `REMOVE USL ${USL_NAME} NAMESPACE ${NAMESPACE}`, when: "usl_stale", removesUsl: true },
     { name: `compile usl ${USL_NAME}`, sql: COMPILE_USL, when: "usl_absent", multi: true, timeoutMs: 120_000 },
-    ...USL_TABLES.map((tb): Step => ({ name: `activate ${tb}`, sql: `ACTIVATE USL TABLE ${USL}.${tb} AS ${activation(tb, ds)}`, timeoutMs: 120_000 })),
+    ...USL_TABLES.map((tb): Step => ({ name: `activate ${tb}`, sql: `ACTIVATE USL TABLE ${USL}.${tb} AS ${activation(tb, ds, rest)}`, timeoutMs: 120_000 })),
     { name: "list dq rules", sql: `LIST DQ USL ${USL}`, probe: "dq_rules" },
     ...DQ_RULES.flatMap((r): Step[] => [
       { name: `register dq ${r.name}`, sql: `REGISTER DQ ${r.name} TABLE ${dqTable(r)} AS ${r.expression}`, when: "dq_rule_absent", rule: r },
@@ -616,7 +767,7 @@ export function plan(env: SetupEnv = envFromProcess()): Step[] {
     ]),
     ...DQ_TABLES.map((tb): Step => ({ name: `run dq ${tb}`, sql: `RUN DQ TABLE ${USL}.${tb}`, show: true, dqTable: tb, timeoutMs: 150_000 })),
     { name: `show ${USL}`, sql: `SHOW NAMESPACES OR TABLES IN ${USL}`, show: true },
-    ...USL_TABLES.map((tb): Step => ({ name: `count ${tb}`, sql: `SELECT COUNT(*) AS n FROM ${USL}.${tb}` })),
+    ...USL_TABLES.map((tb): Step => ({ name: `count ${tb}`, sql: `SELECT COUNT(*) AS n FROM ${USL}.${tb}`, ...(tb === "dns_live" ? { expect: records } : {}) })),
     ...FILE_SOURCES.filter((f) => !f.columns).map((f): Step => ({ name: `count ${keyOf(f)}`, sql: `SELECT COUNT(*) AS n FROM ${keyOf(f)}` })),
   ];
 }
@@ -630,6 +781,8 @@ const WHEN_TEXT: Record<When, (ds: string, s: Step) => string> = {
   file_table_listed: (_ds, s) => `only when ${s.file?.db} lists ${s.file?.table}`,
   file_table_stale: (_ds, s) => `only when ${s.file?.db} lists ${s.file?.table} over another path or format${s.file?.columns ? ", or with other columns" : ""}`,
   file_table_absent: (_ds, s) => `only when ${s.file?.db} lacks ${s.file?.table} or it was dropped this run`,
+  rest_table_stale: (_ds, s) => `only when ${REST_DB} lists ${s.rest?.table} over another endpoint`,
+  rest_table_absent: (_ds, s) => `only when ${REST_DB} lacks ${s.rest?.table} or it was dropped this run`,
   usl_present: () => `only when ${NAMESPACE} lists ${USL_NAME}`,
   usl_stale: () => `only when ${USL_NAME}'s tables or columns differ from the ${USL_TABLES.length} below`,
   usl_absent: () => `only when ${USL_NAME} is absent or was removed this run`,
@@ -678,6 +831,8 @@ export interface ApplyDeps {
   put?: (files: Readonly<Record<string, string>>) => PutResult[];
   /** Where the copy's hash is recorded for the live pass's freshness check: COPY_STATE_FILE with the real put; with `put` given, nowhere unless named. */
   copyState?: string | null;
+  /** The zones the token sees, when env carries none (default: liveZones(), the DNS API's GETs). */
+  zones?: (token: string) => Promise<readonly LiveZone[]>;
 }
 
 /**
@@ -762,12 +917,31 @@ function table(r: QueryResult): string[] {
  * line per statement, ok, skipped or failed. Stops at the first error that is not "already exist".
  */
 export async function apply(deps: ApplyDeps = {}): Promise<ApplyResult> {
-  const env = deps.env ?? envFromProcess();
+  const given = deps.env ?? envFromProcess();
   const client = deps.client ?? new Zetaris();
   const out = deps.out ?? ((l: string) => console.log(l));
+  const { password } = pgTarget(given);
+  const token = restToken(given);
+  const scrub = (s: string, secret: string) => (secret.length >= 4 ? s.split(secret).join("<redacted>") : s);
+  const clean = (s: string) => scrub(scrub(redact(s), password), token).slice(0, 400);
+  const t0 = Date.now();
+  // The zones first: the REST tables of the plan are one per zone and page the DNS API reports now.
+  let env = given;
+  if (!given.zones) {
+    try {
+      env = { ...given, zones: await (deps.zones ?? liveZones)(token) };
+    } catch (e) {
+      const msg = clean((e as Error).message ?? String(e));
+      deps.tracer?.emit({ agent: AGENT, action: "observe", status: "failed", input_summary: "Cloudflare GET /zones and each zone's record count", detail: msg });
+      out(`ZETARIS SETUP FAILED reading the Cloudflare zones after ${Date.now() - t0} ms: ${msg}`);
+      return { ok: false, results: [], dqRuns: {}, error: msg, ms: Date.now() - t0 };
+    }
+    const n = env.zones!.reduce((a, z) => a + z.records, 0);
+    const note = `${env.zones!.length} zone(s) the token sees, ${n} record(s), ${restTables(env.zones!).length} REST table(s) of ${RECORDS_PER_PAGE} records a page`;
+    deps.tracer?.emit({ agent: AGENT, action: "observe", status: "ok", input_summary: "Cloudflare GET /zones and each zone's record count", output_summary: note, latency_ms: Date.now() - t0 });
+    out(`${"ok".padEnd(7)} ${"00 read the Cloudflare zones".padEnd(44)} ${note}  (${Date.now() - t0} ms)`);
+  }
   const steps = plan(env);
-  const { password } = pgTarget(env);
-  const clean = (s: string) => (password.length >= 4 ? redact(s).split(password).join("<redacted>") : redact(s)).slice(0, 400);
   const state = {
     datasourceExisted: false, missingTables: null as string[] | null, uslPresent: false, uslStale: null as string | null, rules: null as Map<string, string> | null,
     /** SHOW LIGHTNING DATABASES, names upper-cased: it listed RULES as "rules" (25 Oct 2026). */
@@ -777,10 +951,13 @@ export async function apply(deps: ApplyDeps = {}): Promise<ApplyResult> {
     /** Why a listed file table is to be dropped and created again. */
     fileStale: new Map<string, string>(),
     dropped: new Set<string>(),
+    /** SHOW LIGHTNING TABLES CLOUDFLARE: each REST table's endpoint, by table name. */
+    restTables: new Map<string, string>(),
+    restDropped: new Set<string>(),
   };
   const results: StepResult[] = [];
   const dqRuns: Partial<Record<UslTable, QueryResult>> = {};
-  const t0 = Date.now();
+  const restStale = (r: RestTable): boolean => state.restTables.has(r.table) && state.restTables.get(r.table) !== r.endpoint;
 
   const listed = (r: DqRule): string | undefined => state.rules?.get(`${r.name}@${r.table}`) ?? state.rules?.get(r.name);
   const gate = (s: Step): string | false => {
@@ -795,6 +972,8 @@ export async function apply(deps: ApplyDeps = {}): Promise<ApplyResult> {
       case "file_table_listed": return !state.fileTables.has(keyOf(s.file!)) && `${s.file!.db} lacks ${s.file!.table}`;
       case "file_table_stale": return !state.fileStale.has(keyOf(s.file!)) && (state.fileTables.has(keyOf(s.file!)) ? `${keyOf(s.file!)} listed as stated` : `${s.file!.db} lacks ${s.file!.table}`);
       case "file_table_absent": return state.fileTables.has(keyOf(s.file!)) && !state.dropped.has(keyOf(s.file!)) && `${keyOf(s.file!)} listed as stated`;
+      case "rest_table_stale": return !restStale(s.rest!) && (state.restTables.has(s.rest!.table) ? `${REST_DB}.${s.rest!.table} listed over its endpoint` : `${REST_DB} lacks ${s.rest!.table}`);
+      case "rest_table_absent": return state.restTables.has(s.rest!.table) && !state.restDropped.has(s.rest!.table) && `${REST_DB}.${s.rest!.table} listed over its endpoint`;
       case "usl_present": return !state.uslPresent && `${USL_NAME} is absent`;
       case "usl_stale": return state.uslStale === null && (state.uslPresent ? `${USL_NAME} holds the ${USL_TABLES.length} tables as compiled` : `${USL_NAME} is absent`);
       case "usl_absent": return state.uslPresent && `${USL_NAME} holds the ${USL_TABLES.length} tables as compiled`;
@@ -842,11 +1021,21 @@ export async function apply(deps: ApplyDeps = {}): Promise<ApplyResult> {
     try {
       const r = await client.query(s.secret ? s.secret() : s.sql, { limit: 200, timeoutMs: s.timeoutMs ?? 60_000, ...(s.multi ? { allowMultiStatement: true } : {}) });
       let note = rowsNote(r);
+      if (s.expect !== undefined) note += `, the zones report ${s.expect}`;
       if (s.probe === "lightning_dbs") {
         const n = col(r, "name");
         state.lightningDbs = new Set(r.rows.map((row) => (n >= 0 ? row[n] : row[0]).toUpperCase()));
-        note += `, ${LIGHTNING_DBS.map((d) => `${d.name} ${state.lightningDbs.has(d.name.toUpperCase()) ? "listed" : "not listed"}`).join(", ")}`;
+        note += `, ${[...LIGHTNING_DBS.map((d) => d.name), REST_DB].map((d) => `${d} ${state.lightningDbs.has(d.toUpperCase()) ? "listed" : "not listed"}`).join(", ")}`;
       }
+      if (s.probe === "rest_tables") {
+        const [n, p] = [col(r, "name"), col(r, "source_table")];
+        for (const row of r.rows) state.restTables.set(row[n >= 0 ? n : 0], p >= 0 ? row[p] : "");
+        const planned = steps.filter((x) => x.when === "rest_table_absent").map((x) => x.rest!);
+        const listedAs = planned.filter((x) => state.restTables.get(x.table) === x.endpoint).length;
+        const stale = planned.filter(restStale).length;
+        note += `, ${listedAs} of ${planned.length} REST tables listed over their endpoint${stale ? `, ${stale} over another` : ""}`;
+      }
+      if (s.when === "rest_table_stale" && s.rest) state.restDropped.add(s.rest.table);
       if (s.probe === "file_tables") {
         const [n, p, f] = [col(r, "name"), col(r, "source_table"), col(r, "format")];
         const say: string[] = [];

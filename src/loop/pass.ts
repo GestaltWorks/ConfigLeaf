@@ -22,6 +22,12 @@
 //     their hash differs from the last copy's, so the DQ read joins the lessons the Decider recalls (a lesson npm run
 //     answer recorded since the last copy included). Its outcome is one trace line and one clause of the summary; a
 //     failed refresh is carried, never thrown.
+//   - On Zetaris, when the tenant has a cloudflare.dns run, beside the adoption read: one SELECT over drift_usl.dns_live
+//     (dnsInventorySql) reads the DQ rule dns_inventory_current, every record the DNS API returns now (Zetaris fetches
+//     the CLOUDFLARE REST tables at the query) against the last complete DNS run. Read only; a failed read is carried,
+//     never thrown. A record that fails means the provider changed since that run, so the pass's picture of the zone is
+//     stale. The summary and the pass row's Zetaris line carry it. On sql.js nothing is read (sample mode has no live
+//     source).
 //
 // Measured 25 Oct 2026: over the Actor's fixture world (test/loop.test.ts) 12 findings, each read back under its
 // disposition_id; a second pass at a later instant writes 12 rows of its own, and one at the same instant writes 0
@@ -37,7 +43,7 @@ import type { Ledger } from "../ledger.ts";
 import { VERBS, runPass, type Finding, type PassResult } from "../pipeline.ts";
 import type { Tracer } from "../trace.ts";
 import { refreshText, type Refresh } from "../zetaris/filestore.ts";
-import { USL } from "../zetaris/setup.ts";
+import { DNS_INVENTORY_CURRENT, USL } from "../zetaris/setup.ts";
 
 export class LoopError extends Error {}
 
@@ -105,12 +111,50 @@ export async function readAdoptionCheck(layer: DataLayer, tenant: string, decide
   }
 }
 
+/**
+ * The DQ rule dns_inventory_current over drift_usl.dns_live: `live` the records the DNS API returns now, `current` those
+ * the last complete DNS run holds with the same type and proxied flag, `runId` that run (null when there is none).
+ */
+export type DnsInventoryCheck =
+  | { rule: "dns_inventory_current"; live: number; current: number; runId: string | null }
+  | { rule: "dns_inventory_current"; error: string };
+
+/** The USL entity the pass reads the rule over. */
+export const DNS_ENTITY = `${USL}.dns_live`;
+
+/** One SELECT over drift_usl.dns_live: the live records and those for which the registered rule's own text holds. */
+export function dnsInventorySql(): string {
+  return `SELECT COUNT(*) AS live, SUM(CASE WHEN ${DNS_INVENTORY_CURRENT} THEN 1 ELSE 0 END) AS current, MAX(run_id) AS run_id FROM ${DNS_ENTITY}`;
+}
+
+/** Read the check through the layer's engine (Zetaris only: the REST tables and the USL live there). A failed read is returned, never thrown. */
+export async function readDnsInventory(layer: DataLayer, tracer?: Tracer): Promise<DnsInventoryCheck> {
+  const sql = dnsInventorySql();
+  try {
+    assertSelectOnly(sql);
+    const r = await layer.engine.run(sql, { tracer, agent: "loop", limit: 1 });
+    const row = objects(r)[0];
+    const n = (v: string | undefined): number => (v ? Number(v) : 0);
+    return { rule: "dns_inventory_current", live: n(row?.live), current: n(row?.current), runId: row?.run_id || null };
+  } catch (e) {
+    return { rule: "dns_inventory_current", error: ((e as Error).message ?? String(e)).slice(0, 300) };
+  }
+}
+
+/** "DQ dns_inventory_current 58 of 58 live records", or "... not read: <why>". */
+export function dnsInventoryText(d: DnsInventoryCheck): string {
+  if ("error" in d) return `DQ ${d.rule} not read: ${d.error}`;
+  return `DQ ${d.rule} ${d.current} of ${d.live} live record${d.live === 1 ? "" : "s"}`;
+}
+
 export interface PassStep {
   tenant: string;
   decidedAt: string;
   pass: PassResult;
   /** Read after the Decider when the layer runs on Zetaris; absent on sql.js. */
   adoptions?: AdoptionCheck;
+  /** Read beside it when the layer runs on Zetaris and the tenant has a DNS run; absent otherwise. */
+  dns?: DnsInventoryCheck;
   /** The refresh of the file tables' copy, when the caller gave one. */
   files?: Refresh;
   /** The tenant's findings, in the pass's order. */
@@ -177,6 +221,8 @@ export async function passStep(layer: DataLayer, opts: PassStepOptions): Promise
   // After the Decider, read only: the rule exception_in_force over this pass's adoptions as Zetaris joins them across
   // DRIFT and LESSONS; with no ledger the pass recorded none, so the latest recorded pass's.
   const adoptions = layer.engine.name === "zetaris" ? await readAdoptionCheck(layer, tenant, ledger ? decidedAt : null, tracer) : undefined;
+  // Read only, beside it: the records the DNS API returns now against the last complete DNS run, joined in Zetaris.
+  const dns = layer.engine.name === "zetaris" && dnsRuns.size ? await readDnsInventory(layer, tracer) : undefined;
 
   const tenantRuns = new Set(runs.map((r) => r.run_id));
   const gated = pass.gatedOut.filter((r) => tenantRuns.has(r));
@@ -186,10 +232,10 @@ export async function passStep(layer: DataLayer, opts: PassStepOptions): Promise
   const recorded = pass.ledger
     ? `ledger: ${pass.ledger.dispositions} disposition(s) and ${pass.ledger.fingerprints} referent fingerprint(s) written, ${kept} finding(s) on rows an earlier pass wrote`
     : "ledger: none, nothing recorded";
-  const dq = `${files ? `; ${refreshText(files)}` : ""}${adoptions ? `; ${adoptionText(adoptions)}` : ""}`;
+  const dq = `${files ? `; ${refreshText(files)}` : ""}${adoptions ? `; ${adoptionText(adoptions)}` : ""}${dns ? `; ${dnsInventoryText(dns)}` : ""}`;
   const summary = `PASS: tenant ${tenant}, decided at ${decidedAt}: ${runs.length} collection run(s) of the tenant, ${gated.length} failed the DQ gate (${gated.join(", ") || "none"}), `
     + `${pass.observed} observations in the World Model, ${findings.length} finding(s) (${tally(findings.map((f) => f.finding.class))}); verbs: ${verbs}; decided by ${by}; `
     + `judge skipped (model: none); ${mem}; policy rules ${pass.rules}, locked settings without an approved value ${pass.locked}; ${recorded}${dq}`;
   tracer?.emit({ agent: "loop", action: "triage", status: "ok", input_summary: `pass ${tenant}`, output_summary: summary.slice(0, 1000), detail: "model: none" });
-  return { tenant, decidedAt, pass, findings, runs: runs.length, kept, lines, summary, ...(adoptions ? { adoptions } : {}), ...(files ? { files } : {}) };
+  return { tenant, decidedAt, pass, findings, runs: runs.length, kept, lines, summary, ...(adoptions ? { adoptions } : {}), ...(dns ? { dns } : {}), ...(files ? { files } : {}) };
 }

@@ -3,17 +3,20 @@
 // where the Zetaris driver container reaches that Postgres. The LESSONS and RULES files are written from
 // DRIFT_MEMORY_DIR and DRIFT_POLICY_FILE into the driver container (ZETARIS_DRIVER_CONTAINER, default
 // zetaris-driver-1) with docker, through wsl.exe -d ZETARIS_WSL_DISTRO (default Ubuntu-24.04) on Windows.
+// CLOUDFLARE_API_TOKEN, the read token, goes into the Authorization header of the CLOUDFLARE REST tables; the zones it
+// sees are read from the DNS API first (GETs only).
 // Against an instance already set up every statement is ok or skipped. Exits 1 on the first step that fails
 // with anything but "already exist".
-// --plan prints the ordered statements without running them; the password reads "<redacted>".
+// --plan prints the ordered statements without running them (the zones are still read); the password and the token
+// read "<redacted>".
 import { redact } from "../src/config.ts";
-import { apply, envFromProcess, formatPlan, plan } from "../src/zetaris/setup.ts";
+import { apply, envFromProcess, formatPlan, liveZones, plan } from "../src/zetaris/setup.ts";
 import { Tracer } from "../src/trace.ts";
 
 try {
   if (process.argv.includes("--plan")) {
     const env = envFromProcess();
-    for (const line of formatPlan(plan(env), env.datasource)) console.log(line);
+    for (const line of formatPlan(plan({ ...env, zones: await liveZones(env.cloudflareToken) }), env.datasource)) console.log(line);
     process.exit(0);
   }
   const tracer = new Tracer(`zetaris_setup_${Date.now().toString(36)}`, { model: "none" });
