@@ -215,6 +215,8 @@ Measured on the operator's estate, tenant `client-1`, and the writes on the lab 
 | `npm run conformance`, `npm run conformance:hmem` | The vendored Meterless suites pass: the World Model suite runs through `src/engine/world.ts`, and the H-MEM suite runs through the reference class that `src/engine/memory.ts` re-exports. | World Model 8 of 8; H-MEM 13 of 13 and the `TechnicianMemory` wrapper check, 25 Oct 2026; and in CI on every push to main and every pull request ([ci.yml](.github/workflows/ci.yml)). |
 | `npm run spike:nightshift` | Nightshift serves Lightning and Ultra by explicit id, signs a receipt for each call that verifies offline, and tracks the app as a job whose event stream replays its turns. | 9 of 9 PASS: 142 model ids listed, Lightning in 3,107 ms and Ultra in 1,625 ms on their OpenRouter routes, 100 of 100 listed receipts verified, this run's 2 receipts in the list, 65 turn events replayed, 25 Oct 2026. |
 | `npm run zetaris:setup` | The idempotent setup of the `DRIFT` datasource, the `LESSONS` and `RULES` file sources, the fourteen-entity USL and its five DQ rules. | 71 statements, 0 failed; `run_complete` 140 of 140 runs valid, `exception_in_force` 184 of 184 adoptions valid, 25 Oct 2026 22:57 UTC. |
+| `npm run collect:zetaris -- --tenant client-1` | Zetaris's own control plane is a collected surface, `zetaris.control`: the semantic layer's entities, the DQ rules, the grants, the datasources and the server version, read only, one observation per object of its canonical JSON with the population asserted, committed to the vault; once approved, the pass holds it to the approval, and an edited rule, a dropped entity or a widened grant is `drift_vs_approved` ESCALATE with its diff (`test/zetaris-control.test.ts`). | Run 30 of 30 objects complete (16 for the USL, 6 DQ rules, 2 for the grants, 5 for the datasources, the server), 30 rows written, its vault commit changing no file since the setup's run of 04:55 UTC; `npm run approve -- --tenant client-1 --surface zetaris.control` wrote 30 approvals; the read-only pass after it raised 0 findings on the surface, 26 Oct 2026. |
+| `npm run pass` (the schema guard) | Before every live pass reads a row, the columns of the fourteen `DRIFT` tables it reads and of each `CLOUDFLARE` REST table are held to sql/schema.sql and to the fields `dns_live` reads; a missing or retyped column fails the surfaces that read it closed, their findings not checked and kept from the ledger (`test/schema-guard.test.ts`). | "schema 20 tables as expected" on the pass row for client-1 at 04:55 UTC, 21 statements, 0.96 s when the guard runs alone; the pass's EXPLAIN QUERY AS of the hero join and the `dns_live` read traced once each, 26 Oct 2026. |
 | `npm run zetaris:queries` | The hero query, the survey and the detectors run through Zetaris itself. | 0 hero rows, the 27 survey findings, 0 invalid runs, 24 Oct 2026. |
 
 ## Where each answer comes from
@@ -579,6 +581,52 @@ the eleven-entity USL stale, removed and compiled with fourteen; a second run ga
 `unverified` `rollback_file` that names no verifying probe, `cause_evidenced` valid on 5 of 5 causes, and
 `exception_in_force` valid on 184 of 184 adoptions: the 23 ADOPTs of client-1 in each of 8 recorded passes, each
 joined to one of the 23 lessons of `examples/memory` (`RULES.rule` 15 rows, `LESSONS.ledger` 23).
+
+ConfigLeaf assures the layer it stands on as a ninth source, the surface `zetaris.control`
+([src/zetaris/control.ts](src/zetaris/control.ts)). `npm run collect:zetaris -- --tenant <id>`, and the setup at its
+end for each tenant with a DNS or control-plane run, reads Zetaris's control plane with read-only statements: SHOW
+NAMESPACES OR TABLES IN the USL (the entities the model must hold, the run's asserted population), LOAD USL (the model
+as JSON), LIST DQ USL, SHOW GRANT ON ALL, SHOW DATASOURCES, SHOW LIGHTNING DATABASES and SHOW SERVER VERSION. Each
+object becomes one observation on the host `zetaris`, setting `definition`: the USL's entity list, each entity as LOAD
+USL reports it (its columns, keys, checks, access-control annotations and activation query), each custom DQ rule with
+its table and expression, the list of principals, each principal's grants (the grant time left out), the datasource
+list, each datasource and Lightning database with its id, and the server version. The value is the object's canonical
+JSON (keys sorted, two-space indent), value_hash its sha256, the text redacted as every observation is (a principal's
+mail address becomes its pseudonym), and the run is committed to the vault as a host's run is, at
+`<DRIFT_VAULT_DIR>/<tenant>/zetaris`. SHOW GRANT needs an administrator or Access Control Read: when the key may not
+run it, the grants are not_checked with the reason and the run goes on without them; any other statement that fails
+leaves the run failed, so the gate refuses it. `npm run approve -- --tenant <id> --surface zetaris.control` signs off
+the whole state, and the existing `drift_vs_approved` detector covers the surface unchanged: an edited DQ rule, a
+dropped entity or a widened grant is a finding, its cause carrying the line diff of the canonical JSON (a dropped
+entity is also `approved_missing`). The policy file's `zetaris.control` rule (critical, locked, `on_drift`
+`escalate`, alert always) makes every such finding ESCALATE, a ticket for a technician, and the agent changes nothing
+on the layer. On 26 Oct 2026 the setup's collection at 04:55 UTC gave run 30 of 30 objects complete (16 for the USL,
+6 DQ rules, 2 for the grants, 5 for the datasources, the server), committed to the vault in 876 ms; `npm run
+collect:zetaris -- --tenant client-1` at 04:55:30 UTC gave the same 30 objects with the same hashes, 30 rows written,
+its vault commit changing no file; the approval at 04:55:43 UTC wrote 30 rows. `test/zetaris-control.test.ts` holds the
+three drifts to ESCALATE over sql.js, the edited rule's diff its one changed expression line.
+
+Before every live pass reads a row, the source-schema guard ([src/zetaris/schema-guard.ts](src/zetaris/schema-guard.ts))
+runs DESCRIBE DATASOURCE TABLE for the fourteen `DRIFT` tables the pass's SQL reads and, after SHOW LIGHTNING TABLES
+CLOUDFLARE, for each REST table, and compares the columns with sql/schema.sql (TEXT as string, INTEGER as integer) and
+with the three fields `dns_live` reads from each zone table's `result` array (id and type strings, proxied a boolean).
+A column the pass reads that is missing or has changed type fails the pass closed on the surfaces that read it: the
+backup tables feed linux.nginx, the DNS record, audit and inventory tables linux.nginx and cloudflare.dns, and every
+other table every surface. Their dispositions go to no ledger, each of their findings is one NOT CHECKED line with the
+reason, and the pass row prints "schema <ds>.<table> changed: <column>" in red; a pass whose own SQL fails over the
+change decides nothing and says so, the schema first. A changed REST field leaves the findings decided and the
+`dns_inventory_current` read not made. When everything matches, the row prints "schema 20 tables as expected".
+`change_window` stands apart: a store created before it lacks it, and the pass's window read already decides what its
+absence means. Last, the pass asks Zetaris for its plan of the two cross-source queries, EXPLAIN QUERY AS of the hero
+join over the tenant's latest nginx and DNS runs and of the `dns_live` read
+([src/zetaris/explain.ts](src/zetaris/explain.ts)): one trace line each, agent zetaris, action explain, the plan
+redacted and cut to 4,000 characters, its first line under `--verbose`; a key that may not run EXPLAIN (it is for
+administrators) gives a not_checked line. The read-only pass for client-1 on 26 Oct 2026 at 04:55 UTC printed "schema
+20 tables as expected" (21 statements, 0.96 s when the guard runs alone), decided 27 findings as before (ADOPT 23, HOLD 3, ESCALATE
+1) and 0 on `zetaris.control` (`drift_vs_approved` 0 and `approved_missing` 0 over the 30 approved objects, no locked
+setting without an approved value), sent 491 Lightning SQL queries (29,933 rows, 0 failed) in 97.9 s and traced the
+hero join's plan (cut at 4,000 characters) and the `dns_live` plan (2,409 characters), each opening "== Parsed Logical
+Plan ==".
 
 ### The semantic layer
 
