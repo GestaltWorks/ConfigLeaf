@@ -574,7 +574,7 @@ Nemotron runs through Nightshift, requested by explicit model id with OpenRouter
 
 | role | model | runs in |
 |---|---|---|
-| Triage: pick and parameterise catalogue checks for a finding | Nemotron 3.5 Lightning: `METERLESS_MODEL_FAST` `openrouter/nvidia/nemotron-3.5-lightning`, then `METERLESS_FALLBACK_FAST` `nvidia/nemotron-3.5-lightning-30b-a3b`; a local lane joins when its weights are installed | the eval's C1 to C3 |
+| Triage: pick and parameterise catalogue checks for a finding | Nemotron 3.5 Lightning: `METERLESS_MODEL_FAST` `nvidia/nemotron-3.5-lightning-30b-a3b` (NVIDIA's endpoint), then `METERLESS_FALLBACK_FAST` `openrouter/nvidia/nemotron-3.5-lightning`; a local lane joins when its weights are installed | the eval's C1 to C3 |
 | Investigation: pick the checks for a FIX, or an ESCALATE under an investigate rule | Nemotron 3.5 Lightning, the same ids | the Actor's `investigate` |
 | Refuting judge: one SELECT that returns rows when the claim is false | Nemotron 3 Ultra: `METERLESS_MODEL_JUDGE` `openrouter/nvidia/nemotron-3-ultra-550b-a55b:free`, then `METERLESS_FALLBACK_JUDGE` `nvidia/nemotron-3-ultra-550b-a55b`; Lightning in C2 | the Actor's `investigate`, the eval's C2 and C3 |
 | Eval C1 | C0 plus Nemotron 3.5 Lightning selecting and parameterising checks from the catalogue | `npm run eval` |
