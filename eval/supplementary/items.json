@@ -1,0 +1,159 @@
+{
+ "created": "2026-10-26T00:58:00.000Z",
+ "note": "Supplementary items, declared post hoc on 26 Oct 2026 and not pre-registered (eval/supplementary/README.md). Each item is one finding a live pass raised on 25 Oct 2026 over a real change: three the operator staged on the production estate (15:53, 16:49 and 18:08 UTC) and the lab cycle of examples/traces/cycle_mvoa0l1i.jsonl. Facts are the finding's summary as the pass wrote it, with pseudonyms as the redactor produced them. agent_says is the live pass's verb and reason; it is never handed to a model. cycle names the tenant and the instant the live pass decided at; the eval slices eval/supplementary/bundle.json at that instant (src/eval/supplementary.ts).",
+ "items": [
+  {
+   "id": "S01",
+   "class": "drift_vs_approved",
+   "source": "live cycle of client-1, 25 Oct 2026 15:53 UTC (no committed trace): pass decided at 2026-10-25T15:54:01.957Z, nginx run run-1f949ba3c2557d42, disposition disp-ad79e295fe0ccf74 in the app Postgres",
+   "question": "A locked vhost was edited on the host; the live file differs from its latest approval. Does this need a technician now?",
+   "agent_says": "ROLLBACK: live value drifted from approved 3f565467a831; vault commit b0e36dc7 holds the approved copy, validated ok_with_gaps with 16 gaps, so rule rule-e186e9d5790a7e6b rolls it back to that copy",
+   "facts": "file in /etc/nginx/conf.d/host-a00d2f.ai.conf on host-aa516a is 4de292773ac4, and its latest approval, 2026-10-24T19:57:38.206Z by operator, is 3f565467a831: the live value drifted from the approved one",
+   "refs": {
+    "run_id": "run-1f949ba3c2557d42",
+    "object_id": "/etc/nginx/conf.d/host-a00d2f.ai.conf",
+    "host": "host-aa516a",
+    "resource_id": null,
+    "finding_id": "fnd-d2e1aa9697e6fab7",
+    "disposition_id": "disp-ad79e295fe0ccf74"
+   },
+   "cycle": { "tenant_id": "client-1", "decided_at": "2026-10-25T15:54:01.957Z", "trace": null }
+  },
+  {
+   "id": "S02",
+   "class": "changed_since_backup",
+   "source": "live cycle of client-1, 25 Oct 2026 15:53 UTC (no committed trace): pass decided at 2026-10-25T15:54:01.957Z, nginx run run-1f949ba3c2557d42, disposition disp-c2dd4dcfec3fe2d8 in the app Postgres",
+   "question": "The edited vhost differs from its copy in the host's newest backup. Does this need a technician now?",
+   "agent_says": "HOLD: rule rule-e186e9d5790a7e6b restores a setting to its approved value; this changed_since_backup finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-26T15:54:01.957Z",
+   "facts": "/etc/nginx/conf.d/host-a00d2f.ai.conf on host-aa516a is 4de292773ac4 and its copy in the host's newest backup (snap-0b816e741ae1dea6, taken 2026-10-25T03:40:31.444Z) is 3f565467a831: the live file and the backup copy differ",
+   "refs": {
+    "run_id": "run-1f949ba3c2557d42",
+    "object_id": "/etc/nginx/conf.d/host-a00d2f.ai.conf",
+    "host": "host-aa516a",
+    "resource_id": null,
+    "finding_id": "fnd-16c204edb6e2b93b",
+    "disposition_id": "disp-c2dd4dcfec3fe2d8"
+   },
+   "cycle": { "tenant_id": "client-1", "decided_at": "2026-10-25T15:54:01.957Z", "trace": null }
+  },
+  {
+   "id": "S03",
+   "class": "drift_vs_approved",
+   "source": "live cycle of client-1, 25 Oct 2026 16:49 UTC (examples/traces/cycle_mvo2bil0.jsonl): pass decided at 2026-10-25T16:49:30.637Z, DNS run run-576e5a1e0ae32b39, disposition disp-0596963e0c81ae00 in the app Postgres",
+   "question": "A DNS record was changed in the dashboard; its content differs from its latest approval. Does this need a technician now?",
+   "agent_says": "ROLLBACK: live value drifted from approved 9291bd740240; vault commit 5ef406fc holds the approved copy, validated ok with 0 gaps, so rule rule-a3f26f34efab2ebb rolls it back to that copy",
+   "facts": "content of record 9ee8076d949534eb9ceef147017db541 (host-492568.ai) is 192.0.2.10 (8faef4a3401b), and its latest approval, 2026-10-24T19:57:48.545Z by operator, is 9291bd740240: the live value drifted from the approved one",
+   "refs": {
+    "run_id": "run-576e5a1e0ae32b39",
+    "object_id": "9ee8076d949534eb9ceef147017db541",
+    "host": null,
+    "resource_id": "9ee8076d949534eb9ceef147017db541",
+    "finding_id": "fnd-b170e6629e934723",
+    "disposition_id": "disp-0596963e0c81ae00"
+   },
+   "cycle": { "tenant_id": "client-1", "decided_at": "2026-10-25T16:49:30.637Z", "trace": "examples/traces/cycle_mvo2bil0.jsonl" }
+  },
+  {
+   "id": "S04",
+   "class": "found_but_different",
+   "source": "live cycle of client-1, 25 Oct 2026 16:49 UTC (examples/traces/cycle_mvo2bil0.jsonl): pass decided at 2026-10-25T16:49:30.637Z, nginx run run-a8590cdc5428b8d4, disposition disp-76034f3fee0e6720 in the app Postgres",
+   "question": "The vhost is unchanged, but the name it serves now resolves to an address outside the inventory. Does this need a technician now?",
+   "agent_says": "HOLD: rule rule-b8d9962485c3ced4 (normal) holds this found_but_different finding until 2026-10-28T16:49:30.637Z",
+   "facts": "server[host-492568.ai:443].server_name[host-492568.ai] in /etc/nginx/conf.d/host-492568.ai.conf on host-aa516a is byte-identical since 2026-10-25T16:32:53.265Z; host-492568.ai resolved to ip-6b6bba then and to 192.0.2.10 now, an address not in the inventory",
+   "refs": {
+    "run_id": "run-a8590cdc5428b8d4",
+    "object_id": "/etc/nginx/conf.d/host-492568.ai.conf",
+    "host": "host-aa516a",
+    "resource_id": null,
+    "finding_id": "fnd-493e06fa1896b40d",
+    "disposition_id": "disp-76034f3fee0e6720"
+   },
+   "cycle": { "tenant_id": "client-1", "decided_at": "2026-10-25T16:49:30.637Z", "trace": "examples/traces/cycle_mvo2bil0.jsonl" }
+  },
+  {
+   "id": "S05",
+   "class": "found_but_different",
+   "source": "live cycle of client-1, 25 Oct 2026 16:49 UTC (examples/traces/cycle_mvo2bil0.jsonl): pass decided at 2026-10-25T16:49:30.637Z, nginx run run-a8590cdc5428b8d4, disposition disp-85072bfaaa4100fc in the app Postgres",
+   "question": "The vhost is unchanged, but the name it serves now resolves to an address outside the inventory. Does this need a technician now?",
+   "agent_says": "HOLD: rule rule-b8d9962485c3ced4 (normal) holds this found_but_different finding until 2026-10-28T16:49:30.637Z",
+   "facts": "server[host-492568.ai:80].server_name[host-492568.ai] in /etc/nginx/conf.d/host-492568.ai.conf on host-aa516a is byte-identical since 2026-10-25T16:32:53.265Z; host-492568.ai resolved to ip-6b6bba then and to 192.0.2.10 now, an address not in the inventory",
+   "refs": {
+    "run_id": "run-a8590cdc5428b8d4",
+    "object_id": "/etc/nginx/conf.d/host-492568.ai.conf",
+    "host": "host-aa516a",
+    "resource_id": null,
+    "finding_id": "fnd-0a8bc053185074a1",
+    "disposition_id": "disp-85072bfaaa4100fc"
+   },
+   "cycle": { "tenant_id": "client-1", "decided_at": "2026-10-25T16:49:30.637Z", "trace": "examples/traces/cycle_mvo2bil0.jsonl" }
+  },
+  {
+   "id": "S06",
+   "class": "drift_vs_approved",
+   "source": "live cycle of client-1, 25 Oct 2026 18:08 UTC (examples/traces/cycle_mvo5600q.jsonl): pass decided at 2026-10-25T18:09:14.465Z, nginx run run-143dd416ad5fff95, disposition disp-dfc1d83e369e469b in the app Postgres",
+   "question": "A signed-off vhost was broken on the host and the vault holds no valid copy of it. Does this need a technician now?",
+   "agent_says": "FIX: live value drifted from approved c14c75198c71 with no valid copy (1 copy in the vault, latest validation unvalidated) and production affected (1 failing probe in run-80feccb18eb0b84a: http host-22b64a.com), so rule rule-6c41a25a00c404c8 investigates, fixes where allowed, documents and opens a ticket",
+   "facts": "file in /etc/nginx/sites-available/host-525a57.com on host-4b4dc1 is 644c5f4af269, and its latest approval, 2026-10-25T18:08:29.101Z by operator, is c14c75198c71: the live value drifted from the approved one",
+   "refs": {
+    "run_id": "run-143dd416ad5fff95",
+    "object_id": "/etc/nginx/sites-available/host-525a57.com",
+    "host": "host-4b4dc1",
+    "resource_id": null,
+    "finding_id": "fnd-d235ecff843daff1",
+    "disposition_id": "disp-dfc1d83e369e469b"
+   },
+   "cycle": { "tenant_id": "client-1", "decided_at": "2026-10-25T18:09:14.465Z", "trace": "examples/traces/cycle_mvo5600q.jsonl" }
+  },
+  {
+   "id": "S07",
+   "class": "changed_since_backup",
+   "source": "live cycle of client-1, 25 Oct 2026 18:08 UTC (examples/traces/cycle_mvo5600q.jsonl): pass decided at 2026-10-25T18:09:14.465Z, nginx run run-143dd416ad5fff95, disposition disp-25fb4c16ee5c5aa1 in the app Postgres",
+   "question": "The broken vhost differs from its copy in the host's newest backup. Does this need a technician now?",
+   "agent_says": "HOLD: rule rule-6c41a25a00c404c8 restores a setting to its approved value; this changed_since_backup finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-26T18:09:14.465Z",
+   "facts": "/etc/nginx/sites-available/host-525a57.com on host-4b4dc1 is 644c5f4af269 and its copy in the host's newest backup (snap-038fceed7aa05c02, taken 2026-10-25T03:40:05.995Z) is 77c0bfaa68ff: the live file and the backup copy differ",
+   "refs": {
+    "run_id": "run-143dd416ad5fff95",
+    "object_id": "/etc/nginx/sites-available/host-525a57.com",
+    "host": "host-4b4dc1",
+    "resource_id": null,
+    "finding_id": "fnd-ac7e08b8363ae75e",
+    "disposition_id": "disp-25fb4c16ee5c5aa1"
+   },
+   "cycle": { "tenant_id": "client-1", "decided_at": "2026-10-25T18:09:14.465Z", "trace": "examples/traces/cycle_mvo5600q.jsonl" }
+  },
+  {
+   "id": "S08",
+   "class": "drift_vs_approved",
+   "source": "live cycle of lab-1, 25 Oct 2026 20:24 UTC, the file edited over ssh at 20:22 UTC (examples/traces/cycle_mvoa0l1i.jsonl): pass decided at 2026-10-25T20:24:34.402Z, nginx run run-ea6025e231e361d0, disposition disp-a6f2ea62f8c8acb3 in the app Postgres",
+   "question": "The lab vhost was edited over ssh; the live file differs from its latest approval. Does this need a technician now?",
+   "agent_says": "ROLLBACK: live value drifted from approved a811a0a5d0dc; vault commit 5dde7698 holds the approved copy, validated ok with 0 gaps, so rule rule-6c41a25a00c404c8 rolls it back to that copy",
+   "facts": "file in /etc/nginx/sites-available/lab.example on host-951abf is a5b94717c6fe, and its latest approval, 2026-10-25T05:17:38.938Z by operator, is a811a0a5d0dc: the live value drifted from the approved one",
+   "refs": {
+    "run_id": "run-ea6025e231e361d0",
+    "object_id": "/etc/nginx/sites-available/lab.example",
+    "host": "host-951abf",
+    "resource_id": null,
+    "finding_id": "fnd-8feb12765bd81257",
+    "disposition_id": "disp-a6f2ea62f8c8acb3"
+   },
+   "cycle": { "tenant_id": "lab-1", "decided_at": "2026-10-25T20:24:34.402Z", "trace": "examples/traces/cycle_mvoa0l1i.jsonl" }
+  },
+  {
+   "id": "S09",
+   "class": "changed_since_backup",
+   "source": "live cycle of lab-1, 25 Oct 2026 20:24 UTC, the file edited over ssh at 20:22 UTC (examples/traces/cycle_mvoa0l1i.jsonl): pass decided at 2026-10-25T20:24:34.402Z, nginx run run-ea6025e231e361d0, disposition disp-2830bf2e6c52d31e in the app Postgres",
+   "question": "The edited lab vhost differs from its copy in the host's newest backup. Does this need a technician now?",
+   "agent_says": "HOLD: rule rule-6c41a25a00c404c8 restores a setting to its approved value; this changed_since_backup finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-26T20:24:34.402Z",
+   "facts": "/etc/nginx/sites-available/lab.example on host-951abf is a5b94717c6fe and its copy in the host's newest backup (snap-3761e7bb8903ddfa, taken 2026-10-25T05:16:25.000Z) is a811a0a5d0dc: the live file and the backup copy differ",
+   "refs": {
+    "run_id": "run-ea6025e231e361d0",
+    "object_id": "/etc/nginx/sites-available/lab.example",
+    "host": "host-951abf",
+    "resource_id": null,
+    "finding_id": "fnd-7fdd0e91bccfb220",
+    "disposition_id": "disp-2830bf2e6c52d31e"
+   },
+   "cycle": { "tenant_id": "lab-1", "decided_at": "2026-10-25T20:24:34.402Z", "trace": "examples/traces/cycle_mvoa0l1i.jsonl" }
+  }
+ ]
+}

@@ -46,6 +46,15 @@
 // left it after the run. The tab shows row counts; index.json's totals carry the eval's stamp, set, calls,
 // verified signatures, substitutions and the re-run tally, and the header shows the calls and the re-run tally.
 //
+// The header is static HTML. Its counts take each finding once, by the pass's finding id: a slice cut around one finding
+// can carry another (the 16 April proxy_split sits in two slices), so a finding in two slices is one finding and two rows.
+// Verbs, classes and judge models count the same way, the header names the rows the Findings tab lists over the slices
+// beside the findings, and each slice keeps its own counts. Above the counts a tile sets Ultra alone (the configuration
+// whose run files record direct: ultra, C4) beside the checks with Ultra as the falsifier (judge: ultra over a model's
+// selection, C3), per run, from the results directory the Nemotron tab is built from: the items labelled no each reads as
+// yes (counts.false_positives of counts.labelled_no), and the planted claims C3 struck in planted.json, under a caption
+// naming the directory and the runs' span from their started_at and finished_at.
+//
 // Refuses to publish (throws, writes nothing) when a check cites a template the catalogue cannot render, or
 // parameters it refuses; when a re-run differs from the record (a check's, a live judge's, or an eval judge SELECT
 // that runs and returns another count, named by file, configuration, run and claim or item); when a results file
@@ -215,7 +224,10 @@ export interface SiteIndex {
   title: string;
   examples: { dir: string; file: string; findings: number; checks: number; reproduced: boolean }[];
   totals: {
-    examples: number; findings: number; checks: number; checksRerun: number; verbs: Record<string, number>; classes: Record<string, number>; judgeModels: Record<string, number>;
+    examples: number;
+    /** Each finding once, by the pass's finding id; `rows` counts it once per slice that carries it, as the Findings tab lists it. Verbs, classes and judge models count by finding id too. */
+    findings: number; rows: number;
+    checks: number; checksRerun: number; verbs: Record<string, number>; classes: Record<string, number>; judgeModels: Record<string, number>;
     /** The eval results the Nemotron tab is built from. */
     nemotron: NemotronTotals;
   };
@@ -537,8 +549,11 @@ const EvalJudge = z.looseObject({
   status: z.string(), sql: opt(), rows: z.number().int().nonnegative().nullable().optional(), receipt_id: opt(), served_model: opt(),
 });
 const EvalRun = z.looseObject({
-  config: z.looseObject({ id: z.string(), select: z.looseObject({ kind: z.string() }).nullable().optional() }),
+  config: z.looseObject({
+    id: z.string(), select: z.looseObject({ kind: z.string() }).nullable().optional(), judge: z.string().nullable().optional(), direct: z.string().nullable().optional(),
+  }),
   run: z.number().int().positive(), valid: z.boolean(), recording: z.string(), tenant: z.string(), set: z.string(),
+  started_at: z.string().nullable().optional(), finished_at: z.string().nullable().optional(),
   policy: z.looseObject({ file: z.string() }).nullable().optional(),
   counts: z.looseObject({
     calls: z.number().int(), checks_selected: z.number().int(), checks_valid: z.number().int(), checks_ran_unmodified: z.number().int(),
@@ -556,7 +571,7 @@ const EvalRun = z.looseObject({
 });
 const EvalPlanted = z.looseObject({
   recording: z.string(),
-  claims: z.array(EvalJudge.extend({ config: z.string(), run: z.number().int().positive(), judge_tier: z.string(), id: z.string(), kind: z.string() })),
+  claims: z.array(EvalJudge.extend({ config: z.string(), run: z.number().int().positive(), judge_tier: z.string(), id: z.string(), kind: z.string(), struck: z.boolean().optional() })),
 });
 const PlantedText = z.looseObject({ claims: z.array(z.looseObject({ id: z.string(), kind: z.string(), claim: z.string() })) });
 
@@ -590,6 +605,18 @@ export interface NemotronView {
   runs: { config: string; run: number; valid: boolean; selects: boolean; calls: number; checksSelected: number; checksValid: number; ranUnmodified: number; falsePositives: number; labelledNo: number }[];
   claims: { id: string; kind: string; claim: string | null; judges: JudgeSelectView[] }[];
   items: JudgeSelectView[];
+  /** The header's tile; null when the run files hold no configuration with direct: ultra or none with judge: ultra over a model's selection. */
+  headline: Headline | null;
+}
+/** One run of a headline configuration: the items labelled no whose verdict reads yes, of the items labelled no. */
+export interface HeadlineRun { run: number; valid: boolean; readYes: number; labelledNo: number }
+export interface Headline {
+  /** Ultra alone: the configuration whose run files record direct: ultra (C4). */
+  alone: { config: string; runs: HeadlineRun[] };
+  /** The checks with Ultra as the falsifier: judge: ultra over a model's selection (C3); per run also the planted claims struck, of those planted. */
+  checks: { config: string; runs: (HeadlineRun & { struck: number; claims: number })[] };
+  /** The earliest started_at and the latest finished_at over every run file. */
+  started: string | null; finished: string | null;
 }
 
 /** The lexically newest directory under `base` that holds planted.json and a C*-run*.json; null when none does. */
@@ -725,6 +752,24 @@ export async function nemotronView(dir: string): Promise<NemotronView> {
     const rows = [...served.values()];
     const judged = [...claims.flatMap((c) => c.judges), ...items].filter((j) => j.rerun !== "not_run");
     const stamp = path.basename(dir);
+
+    const alone = runs.find(({ r }) => r.config.direct === "ultra")?.r.config.id;
+    const checked = runs.find(({ r }) => r.config.judge === "ultra" && r.config.select?.kind === "model")?.r.config.id;
+    const runsOf = (id: string): HeadlineRun[] => runs.filter(({ r }) => r.config.id === id)
+      .map(({ r }) => ({ run: r.run, valid: r.valid, readYes: r.counts.false_positives, labelledNo: r.counts.labelled_no }));
+    const instants = (xs: (string | null | undefined)[]): string[] => xs.filter((s): s is string => typeof s === "string" && !Number.isNaN(Date.parse(s))).sort();
+    const headline: Headline | null = alone && checked ? {
+      alone: { config: alone, runs: runsOf(alone) },
+      checks: {
+        config: checked,
+        runs: runsOf(checked).map((x) => {
+          const p = planted.claims.filter((c) => c.config === checked && c.run === x.run);
+          return { ...x, struck: p.filter((c) => c.struck ?? c.status === "refuted").length, claims: p.length };
+        }),
+      },
+      started: instants(runs.map(({ r }) => r.started_at))[0] ?? null,
+      finished: instants(runs.map(({ r }) => r.finished_at)).at(-1) ?? null,
+    } : null;
     return {
       dir: shown, recording: first.recording, policy, tenant: first.tenant,
       totals: {
@@ -741,7 +786,7 @@ export async function nemotronView(dir: string): Promise<NemotronView> {
         checksSelected: r.counts.checks_selected, checksValid: r.counts.checks_valid, ranUnmodified: r.counts.checks_ran_unmodified,
         falsePositives: r.counts.false_positives, labelledNo: r.counts.labelled_no,
       })),
-      claims, items,
+      claims, items, headline,
     };
   } finally {
     engine.close();
@@ -809,6 +854,59 @@ ${c.claim ? `<p>${escapeText(c.claim)}</p>\n` : ""}${tableOf(["config", "run", "
 ${tableOf(["item", "finding", "config", "run", "Lightning's checks", ...judgeHead], byFinding(v.items).flatMap((g) => judgeRows(g, (j) =>
   `${j === g[0] ? `<td rowspan="${g.length}">${escapeText(j.item ?? "-")}</td><td rowspan="${g.length}">${escapeText(j.finding ?? "-")}</td>` : ""}${td(j.config)}${td(j.run)}${td(j.templates?.join(", ") ?? null)}`)))}
 </div></section>`;
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** An instant as the page dates it: 25 Oct 2026 23:34 UTC. */
+const dated = (iso: string): string => {
+  const d = new Date(iso);
+  return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()} ${d.toISOString().slice(11, 16)} UTC`;
+};
+
+/**
+ * The header's tile: Ultra alone beside the checks with Ultra as the falsifier, per run, numbers as the run files and
+ * planted.json record them, and one caption naming the results directory and the runs' span. Empty when the results hold no such pair.
+ */
+export function headlineTile(v: NemotronView): string {
+  const h = v.headline;
+  if (!h) return "";
+  const runsText = (xs: { run: number }[]): string => {
+    const ns = xs.map((x) => x.run);
+    return ns.length === 1 ? `run ${ns[0]}` : `runs ${ns.slice(0, -1).join(", ")} and ${ns[ns.length - 1]}`;
+  };
+  // "6, 5, 6 of 9" when every run has the same total, else each run's own
+  const perRun = (xs: [number, number][]): string =>
+    !xs.length ? "-" : xs.every(([, d]) => d === xs[0][1]) ? `${xs.map(([k]) => k).join(", ")} of ${xs[0][1]}` : xs.map(([k, d]) => `${k} of ${d}`).join(", ");
+  const li = (b: string, label: string): string => `<li><b>${escapeText(b)}</b>${escapeText(label)}</li>`;
+  const invalid = [h.alone, h.checks].flatMap((c) => c.runs.filter((r) => !r.valid).map((r) => `${c.config} run ${r.run}`));
+  const span = h.started && h.finished ? `, ${dated(h.started)} to ${dated(h.finished)}` : "";
+  return `<div class="headline">
+<h2>Ultra alone vs the checks with Ultra as the falsifier</h2>
+<ul class="stats">
+${li(perRun(h.alone.runs.map((r) => [r.readYes, r.labelledNo])), `items labelled no that Ultra alone (${h.alone.config}) reads as yes, ${runsText(h.alone.runs)}`)}
+${li(perRun(h.checks.runs.map((r) => [r.readYes, r.labelledNo])), `items labelled no that the checks with Ultra as the falsifier (${h.checks.config}) read as yes, ${runsText(h.checks.runs)}`)}
+${li(perRun(h.checks.runs.map((r) => [r.struck, r.claims])), `planted false claims struck by ${h.checks.config}, ${runsText(h.checks.runs)}`)}
+</ul>
+<p class="meta">From <a href="#nemotron"><code>${escapeText(v.dir)}</code></a>, the ${escapeText(v.totals.set)} set${span}.${invalid.length ? ` Not valid: ${invalid.join(", ")}.` : ""}</p>
+</div>`;
+}
+
+/**
+ * The header's counts, static: the findings by finding id beside the rows the slices list, the verbs by finding id, the
+ * checks re-run over the slices, the classes, and the eval's Nemotron calls and judge SELECTs re-run, both linked to the tab.
+ */
+export function headerStats(t: SiteIndex["totals"]): string {
+  const n = t.nemotron;
+  const plural = (k: number, w: string): string => `${k} ${w}${k === 1 ? "" : "s"}`;
+  const li = (b: string, label: string): string => `<li><b>${b}</b>${escapeText(label)}</li>`;
+  return `<ul class="stats" id="stats">
+${li(String(t.findings), `${t.findings === 1 ? "finding" : "findings"}, ${plural(t.rows, "row")} over ${plural(t.examples, "slice")}`)}
+${li(escapeText(Object.entries(t.verbs).map(([k, x]) => `${x} ${k}`).join(", ")), "verbs")}
+${li(`${t.checksRerun} / ${t.checks}`, "checks re-run over the slices at build, counts equal")}
+${li(String(Object.keys(t.classes).length), "finding classes")}
+${li(`<a href="#nemotron">${n.calls}</a>`, `Nemotron calls in eval ${n.stamp}, ${n.signatureVerified} receipts verified`)}
+${li(`<a href="#nemotron">${n.rerunEqual} / ${n.judgeSelects}</a>`, `Nemotron judge SELECTs re-run at build, counts equal${n.notRunnable ? `; ${n.notRunnable} recorded text does not run` : ""}`)}
+</ul>`;
 }
 
 /** Every string leaf of a value, in order: the text the deny-list scan reads for the Nemotron tab. */
@@ -956,6 +1054,9 @@ function zetarisParagraph(): string {
 
 // ---- the build --------------------------------------------------------------------------------------------------
 
+/** The key the header counts a finding by: the pass's finding id, or the row's own id for an older record that has none. */
+const findingKey = (f: FindingView): string => f.fields.find(([k]) => k === "finding id")?.[1] ?? f.id;
+
 function exampleDirs(examplesDir: string): string[] {
   const dirs = readdirSync(examplesDir)
     .filter((d) => statSync(path.join(examplesDir, d)).isDirectory())
@@ -999,12 +1100,16 @@ export async function buildSite(opts: BuildOptions = {}): Promise<BuildResult> {
 
   const all = examples.flatMap((e) => e.findings);
   const checks = all.flatMap((f) => f.checks);
+  // Each finding once, by its finding id: the same finding in two slices is one finding and two rows. A finding that
+  // reads two verbs in two slices counts under each (one per finding id and verb), so no slice's reading is dropped.
+  const once = (pick: (f: FindingView) => string): Record<string, number> =>
+    tally([...new Map(all.map((f) => [`${findingKey(f)}\u001f${pick(f)}`, pick(f)])).values()]);
   const index: SiteIndex = {
     title: "ConfigLeaf replay",
     examples: examples.map((e) => ({ dir: e.dir, file: `data/${e.dir}.json`, findings: e.findings.length, checks: e.findings.reduce((n, f) => n + f.checks.length, 0), reproduced: e.reproduced })),
     totals: {
-      examples: examples.length, findings: all.length, checks: checks.length, checksRerun: checks.filter((c) => c.status === "ran").length,
-      verbs: tally(all.map((f) => f.verb)), classes: tally(all.map((f) => f.class)), judgeModels: tally(all.map((f) => f.judge.model)),
+      examples: examples.length, findings: new Set(all.map(findingKey)).size, rows: all.length, checks: checks.length, checksRerun: checks.filter((c) => c.status === "ran").length,
+      verbs: once((f) => f.verb), classes: once((f) => f.class), judgeModels: once((f) => f.judge.model),
       nemotron: nemotron.totals,
     },
     sample,
@@ -1021,7 +1126,7 @@ export async function buildSite(opts: BuildOptions = {}): Promise<BuildResult> {
   const uslText = uslMarkdown();
 
   const files = new Map<string, string>();
-  files.set("index.html", page(doc.html, sourcesPanel(sourcesText, uslText), nemotronPanel(nemotron)));
+  files.set("index.html", page(headlineTile(nemotron), headerStats(index.totals), doc.html, sourcesPanel(sourcesText, uslText), nemotronPanel(nemotron)));
   files.set(".nojekyll", "");
   files.set("data/index.json", `${JSON.stringify(index, null, 2)}\n`);
   for (const e of examples) files.set(`data/${e.dir}.json`, `${JSON.stringify(e, null, 1)}\n`);
@@ -1053,9 +1158,9 @@ export async function buildSite(opts: BuildOptions = {}): Promise<BuildResult> {
 // ---- the page: one file, inline CSS and script, no framework, no CDN, no external font -------------------------
 // Four tabs: Findings (the script renders data/), Document, Sources and Nemotron (static HTML, built above). The script
 // shows the tab the address names (#document, #sources, #nemotron; any other address is Findings); with the script off
-// every tab shows.
+// every tab shows. The header, its tile and its counts included, is static HTML too.
 
-const page = (documentTab: string, sourcesTab: string, nemotronTab: string): string => `<!doctype html>
+const page = (headline: string, stats: string, documentTab: string, sourcesTab: string, nemotronTab: string): string => `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -1084,6 +1189,10 @@ pre{background:var(--code);border-radius:6px;padding:10px 12px;margin:6px 0;over
 .stats b{font-size:1.25rem;display:block;line-height:1.2}
 .stats li{color:var(--muted);font-size:.85rem}
 .stats li b{color:var(--fg)}
+.headline{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px 8px;margin:16px 0 4px;max-width:86ch}
+.headline h2{font-size:1rem;margin:0}
+.headline .stats{margin:8px 0 6px;gap:10px 22px}
+.headline .stats li{flex:1 1 13rem;max-width:21rem}
 .controls{position:sticky;top:0;z-index:2;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 0;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
 .controls label{font-size:.85rem;color:var(--muted)}
 select,button{font:inherit;font-size:.85rem;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:6px;padding:5px 9px}
@@ -1153,7 +1262,8 @@ td pre{white-space:pre-wrap;word-break:break-word;margin:4px 0 0;min-width:36ch;
 <header><div class="wrap">
 <h1>ConfigLeaf: every finding, with the SQL behind it</h1>
 <p class="lede">A config-drift assurance pass for MSP technicians, replayed from recorded collections. Open a finding to see the detector query that raised it, each precondition check with the SQL that ran, the rows it returned and the hashes, and the judge step. The Document tab holds the owner's document over the full recorded bundle, the Sources tab names the tables and the source behind each finding class, and the Nemotron tab holds the eval's Nemotron calls with every SELECT its judges wrote, re-run at build. In a live pass the same detector and check SQL runs as Zetaris Lightning SQL over the <code>${escapeHtml(DATASOURCE)}</code> datasource, beside the technician's memory store and the policy file, with the <code>${escapeHtml(USL_NAME)}</code> semantic layer and its ${word(DQ_RULES.length)} DQ rules over the three; on this page it runs on sql.js over the recorded rows, and <code>test/parity.test.ts</code> holds the two engines to the same columns, rows and totals.</p>
-<ul class="stats" id="stats"></ul>
+${headline}
+${stats}
 <p class="report"><a href="${REPORT_LINK}">Report</a><br><span class="meta">The owner's report, <code>examples/report.html</code>: one HTML file over the same recorded bundle as the Document tab, opened from a clone of the repository.</span></p>
 <nav class="tabs" aria-label="Page sections"><a href="#findings">Findings</a><a href="#document">Document</a><a href="#sources">Sources</a><a href="#nemotron">Nemotron</a></nav>
 </div></header>
@@ -1306,8 +1416,9 @@ ${nemotronTab}
       const show = (!cls || el.dataset.class === cls) && (!verb || el.dataset.verb === verb);
       el.hidden = !show; all++; if (show) n++;
     }
-    for (const s of document.querySelectorAll("#app > section")) s.hidden = !s.querySelector("details.finding:not([hidden])");
-    document.getElementById("shown").textContent = n + " of " + all + " findings shown";
+    const slices = document.querySelectorAll("#app > section");
+    for (const s of slices) s.hidden = !s.querySelector("details.finding:not([hidden])");
+    document.getElementById("shown").textContent = n + " of " + plural(all, "row") + " over " + plural(slices.length, "slice") + " shown";
   }
   function options(sel, values) { for (const v of values) sel.append(h("option", { value: v }, v)); sel.addEventListener("change", filter); }
 
@@ -1324,14 +1435,6 @@ ${nemotronTab}
     LIMITS = index.limits;
     RULE = index.decisionRule;
     const t = index.totals;
-    document.getElementById("stats").replaceChildren(
-      h("li", null, h("b", null, String(t.findings)), "findings in " + plural(t.examples, "example")),
-      h("li", null, h("b", null, count(t.verbs)), "verbs"),
-      h("li", null, h("b", null, t.checksRerun + " / " + t.checks), "checks re-run at build, counts equal"),
-      h("li", null, h("b", null, Object.keys(t.classes).length), "finding classes"),
-      h("li", null, h("b", null, h("a", { href: "#nemotron" }, String(t.nemotron.calls))), "Nemotron calls in eval " + t.nemotron.stamp + ", " + t.nemotron.signatureVerified + " receipts verified"),
-      h("li", null, h("b", null, h("a", { href: "#nemotron" }, t.nemotron.rerunEqual + " / " + t.nemotron.judgeSelects)),
-        "Nemotron judge SELECTs re-run at build, counts equal" + (t.nemotron.notRunnable ? "; " + t.nemotron.notRunnable + " recorded text does not run" : "")));
     options(document.getElementById("f-class"), Object.keys(t.classes));
     options(document.getElementById("f-verb"), Object.keys(t.verbs));
     app.replaceChildren(...examples.map(example));
@@ -1380,6 +1483,13 @@ if (invoked === import.meta.url.toLowerCase()) {
       resultsDir: args.results ? path.resolve(args.results) : undefined,
     });
     for (const e of r.index.examples) console.log(`${e.dir}: ${e.findings} finding(s), ${e.checks} check(s) rendered and re-run, counts equal; pass over the slice ${e.reproduced ? "reproduces" : "DOES NOT reproduce"} findings.json`);
+    const t = r.index.totals;
+    console.log(`header: ${t.findings} finding(s) by finding id (${Object.entries(t.verbs).map(([k, n]) => `${k} ${n}`).join(", ")}), ${t.rows} row(s) over ${t.examples} slice(s)`);
+    const h = r.nemotron.headline;
+    if (h) {
+      const runs = (xs: [number, number][]): string => xs.map(([k, d]) => `${k}/${d}`).join(" ");
+      console.log(`tile: labelled no, read yes: ${h.alone.config} ${runs(h.alone.runs.map((x) => [x.readYes, x.labelledNo]))}, ${h.checks.config} ${runs(h.checks.runs.map((x) => [x.readYes, x.labelledNo]))}; planted claims struck by ${h.checks.config} ${runs(h.checks.runs.map((x) => [x.struck, x.claims]))}`);
+    } else console.log("tile: none; the results hold no configuration with direct: ultra beside one with judge: ultra over a model's selection");
     const s = r.index.sample;
     if (s) console.log(`sample: ${s.runs} runs, ${s.observed} observations, ${s.findings} findings (${Object.entries(s.classes).map(([k, n]) => `${k} ${n}`).join(", ")})`);
     const n = r.nemotron.totals;

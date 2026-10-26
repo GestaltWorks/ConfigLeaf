@@ -1,0 +1,214 @@
+{
+ "config": {
+  "id": "C4",
+  "text": "Nemotron 3 Ultra alone: the verdict from the rows, no SQL checks, no catalogue (baseline)",
+  "select": {
+   "kind": "none"
+  },
+  "judge": null,
+  "direct": "ultra"
+ },
+ "run": 2,
+ "valid": true,
+ "invalid_reason": null,
+ "started_at": "2026-10-26T03:29:00.203Z",
+ "finished_at": "2026-10-26T03:29:19.451Z",
+ "recording": "eval/supplementary/bundle.json",
+ "slice": {
+  "tenant": "lab-1",
+  "at": "2026-10-25T20:24:34.402Z",
+  "rows": {
+   "collection_run": 32,
+   "observation": 506,
+   "approved_setting": 6,
+   "backup_snapshot": 1,
+   "backup_item": 15,
+   "dns_record": 0,
+   "audit_event": 30,
+   "inventory_asset": 1,
+   "policy_rule": 26,
+   "vault_copy": 110,
+   "copy_validation": 5,
+   "probe": 40,
+   "disposition": 25,
+   "action": 13,
+   "ticket": 2,
+   "referent_fingerprint": 0,
+   "finding_cause": 3
+  }
+ },
+ "tenant": "lab-1",
+ "decided_at": "2026-10-25T20:24:34.234Z",
+ "policy": {
+  "file": "policy/hackathon.json",
+  "version": 2,
+  "rows": 15,
+  "inserted": 0,
+  "rules": 26
+ },
+ "split_seed": null,
+ "set": "supplementary",
+ "counts": {
+  "items": 2,
+  "scored": 2,
+  "not_raised": 0,
+  "with_verdict": 2,
+  "not_judged": 0,
+  "agree": 1,
+  "disagree": 1,
+  "unsure": 0,
+  "false_positives": 1,
+  "labelled_no": 2,
+  "checks_selected": 0,
+  "checks_valid": 0,
+  "checks_invalid": 0,
+  "checks_ran_unmodified": 0,
+  "checks_run": 0,
+  "falsifier_ran": 0,
+  "falsifier_struck": 0,
+  "agreed_strikes": 0,
+  "wrong_strikes": 0,
+  "early_stops": 0,
+  "judge_withheld": 0,
+  "findings_assessed": 2,
+  "findings_with_disposition": 2,
+  "calls": 2,
+  "cache_hits": 0,
+  "substitutions": 0,
+  "memory_injected": 0,
+  "tokens_in": 1309,
+  "tokens_out": 1625,
+  "latency_ms_median": 9469.5
+ },
+ "items": [
+  {
+   "id": "S08",
+   "class": "drift_vs_approved",
+   "set": "supplementary",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-8feb12765bd81257"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-8feb12765bd81257",
+     "class": "drift_vs_approved",
+     "summary": "file in /etc/nginx/sites-available/lab.example on host-951abf is a5b94717c6fe, and its latest approval, 2026-10-25T05:17:38.938Z by operator, is a811a0a5d0dc: the live value drifted from the approved one",
+     "decided_by": null,
+     "rule_id": null,
+     "checks": [],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "The live nginx configuration differs from the approved version and is held pending review or re-approval.",
+     "not_judged": null
+    }
+   ],
+   "direct": {
+    "verb": "HOLD",
+    "reason": "The live nginx configuration differs from the approved version and is held pending review or re-approval."
+   },
+   "strikes": 0
+  },
+  {
+   "id": "S09",
+   "class": "changed_since_backup",
+   "set": "supplementary",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-7fdd0e91bccfb220"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "ESCALATE",
+   "reading": "yes",
+   "agree": false,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-7fdd0e91bccfb220",
+     "class": "changed_since_backup",
+     "summary": "/etc/nginx/sites-available/lab.example on host-951abf is a5b94717c6fe and its copy in the host's newest backup (snap-3761e7bb8903ddfa, taken 2026-10-25T05:16:25.000Z) is a811a0a5d0dc: the live file and the backup copy differ",
+     "decided_by": null,
+     "rule_id": null,
+     "checks": [],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "ESCALATE",
+     "reason": "The nginx site configuration for lab.example shows a changed upstream port (8098 vs 8081 in comment) since the last backup, requiring technician verification of the authorization and impact.",
+     "not_judged": null
+    }
+   ],
+   "direct": {
+    "verb": "ESCALATE",
+    "reason": "The nginx site configuration for lab.example shows a changed upstream port (8098 vs 8081 in comment) since the last backup, requiring technician verification of the authorization and impact."
+   },
+   "strikes": 0
+  }
+ ],
+ "calls": [
+  {
+   "kind": "direct",
+   "item": "S08",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_baww96qn",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 11491,
+   "tokens_in": 645,
+   "tokens_out": 1015,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_baww96qn openrouter/nvidia/nemotron-3-ultra-550b-a55b:free (ultra), signature verified, no memory injected, custody holds",
+   "scope": "supplementary-2026-10-26T01-00-40Z-g4-33",
+   "memory_injected": 0
+  },
+  {
+   "kind": "direct",
+   "item": "S09",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_w5f4f5fh",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 7448,
+   "tokens_in": 664,
+   "tokens_out": 610,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_w5f4f5fh openrouter/nvidia/nemotron-3-ultra-550b-a55b:free (ultra), signature verified, no memory injected, custody holds",
+   "scope": "supplementary-2026-10-26T01-00-40Z-g4-34",
+   "memory_injected": 0
+  }
+ ],
+ "pass": null
+}
