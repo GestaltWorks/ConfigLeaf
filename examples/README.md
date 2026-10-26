@@ -38,7 +38,11 @@ skipped, and the 16 named queries it ran, 83 runs in all. [report.html](report.h
 file rendered from the document's rows (`npm run sample`, `npm run document` in sample mode and `npm run examples`
 write it alike): the one finding that needs a person with its cause and ticket #2, the 3 held until 27 Oct 2026 23:21
 UTC, the 23 adopted under the technician's exceptions, no action, and the latest read of each source with its DQ gate
-result; on 25 Oct 2026, 30,094 bytes. [memory/](memory/) is the store itself, `state.json` and `ledger.jsonl` as the
+result; on 26 Oct 2026, 31,687 bytes. [executive.html](executive.html) is the executive report over the same
+bundle and lessons for client-1, the last 7 days to the decision instant (`npm run examples` and
+`SAMPLE_MODE=true npm run report:executive` write it alike): six KPIs, four charts with their data beneath them, the one
+incident with its cause and ticket #2, the sources and the five DQ rules, and the receipts of the newest eval results;
+one standalone file with no script, 32,934 bytes. [memory/](memory/) is the store itself, `state.json` and `ledger.jsonl` as the
 vendored H-MEM reference writes them; `npm run answer -- --list` prints its 23 lessons.
 
 ## proxy-split

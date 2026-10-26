@@ -30,8 +30,11 @@
 // HTML in index.html, so they read from file:// and with the script off.
 //
 // The header carries a link, Report, to the owner's report (examples/report.html, src/document/report.ts) as
-// ../examples/report.html with one line saying what the file is: a fixed relative link, so the build stays the same
-// whatever the report holds; it opens when the page is read from a clone of the repository.
+// ../examples/report.html, and one, Executive report, to the executive report (examples/executive.html,
+// src/document/executive.ts) as ../examples/executive.html, each with one line saying what the file is: fixed relative
+// links, so the build stays the same whatever the reports hold; they open when the page is read from a clone of the
+// repository. The page wears the one design (src/design/theme.ts): its tokens light and dark, the type scale, the
+// header bar with the leaf mark, the cards; the landing page takes the same tokens and mark through two tokens.
 //
 // A fourth static tab, Nemotron, is built from one eval results directory (BuildOptions.resultsDir, `--results`; by
 // default the lexically newest directory under eval/results that holds planted.json and C*-run*.json): the run files'
@@ -109,6 +112,7 @@ import {
 } from "../src/data/queries.ts";
 import { sourceRows, sourcesMarkdown } from "../src/document/render.ts";
 import { utc } from "../src/document/report.ts";
+import { BASE_CSS, MARK, ROOT_CSS } from "../src/design/theme.ts";
 import { TechnicianMemory } from "../src/engine/memory.ts";
 import { DriftWorld } from "../src/engine/world.ts";
 import { isSubstitution } from "../src/eval/models.ts";
@@ -136,6 +140,8 @@ export const word = (n: number): string => NUMBER_WORDS[n] ?? String(n);
 export const MAX_BYTES = 350_000;
 /** The header's Report link: the owner's report (npm run examples writes it), relative to docs/ in a clone of the repository. */
 export const REPORT_LINK = "../examples/report.html";
+/** The header's Executive report link: the executive report (npm run examples writes it), relative to docs/ the same way. */
+export const EXECUTIVE_LINK = "../examples/executive.html";
 /** Rows shown per query; the count and the rows hash cover every row. */
 export const MAX_ROWS = 20;
 /** Characters shown per cell; a longer value is cut and marked. */
@@ -1330,7 +1336,11 @@ export function renderSiteHtml(input: SiteInput, template: string = readFileSync
   const receipts = receiptsVerifyLines(input.resultsDir);
 
   const tokens: Record<string, string | null> = {
+    // the template reads {{ and }} as a token's braces, so the closing braces of the dark block stand apart
+    THEME_CSS: ROOT_CSS.replaceAll("}}", "} }"),
+    MARK_HTML: MARK,
     REPORT_HREF: escapeHtml(REPORT_LINK),
+    EXECUTIVE_HREF: escapeHtml(EXECUTIVE_LINK),
     DECK_HREF: DECK_URL ? escapeHtml(DECK_URL) : null,
     REPO_HREF: repo ? escapeHtml(repo) : null,
     README_SENTENCE_ONE: inline(heroOne),
@@ -1500,39 +1510,36 @@ const page = (headline: string, stats: string, documentTab: string, sourcesTab: 
 <title>ConfigLeaf replay</title>
 <meta name="description" content="Every finding of the ConfigLeaf pass over recorded, redacted real collections, with the SQL that ran, the rows it returned, the hashes and the judge step.">
 <style>
-:root{--bg:#f8f7f4;--fg:#1c1d1f;--muted:#5b5f65;--line:#dcd8cf;--card:#fff;--code:#f1efea;--accent:#1f55c0;--ok:#1b6a39;--ok-bg:#e1f1e6;--bad:#a12a1c;--bad-bg:#f7e2dd;--warn:#7f5300;--warn-bg:#f8ecd2;--chip:#ebe8e1;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
-@media (prefers-color-scheme:dark){:root{--bg:#131416;--fg:#e7e5e0;--muted:#a19f99;--line:#2e3034;--card:#1a1b1e;--code:#212327;--accent:#93b2ff;--ok:#82d49e;--ok-bg:#1b3124;--bad:#ff9d8c;--bad-bg:#3a1f1b;--warn:#f0c46e;--warn-bg:#382c13;--chip:#26282c}}
-*{box-sizing:border-box}
-html{-webkit-text-size-adjust:100%}
-body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;overflow-wrap:anywhere}
+${ROOT_CSS}
+:root{--code:var(--soft);--chip:var(--soft);--bad:var(--need);--bad-bg:var(--need-bg);--warn:var(--hold);--warn-bg:var(--hold-bg);--accent:var(--locked)}
+${BASE_CSS}
+body{--page:1100px;--gutter:16px;line-height:1.55}
 pre,table{overflow-wrap:normal}
 .wrap{max-width:1100px;margin:0 auto;padding:0 16px}
-a{color:var(--accent)}
-header{padding:36px 0 12px;border-bottom:1px solid var(--line)}
-h1{font-size:1.7rem;line-height:1.2;margin:0 0 8px;letter-spacing:-.015em}
-h2{font-size:1.25rem;margin:40px 0 6px;letter-spacing:-.01em}
-h3{font-size:1rem;margin:0}
-h4{font-size:.8rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:22px 0 8px}
+.bar{position:static}
+header{padding:28px 0 12px;border-bottom:1px solid var(--line)}
+h1{margin:0 0 8px}
+h2{margin:40px 0 6px}
+h4{font-size:var(--t-xs);text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:22px 0 8px}
 p{margin:6px 0 10px;max-width:78ch}
-.lede{color:var(--muted);font-size:1.02rem}
-code,.mono{font-family:var(--mono);font-size:.88em}
+.lede{color:var(--muted);font-size:var(--t-m)}
 pre{background:var(--code);border-radius:6px;padding:10px 12px;margin:6px 0;overflow:auto;max-height:440px;font:12.5px/1.5 var(--mono);white-space:pre;tab-size:2}
 .stats{display:flex;flex-wrap:wrap;gap:8px 22px;margin:14px 0 4px;padding:0;list-style:none}
-.stats b{font-size:1.25rem;display:block;line-height:1.2}
-.stats li{color:var(--muted);font-size:.85rem}
+.stats b{font-size:var(--t-l);display:block;line-height:1.2;font-variant-numeric:tabular-nums}
+.stats li{color:var(--muted);font-size:var(--t-s)}
 .stats li b{color:var(--fg)}
-.headline{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px 8px;margin:16px 0 4px;max-width:86ch}
-.headline h2{font-size:1rem;margin:0}
+.headline{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px 8px;margin:16px 0 4px;max-width:86ch}
+.headline h2{font-size:var(--t-m);margin:0}
 .headline .stats{margin:8px 0 6px;gap:10px 22px}
 .headline .stats li{flex:1 1 13rem;max-width:21rem}
 .controls{position:sticky;top:0;z-index:2;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 0;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
 .controls label{font-size:.85rem;color:var(--muted)}
-select,button{font:inherit;font-size:.85rem;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:6px;padding:5px 9px}
+select,button{font:inherit;font-size:var(--t-s);color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:7px;padding:5px 10px}
 button{cursor:pointer}
 button:hover,select:hover{border-color:var(--muted)}
 .meta{font-size:.82rem;color:var(--muted);margin:4px 0}
 .meta code{word-break:break-all}
-details.finding{background:var(--card);border:1px solid var(--line);border-radius:8px;margin:10px 0}
+details.finding{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);margin:10px 0}
 details.finding[open]{box-shadow:0 1px 0 var(--line)}
 details.finding>summary{cursor:pointer;padding:12px 14px;list-style:none;display:flex;gap:10px;align-items:baseline}
 details.finding>summary::-webkit-details-marker{display:none}
@@ -1542,10 +1549,11 @@ details.finding[open]>summary::before{transform:rotate(90deg)}
 .claim{display:block;margin-top:3px}
 .where{display:block;font-size:.8rem;color:var(--muted);font-family:var(--mono);word-break:break-all;margin-top:2px}
 .body{padding:0 14px 16px 14px;border-top:1px solid var(--line)}
-.tag{display:inline-block;font:600 11px/1 var(--mono);padding:4px 7px;border-radius:4px;letter-spacing:.03em;vertical-align:1px;margin-right:6px}
-.v-ESCALATE{background:var(--warn-bg);color:var(--warn)}
-.v-ADOPT{background:var(--ok-bg);color:var(--ok)}
-.v-HOLD{background:var(--chip);color:var(--fg)}
+.tag{display:inline-block;font-size:11px;font-weight:700;line-height:1.6;padding:0 6px;border-radius:4px;letter-spacing:.04em;vertical-align:1px;margin-right:6px}
+.v-ESCALATE,.v-FIX{background:var(--need-bg);color:var(--need)}
+.v-ROLLBACK{background:var(--ok-bg);color:var(--ok)}
+.v-ADOPT{background:var(--soft);color:var(--adopted)}
+.v-HOLD{background:var(--hold-bg);color:var(--hold)}
 .cls{background:var(--chip);color:var(--fg);font-weight:500}
 .ok{color:var(--ok)}
 .warnc{color:var(--warn)}
@@ -1574,9 +1582,11 @@ tr:last-child td{border-bottom:0}
 footer{margin:48px 0 0;padding:22px 0 40px;border-top:1px solid var(--line);color:var(--muted);font-size:.88rem}
 footer p{max-width:86ch}
 [hidden]{display:none!important}
-.report{margin:14px 0 0}
+.reports{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;margin:14px 0 0}
+.report{margin:0;max-width:none;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:12px 16px}
 .report a{font-weight:600}
 .tabs{display:flex;flex-wrap:wrap;gap:2px;margin:18px 0 -13px;position:relative}
+.tabs a{text-decoration:none}
 .tabs a{padding:7px 14px;border:1px solid transparent;border-bottom:0;border-radius:6px 6px 0 0;color:var(--muted);text-decoration:none;font-size:.92rem;font-weight:500}
 .tabs a:hover{color:var(--fg)}
 .tabs a[aria-current]{background:var(--bg);border-color:var(--line);color:var(--fg);font-weight:600}
@@ -1587,16 +1597,23 @@ footer p{max-width:86ch}
 .md>.meta{max-width:86ch}
 td details summary{cursor:pointer;color:var(--accent)}
 td pre{white-space:pre-wrap;word-break:break-word;margin:4px 0 0;min-width:36ch;font-size:11.5px}
-@media (max-width:640px){body{font-size:14.5px}h1{font-size:1.4rem}.controls{position:static}dl.fields{grid-template-columns:1fr}dl.fields dt{margin-top:6px}details.finding>summary{padding:12px 10px}.body{padding:0 10px 14px}}
+@media (max-width:640px){body{font-size:16px}.controls{position:static}dl.fields{grid-template-columns:1fr}dl.fields dt{margin-top:6px}details.finding>summary{padding:12px 10px}.body{padding:0 10px 14px}}
 </style>
 </head>
 <body>
+<div class="bar"><div class="bar-in">
+${MARK}
+<nav class="sum" aria-label="Reports"><a href="${REPORT_LINK}">Report</a> · <a href="${EXECUTIVE_LINK}">Executive report</a></nav>
+</div></div>
 <header><div class="wrap">
 <h1>ConfigLeaf: every finding, with the SQL behind it</h1>
 <p class="lede">A config-drift assurance pass for MSP technicians, replayed from recorded collections. Open a finding to see the detector query that raised it, each precondition check with the SQL that ran, the rows it returned and the hashes, and the judge step. The Document tab holds the owner's document over the full recorded bundle, the Sources tab names the tables and the source behind each finding class, and the Nemotron tab holds the eval's Nemotron calls with every SELECT its judges wrote, re-run at build. In a live pass the same detector and check SQL runs as Zetaris Lightning SQL over the <code>${escapeHtml(DATASOURCE)}</code> datasource, beside the technician's memory store and the policy file, with the <code>${escapeHtml(USL_NAME)}</code> semantic layer and its ${word(DQ_RULES.length)} DQ rules over the three; on this page it runs on sql.js over the recorded rows, and <code>test/parity.test.ts</code> holds the two engines to the same columns, rows and totals.</p>
 ${headline}
 ${stats}
+<div class="reports">
 <p class="report"><a href="${REPORT_LINK}">Report</a><br><span class="meta">The owner's report, <code>examples/report.html</code>: one HTML file over the same recorded bundle as the Document tab, opened from a clone of the repository.</span></p>
+<p class="report"><a href="${EXECUTIVE_LINK}">Executive report</a><br><span class="meta">The executive report, <code>examples/executive.html</code>: the same recorded bundle for a CISO or a CTO, its KPIs, charts, incidents, sources and receipts over the last 7 days, opened from a clone of the repository.</span></p>
+</div>
 <nav class="tabs" aria-label="Page sections"><a href="#findings">Findings</a><a href="#document">Document</a><a href="#sources">Sources</a><a href="#nemotron">Nemotron</a></nav>
 </div></header>
 <main>

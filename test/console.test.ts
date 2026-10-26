@@ -1,13 +1,18 @@
 // The technician's console (src/console/) and the change-window step of the Decider (src/policy/decide.ts). The
 // server boots in sample mode on an ephemeral port: over sample/bundle.json for client-1 with the committed lessons
 // (every page, its CSP and its static parts, the Settings objects and their locks in attention order, Unlock, Lock,
-// the CSRF refusals, the tenant's traces only, no external URL), and over test/fixtures/policy-bundle.json for
+// the CSRF refusals, the tenant's traces only, no external URL; Executive with its period switch, Export PDF and
+// Download HTML, the download one standalone file with its style by hash; Templates, every setting under its rule,
+// each object a link to its drawer), the tenant switcher over the same bundle (client-1 and lab-1: a switch answers
+// 303 and every page and action reads the other tenant; a tenant the store lacks, a bad token and a return path off
+// the console refused or sent to the Overview), and over test/fixtures/policy-bundle.json for
 // client-a, the loop's fixture world, whose app.conf drifts under the locked conf.d rule with a valid copy (Unlock then
 // a pass holds it instead of rolling it back, Lock and a pass roll it back again, Approve, a fake and the real module,
 // closes the window; a window that ran out or sits on another host is left alone; a window read that fails refuses
 // Unlock and escalates). The pass itself over the fixture: a failing window read escalates every drift a rule would
 // roll back or fix, a datasource that lists no change_window reads none. Offline: no host, no Zetaris, no Postgres;
 // the passes write no trace file.
+import { createHash } from "node:crypto";
 import http from "node:http";
 import { cpSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -18,7 +23,7 @@ import type { QueryResult } from "../src/adapters/zetaris.ts";
 import { SAMPLE_MEMORY_DIR } from "../src/config.ts";
 import { ASSETS, CSS, SCRIPT } from "../src/console/html.ts";
 import { encodeKey, plainUrls, timesIn } from "../src/console/pages.ts";
-import { nonceReport, startConsole, type ConsoleServer } from "../src/console/server.ts";
+import { fileCsp, nonceReport, startConsole, type ConsoleServer } from "../src/console/server.ts";
 import { objectKey, sampleBackend, zetarisGaps, type Backend } from "../src/console/state.ts";
 import { DataLayer, type Engine } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
@@ -38,8 +43,9 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const SAMPLE = JSON.parse(readFileSync(path.join(ROOT, "sample", "bundle.json"), "utf8")) as Record<string, unknown>;
 const POLICY = JSON.parse(readFileSync(path.join(ROOT, "test", "fixtures", "policy-bundle.json"), "utf8")) as Record<string, unknown>;
 const PAGES: readonly [string, string][] = [
-  ["/overview", "<h1>Overview</h1>"], ["/settings", "<h1>Settings</h1>"], ["/findings", "<h1>Findings</h1>"], ["/actions", "<h1>Actions and tickets</h1>"],
-  ["/traces", "<h1>Traces</h1>"], ["/sources", "<h1>Sources</h1>"], ["/policy", "<h1>Policy</h1>"], ["/document", "<h1>The owner's document</h1>"],
+  ["/overview", "<h1>Overview</h1>"], ["/executive", "<h1>client-1 · executive report</h1>"], ["/settings", "<h1>Settings</h1>"], ["/templates", "<h1>Templates</h1>"],
+  ["/findings", "<h1>Findings</h1>"], ["/actions", "<h1>Actions and tickets</h1>"], ["/traces", "<h1>Traces</h1>"], ["/sources", "<h1>Sources</h1>"],
+  ["/policy", "<h1>Policy</h1>"], ["/document", "<h1>The owner's document</h1>"],
 ];
 /** A server test boots a console and runs a sql.js pass over a bundle: 1 to 4 s alone, past vitest's 5 s in the full parallel run. */
 const SERVER = { timeout: 30_000 };
@@ -317,6 +323,64 @@ describe("the console over sample/bundle.json, client-1", SERVER, () => {
       .toBe("issue #7 opened; see (a pseudonymised URL) and https://example.org/docs");
   });
 
+  it("the nav names Executive and Templates beside the other pages, Executive right after the Overview", async () => {
+    const html = (await get(server, "/templates")).body;
+    const nav = [...html.matchAll(/<li><a href="(\/[a-z]+)"(?: aria-current="page")?>([^<]+)/g)].map((m) => [m[1], m[2]]);
+    expect(nav).toEqual([["/overview", "Overview"], ["/executive", "Executive"], ["/settings", "Settings"], ["/templates", "Templates"], ["/findings", "Findings"], ["/actions", "Actions and tickets"], ["/traces", "Traces"], ["/sources", "Sources"]]);
+    expect(html).toContain('<li><a href="/templates" aria-current="page">Templates');
+  });
+
+  it("Executive: the period switch, Export PDF (shown by the script, which prints) and Download HTML over the report's sections, the tenant, the period and the time UTC in its header", async () => {
+    const html = (await get(server, "/executive?period=30d")).body;
+    expect(html).toContain('<nav class="seg" aria-label="Period"><a href="/executive?period=7d">7 days</a><a href="/executive?period=30d" aria-current="page">30 days</a><a href="/executive?period=all">All</a></nav>');
+    expect(html).toContain('<button type="button" class="btn" data-print hidden>Export PDF</button><a class="btn" href="/executive/download?period=30d" download>Download HTML</a>');
+    expect(SCRIPT).toContain("window.print()");
+    expect(html).toMatch(/<p class="ex-when"><span>the last 30 days<\/span> <span>26 Sep 2026 to 25 Oct 2026 15:0\d UTC<\/span><\/p>/);
+    expect([...html.matchAll(/<div class="tile"><span class="k">([^<]+)<\/span>/g)].map((m) => m[1])).toEqual(["Settings watched", "Coverage", "Copies with a valid restore", "Drift events", "Change to detection", "Actions", "Receipts verified"]);
+    expect([...html.matchAll(/<figure class="ex-chart" id="([a-z-]+)">/g)].map((m) => m[1])).toEqual(["ex-findings", "ex-actions", "ex-probes", "ex-approvals"]);
+    // the incident links its entry on Findings: the proxy_split ESCALATE, ticket #2
+    expect(html).toMatch(/<a href="\/findings#f-fnd-b4a40091cdb4f906" class="mono">fnd-b4a40091cdb4f906<\/a>/);
+    // a period the switch does not name reads as the last 7 days
+    expect((await get(server, "/executive?period=1y")).body).toContain('<a href="/executive?period=7d" aria-current="page">7 days</a>');
+    // print: the shell left out, the light tokens, A4 with a page break between sections
+    expect(CSS).toContain(".side,.bar,.skip,.toasts,.drawer,.scrim,.ex-tools{display:none!important}");
+    expect(CSS).toContain("@page{size:A4;margin:14mm 12mm}");
+    expect(CSS).toContain(".ex-sec{break-before:page}");
+  });
+
+  it("Download HTML is the executive report as one file: an attachment named for the tenant and the period, its one style block by hash in the CSP, no script, nothing from outside", async () => {
+    const r = await get(server, "/executive/download?period=all");
+    expect(r.status).toBe(200);
+    expect(r.headers.get("content-disposition")).toBe('attachment; filename="executive-client-1-all.html"');
+    const style = /<style>([\s\S]*?)<\/style>/.exec(r.body)![1];
+    expect(r.headers.get("content-security-policy")).toBe(`default-src 'none'; style-src 'sha256-${createHash("sha256").update(style).digest("base64")}'; img-src data:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'`);
+    expect(fileCsp(r.body)).toBe(r.headers.get("content-security-policy"));
+    expect(r.body.match(/<script|<link\b|<img\b|<iframe\b|@import|url\(\s*["']?https?:/gi)).toBeNull();
+    expect(r.body.split("<style>").length - 1).toBe(1);
+    expect(r.body).toContain("<h1>client-1 · executive report</h1>");
+    expect(r.body).toContain("<span>every day on record</span>");
+  });
+
+  it("Templates: every setting of the latest passing runs under the rule that governs it, the deviations the objects with findings open under the rule, each object a link to its Settings drawer", async () => {
+    const html = (await get(server, "/templates")).body;
+    const cards = [...html.matchAll(/<details class="card tpl" id="tpl-([^"]+)"[^>]*>\n<summary><span class="tpl-name">([^<]+)<\/span> <span class="b (?:locked|open)">[^<]+<\/span> <span class="tpl-n">([\d,]+) settings? in (\d+) objects? · <span[^>]*>(\d+) deviations?<\/span><\/span><\/summary>([\s\S]*?)<\/details>/g)]
+      .map((m) => ({ id: m[1], name: m[2], settings: Number(m[3].replace(/,/g, "")), objects: Number(m[4]), deviations: Number(m[5]), body: m[6] }));
+    // the rules in force, version 2 of policy/hackathon.json, each once: the settings no rule governs would be a card of their own
+    expect(cards).toHaveLength(15);
+    expect(cards.reduce((n, c) => n + c.settings, 0)).toBe(1352);
+    expect(cards[0]).toMatchObject({ name: "everything else (catch-all)", deviations: 3 });
+    const proxied = cards.find((c) => c.name === "* · proxied")!;
+    expect(proxied).toMatchObject({ id: "rule-8e75e1d767980665", settings: 58, objects: 58, deviations: 1 });
+    expect(proxied.body).toContain('<span class="b locked">locked by rule</span>');
+    // every row's object opens its drawer on Settings
+    const settings = settingRows((await get(server, "/settings")).body).map((r) => r.key);
+    const links = [...html.matchAll(/<a href="\/settings\?open=([^"]+)">/g)].map((m) => Buffer.from(decodeURIComponent(m[1]), "base64url").toString("utf8"));
+    expect(links.length).toBeGreaterThan(112);
+    for (const k of links) expect(settings, k).toContain(k);
+    const open = (await get(server, `/settings?open=${encodeURIComponent(encodeKey(settings[0]))}`)).body;
+    expect(open).toContain(`<body data-open="${encodeKey(settings[0])}">`);
+  });
+
   it("no page names an external URL: no script, style, font, frame or form outside the console, and no absolute URL in the page text", async () => {
     for (const p of [...PAGES.map(([x]) => x), "/overview/report", "/traces/view?f=examples%2Ftraces%2Fcycle_mvo2bil0.jsonl"]) {
       const body = (await get(server, p)).body;
@@ -326,6 +390,65 @@ describe("the console over sample/bundle.json, client-1", SERVER, () => {
       expect(body.match(/@import|url\(\s*["']?https?:/gi), p).toBeNull();
       expect(body.match(/https?:\/\/[^\s"'<]+/g), p).toBeNull();
     }
+  });
+});
+
+describe("the tenant switcher over sample/bundle.json: client-1 and lab-1", SERVER, () => {
+  let server: ConsoleServer;
+  let backend: Backend;
+  beforeAll(async () => { ({ server, backend } = await boot({ bundle: SAMPLE, bundlePath: "sample/bundle.json", tenant: "client-1", at: "2026-10-25T15:00:00.000Z" })); }, BOOT_MS);
+  afterAll(async () => { await server?.close(); });
+  const tenantPost = (fields: Record<string, string>, headers: Record<string, string> = {}) =>
+    fetch(`${server.url}/do/tenant`, { method: "POST", redirect: "manual", body: new URLSearchParams({ csrf: server.csrf, ...fields }), headers });
+
+  it("lists the bundle's tenants on every page; a switch answers 303 to the page it came from, and every page reads lab-1 from then on, its first pass run at the sample's instant", async () => {
+    expect(backend.tenants).toEqual(["client-1", "lab-1"]);
+    for (const [p] of PAGES) expect((await get(server, p)).body, p).toContain('<select id="tenant-pick" name="tenant" data-autosubmit><option value="client-1" selected>client-1</option><option value="lab-1">lab-1</option></select>');
+    expect((await get(server, "/executive?period=all")).body).toContain('<input type="hidden" name="return" value="/executive?period=all">');
+    const r = await tenantPost({ tenant: "lab-1", return: "/executive?period=all" });
+    expect([r.status, r.headers.get("location")]).toEqual([303, "/executive?period=all"]);
+    expect(server.tenant()).toBe("lab-1");
+    for (const [p] of PAGES) expect((await get(server, p)).body, p).toContain('<option value="lab-1" selected>lab-1</option>');
+    expect((await get(server, "/settings")).body).toContain("Every object the estate holds for lab-1: 5 files on 1 host and 0 records in 0 zones");
+    expect((await get(server, "/overview/report")).body).toContain("lab-1 · configuration assurance");
+    const ex = (await get(server, "/executive")).body;
+    expect(ex).toContain("<h1>lab-1 · executive report</h1>");
+    expect(ex).toContain('<h2>Incidents of the period<span class="cnt">2</span></h2>');
+    expect(ex).toMatch(/#3 <span class="muted">incident, P1, open<\/span>/);
+    expect(ex).toMatch(/#4 <span class="muted">change, P1, closed<\/span>/);
+    expect((await server.settled())!.decidedAt).toBe("2026-10-25T14:17:53.416Z");
+    expect((await get(server, "/traces")).body).toContain("cycle_mvoa0l1i");
+  });
+
+  it("an action after the switch is the new tenant's: Unlock on lab-1 writes a change_window row of lab-1", async () => {
+    const row = settingRows((await get(server, "/settings")).body).find((x) => x.key.endsWith("\u001f/etc/nginx/sites-available/lab.example"))!;
+    const u = await post(server, "unlock", { key: encodeKey(row.key), who: "tech-l", hours: "1", why: "the lab's change" });
+    expect(u.json.ok).toBe(true);
+    const rows = objects(await backend.layer.run("SELECT tenant_id, host FROM {{t:change_window}} WHERE object_id = {{p:o}}", { o: "/etc/nginx/sites-available/lab.example" }));
+    expect(rows).toEqual([{ tenant_id: "lab-1", host: "host-951abf" }]);
+    expect((await post(server, "lock", { key: encodeKey(row.key) })).json.ok).toBe(true);
+  });
+
+  it("refuses a tenant the store holds no run of and a form without the console's token; a return path off the console's pages goes to the Overview", async () => {
+    const nope = await tenantPost({ tenant: "nope" }, { accept: "application/json" });
+    expect(nope.status).toBe(400);
+    expect(((await nope.json()) as { title: string }).title).toBe("Tenant refused: the store holds no run of tenant nope; the switcher lists client-1, lab-1");
+    const bad = await fetch(`${server.url}/do/tenant`, { method: "POST", body: new URLSearchParams({ csrf: "x", tenant: "client-1" }), headers: { accept: "application/json" } });
+    expect(bad.status).toBe(403);
+    expect(server.tenant()).toBe("lab-1");
+    for (const back of ["https://elsewhere.example/", "//elsewhere.example", "/traces/view?f=..%2F..%2Fpackage.json", "/executive?period=1y"]) {
+      const r = await tenantPost({ tenant: "lab-1", return: back });
+      expect([r.status, r.headers.get("location")], back).toEqual([303, "/overview"]);
+    }
+  });
+
+  it("switching back reads client-1 again with the pass it had", async () => {
+    const r = await tenantPost({ tenant: "client-1", return: "/findings" }, { accept: "application/json" });
+    expect(((await r.json()) as { ok: boolean; title: string })).toMatchObject({ ok: true, title: "Switched to client-1" });
+    expect(server.tenant()).toBe("client-1");
+    const findings = (await get(server, "/findings")).body;
+    expect(findings).toMatch(/<a href="\/findings#needs" class="need"><b>1<\/b> needs you<\/a>/);
+    expect(findings).toContain('<option value="client-1" selected>client-1</option>');
   });
 });
 

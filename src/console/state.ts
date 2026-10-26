@@ -1,8 +1,9 @@
 // The console's state: what it reads through the DataLayer the agent uses (Zetaris live, sql.js in sample mode) and
-// what it holds between requests. One Console per process, one tenant.
+// what it holds between requests. One Console per process, one tenant at a time (withTenant).
 //
 // Contract:
-//   - Backend: the layer the pages read through (inside a CountingEngine, so a pass's query count is known), the store
+//   - Backend: the tenant and the tenants the store holds runs of (withTenant gives the same backend for another), the
+//     layer the pages read through (inside a CountingEngine, so a pass's query count is known), the store
 //     the actions write through (change_window rows, approved_setting rows), the redactor every page string passes, the
 //     lessons, and the ledger a pass records into: a MemoryLedger over the sql.js engine in sample mode (the actions and
 //     the passes live for the process), none live, where the console's pass is a dry pass that records nothing.
@@ -65,7 +66,10 @@ export interface ApprovalSource extends ApprovalStore {
 
 export interface Backend {
   mode: ConsoleMode;
+  /** The tenant the pages and the actions are of; withTenant gives the same backend for another. */
   tenant: string;
+  /** The tenants the store holds runs of, in code-unit order: the header's switcher lists them. */
+  tenants: readonly string[];
   layer: DataLayer;
   counting: CountingEngine;
   /** The sql.js engine in sample mode; null live. */
@@ -152,14 +156,22 @@ export async function sampleBackend(o: { tenant: string; bundle: Record<string, 
   const lessons = new TechnicianMemory({ storage: "read", directory: o.memoryDir }).lessons().map((l) => l.recordedAt);
   let sha = "";
   try { sha = textSha256(readFileSync(o.bundlePath, "utf8")); } catch { sha = textSha256(JSON.stringify(o.bundle)); }
+  const tenants = [...new Set(((o.bundle.collection_run ?? []) as { tenant_id: string }[]).map((r) => r.tenant_id))].sort(cmp);
   return {
-    mode: "sample", tenant: o.tenant, layer, counting, engine, redactor: BUNDLE_REDACTOR, windows: new MemoryWindows(engine), approvals: new LayerApprovals(layer, engine),
+    mode: "sample", tenant: o.tenant, tenants: tenants.includes(o.tenant) ? tenants : [...tenants, o.tenant].sort(cmp), layer, counting, engine, redactor: BUNDLE_REDACTOR, windows: new MemoryWindows(engine), approvals: new LayerApprovals(layer, engine),
     ledger: new MemoryLedger(engine), vault: null, memoryDir: o.memoryDir, memoryWritable: o.write,
     source: `sql.js over ${o.bundlePath.replace(/\\/g, "/")}`, bundle: { path: o.bundlePath.replace(/\\/g, "/"), sha256: sha },
     sampleInstant: new Date(decisionInstantWith(o.bundle, lessons) ?? Date.now()).toISOString(),
     close: async () => engine.close(),
   };
 }
+
+const TENANTS_SQL = `SELECT DISTINCT tenant_id
+FROM {{t:collection_run}}
+ORDER BY tenant_id`;
+
+/** The same backend for another of its tenants: one store, one engine, one redactor; the pages, the passes and the actions read and write that tenant's rows. */
+export const withTenant = (b: Backend, tenant: string): Backend => (b.tenant === tenant ? b : { ...b, tenant });
 
 /** Why live mode cannot start, as one sentence; null when it can. */
 export function liveRefusal(env: NodeJS.ProcessEnv = process.env): string | null {
@@ -194,8 +206,11 @@ export async function liveBackend(o: { tenant: string }): Promise<Backend> {
   await store.applySchema();
   const redactor = new Redactor(config.redactSalt, config.redactWords);
   const counting = new CountingEngine(new ZetarisEngine());
+  const layer = new DataLayer(counting);
+  // the tenants the store holds runs of; a read that fails leaves the one the console was started for
+  const tenants = await layer.run(TENANTS_SQL, {}, { agent: "console", limit: 1000 }).then((r) => objects(r).map((x) => x.tenant_id).filter((x) => x && x !== "*"), () => [] as string[]);
   return {
-    mode: "live", tenant: o.tenant, layer: new DataLayer(counting), counting, engine: null, redactor, windows: new PgWindows(store), approvals: store,
+    mode: "live", tenant: o.tenant, tenants: [...new Set([...tenants, o.tenant])].sort(cmp), layer, counting, engine: null, redactor, windows: new PgWindows(store), approvals: store,
     ledger: null, vault: Vault.fromEnv({ redactor }), memoryDir: config.memoryDir, memoryWritable: true,
     source: `Zetaris over the ${config.zetaris.datasource} datasource`, bundle: null, sampleInstant: null,
     refreshFiles: () => refreshFileTables(), close: () => store.close(),

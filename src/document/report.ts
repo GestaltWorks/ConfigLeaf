@@ -3,6 +3,9 @@
 // below it, what is held and until when, what is adopted, what the agent did, what it watched and where to look deeper.
 // Every fact with a source in the repository links to it.
 //
+// It wears the one design (src/design/theme.ts): the tokens, the type scale, the header bar with the leaf mark, the
+// cards and the tiles the console and the executive report wear.
+//
 // Contract: renderReport(data, ctx) is a pure function of the rows the owner's document is rendered from
 // (src/document/render.ts DocumentResult.data, the same queries, none of its own) and of what the run knows beside
 // them (ctx: the pass's findings, the cycle's act and tickets results, the mode, the trace, the tip, the policy file
@@ -44,8 +47,9 @@
 // Measured 25 Oct 2026 over sample/bundle.json for client-1 (test/report.test.ts, examples/report.html): the bar
 // "1 needs you · 3 held · 23 adopted · nothing changed"; one card, the proxy_split ESCALATE with its cause, ticket #2
 // (plain text: the bundle's URL is pseudonymised) and the replay anchor proxy-split-1; the 3 holds in 57 h; 23
-// adoptions under 15 lessons; the tiles 27 findings, 112 of 112 copies, 0 actions, 1 ticket; 30,095 bytes of the
-// 300,000-byte budget, the same bytes from npm run sample, npm run document and npm run examples.
+// adoptions under 15 lessons; the tiles 27 findings, 112 of 112 copies, 0 actions, 1 ticket; 31,687 bytes of the
+// 300,000-byte budget in the one design (src/design/theme.ts, 26 Oct 2026), the same bytes from npm run sample, npm
+// run document and npm run examples.
 
 import { spawnSync } from "node:child_process";
 import { actionOf } from "../actions/plan.ts";
@@ -57,6 +61,7 @@ import {
 } from "../loop/present.ts";
 import type { Finding, Verb } from "../pipeline.ts";
 import type { DocumentData, OpenDisposition } from "./render.ts";
+import { BASE_CSS, DARK, LIGHT, MARK, PRINT_TOKENS, ROOT_CSS } from "../design/theme.ts";
 
 /** The report's budget with the sample data. */
 export const REPORT_MAX_BYTES = 300_000;
@@ -192,14 +197,14 @@ const VERB_ORDER: readonly Verb[] = ["ESCALATE", "FIX", "ROLLBACK", "HOLD", "ADO
 /** The section each verb's findings are in. */
 const VERB_SECTION: Readonly<Record<Verb, string>> = { ESCALATE: "#needs", FIX: "#needs", ROLLBACK: "#actions", HOLD: "#held", ADOPT: "#adopted" };
 const NEEDS: readonly string[] = ["FIX", "ESCALATE"];
-const KIND_WORD: Readonly<Record<string, string>> = { rollback_file: "rollback of a file", revert_record: "revert of a DNS record", investigate: "investigation", fix: "fix" };
-const STATUS_WORD: Readonly<Record<string, string>> = { done: "done", unverified: "written, not verified", failed: "failed", refused: "refused, nothing written", not_judged: "not judged" };
+export const KIND_WORD: Readonly<Record<string, string>> = { rollback_file: "rollback of a file", revert_record: "revert of a DNS record", investigate: "investigation", fix: "fix" };
+export const STATUS_WORD: Readonly<Record<string, string>> = { done: "done", unverified: "written, not verified", failed: "failed", refused: "refused, nothing written", not_judged: "not judged" };
 const ADOPTED_UNDER: Readonly<Record<string, string>> = { operator: "the technician's exceptions", policy: "policy rules", default: "the default checks" };
 /** A pseudonym the redactor writes: a URL that carries one points nowhere real. */
 const PSEUDONYM = /\b(?:host|ip|word|mail|user|domain)-[0-9a-f]{6}\b/;
 
 /** Each collection surface in plain words: its name (with the host for a host surface) and what it holds. */
-const SURFACES: Readonly<Record<string, { name: (host: string) => string; holds: string; rank: number }>> = {
+export const SURFACES: Readonly<Record<string, { name: (host: string) => string; holds: string; rank: number }>> = {
   "cloudflare.dns": { name: () => "DNS records", holds: "every zone's records, each field as the provider returns it", rank: 0 },
   "cloudflare.audit": { name: () => "Provider audit log", holds: "who changed which record and when", rank: 1 },
   "linux.nginx": { name: (h) => `nginx on ${h}`, holds: "each vhost file and setting, read over SSH", rank: 2 },
@@ -331,21 +336,21 @@ function latestRuns(data: DocumentData): DocumentData["runs"] {
   return [...m.values()].sort((a, b) => rank(a.surface) - rank(b.surface) || cmp(a.surface, b.surface) || cmp(a.host, b.host));
 }
 
-const surfaceName = (r: { surface: string; host: string }): string => SURFACES[r.surface]?.name(r.host) ?? `${r.surface}${r.host ? ` on ${r.host}` : ""}`;
+export const surfaceName = (r: { surface: string; host: string }): string => SURFACES[r.surface]?.name(r.host) ?? `${r.surface}${r.host ? ` on ${r.host}` : ""}`;
 /** The id of a source's row in Coverage. */
 const sourceId = (f: Facts, surface: string, host: string): string => `src-${slug(surface)}${host ? `-${slug(f.ctx.redactor.text(host))}` : ""}`;
 /** The Coverage row a disposition's rows come from: the DNS records for a record, the host's nginx for a file. */
 const sourceOf = (d: OpenDisposition): { surface: string; host: string } => (d.surface.startsWith("cloudflare.") ? { surface: d.surface, host: "" } : { surface: d.surface, host: d.host });
 
 /** Why a run fails the gate, in a few words. */
-function gateWhy(r: DocumentData["runs"][number]): string {
+export function gateWhy(r: DocumentData["runs"][number]): string {
   if (r.status !== "complete") return `the run is ${r.status}, ${r.observed_count || "0"} of ${r.expected_count || "?"} read`;
   if (!r.expected_count || !r.observed_count) return "the run asserted no population";
   return `${r.observed_count} of ${r.expected_count} read`;
 }
 
 /** The policy version in force (the greatest) and its rules. */
-function policyOf(rules: readonly PolicyRule[]): { version: number; rules: number } | null {
+export function policyOf(rules: readonly PolicyRule[]): { version: number; rules: number } | null {
   if (!rules.length) return null;
   const version = Math.max(...rules.map((r) => Number(r.version) || 0));
   return { version, rules: rules.filter((r) => Number(r.version) === version).length };
@@ -383,6 +388,7 @@ function barHtml(f: Facts): string {
     ...(failing ? [`<a href="#coverage" class="need"><b>${thousands(failing)}</b> ${failing === 1 ? "source fails" : "sources fail"} the gate</a>`] : []),
   ];
   return `<header class="bar"><div class="bar-in">
+${MARK}
 <nav class="sum" aria-label="Summary">${items.join(" · ")}</nav>
 <div class="who"><h1>${t(data.tenant)} · configuration assurance</h1><span>${t(utc(data.decidedAt))}</span><span>${t(f.ctx.mode)}</span></div>
 </div></header>`;
@@ -813,48 +819,27 @@ function footerHtml(f: Facts): string {
 
 // ---- the page ---------------------------------------------------------------------------------------------------
 
-export const LIGHT = "--bg:#fbfaf7;--fg:#1d1e20;--muted:#62666d;--line:#dedad2;--card:#ffffff;--soft:#f2f0eb;--need:#b3361d;--need-bg:#fbebe6;--hold:#835700;--hold-bg:#f8ecd2;--adopted:#6c7178;--ok:#2f6b45";
-export const DARK = "--bg:#141517;--fg:#e8e6e1;--muted:#a3a19b;--line:#33353a;--card:#1b1c1f;--soft:#222428;--need:#ff8e74;--need-bg:#3a201a;--hold:#f0c46e;--hold-bg:#382c13;--adopted:#9a9da3;--ok:#8fd1a6";
+/** The colour tokens, from the one design (src/design/theme.ts); the console and the executive report read the same. */
+export { DARK, LIGHT };
 
-const CSS = `:root{${LIGHT}}
-@media (prefers-color-scheme:dark){:root{${DARK}}}
-*{box-sizing:border-box}
-html{-webkit-text-size-adjust:100%;scroll-padding-top:64px}
-body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;overflow-wrap:anywhere}
-a{color:inherit;text-decoration-thickness:1px;text-underline-offset:2px}
-a:hover{text-decoration-thickness:2px}
-h2{font-size:18px;line-height:1.3;margin:0 0 10px}
-h3{font-size:15px;line-height:1.35;margin:0}
-p{margin:4px 0}
-ul{margin:4px 0;padding-left:20px}
+const CSS = `${ROOT_CSS}
+${BASE_CSS}
+body{--page:1100px;--gutter:16px}
+html{scroll-padding-top:64px}
 li{margin:2px 0}
 small{font-size:.5em;color:var(--muted);font-weight:500}
-.muted{color:var(--muted)}
-.bar{position:sticky;top:0;z-index:10;background:var(--bg);border-bottom:1px solid var(--line);font-size:15px}
-.bar-in{max-width:1100px;margin:0 auto;padding:10px 16px;display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:2px 24px}
-.sum{font-size:18px;font-weight:600;line-height:1.3}
-.sum a{text-decoration:none;white-space:nowrap}
-.sum a:hover{text-decoration:underline}
-.sum b{font-variant-numeric:tabular-nums}
-.sum .need{color:var(--need)}
-.who{display:flex;flex-wrap:wrap;align-items:baseline;gap:0 12px;font-size:12.5px;color:var(--muted)}
-.who h1{font-size:12.5px;font-weight:600;margin:0;color:var(--fg)}
 main{max-width:1100px;margin:0 auto;padding:20px 16px 8px}
 main section{margin:0 0 28px}
 .first{display:grid;grid-template-columns:minmax(0,1fr);gap:0 28px}
 @media (min-width:900px){.first{grid-template-columns:minmax(0,2fr) minmax(0,1fr)}}
 .tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;align-content:start;margin:0 0 28px}
-.tile{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:20px}
 .tile .tl{display:block;text-decoration:none}
 .tile .tl:hover .k{text-decoration:underline}
-.tile .k{display:block;font-size:12.5px;line-height:1.3;color:var(--muted)}
-.tile .v{display:block;font-size:28px;font-weight:650;line-height:1.15;margin:4px 0 2px;font-variant-numeric:tabular-nums}
-.tile .s{margin:0;font-size:12.5px;color:var(--muted)}
 .tile.has-need{border-color:var(--need)}
 .tile.warn .v{color:var(--need)}
-.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px;margin:0 0 10px;break-inside:avoid}
+.card{margin:0 0 10px;break-inside:avoid}
 .card .where,.card .when{color:var(--muted)}
-.links{display:flex;flex-wrap:wrap;gap:2px 16px;margin:8px 0 0;font-size:13.5px}
+.links{display:flex;flex-wrap:wrap;gap:2px 16px;margin:8px 0 0;font-size:var(--t-s)}
 .tog{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px}
 .tog[aria-expanded="true"]{font-weight:600}
 .tk{text-decoration:underline dotted;text-underline-offset:2px;cursor:help}
@@ -866,12 +851,11 @@ main section{margin:0 0 28px}
 .badge.v-ESCALATE,.badge.v-FIX{background:var(--need-bg)}
 .badge.v-HOLD{background:var(--hold-bg)}
 .badge.v-ROLLBACK,.badge.v-ADOPT{background:var(--soft)}
-.fold{margin:10px 0 0;padding:8px 0 0;border-top:1px solid var(--line);font-size:13.5px}
+.fold{margin:10px 0 0;padding:8px 0 0;border-top:1px solid var(--line);font-size:var(--t-s)}
 .fold .fh{font-weight:600;margin:8px 0 2px}
-.fid{margin:8px 0 0;font-size:12px;color:var(--muted)}
-pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:var(--soft);padding:8px;border-radius:6px;margin:4px 0}
-.alert{border:1px solid var(--need);border-radius:8px;padding:10px 12px;margin:0 0 10px;color:var(--need);background:var(--need-bg)}
-.calm{color:var(--ok);font-weight:600}
+.fid{margin:8px 0 0;font-size:var(--t-xs);color:var(--muted)}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.4 var(--mono);background:var(--soft);padding:8px;border-radius:6px;margin:4px 0}
+.alert{margin:0 0 10px}
 .stories{list-style:none;padding:0;margin:0}
 .stories li{margin:0 0 8px}
 .story{display:inline;margin:0}
@@ -880,19 +864,18 @@ details{margin:6px 0}
 summary{cursor:pointer;color:var(--muted)}
 ul.plain{list-style:none;padding:0}
 ul.plain li{padding:3px 0;border-bottom:1px solid var(--line)}
-table{border-collapse:collapse;width:100%;margin:6px 0;font-size:13.5px}
+table{border-collapse:collapse;width:100%;margin:6px 0;font-size:var(--t-s)}
 th,td{text-align:left;vertical-align:top;padding:5px 8px;border-bottom:1px solid var(--line);overflow-wrap:break-word}
 td[data-label="Under"],td[data-label="Lesson"],td[data-label="Rule"]{white-space:nowrap}
-th{font-size:12px;font-weight:600;color:var(--muted);background:var(--soft)}
-.nw{white-space:nowrap}
-.rel{font-size:12px;color:var(--muted);white-space:nowrap}
+th{font-size:var(--t-xs);font-weight:600;color:var(--muted);background:var(--soft)}
+.rel{font-size:var(--t-xs);color:var(--muted);white-space:nowrap}
 .rel.late{color:var(--need);font-weight:600}
 .tag{display:inline-block;font-size:11px;padding:0 6px;border-radius:4px;background:var(--soft);color:var(--muted)}
 .fail,.st-failed{color:var(--need);font-weight:600}
 .pass,.st-done{color:var(--ok)}
 .st-refused,.st-unverified,.st-not_judged{color:var(--muted)}
 .lead{font-weight:600}
-.notes{color:var(--muted);font-size:13.5px}
+.notes{color:var(--muted);font-size:var(--t-s)}
 .deeper{list-style:none;padding:0;margin:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:6px 24px}
 .deeper .what{display:block;font-size:13px;color:var(--muted)}
 footer{max-width:1100px;margin:0 auto;padding:14px 16px 32px;border-top:1px solid var(--line);color:var(--muted);font-size:12.5px}
@@ -900,17 +883,16 @@ footer p{margin:2px 0}
 @media (max-width:640px){
 html{scroll-padding-top:120px}
 body{font-size:16px}
-.sum{font-size:17px}
 .tile{padding:16px}
 .links{font-size:14.5px}
 table,thead,tbody,tr,td{display:block;width:100%}
 thead{display:none}
 tr{border:1px solid var(--line);border-radius:8px;margin:0 0 8px;padding:6px 10px;background:var(--card)}
 td{border:0;padding:2px 0}
-td::before{content:attr(data-label);display:block;font-size:12px;color:var(--muted)}
+td::before{content:attr(data-label);display:block;font-size:var(--t-xs);color:var(--muted)}
 }
 @media print{
-:root{color-scheme:light;${LIGHT};--bg:#fff;--card:#fff;--soft:#f3f3f3}
+:root{${PRINT_TOKENS}}
 html{scroll-padding-top:0}
 body{font-size:10.5pt}
 .bar{position:static}

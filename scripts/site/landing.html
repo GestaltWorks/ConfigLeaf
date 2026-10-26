@@ -5,19 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ConfigLeaf (drift-agent)</title>
   <style>
+    {{THEME_CSS}}
     :root {
-      --bg-dark: #0f172a;
-      --card-bg: #1e293b;
-      --border-color: #334155;
-      --text-main: #f8fafc;
-      --text-muted: #94a3b8;
-      --accent-green: #10b981;
-      --accent-teal: #06b6d4;
-      --code-bg: #0b0f19;
+      --bg-dark: var(--bg);
+      --card-bg: var(--card);
+      --border-color: var(--line);
+      --text-main: var(--fg);
+      --text-muted: var(--muted);
+      --accent-green: var(--ok);
+      --accent-teal: var(--locked);
+      --code-bg: var(--soft);
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      font-family: var(--sans);
       background-color: var(--bg-dark);
       color: var(--text-main);
       line-height: 1.5;
@@ -34,6 +35,9 @@
     }
     .brand { display: flex; align-items: center; gap: 0.75rem; }
     .brand-title { font-size: 1.4rem; font-weight: 700; }
+    .brand .mark { display: inline-flex; color: var(--accent-green); }
+    .brand .mark, .brand .mark svg { width: 32px; height: 32px; }
+    .brand .mark .vein { stroke: var(--text-main); }
     .brand-title span { color: var(--accent-green); }
     .brand-subtitle { font-size: 0.8rem; color: var(--accent-teal); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
     .nav-links { display: flex; gap: 1.25rem; font-size: 0.9rem; }
@@ -83,7 +87,7 @@
       overflow-x: auto;
       margin-top: 0.85rem;
       border-left: 2px solid var(--accent-teal);
-      color: #cbd5e1;
+      color: var(--text-main);
       white-space: pre-wrap;
     }
     .cli-section { margin-bottom: 3rem; }
@@ -95,7 +99,7 @@
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       font-size: 0.8rem;
       margin-top: 0.6rem;
-      color: #34d399;
+      color: var(--accent-green);
       white-space: pre-wrap;
     }
     .cli-prompt { color: var(--text-muted); }
@@ -107,11 +111,7 @@
 <body>
   <header>
     <div class="brand">
-      <svg width="32" height="32" viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" style="color: var(--accent-green);">
-        <path d="M 50 15 C 57 15, 62 25, 62 30 C 65 22, 75 22, 80 27 C 82 31, 80 43, 85 45 C 92 48, 92 62, 85 65 C 77 68, 77 75, 75 80 C 68 85, 55 83, 50 78 C 45 83, 32 85, 25 80 C 23 75, 23 68, 15 65 C 8 62, 8 48, 15 45 C 20 43, 18 31, 20 27 C 25 22, 35 22, 38 30 C 38 25, 43 15, 50 15 Z" />
-        <path d="M 50 78 L 50 88" />
-        <path d="M 50 78 L 50 35 M 50 62 L 70 70 M 50 52 L 30 62" stroke="var(--accent-teal)" stroke-width="4" />
-      </svg>
+      {{MARK_HTML}}
       <div>
         <div class="brand-title">Config<span>Leaf</span></div>
         <div class="brand-subtitle">drift-agent</div>
@@ -120,6 +120,7 @@
     <nav class="nav-links">
       <a href="index.html">Replay</a>
       <a href="{{REPORT_HREF}}">Owner's report</a>
+      <a href="{{EXECUTIVE_HREF}}">Executive report</a>
       <a href="{{DECK_HREF}}">Deck</a>
       <a href="{{REPO_HREF}}">Repository</a>
     </nav>

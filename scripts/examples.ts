@@ -31,14 +31,16 @@
 //
 // Then the owner's report over the full bundle for the same tenant, report.html in the output directory
 // (examples/report.html): src/document/sample.ts renderSample and sampleReport, as npm run document writes it in
-// sample mode, through the deny-list probe; a re-run with the same store writes the same bytes.
+// sample mode, through the deny-list probe; a re-run with the same store writes the same bytes. And the executive
+// report for the same tenant over the last 7 days to the decision instant, executive.html (src/document/sample.ts
+// sampleExecutive, as npm run report:executive writes it in sample mode), through the same probe.
 
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { config, memoryDir } from "../src/config.ts";
-import { renderSample, sampleReport, textSha256 } from "../src/document/sample.ts";
+import { renderSample, sampleExecutive, sampleReport, textSha256 } from "../src/document/sample.ts";
 import { countLabels } from "../src/redactor.ts";
 import { DataLayer } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
@@ -219,4 +221,10 @@ if (invoked === import.meta.url.toLowerCase()) {
   if (hits) throw new Error(`report: deny-list probe: ${hits} of ${labels.length} configured label(s) appear in the report; nothing written`);
   writeFileSync(path.join(args.out!, "report.html"), html);
   console.log(`report: ${path.join(args.out!, "report.html").replace(/\\/g, "/")} for ${TENANT}, ${Buffer.byteLength(html)} bytes, ${r.doc.open} finding(s) open, decided at ${r.doc.decidedAt ?? "none"}; deny-list probe 0 of ${labels.length} label(s)`);
+  // the executive report over the same bundle and tenant, the last 7 days to the decision instant (npm run report:executive in sample mode)
+  const ex = await sampleExecutive(JSON.parse(text) as Record<string, unknown>, { tenant: TENANT, memory, source: "sql.js over sample/bundle.json", period: "7d", file: { path: "sample/bundle.json", sha256: textSha256(text) } });
+  const exHits = Object.keys(countLabels(ex.html, labels)).length;
+  if (exHits) throw new Error(`executive: deny-list probe: ${exHits} of ${labels.length} configured label(s) appear in the executive report; nothing written`);
+  writeFileSync(path.join(args.out!, "executive.html"), ex.html);
+  console.log(`executive: ${path.join(args.out!, "executive.html").replace(/\\/g, "/")} for ${TENANT}, ${Buffer.byteLength(ex.html)} bytes, the last 7 days to ${ex.executive.at}, ${ex.executive.incidentCount} incident(s); deny-list probe 0 of ${labels.length} label(s)`);
 }

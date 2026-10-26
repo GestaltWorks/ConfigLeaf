@@ -5,20 +5,29 @@
 // Contract:
 //   - Binds the host given (127.0.0.1) and the port given (0 for an ephemeral one). A request whose Host header names
 //     another host is refused (421), so a page of another origin cannot reach the console through DNS rebinding.
-//   - GET /overview, /settings, /findings, /actions, /traces, /traces/view?f=<dir>/<file>, /sources, /policy,
-//     /document, and /overview/report (the owner's report, src/document/report.ts renderReport over the snapshot's
-//     rows, with its outbound links opening in the top window). / redirects to /overview. Anything else is 404.
+//   - GET /overview, /executive?period=7d|30d|all (the executive report, src/document/executive.ts, over the period
+//     ending now: the snapshot's document rows and the report's own reads), /settings, /templates, /findings, /actions,
+//     /traces, /traces/view?f=<dir>/<file>, /sources, /policy, /document, /overview/report (the owner's report,
+//     src/document/report.ts renderReport over the snapshot's rows, with its outbound links opening in the top window)
+//     and /executive/download?period= (the executive report as one standalone file, an attachment named
+//     executive-<tenant>-<period>.html, its CSP the file's one style block by hash). / redirects to /overview.
+//     Anything else is 404.
+//   - One tenant at a time: the header's switcher (POST /do/tenant) names one of the tenants the store holds runs of
+//     (src/console/state.ts Backend.tenants) and every page reads that tenant's rows from then on; each tenant keeps
+//     its own pass, snapshot and source counts, and its first pass runs when the switcher first names it (at the
+//     sample's instant in sample mode, in the background live). A request reads the tenant it began with.
 //     Every page is no-store and carries a CSP with no 'unsafe-inline': the console's pages link their stylesheet and
 //     script from /assets/ (src/console/html.ts ASSETS, the path naming the content's hash, served public for a year,
 //     immutable, with an ETag), and the report's one style block and two scripts carry the response's nonce.
 //   - Traces: the *.jsonl files of the trace directories whose lines name the console's tenant in a command's own
 //     place (traceTenants): a cycle's step lines, the live pass's file-table refresh, a receipt's app, the console's
 //     pass. The viewer opens those only, and shows a ticket URL in a line as the ticket's number.
-//   - POST /do/unlock, /do/approve, /do/lock, /do/exception, /do/pass, form-encoded, at most 64 KB. Each carries the
-//     process's CSRF token (refused 403 when it differs, when an Origin header names another origin, or when
-//     Sec-Fetch-Site says cross-site); every action but the pass carries confirm=yes, which the page sets after its
-//     own confirmation. With Accept: application/json the answer is { ok, title, lines }; without, the page named by
-//     `return` rendered with the toast.
+//   - POST /do/unlock, /do/approve, /do/lock, /do/exception, /do/pass, /do/tenant, form-encoded, at most 64 KB. Each
+//     carries the process's CSRF token (refused 403 when it differs, when an Origin header names another origin, or
+//     when Sec-Fetch-Site says cross-site); every action but the pass and the switch carries confirm=yes, which the
+//     page sets after its own confirmation. With Accept: application/json the answer is { ok, title, lines }; without,
+//     the page named by `return` rendered with the toast, and for a switch a 303 to that page (a page of the nav, else
+//     the Overview).
 //       unlock     a change_window row on the object (src/policy/window.ts newWindow: who, 1 to 72 hours, why);
 //                  refused while a window is open on it, while the windows cannot be read (a window the passes cannot
 //                  read holds nothing), and when the row's id is stored already (the same object at the same
@@ -32,11 +41,12 @@
 //                  scoped as npm run answer scopes it), until a date (00:00 UTC that day) or an instant in the
 //                  millisecond form, nothing looser; in sample mode only when the console was started with --write
 //       pass       src/console/state.ts runConsolePass at the clock: recorded in sample mode, a dry pass live; never act
-//     A write invalidates the snapshot, so the next page reads the store again.
+//       tenant     the tenant every page reads from then on, one the store holds runs of; nothing written
+//     A write invalidates every tenant's snapshot, so the next page reads the store again.
 //   - Sample mode starts with the sample's own pass at its decision instant, as npm run sample decides, recorded into
 //     the sql.js ledger; live mode starts its first dry pass in the background and serves the ledger until it ends.
 
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, statSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
@@ -47,16 +57,20 @@ import type { FindingCause } from "../data/rows.ts";
 import { LAYER_TABLES } from "../data/layer.ts";
 import { SCHEMA_TABLES } from "../data/schema.ts";
 import { FILE_DATASOURCES, FILE_TABLES } from "../data/files.ts";
+import { evalReceipts, isPeriod, readExecutive, renderExecutive, type Executive, type ExecutiveContext, type Period } from "../document/executive.ts";
 import { REPORT_MODE, renderReport, repoTip, utc } from "../document/report.ts";
 import { policyFileShown } from "../document/sample.ts";
 import { MemoryError, TechnicianMemory, scopeValuesOf, type ScopeType } from "../engine/memory.ts";
 import { PLAIN, Table, passView } from "../loop/present.ts";
 import { WindowError, freeText, newWindow } from "../policy/window.ts";
 import { DNS_FIELDS, approveRun, ApproveError, type ApprovalSelection } from "../vault/approve.ts";
-import { barCounts, barHtml, actionsPage, decodeKey, documentPage, errorPage, findingsPage, overviewPage, passForm, plainUrls, policyPage, settingsPage, sourcesPage, traceViewPage, tracesPage, type SourceCount, type TraceEventRow, type TraceFile, type View } from "./pages.ts";
+import {
+  barCounts, barHtml, actionsPage, decodeKey, documentPage, errorPage, executivePage, findingsPage, overviewPage, passForm, plainUrls, policyPage, settingsPage, sourcesPage, templatesOf,
+  templatesPage, traceViewPage, tracesPage, type SourceCount, type TraceEventRow, type TraceFile, type View,
+} from "./pages.ts";
 import { ASSETS, escapeHtml, layout, type Asset, type Shell } from "./html.ts";
 import {
-  classesOf, decisionsOfLedger, decisionsOfPass, readSnapshot, runConsolePass, settingObjects, vaultCommitOf,
+  classesOf, decisionsOfLedger, decisionsOfPass, readSnapshot, runConsolePass, settingObjects, vaultCommitOf, withTenant,
   type Backend, type PassRun, type SettingObject, type Snapshot,
 } from "./state.ts";
 
@@ -94,8 +108,10 @@ export interface ConsoleServer {
   url: string;
   port: number;
   csrf: string;
-  /** The pass the console holds, after any running one ends. */
+  /** The pass the console holds for the tenant the pages read, after any running one ends. */
   settled(): Promise<PassRun | null>;
+  /** The tenant the pages read now. */
+  tenant(): string;
   close(): Promise<void>;
 }
 
@@ -112,72 +128,98 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
   const t = (s: string | number | null | undefined): string => escapeHtml(b.redactor.text(s === null || s === undefined ? "" : String(s)));
   const tip = b.mode === "live" ? repoTip(ROOT) : null;
 
-  let pass: PassRun | null = null;
-  let running: { startedAt: string; done: Promise<void> } | null = null;
-  let snapshot: Promise<Snapshot> | null = null;
-  let sources: Promise<SourceCount[]> | null = null;
-
-  const snap = (): Promise<Snapshot> => {
-    if (!snapshot) {
-      const p = readSnapshot(b, classesOf(pass));
-      snapshot = p;
-      p.catch(() => { if (snapshot === p) snapshot = null; });
-    }
-    return snapshot;
+  // One state per tenant: the console's pass, a pass running, the snapshot and the source counts. The header's switcher
+  // sets `current`; a request reads the tenant it began with.
+  interface TenantState { pass: PassRun | null; running: { startedAt: string; done: Promise<void> } | null; snapshot: Promise<Snapshot> | null; sources: Promise<SourceCount[]> | null }
+  const states = new Map<string, TenantState>();
+  let current = b.tenant;
+  const st = (tenant: string): TenantState => {
+    let s = states.get(tenant);
+    if (!s) states.set(tenant, (s = { pass: null, running: null, snapshot: null, sources: null }));
+    return s;
   };
-  const invalidate = (): void => { snapshot = null; sources = null; };
+  const be = (tenant: string): Backend => withTenant(b, tenant);
 
-  const doPass = async (decidedAt: string): Promise<PassRun> => {
-    const r = await runConsolePass(b, { decidedAt, trace: o.tracePasses !== false });
-    pass = r;
+  const snap = (tenant: string): Promise<Snapshot> => {
+    const s = st(tenant);
+    if (!s.snapshot) {
+      const p = readSnapshot(be(tenant), classesOf(s.pass));
+      s.snapshot = p;
+      p.catch(() => { if (s.snapshot === p) s.snapshot = null; });
+    }
+    return s.snapshot;
+  };
+  // a write or a pass changes the one store the tenants share: each reads it again
+  const invalidate = (): void => { for (const s of states.values()) { s.snapshot = null; s.sources = null; } };
+
+  const doPass = async (tenant: string, decidedAt: string): Promise<PassRun> => {
+    const r = await runConsolePass(be(tenant), { decidedAt, trace: o.tracePasses !== false });
+    st(tenant).pass = r;
     invalidate();
     return r;
   };
-  const startPass = (decidedAt: string): Promise<void> => {
+  const startPass = (tenant: string, decidedAt: string): Promise<void> => {
+    const s = st(tenant);
     const startedAt = clock().toISOString();
-    const done = doPass(decidedAt).then(() => undefined, (e: Error) => { print(`console: the pass failed: ${b.redactor.text(redact(e.message))}`); }).finally(() => { running = null; });
-    running = { startedAt, done };
+    const done = doPass(tenant, decidedAt).then(() => undefined, (e: Error) => { print(`console: the pass of ${tenant} failed: ${b.redactor.text(redact(e.message))}`); }).finally(() => { s.running = null; });
+    s.running = { startedAt, done };
     return done;
   };
+  /** A tenant's first pass, when the console starts and when the switcher first names it: at the sample's instant in sample mode, in the background live. */
+  const firstPass = async (tenant: string, when: "listening" | "before"): Promise<void> => {
+    if (o.firstPass === "sync" && when === "before") await doPass(tenant, b.sampleInstant ?? clock().toISOString());
+    else if (o.firstPass === "background" && when === "listening") void startPass(tenant, clock().toISOString());
+  };
 
-  if (o.firstPass === "sync") await doPass(b.sampleInstant ?? clock().toISOString());
+  await firstPass(current, "before");
 
-  const view = async (): Promise<View> => {
-    const s = await snap();
+  const view = async (tenant: string): Promise<View> => {
+    const s = await snap(tenant);
+    const state = st(tenant);
+    const pass = state.pass;
     const now = clock().toISOString();
     const decisions = pass ? decisionsOfPass(pass) : decisionsOfLedger(s.doc.data.open, s.windowHolds);
     const causes = new Map<string, FindingCause>((s.doc.data.causes ?? []).map((c) => [c.disposition_id, c]));
     for (const c of pass?.explained.causes ?? []) causes.set(c.disposition_id, c.cause);
-    const traces = listTraces(traceDirs, b.tenant);
+    const traces = listTraces(traceDirs, tenant);
     return {
-      tenant: b.tenant, mode: b.mode, now, csrf, t, snapshot: s, pass, passRunning: running?.startedAt ?? null, decisions, source: pass ? "pass" : "ledger", causes,
-      objects: settingObjects(s, decisions, causes, b.tenant, now), memoryWritable: b.memoryWritable, dataSource: b.source, traces,
+      tenant, mode: b.mode, now, csrf, t, snapshot: s, pass, passRunning: state.running?.startedAt ?? null, decisions, source: pass ? "pass" : "ledger", causes,
+      objects: settingObjects(s, decisions, causes, tenant, now), memoryWritable: b.memoryWritable, dataSource: b.source, traces,
       lastCycle: traces.find((f) => f.id.startsWith("cycle_")) ?? null, datasource: datasourceOf(b),
     };
   };
 
   const modeLine = b.mode === "sample" ? `sample mode, ${b.source}; changes live for this process` : `live, ${b.source}; passes are dry`;
 
-  const page = async (name: Shell["page"], title: string, render: (v: View) => { body: string; extra?: string }, extra: { toast?: Toast | null; open?: string | null; bar?: boolean } = {}): Promise<string> => {
-    const v = await view();
+  const page = async (tenant: string, name: Shell["page"], title: string, render: (v: View) => { body: string; extra?: string }, extra: { toast?: Toast | null; open?: string | null; bar?: boolean; returnTo?: string } = {}): Promise<string> => {
+    const v = await view(tenant);
     const r = render(v);
     const c = barCounts(v);
     return layout({
-      title, page: name, tenant: b.tenant, modeLine, bar: extra.bar === false ? null : barHtml(v), csrf,
-      nav: { settings: v.objects.length, findings: v.decisions.length, needs: c.needs, actions: (v.snapshot.doc.data.actions ?? []).length, traces: v.traces.length },
+      title, page: name, tenant, tenants: b.tenants, returnTo: extra.returnTo ?? PAGE_PATH[name], modeLine, bar: extra.bar === false ? null : barHtml(v), csrf,
+      nav: { settings: v.objects.length, findings: v.decisions.length, needs: c.needs, actions: (v.snapshot.doc.data.actions ?? []).length, traces: v.traces.length, templates: templatesOf(v).length },
       passForm: passForm(v, "side"), body: r.body, extra: r.extra, toast: extra.toast ? { ok: extra.toast.ok, title: extra.toast.title, lines: extra.toast.lines } : null, open: extra.open ?? null,
     });
   };
 
-  const render = async (route: string, query: URLSearchParams, toast: Toast | null = null, nonce = ""): Promise<{ status: number; type: string; body: string } | null> => {
+  /** The executive report of a tenant over a period ending now, from the snapshot's document rows and the report's own reads. */
+  const executive = async (tenant: string, period: Period): Promise<{ v: View; x: Executive; ctx: ExecutiveContext }> => {
+    const v = await view(tenant);
+    const x = await readExecutive(b.layer, v.snapshot.doc.data, { tenant, period, at: v.now, classes: classesOf(v.pass), receipts: evalReceipts(ROOT) });
+    const ids = new Set(v.decisions.map((d) => d.finding_id));
+    const ctx: ExecutiveContext = { redactor: b.redactor, policyFile: o.policyFile ?? policyFileShown(), bundle: b.bundle, tip, findingHref: (id) => (ids.has(id) ? `/findings#f-${id}` : null) };
+    return { v, x, ctx };
+  };
+
+  const render = async (tenant: string, route: string, query: URLSearchParams, toast: Toast | null = null, nonce = ""): Promise<{ status: number; type: string; body: string; headers?: Record<string, string> } | null> => {
     const html = (body: string, status = 200) => ({ status, type: "text/html; charset=utf-8", body });
     switch (route) {
-      case "/overview": return html(await page("overview", "Overview", (v) => ({ body: overviewPage(v) }), { toast, bar: false }));
+      case "/overview": return html(await page(tenant, "overview", "Overview", (v) => ({ body: overviewPage(v) }), { toast, bar: false }));
       case "/overview/report": {
-        const v = await view();
+        const v = await view(tenant);
         const report = renderReport(v.snapshot.doc.data, {
           redactor: b.redactor, mode: REPORT_MODE.dryRun, trace: b.mode === "live" && v.lastCycle ? { id: v.lastCycle.id, path: `${v.lastCycle.dir}/${v.lastCycle.name}` } : null,
-          tip, policyFile: o.policyFile ?? policyFileShown(), findings: pass?.step.findings ?? [], bundle: b.bundle,
+          tip, policyFile: o.policyFile ?? policyFileShown(), findings: v.pass?.step.findings ?? [], bundle: b.bundle,
           links: {
             replay: null, replayAnchors: {}, document: "/document", trace: v.lastCycle ? `/traces/view?f=${encodeURIComponent(v.lastCycle.ref)}` : null,
             policy: "/policy", traces: "/traces", eval: null, readme: null, lessons: null, receipts: null,
@@ -185,43 +227,56 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
         });
         return html(nonceReport(report, nonce));
       }
+      case "/executive": {
+        const period = periodOf(query);
+        const { x, ctx } = await executive(tenant, period);
+        return html(await page(tenant, "executive", "Executive report", () => ({ body: executivePage(x, ctx) }), { toast, returnTo: `/executive?period=${period}` }));
+      }
+      case "/executive/download": {
+        const period = periodOf(query);
+        const { x, ctx } = await executive(tenant, period);
+        const file = renderExecutive(x, ctx);
+        return { status: 200, type: "text/html; charset=utf-8", body: file, headers: { "content-disposition": `attachment; filename="executive-${tenant}-${period}.html"`, "content-security-policy": fileCsp(file) } };
+      }
+      case "/templates": return html(await page(tenant, "templates", "Templates", (v) => ({ body: templatesPage(v) }), { toast }));
       case "/settings": {
         const open = query.get("open");
         let key: string | null = null;
         if (open) try { key = open; decodeKey(open); } catch { key = null; }
-        return html(await page("settings", "Settings", (v) => {
+        return html(await page(tenant, "settings", "Settings", (v) => {
           const r = settingsPage(v, { group: query.get("group") ?? undefined, lock: query.get("lock") ?? undefined, status: query.get("status") ?? undefined, q: query.get("q") ?? undefined });
           return { body: r.body, extra: r.templates };
         }, { toast, open: key }));
       }
-      case "/findings": return html(await page("findings", "Findings", (v) => ({ body: findingsPage(v) }), { toast }));
-      case "/actions": return html(await page("actions", "Actions and tickets", (v) => ({ body: actionsPage(v) }), { toast }));
-      case "/traces": return html(await page("traces", "Traces", (v) => ({ body: tracesPage(v) }), { toast }));
+      case "/findings": return html(await page(tenant, "findings", "Findings", (v) => ({ body: findingsPage(v) }), { toast }));
+      case "/actions": return html(await page(tenant, "actions", "Actions and tickets", (v) => ({ body: actionsPage(v) }), { toast }));
+      case "/traces": return html(await page(tenant, "traces", "Traces", (v) => ({ body: tracesPage(v) }), { toast }));
       case "/traces/view": {
         const ref = query.get("f") ?? "";
-        const f = listTraces(traceDirs, b.tenant).find((x) => x.ref === ref);
-        if (!f) return html(await page("traces", "Trace not found", () => ({ body: errorPage(`No trace ${ref} of ${b.tenant} in ${traceDirs.map((d) => d.label).join(" or ")}.`) })), 404);
+        const f = listTraces(traceDirs, tenant).find((x) => x.ref === ref);
+        if (!f) return html(await page(tenant, "traces", "Trace not found", () => ({ body: errorPage(`No trace ${ref} of ${tenant} in ${traceDirs.map((d) => d.label).join(" or ")}.`) })), 404);
         const dir = traceDirs.find((d) => d.label === f.dir)!;
         const { events, skipped } = readTrace(path.join(dir.dir, f.name), (s) => plainUrls(b.redactor.text(redact(s))));
-        return html(await page("traces", `Trace ${f.id}`, (v) => ({ body: traceViewPage(v, f, events, skipped) })));
+        return html(await page(tenant, "traces", `Trace ${f.id}`, (v) => ({ body: traceViewPage(v, f, events, skipped) })));
       }
       case "/sources": {
-        sources ??= countSources(b);
-        const counts = await sources;
-        return html(await page("sources", "Sources", (v) => ({ body: sourcesPage(v, counts) }), { toast }));
+        const s = st(tenant);
+        s.sources ??= countSources(be(tenant));
+        const counts = await s.sources;
+        return html(await page(tenant, "sources", "Sources", (v) => ({ body: sourcesPage(v, counts) }), { toast }));
       }
-      case "/policy": return html(await page("policy", "Policy", (v) => ({ body: policyPage(v) })));
-      case "/document": return html(await page("document", "The owner's document", (v) => ({ body: documentPage(v) })));
+      case "/policy": return html(await page(tenant, "policy", "Policy", (v) => ({ body: policyPage(v) })));
+      case "/document": return html(await page(tenant, "document", "The owner's document", (v) => ({ body: documentPage(v) })));
       default: return null;
     }
   };
 
   // ---- the actions ----
 
-  const objectOf = async (keyParam: string): Promise<SettingObject> => {
+  const objectOf = async (tenant: string, keyParam: string): Promise<SettingObject> => {
     let key: string;
     try { key = decodeKey(keyParam); } catch { throw new ActionError("the form names no object"); }
-    const v = await view();
+    const v = await view(tenant);
     const obj = v.objects.find((x) => x.key === key);
     if (!obj) throw new ActionError("the object is not in the latest passing runs of this tenant");
     return obj;
@@ -229,14 +284,14 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
   const sampleLine = (): string[] => (b.mode === "sample" ? [SAMPLE_NOTE] : []);
   const objectName = (obj: SettingObject): string => (obj.kind === "file" ? `${obj.object_id} on ${obj.host}` : `record ${obj.name}`);
 
-  const actions: Record<string, (f: URLSearchParams) => Promise<Toast>> = {
-    unlock: async (f) => {
-      const obj = await objectOf(f.get("key") ?? "");
+  const actions: Record<string, (f: URLSearchParams, tenant: string) => Promise<Toast>> = {
+    unlock: async (f, tenant) => {
+      const obj = await objectOf(tenant, f.get("key") ?? "");
       if (obj.window) throw new ActionError(`a change window is open on ${objectName(obj)} until ${obj.window.until}; Lock or Approve closes it first`);
-      const unread = (await snap()).windowsError;
+      const unread = (await snap(tenant)).windowsError;
       if (unread) throw new ActionError(`the change windows are not read (${unread.split("\n")[0].slice(0, 200)}), so the passes would not read this one either; npm run zetaris:setup registers change_window`);
       const hours = Number(f.get("hours") ?? "");
-      const row = newWindow({ tenant: b.tenant, surface: obj.surface, host: obj.host, object_id: obj.object_id, who: f.get("who") ?? "", why: f.get("why") ?? "", hours, now: clock(), redact: (s) => b.redactor.text(redact(s)) });
+      const row = newWindow({ tenant, surface: obj.surface, host: obj.host, object_id: obj.object_id, who: f.get("who") ?? "", why: f.get("why") ?? "", hours, now: clock(), redact: (s) => b.redactor.text(redact(s)) });
       const n = await b.windows.open(row);
       invalidate();
       if (n === 0) throw new ActionError(`a change window is already open on ${objectName(obj)}, or was just opened at ${row.opened_at}: change_window ${row.window_id} is stored already, nothing written`);
@@ -245,11 +300,11 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
         lines: [`change_window ${row.window_id}: ${n} row written`, `opened by ${row.opened_by} at ${row.opened_at} until ${row.until}: ${row.reason}`, "the next pass holds a drift on this object that a rule would roll back, fix or hold, until the window ends", ...sampleLine()],
       };
     },
-    approve: async (f) => {
-      const obj = await objectOf(f.get("key") ?? "");
+    approve: async (f, tenant) => {
+      const obj = await objectOf(tenant, f.get("key") ?? "");
       const host = obj.surface === "cloudflare.dns" ? null : obj.host;
-      const run = await b.approvals.latestPassingRun(b.tenant, obj.surface, host);
-      if (!run) throw new ActionError(`no passing ${obj.surface} run for ${b.tenant}${host ? ` on ${host}` : ""}`);
+      const run = await b.approvals.latestPassingRun(tenant, obj.surface, host);
+      if (!run) throw new ActionError(`no passing ${obj.surface} run for ${tenant}${host ? ` on ${host}` : ""}`);
       const observations = await b.approvals.observationsOf(run.run_id);
       let selection: ApprovalSelection;
       if (obj.kind === "file") selection = { kind: "object", host: host!, object_id: obj.object_id };
@@ -261,14 +316,14 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
       const noteRaw = freeText("note", f.get("note") ?? "", 500, "an optional note", true);
       let r;
       try {
-        r = await approve(b.approvals, { tenant: b.tenant, run, observations, selection, by, note: noteRaw ? b.redactor.text(redact(noteRaw)) : null, now: clock(), dryRun: false });
+        r = await approve(b.approvals, { tenant, run, observations, selection, by, note: noteRaw ? b.redactor.text(redact(noteRaw)) : null, now: clock(), dryRun: false });
       } catch (e) {
         if (e instanceof ApproveError) throw new ActionError(e.message);
         throw e;
       }
       let vault: string;
       try {
-        const commit = await vaultCommitOf(b.layer, b.tenant, run.run_id, obj.object_id);
+        const commit = await vaultCommitOf(b.layer, tenant, run.run_id, obj.object_id);
         vault = commit ? `approve: the approved bytes are run ${run.run_id}'s, vault commit ${commit.slice(0, 8)}` : `approve: the vault holds no copy from run ${run.run_id}`;
       } catch (e) {
         vault = `approve: the vault copy of run ${run.run_id} was not read (${b.redactor.text(redact((e as Error)?.message ?? String(e))).split("\n")[0].slice(0, 200)}); the approval stands, its vault commit unnamed`;
@@ -281,16 +336,17 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
       invalidate();
       return { ok: true, title: `Approved: ${obj.kind === "file" ? obj.object_id : obj.name}`, lines: [...lines, ...sampleLine()] };
     },
-    lock: async (f) => {
-      const obj = await objectOf(f.get("key") ?? "");
+    lock: async (f, tenant) => {
+      const obj = await objectOf(tenant, f.get("key") ?? "");
       if (!obj.window) throw new ActionError(`no change window is open on ${objectName(obj)}`);
       const at = clock().toISOString();
       const n = await b.windows.close(obj.window.window_id, at);
       invalidate();
       return { ok: true, title: `Locked: ${obj.kind === "file" ? obj.object_id : obj.name}`, lines: [`change_window ${obj.window.window_id} closed at ${at} (${n} row); nothing approved`, "the next pass treats a drift on this object as before", ...sampleLine()] };
     },
-    exception: async (f) => {
+    exception: async (f, tenant) => {
       if (!b.memoryWritable) throw new ActionError(`the store is read-only in sample mode (${path.relative(ROOT, b.memoryDir).replace(/\\/g, "/") || b.memoryDir}); start the console with --write to record into it`);
+      const pass = st(tenant).pass;
       if (!pass) throw new ActionError("run a pass first: an exception is scoped on the finding as the pass raises it");
       const finding = pass.step.findings.find((x) => x.id === f.get("finding"));
       if (!finding) throw new ActionError(`no finding ${f.get("finding") ?? ""} in the console's pass`);
@@ -322,20 +378,30 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
         ],
       };
     },
-    pass: async () => {
-      if (running) throw new ActionError(`a pass is running since ${running.startedAt}`);
+    pass: async (_f, tenant) => {
+      const s = st(tenant);
+      if (s.running) throw new ActionError(`a pass is running since ${s.running.startedAt}`);
       const decidedAt = clock().toISOString();
       const t0 = Date.now();
       let r: PassRun | null = null;
-      const done = doPass(decidedAt).then((x) => { r = x; });
-      running = { startedAt: decidedAt, done };
-      try { await done; } finally { running = null; }
+      const done = doPass(tenant, decidedAt).then((x) => { r = x; });
+      s.running = { startedAt: decidedAt, done };
+      try { await done; } finally { s.running = null; }
       const p = r!;
-      const lines = new Table(PLAIN, (s) => b.redactor.text(redact(s))).row("pass", passView(p.step, b.mode === "live" ? { datasource: config.zetaris.datasource, ...p.queries } : undefined), Date.now() - t0);
+      const lines = new Table(PLAIN, (x) => b.redactor.text(redact(x))).row("pass", passView(p.step, b.mode === "live" ? { datasource: config.zetaris.datasource, ...p.queries } : undefined), Date.now() - t0);
       return {
         ok: true, title: `${p.recorded ? "Pass" : "Dry pass"} decided at ${utc(p.decidedAt)}: ${p.step.findings.length} finding(s)`,
         lines: [...lines, `${p.queries.queries} queries through ${datasourceOf(b)}, ${p.queries.failed} failed; ${p.recorded ? "dispositions recorded in the sql.js ledger" : "nothing recorded"}; act not run`, ...(p.trace ? [`trace ${p.trace.file}`] : []), ...sampleLine()],
       };
+    },
+    tenant: async (f) => {
+      const want = f.get("tenant") ?? "";
+      if (!b.tenants.includes(want)) throw new ActionError(`the store holds no run of tenant ${want.slice(0, 64) || "(none named)"}; the switcher lists ${b.tenants.join(", ")}`);
+      const first = !st(want).pass && !st(want).running;
+      if (first) await firstPass(want, "before");
+      current = want;
+      if (first) await firstPass(want, "listening");
+      return { ok: true, title: `Switched to ${want}`, lines: [`every page now reads ${want}'s rows${first && st(want).pass ? `; its first pass decided at ${utc(st(want).pass!.decidedAt)}` : ""}`] };
     },
   };
 
@@ -357,17 +423,18 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
   async function handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     if (!hosts.has((req.headers.host ?? "").toLowerCase())) return send(res, 421, "text/plain; charset=utf-8", "the console answers on 127.0.0.1 only\n");
     const url = new URL(req.url ?? "/", origin);
+    const tenant = current;
     if (req.method === "GET" || req.method === "HEAD") {
       if (url.pathname === "/") { res.writeHead(303, { location: "/overview" }); res.end(); return; }
       const a = STATIC.get(url.pathname);
       if (a) return sendAsset(req, res, a);
       const nonce = randomBytes(16).toString("base64");
-      const r = await render(url.pathname, url.searchParams, null, nonce);
+      const r = await render(tenant, url.pathname, url.searchParams, null, nonce);
       if (!r) return send(res, 404, "text/html; charset=utf-8", layoutError(`No page ${url.pathname}.`), nonce);
-      return send(res, r.status, r.type, req.method === "HEAD" ? "" : r.body, nonce);
+      return send(res, r.status, r.type, req.method === "HEAD" ? "" : r.body, nonce, r.headers);
     }
     if (req.method !== "POST") return send(res, 405, "text/plain; charset=utf-8", "GET and POST only\n");
-    const m = url.pathname.match(/^\/do\/(unlock|approve|lock|exception|pass)$/);
+    const m = url.pathname.match(/^\/do\/(unlock|approve|lock|exception|pass|tenant)$/);
     if (!m) return send(res, 404, "text/plain; charset=utf-8", "no such action\n");
     const wantsJson = (req.headers.accept ?? "").includes("application/json");
     const body = await readBody(req);
@@ -376,15 +443,17 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
       const status = toast.status ?? (toast.ok ? 200 : 400);
       if (wantsJson) return send(res, status, "application/json; charset=utf-8", JSON.stringify({ ok: toast.ok, title: toast.title, lines: toast.lines }));
       const back = form.get("return") ?? "/overview";
-      const r = await render(["/settings", "/findings", "/overview"].includes(back) ? back : "/overview", new URLSearchParams(), toast);
+      // a switch answers with the page it came from, read again for the new tenant: a reload then asks for nothing twice
+      if (m[1] === "tenant" && toast.ok) { res.writeHead(303, { location: RETURN.test(back) ? back : "/overview", ...SECURITY }); res.end(); return; }
+      const r = await render(current, ["/settings", "/findings", "/overview"].includes(back) ? back : "/overview", new URLSearchParams(), toast);
       return send(res, status, "text/html; charset=utf-8", r!.body);
     };
     if (body === null) return reply({ ok: false, status: 413, title: "Refused: the form is larger than 64 KB", lines: [] });
     const refusal = csrfRefusal(req, form);
     if (refusal) return reply({ ok: false, status: 403, title: `Refused: ${refusal}`, lines: ["reload the page for a fresh form"] });
-    if (m[1] !== "pass" && form.get("confirm") !== "yes") return reply({ ok: false, title: "Confirm on the page first: the action carries its confirmation", lines: [] });
+    if (m[1] !== "pass" && m[1] !== "tenant" && form.get("confirm") !== "yes") return reply({ ok: false, title: "Confirm on the page first: the action carries its confirmation", lines: [] });
     try {
-      const toast = await actions[m[1]](form);
+      const toast = await actions[m[1]](form, tenant);
       print(`console: ${m[1]}: ${toast.title}`);
       return reply(toast);
     } catch (e) {
@@ -411,13 +480,14 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
   const port = (server.address() as AddressInfo).port;
   origin = `http://${o.host ?? "127.0.0.1"}:${port}`;
   hosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`]);
-  if (o.firstPass === "background") void startPass(clock().toISOString());
+  await firstPass(current, "listening");
 
   return {
     url: origin, port, csrf,
-    settled: async () => { if (running) await running.done; return pass; },
+    settled: async () => { const s = st(current); if (s.running) await s.running.done; return s.pass; },
+    tenant: () => current,
     close: async () => {
-      if (running) await running.done.catch(() => undefined);
+      for (const s of states.values()) if (s.running) await s.running.done.catch(() => undefined);
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await b.close();
     },
@@ -450,9 +520,25 @@ export const csp = (nonce: string): string =>
 
 const SECURITY = { "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" } as const;
 
-function send(res: http.ServerResponse, status: number, type: string, body: string, nonce = ""): void {
-  res.writeHead(status, { "content-type": type, "cache-control": "no-store", ...SECURITY, "content-security-policy": csp(nonce) });
+function send(res: http.ServerResponse, status: number, type: string, body: string, nonce = "", headers: Record<string, string> = {}): void {
+  res.writeHead(status, { "content-type": type, "cache-control": "no-store", ...SECURITY, "content-security-policy": csp(nonce), ...headers });
   res.end(body);
+}
+
+/** A page's path for a switch to return to: a page of the nav, and the executive report with its period; nothing else. */
+const RETURN = /^\/(?:overview|executive(?:\?period=(?:7d|30d|all))?|settings|templates|findings|actions|traces|sources|policy|document)$/;
+/** Where each page's switch returns. */
+const PAGE_PATH: Readonly<Record<Shell["page"], string>> = {
+  overview: "/overview", executive: "/executive", settings: "/settings", templates: "/templates", findings: "/findings", actions: "/actions",
+  traces: "/traces", sources: "/sources", policy: "/policy", document: "/document",
+};
+/** The period a request names; the last 7 days for none or another. */
+const periodOf = (q: URLSearchParams): Period => { const p = q.get("period"); return isPeriod(p) ? p : "7d"; };
+
+/** The CSP of the downloaded executive report: its one style block by hash, nothing else; no script runs in it. */
+export function fileCsp(file: string): string {
+  const style = /<style>([\s\S]*?)<\/style>/.exec(file)?.[1] ?? "";
+  return `default-src 'none'; style-src 'sha256-${createHash("sha256").update(style).digest("base64")}'; img-src data:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'`;
 }
 
 /** A static part of the shell: its path names its hash, so it is cached for a year and never revalidated; an If-None-Match on its ETag is 304. */

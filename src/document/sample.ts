@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { config } from "../config.ts";
 import { DataLayer } from "../data/layer.ts";
 import { SqlJsEngine } from "../data/engines/sqljs.ts";
+import { fileRows } from "../data/file-rows.ts";
 import { decisionInstantWith } from "../data/instant.ts";
 import type { TechnicianMemory } from "../engine/memory.ts";
 import { DriftWorld } from "../engine/world.ts";
@@ -25,6 +26,7 @@ import { BUNDLE_REDACTOR, MemoryCauseSink, explainTenants, type ExplainResult } 
 import { MemoryLedger } from "../ledger.ts";
 import { runPass, type Finding, type PassResult } from "../pipeline.ts";
 import type { Tracer } from "../trace.ts";
+import { evalReceipts, readExecutive, renderExecutive, type Executive, type Period } from "./executive.ts";
 import { renderDocument, type DocumentResult } from "./render.ts";
 import { REPORT_MODE, renderReport, type ReportLinks } from "./report.ts";
 
@@ -90,4 +92,29 @@ export function sampleReport(doc: DocumentResult, findings: readonly Finding[], 
     redactor: BUNDLE_REDACTOR, mode: REPORT_MODE.dryRun, trace: null, tip: null, policyFile: policyFileShown(),
     findings: findings.filter((f) => f.finding.tenant_id === doc.data.tenant), bundle, links: replayLinks(),
   });
+}
+
+/**
+ * The executive report in sample mode (src/document/executive.ts): the same pass, explain step and document reads as
+ * renderSample, with the file tables loaded beside the bundle as sql.js holds them for Zetaris's LESSONS and RULES (so
+ * the exception_in_force rule reads), over the period ending at the decision instant, BUNDLE_REDACTOR, the newest
+ * eval results; no clock, trace or tip, so a second render is byte-identical. scripts/executive.ts in sample mode,
+ * scripts/examples.ts and the test render through here, so examples/executive.html comes from one sequence.
+ */
+export async function sampleExecutive(bundle: Record<string, unknown>, o: { tenant: string; memory: TechnicianMemory; source: string; period: Period; file: { path: string; sha256: string }; tracer?: Tracer }): Promise<{ html: string; executive: Executive }> {
+  const engine = await SqlJsEngine.create();
+  try {
+    engine.loadBundle(bundle);
+    engine.loadFileTables(fileRows({ memoryDir: o.memory.directory ?? undefined, policyFile: config.policyFile, redactor: BUNDLE_REDACTOR }));
+    const layer = new DataLayer(engine);
+    const decidedAt = new Date(decisionInstantWith(bundle, o.memory.lessons().map((l) => l.recordedAt)) ?? Date.now()).toISOString();
+    const pass = await runPass(layer, { tracer: o.tracer, world: new DriftWorld("executive"), memory: o.memory, ledger: new MemoryLedger(engine), decidedAt });
+    await explainTenants({ decidedAt, findings: pass.findings }, { layer, vault: null, redactor: BUNDLE_REDACTOR, sink: new MemoryCauseSink(engine), tracer: o.tracer });
+    const classes = new Map(pass.findings.map((f) => [f.id, f.finding.class]));
+    const doc = await renderDocument(layer, { tenant: o.tenant, classes, source: o.source, tracer: o.tracer, report: true });
+    const executive = await readExecutive(layer, doc.data, { tenant: o.tenant, period: o.period, at: decidedAt, classes, receipts: evalReceipts(ROOT), tracer: o.tracer });
+    return { executive, html: renderExecutive(executive, { redactor: BUNDLE_REDACTOR, policyFile: policyFileShown(), bundle: o.file }) };
+  } finally {
+    engine.close();
+  }
 }

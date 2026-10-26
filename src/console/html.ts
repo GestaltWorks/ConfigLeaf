@@ -1,53 +1,57 @@
-// The console's page shell: the report's colour tokens (src/document/report.ts LIGHT and DARK) with the console's own
-// four on top (locked, an open window, the hover and the focus ring), one stylesheet and one script, each served from
-// its own same-origin path that names its content's hash (ASSETS: /assets/console.<hash>.css and .js, cached for a
-// year, src/console/server.ts), so a page carries no inline style or script and the CSP needs no 'unsafe-inline';
-// and the layout every page shares: a 240 px navigation, a sticky summary bar and content up to 1200 px. No external
-// script, style or font; light and dark by prefers-color-scheme; at phone width the navigation folds above the bar,
-// tables become one block per row, type goes to 16 px and the gutter is 16 px.
+// The console's page shell: the one design's tokens, type scale, header bar, cards and tiles (src/design/theme.ts,
+// the owner's report's and the executive report's too) with the console's own rules on top, the executive report's
+// (src/document/executive.ts EXECUTIVE_CSS) among them; one stylesheet and one script, each served from its own
+// same-origin path that names its content's hash (ASSETS: /assets/console.<hash>.css and .js, cached for a year,
+// src/console/server.ts), so a page carries no inline style or script and the CSP needs no 'unsafe-inline'; and the
+// layout every page shares: a 240 px navigation with the leaf mark, the tenant switcher and the pages, a sticky summary
+// bar and content up to 1200 px. No external script, style or font; light and dark by prefers-color-scheme; in print
+// the light tokens and the page alone, the navigation, the bar and the toasts left out; at phone width the navigation
+// folds above the bar, tables become one block per row, type goes to 16 px and the gutter is 16 px.
 //
-// The script does four things and nothing else: the drawer (open from a row by click, Enter or Space; close on
+// The script does these things and nothing else: the drawer (open from a row by click, Enter or Space; close on
 // Escape, the scrim or Close; focus kept inside while it is open and returned to the row after), the Settings filters
 // and search, the action forms (an on-page confirmation, then one fetch POST; on success the toast is kept in
-// sessionStorage and the page reloads, on refusal the toast shows and the form stays), and the trace viewer's agent
-// filter. Every page reads in full without it; an action needs it.
+// sessionStorage and the page reloads, on refusal the toast shows and the form stays), the trace viewer's agent
+// filter, the tenant switcher (a change submits its form; without the script its Switch button does), Export PDF
+// (window.print) and, for printing, every fold opened and closed again after. Every page reads in full without it; an
+// action needs it.
 
 import { createHash } from "node:crypto";
-import { DARK, LIGHT, escapeHtml } from "../document/report.ts";
+import { EXECUTIVE_CSS } from "../document/executive.ts";
+import { escapeHtml } from "../document/report.ts";
+import { BASE_CSS, DARK, DARK_MORE, LIGHT, LIGHT_MORE, MARK, PRINT_TOKENS, ROOT_CSS } from "../design/theme.ts";
 
 export { escapeHtml };
 
-export const CONSOLE_LIGHT = `${LIGHT};--locked:#2b5c8a;--locked-bg:#e7eef6;--window:#835700;--window-bg:#f8ecd2;--hover:#f3f1ec;--focus:#2b5c8a;--scrim:rgba(20,20,22,.36);--shadow:0 10px 40px rgba(0,0,0,.14)`;
-export const CONSOLE_DARK = `${DARK};--locked:#8db8e6;--locked-bg:#1b2733;--window:#f0c46e;--window-bg:#382c13;--hover:#202226;--focus:#8db8e6;--scrim:rgba(0,0,0,.55);--shadow:0 10px 40px rgba(0,0,0,.5)`;
+/** The console's tokens: the one design's (src/design/theme.ts), the owner's report's colours and the console's own on top. */
+export const CONSOLE_LIGHT = `${LIGHT};${LIGHT_MORE}`;
+export const CONSOLE_DARK = `${DARK};${DARK_MORE}`;
 
-export const CSS = `:root{${CONSOLE_LIGHT};--mono:ui-monospace,SFMono-Regular,"Cascadia Mono",Consolas,"Liberation Mono",Menlo,monospace;color-scheme:light}
-@media (prefers-color-scheme:dark){:root{${CONSOLE_DARK};color-scheme:dark}}
-*{box-sizing:border-box}
+export const CSS = `${ROOT_CSS}
+${BASE_CSS}
 [hidden]{display:none!important}
-html{-webkit-text-size-adjust:100%}
-body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;overflow-wrap:anywhere}
-a{color:inherit;text-decoration-thickness:1px;text-underline-offset:2px}
-a:hover{text-decoration-thickness:2px}
 button,input,select,textarea{font:inherit;color:inherit}
 :focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:3px}
 .skip{position:absolute;left:-999px;top:8px;z-index:50;background:var(--card);padding:6px 10px;border:1px solid var(--line);border-radius:6px}
 .skip:focus{left:8px}
-code,.mono{font-family:var(--mono);font-size:.87em}
-.muted{color:var(--muted)}
-.nw{white-space:nowrap}
-h1{font-size:22px;line-height:1.25;margin:0 0 4px;letter-spacing:-.005em}
-h2{font-size:17px;line-height:1.3;margin:28px 0 8px}
+h2{margin:28px 0 8px}
 h2 .cnt{font-weight:500;color:var(--muted);font-size:14px;margin-left:6px}
-h3{font-size:15px;line-height:1.35;margin:0 0 4px}
-p{margin:4px 0}
-ul{margin:4px 0;padding-left:20px}
+h3{margin:0 0 4px}
 .shell{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:100vh}
 .side{position:sticky;top:0;height:100vh;overflow:auto;background:var(--card);border-right:1px solid var(--line);padding:18px 12px;display:flex;flex-direction:column;gap:14px}
-.brand{padding:0 8px}
+.brand{padding:0 8px;display:flex;gap:10px;align-items:flex-start}
 .brand b{display:block;font-size:16px}
 .brand span{display:block;font-size:12.5px;color:var(--muted);margin-top:2px}
+.brand .mark{margin-top:1px}
 .tenant{margin:0 2px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:12.5px;color:var(--muted)}
 .tenant b{display:block;font-size:14px;color:var(--fg)}
+.tenant .mode{display:block;margin-top:4px}
+.tsw{margin:0}
+.tsw label{display:block;font-size:12px;color:var(--muted);margin:0 0 3px}
+.tsw-row{display:flex;gap:6px}
+.tsw select{flex:1;min-width:0;padding:5px 8px;border:1px solid var(--line);border-radius:7px;background:var(--card);font-size:14px;font-weight:600;color:var(--fg)}
+.tsw .btn{padding:4px 10px;font-size:13px}
+.js .tsw .btn{display:none}
 .nav{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
 .nav a{display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:7px 10px;border-radius:7px;text-decoration:none}
 .nav a:hover{background:var(--hover)}
@@ -55,30 +59,23 @@ ul{margin:4px 0;padding-left:20px}
 .nav .cnt{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
 .nav .cnt.need{color:var(--need);font-weight:650}
 .side form{margin:0 2px}
+.side .tsw{margin:0}
 .side-foot{margin-top:auto;padding:0 8px;font-size:12px;color:var(--muted)}
 .content{min-width:0;display:flex;flex-direction:column}
-.bar{position:sticky;top:0;z-index:10;background:var(--bg);border-bottom:1px solid var(--line)}
-.bar-in{max-width:1200px;margin:0 auto;padding:10px 24px;display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:2px 20px}
-.sum{font-size:17px;font-weight:600;line-height:1.3}
-.sum a{text-decoration:none;white-space:nowrap}
-.sum a:hover{text-decoration:underline}
-.sum b{font-variant-numeric:tabular-nums}
-.sum .need{color:var(--need)}
+.bar-in{justify-content:space-between;align-items:baseline;gap:2px 20px}
 .sum .adopted{color:var(--adopted)}
 .sum .locked{color:var(--locked)}
 .sum .window{color:var(--window)}
 .sum .zero{color:var(--muted)}
 .sum .dot{color:var(--muted);font-weight:400}
-.who{display:flex;flex-wrap:wrap;gap:0 12px;font-size:12.5px;color:var(--muted)}
-.who b{color:var(--fg);font-weight:600}
 main{flex:1;min-width:0}
 .wrap{max-width:1200px;margin:0 auto;padding:20px 24px 56px}
 .head{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:flex-end;justify-content:space-between;margin:0 0 6px}
 .lede{color:var(--muted);max-width:86ch}
 .facts{display:flex;flex-wrap:wrap;gap:4px 18px;margin:8px 0 12px;font-size:13.5px;color:var(--muted)}
 .facts b{color:var(--fg);font-weight:600}
-.alert{border:1px solid var(--need);border-radius:8px;padding:8px 12px;margin:10px 0;color:var(--need);background:var(--need-bg)}
-.note{border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin:10px 0;background:var(--card);font-size:14px}
+.alert{margin:10px 0;padding:8px 12px}
+.note{border:1px solid var(--line);border-radius:var(--radius);padding:8px 12px;margin:10px 0;background:var(--card);font-size:14px}
 .b{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;line-height:1.35;padding:1px 8px;border-radius:999px;border:1px solid var(--line);white-space:nowrap;font-weight:560}
 .b::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;flex:none}
 .b.need{color:var(--need);background:var(--need-bg);border-color:transparent}
@@ -93,7 +90,7 @@ main{flex:1;min-width:0}
 .verb.v-ESCALATE,.verb.v-FIX{color:var(--need);background:var(--need-bg)}
 .verb.v-ADOPT{color:var(--adopted)}
 .verb.v-HOLD.w{color:var(--window);background:var(--window-bg)}
-.tbl{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.tbl{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
 table{border-collapse:collapse;width:100%;font-size:15px}
 th,td{text-align:left;vertical-align:top;padding:7px 10px;border-bottom:1px solid var(--line)}
 th{font-size:12.5px;font-weight:600;color:var(--muted);background:var(--soft);white-space:nowrap}
@@ -227,6 +224,35 @@ table.rt tr.grp td::before{display:none}
 .wf form{grid-template-columns:1fr}
 .wf .hint{grid-column:1}
 .report{height:calc(100vh - 230px)}
+.ex-tools{flex-wrap:wrap}
+}
+${EXECUTIVE_CSS}
+.ex-tools{display:flex;align-items:center;justify-content:space-between;gap:8px 16px;margin:0 0 14px;padding:0 0 10px;border-bottom:1px solid var(--line)}
+.ex-act{display:inline-flex;gap:8px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--card)}
+.seg a{padding:6px 12px;text-decoration:none;font-size:14px;border-left:1px solid var(--line)}
+.seg a:first-child{border-left:0}
+.seg a:hover{background:var(--hover)}
+.seg a[aria-current="page"]{background:var(--fg);color:var(--bg);font-weight:600}
+.tpls{display:flex;flex-direction:column;gap:10px;margin:14px 0 0}
+.tpl{padding:0}
+.tpl>summary{list-style:none;display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:12px 16px}
+.tpl>summary::-webkit-details-marker{display:none}
+.tpl>summary::before{content:"\\25B8";color:var(--muted)}
+.tpl[open]>summary::before{content:"\\25BE"}
+.tpl-name{font-family:var(--mono);font-weight:600;font-size:14px}
+.tpl-n{margin-left:auto;color:var(--muted);font-size:13.5px}
+.tpl-n .need{color:var(--need);font-weight:600}
+.tpl-rule{margin:0;padding:0 16px 10px;font-size:13.5px}
+.tpl .tbl{border-width:1px 0 0;border-radius:0 0 var(--radius) var(--radius)}
+.tpl-t td .verb{margin-right:4px}
+@media print{
+:root{${PRINT_TOKENS}}
+body{font-size:10pt}
+.side,.bar,.skip,.toasts,.drawer,.scrim,.ex-tools{display:none!important}
+.shell{display:block}
+.wrap{max-width:none;padding:0}
+a{text-decoration:none}
 }`;
 
 /** The one script (see the header). No template literal and no ${ inside, so it sits in this file as a plain string. */
@@ -234,6 +260,7 @@ export const SCRIPT = `(function(){"use strict";
 var $=function(s,el){return (el||document).querySelector(s)};
 var $$=function(s,el){return Array.prototype.slice.call((el||document).querySelectorAll(s))};
 var keep={get:function(k){try{return sessionStorage.getItem(k)}catch(e){return null}},set:function(k,v){try{sessionStorage.setItem(k,v)}catch(e){}},del:function(k){try{sessionStorage.removeItem(k)}catch(e){}}};
+document.documentElement.classList.add("js");
 var toasts=$("#toasts");
 function toast(t){if(!toasts)return;var d=document.createElement("div");d.className="toast"+(t.ok?"":" err");d.setAttribute("role",t.ok?"status":"alert");var h=document.createElement("b");h.textContent=t.title||"";d.appendChild(h);if(t.lines&&t.lines.length){var p=document.createElement("pre");p.textContent=t.lines.join("\\n");d.appendChild(p)}var x=document.createElement("button");x.type="button";x.className="tx";x.setAttribute("aria-label","Dismiss");x.textContent="\\u00d7";x.onclick=function(){d.remove()};d.appendChild(x);toasts.appendChild(d);if(t.ok)setTimeout(function(){d.remove()},15000)}
 document.addEventListener("click",function(e){var x=e.target.closest(".toast .tx");if(x)x.parentNode.remove()});
@@ -252,6 +279,10 @@ function send(form){var btns=$$("button",form);btns.forEach(function(b){b.disabl
 document.addEventListener("submit",function(e){var form=e.target;if(!form.matches||!form.matches("form[data-action]"))return;e.preventDefault();var conf=$(".confirm",form);if(conf&&conf.hidden){if(!form.reportValidity())return;var s=$("[data-summary]",conf);if(s&&form.dataset.summary)s.textContent=summary(form);conf.hidden=false;var yes=$("[data-yes]",conf);if(yes)yes.focus();return}send(form)});
 function summary(form){var h=form.elements.hours;var text=form.dataset.summary;if(h){var until=new Date(Date.now()+Number(h.value||0)*3600000);text=text.replace("{until}",until.toISOString().slice(0,16).replace("T"," ")+" UTC")}return text}
 document.addEventListener("click",function(e){var no=e.target.closest("[data-no]");if(no){var c=no.closest(".confirm");if(c)c.hidden=true}});
+document.addEventListener("change",function(e){var s=e.target;if(s.matches&&s.matches("select[data-autosubmit]")&&s.form)s.form.submit()});
+$$("[data-print]").forEach(function(b){b.hidden=false;b.addEventListener("click",function(){window.print()})});
+addEventListener("beforeprint",function(){$$("details:not([open])").forEach(function(d){d.open=true;d.dataset.printed="1"})});
+addEventListener("afterprint",function(){$$("details[data-printed]").forEach(function(d){d.open=false;delete d.dataset.printed})});
 var af=$("#agent");if(af){var trs=$$("tbody tr[data-agent]"),tc=$("#tcount");af.addEventListener("change",function(){var n=0;trs.forEach(function(r){r.hidden=af.value!==""&&r.dataset.agent!==af.value;if(!r.hidden)n++});if(tc)tc.textContent=n+" of "+trs.length+" events"})}
 })();`;
 
@@ -269,11 +300,15 @@ export const ASSETS = {
   js: asset("console", "js", "text/javascript; charset=utf-8", SCRIPT),
 } as const;
 
-export interface NavCounts { settings: number; findings: number; needs: number; actions: number; traces: number }
+export interface NavCounts { settings: number; findings: number; needs: number; actions: number; traces: number; templates: number }
 export interface Shell {
   title: string;
-  page: "overview" | "settings" | "findings" | "actions" | "traces" | "sources" | "policy" | "document";
+  page: "overview" | "executive" | "settings" | "templates" | "findings" | "actions" | "traces" | "sources" | "policy" | "document";
   tenant: string;
+  /** The tenants the switcher lists; with one, the tenant reads as plain text. */
+  tenants: readonly string[];
+  /** The page a switch returns to. */
+  returnTo: string;
   modeLine: string;
   bar: string | null;
   nav: NavCounts;
@@ -289,8 +324,8 @@ export interface Shell {
 }
 
 const NAV: readonly [Shell["page"], string, string][] = [
-  ["overview", "/overview", "Overview"], ["settings", "/settings", "Settings"], ["findings", "/findings", "Findings"],
-  ["actions", "/actions", "Actions and tickets"], ["traces", "/traces", "Traces"], ["sources", "/sources", "Sources"],
+  ["overview", "/overview", "Overview"], ["executive", "/executive", "Executive"], ["settings", "/settings", "Settings"], ["templates", "/templates", "Templates"],
+  ["findings", "/findings", "Findings"], ["actions", "/actions", "Actions and tickets"], ["traces", "/traces", "Traces"], ["sources", "/sources", "Sources"],
 ];
 
 const navCount = (s: Shell, page: Shell["page"]): string => {
@@ -299,11 +334,19 @@ const navCount = (s: Shell, page: Shell["page"]): string => {
   if (page === "findings") return n.needs ? `<span class="cnt need">${n.needs} need you</span>` : `<span class="cnt">${n.findings}</span>`;
   if (page === "actions") return `<span class="cnt">${n.actions}</span>`;
   if (page === "traces") return `<span class="cnt">${n.traces}</span>`;
+  if (page === "templates") return `<span class="cnt">${n.templates}</span>`;
   return "";
 };
 
 export function toastHtml(t: { ok: boolean; title: string; lines: string[] }): string {
   return `<div class="toast${t.ok ? "" : " err"}" role="${t.ok ? "status" : "alert"}"><b>${escapeHtml(t.title)}</b>${t.lines.length ? `<pre>${escapeHtml(t.lines.join("\n"))}</pre>` : ""}<button type="button" class="tx" aria-label="Dismiss">×</button></div>`;
+}
+
+/** The tenant switcher: a form that names the tenant and the page to return to; a change submits it (the script), else its Switch button. */
+export function tenantSwitcher(s: Pick<Shell, "tenant" | "tenants" | "csrf" | "returnTo">): string {
+  if (s.tenants.length < 2) return `<b>${escapeHtml(s.tenant)}</b>`;
+  const options = s.tenants.map((t) => `<option value="${escapeHtml(t)}"${t === s.tenant ? " selected" : ""}>${escapeHtml(t)}</option>`).join("");
+  return `<form method="post" action="/do/tenant" class="tsw"><input type="hidden" name="csrf" value="${escapeHtml(s.csrf)}"><input type="hidden" name="return" value="${escapeHtml(s.returnTo)}"><label for="tenant-pick">Tenant</label><div class="tsw-row"><select id="tenant-pick" name="tenant" data-autosubmit>${options}</select><button type="submit" class="btn">Switch</button></div></form>`;
 }
 
 export function layout(s: Shell): string {
@@ -321,8 +364,8 @@ export function layout(s: Shell): string {
 <a class="skip" href="#main">Skip to content</a>
 <div class="shell">
 <nav class="side" aria-label="Sections">
-<div class="brand"><b>ConfigLeaf console</b><span>configuration assurance, the technician's view</span></div>
-<div class="tenant"><b>${escapeHtml(s.tenant)}</b>${escapeHtml(s.modeLine)}</div>
+<div class="brand">${MARK}<div><b>ConfigLeaf console</b><span>configuration assurance, the technician's view</span></div></div>
+<div class="tenant">${tenantSwitcher(s)}<span class="mode">${escapeHtml(s.modeLine)}</span></div>
 <ul class="nav">
 ${nav}
 </ul>

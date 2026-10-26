@@ -13,17 +13,25 @@
 //              and Unlock, Approve and Lock.
 //   Findings   the current decisions by verb with their labels, reasons (every instant in them as the page formats
 //              one), expiries, causes and tickets, and Record exception on each.
+//   Executive  the executive report (src/document/executive.ts) for the period the switch names, with Export PDF (the
+//              browser's print, the report's print stylesheet) and Download HTML (the same report as one standalone file).
+//   Templates  the settings of the latest passing runs grouped by the policy rule that governs each (the rule's object
+//              and setting globs, the most specific match, src/policy/resolve.ts): per template its rule, the objects
+//              whose settings follow it with their counts, each one's lock under it and its status, and the deviations,
+//              the objects whose findings are open under the rule; each object links to its Settings drawer.
 //   Actions and tickets, Traces, Sources, and two pages the links point at: the policy rules and the document.
 
 import type { Action, ChangeWindow, FindingCause, PolicyRule } from "../data/rows.ts";
+import { PERIODS, PERIOD_SHORT, executiveSections, type Executive, type ExecutiveContext } from "../document/executive.ts";
 import { untilPhrase, utc } from "../document/report.ts";
 import { withRestore } from "../explain/cause.ts";
 import { classLabel, findingWhere, hex8, nemotronOf, shortModel, tail, thousands } from "../loop/present.ts";
 import { labelsOf } from "../psa/index.ts";
 import type { Verb } from "../pipeline.ts";
+import { resolvePolicy } from "../policy/resolve.ts";
 import { WINDOW_MAX_HOURS, WINDOW_MIN_HOURS } from "../policy/window.ts";
 import { escapeHtml } from "./html.ts";
-import { STATUSES, type ConsoleMode, type Decision, type PassRun, type SettingObject, type Snapshot, type Status } from "./state.ts";
+import { STATUSES, objectKey, type ConsoleMode, type Decision, type PassRun, type SettingObject, type Snapshot, type Status } from "./state.ts";
 
 type Row = Readonly<Record<string, string>>;
 
@@ -403,6 +411,107 @@ function drawerTemplate(v: View, o: SettingObject, id: string, actions: readonly
 ${actionForms(v, o)}
 </div>
 </template>`;
+}
+
+// ---- Executive --------------------------------------------------------------------------------------------------
+
+/** The executive report inside the shell: the period switch, Export PDF (shown by the script, which prints) and Download HTML, then the report's sections. */
+export function executivePage(x: Executive, ctx: ExecutiveContext): string {
+  const tools = `<div class="ex-tools">
+<nav class="seg" aria-label="Period">${PERIODS.map((p) => `<a href="/executive?period=${p}"${p === x.period ? ' aria-current="page"' : ""}>${PERIOD_SHORT[p]}</a>`).join("")}</nav>
+<span class="ex-act"><button type="button" class="btn" data-print hidden>Export PDF</button><a class="btn" href="/executive/download?period=${x.period}" download>Download HTML</a></span>
+</div>`;
+  return `${tools}
+${executiveSections(x, ctx)}`;
+}
+
+// ---- Templates --------------------------------------------------------------------------------------------------
+
+/** One template: a policy rule (null for the settings no rule governs), the objects whose settings follow it, and its deviations. */
+export interface Template {
+  rule: PolicyRule | null;
+  objects: { key: string; object: SettingObject | null; name: string; where: string; settings: number; open: Decision[] }[];
+  settings: number;
+  /** Objects whose findings are open under the rule. */
+  deviations: number;
+}
+
+/** The rules in force: of each family (tenant, surface, object and setting globs) the highest version, as src/policy/resolve.ts weighs them. */
+function latestRules(v: View): PolicyRule[] {
+  const latest = new Map<string, PolicyRule>();
+  for (const r of v.snapshot.doc.data.rules) {
+    const f = [r.tenant_id, r.surface, r.object_glob, r.setting_glob].join("\u001f");
+    const seen = latest.get(f);
+    if (!seen || Number(r.version) > Number(seen.version) || (Number(r.version) === Number(seen.version) && r.rule_id < seen.rule_id)) latest.set(f, r);
+  }
+  return [...latest.values()];
+}
+
+/** The templates of the tenant: every setting of the latest passing runs under the rule that governs it, every open finding under the rule it was decided by. */
+export function templatesOf(v: View): Template[] {
+  const rules = latestRules(v);
+  const objectsBy = new Map(v.objects.map((o) => [o.key, o]));
+  const groups = new Map<string, Map<string, Template["objects"][number]>>();
+  const row = (ruleId: string, key: string, fallback: { surface: string; host: string | null; object_id: string }): Template["objects"][number] => {
+    const g = groups.get(ruleId) ?? new Map<string, Template["objects"][number]>();
+    groups.set(ruleId, g);
+    let r = g.get(key);
+    if (!r) {
+      const o = objectsBy.get(key) ?? null;
+      const where = o ? (o.kind === "file" ? (o.host ?? "-") : o.group.replace(/^zone /, "")) : (fallback.host ?? "-");
+      g.set(key, (r = { key, object: o, name: o ? (o.kind === "file" ? tail(o.object_id) : o.name) : tail(fallback.object_id), where, settings: 0, open: [] }));
+    }
+    return r;
+  };
+  for (const x of v.snapshot.observations) {
+    const host = x.host || null;
+    const rule = resolvePolicy(v.snapshot.doc.data.rules, { tenant_id: v.tenant, surface: x.surface, object_id: x.object_id, setting_path: x.setting_path });
+    row(rule?.rule_id ?? "", objectKey(x.surface, host, x.object_id), { surface: x.surface, host, object_id: x.object_id }).settings++;
+  }
+  for (const d of v.decisions) if (d.rule_id) row(d.rule_id, objectKey(d.surface, d.host, d.object_id), d).open.push(d);
+  const byId = new Map(rules.map((r) => [r.rule_id, r]));
+  const out: Template[] = [...groups].map(([id, g]) => {
+    const objects = [...g.values()].sort((a, b) => (b.open.length ? 1 : 0) - (a.open.length ? 1 : 0) || cmp(a.where, b.where) || cmp(a.name, b.name));
+    return { rule: byId.get(id) ?? null, objects, settings: objects.reduce((n, o) => n + o.settings, 0), deviations: objects.filter((o) => o.open.length).length };
+  });
+  // the rules no setting follows, so the page names every rule
+  for (const r of rules) if (!groups.has(r.rule_id)) out.push({ rule: r, objects: [], settings: 0, deviations: 0 });
+  const crit = ["critical", "high", "normal", "low"];
+  return out.sort((a, b) => b.deviations - a.deviations || b.settings - a.settings || crit.indexOf(a.rule?.criticality ?? "") - crit.indexOf(b.rule?.criticality ?? "") || cmp(a.rule?.rule_id ?? "~", b.rule?.rule_id ?? "~"));
+}
+
+/** An object's lock under one template: the open window on it, else the rule's lock. */
+function lockUnder(v: View, o: SettingObject | null, rule: PolicyRule | null): string {
+  if (o?.window) return `<span class="b window" title="${v.t(`change window ${o.window.window_id} opened by ${o.window.opened_by}, open until ${utc(o.window.until)}`)}">open until ${v.t(shortUtc(o.window.until))}</span>`;
+  if (!rule) return `<span class="b open">open, no rule</span>`;
+  return Number(rule.lock) === 1 ? `<span class="b locked">locked by rule</span>` : `<span class="b open">open by rule</span>`;
+}
+
+export function templatesPage(v: View): string {
+  const ts = templatesOf(v);
+  const cards = ts.map((x, i) => {
+    const r = x.rule;
+    const name = r ? v.t(template(r)) : "No rule";
+    const rows = x.objects.map((o) => {
+      const link = o.object ? `<a href="/settings?open=${encodeURIComponent(encodeKey(o.object.key))}">${v.t(o.name)}</a>` : v.t(o.name);
+      return `<tr><td data-label="Object"><span class="on">${link}</span> <span class="oh">${v.t(o.where)}</span></td><td data-label="Settings" class="num">${thousands(o.settings)}</td><td data-label="Lock">${lockUnder(v, o.object, r)}</td><td data-label="Status">${o.object ? statusBadge(o.object.status) : `<span class="muted">not in Settings</span>`}</td><td data-label="Open under the rule">${o.open.length ? o.open.map((d) => `<a href="/findings#f-${v.t(d.finding_id)}">${verbBadge(v, d)}</a>`).join("") : `<span class="muted">none</span>`}</td></tr>`;
+    });
+    const facts = r
+      ? `<p class="tpl-rule"><a href="/policy#${escapeHtml(r.rule_id)}"><code>${v.t(r.rule_id)}</code></a> · ${v.t(r.surface)} · ${v.t(r.criticality)} · on drift ${v.t(r.on_drift)}, no copy ${v.t(r.on_no_copy)} · hold ${v.t(r.hold_max_hours)} h · alert ${v.t(r.alert)}, ${v.t(r.psa_priority)}${r.note ? ` · <span class="muted">${v.t(r.note)}</span>` : ""}</p>`
+      : `<p class="tpl-rule muted">The settings no policy rule governs: the default checks decide them.</p>`;
+    const lock = r ? (Number(r.lock) === 1 ? `<span class="b locked">locked</span>` : `<span class="b open">open</span>`) : `<span class="b open">no rule</span>`;
+    return `<details class="card tpl" id="tpl-${r ? escapeHtml(r.rule_id) : "none"}"${x.deviations || i === 0 ? " open" : ""}>
+<summary><span class="tpl-name">${name}</span> ${lock} <span class="tpl-n">${plural(x.settings, "setting")} in ${plural(x.objects.length, "object")} · <span${x.deviations ? ' class="need"' : ""}>${plural(x.deviations, "deviation")}</span></span></summary>
+${facts}
+${rows.length ? `<div class="tbl"><table class="rt tpl-t"><thead><tr><th scope="col">Object</th><th scope="col" class="num">Settings</th><th scope="col">Lock</th><th scope="col">Status</th><th scope="col">Open under the rule</th></tr></thead><tbody>${rows.join("\n")}</tbody></table></div>` : `<p class="muted">No setting of the latest passing runs follows this rule.</p>`}
+</details>`;
+  });
+  const settings = ts.reduce((n, x) => n + x.settings, 0);
+  return `<div class="head"><div><h1>Templates</h1>
+<p class="lede">The ${plural(settings, "setting")} of ${v.t(v.tenant)}'s latest passing runs, grouped by the policy rule that governs each (the policy_rule rows the store holds, loaded from the policy file; the most specific match governs, as on the <a href="/policy">policy</a> page). Per template: its rule, the objects whose settings follow it, each one's lock under it and its status, and the deviations, the objects whose findings are open under the rule. Select an object for its Settings drawer.</p></div></div>
+<div class="tpls">
+${cards.join("\n")}
+</div>`;
 }
 
 // ---- Findings ---------------------------------------------------------------------------------------------------

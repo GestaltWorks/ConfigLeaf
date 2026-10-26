@@ -27,7 +27,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  buildSite, DECK_URL, escapeHtml, formatTraceLine, headerStats, headlineTile, markdownToHtml, MAX_BYTES, nemotronView, newestResults, readTrace, renderSiteHtml, REPORT_LINK, repositoryUrl, scanOutput, SITE_TEMPLATE, SiteError, word, type BuildResult, type ExampleView, type JudgeSelectView, type SiteInput,
+  buildSite, DECK_URL, escapeHtml, EXECUTIVE_LINK, formatTraceLine, headerStats, headlineTile, markdownToHtml, MAX_BYTES, nemotronView, newestResults, readTrace, renderSiteHtml, REPORT_LINK, repositoryUrl, scanOutput, SITE_TEMPLATE, SiteError, word, type BuildResult, type ExampleView, type JudgeSelectView, type SiteInput,
 } from "../scripts/build-site.ts";
 import { templateById } from "../src/catalogue/templates.ts";
 import { config } from "../src/config.ts";
@@ -38,6 +38,7 @@ import { fileSourceRows, sourceRows, sourcesMarkdown } from "../src/document/ren
 import { VERBS } from "../src/pipeline.ts";
 import { Redactor } from "../src/redactor.ts";
 import { DQ_RULES, USL_NAME, USL_TABLES } from "../src/zetaris/setup.ts";
+import { MARK, ROOT_CSS } from "../src/design/theme.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const EXAMPLES = path.join(ROOT, "examples");
@@ -204,9 +205,9 @@ describe("the replay page", () => {
     // the script and the styles name no host but localhost (the file:// hint); the document's ticket url is text in a list item
     const code = [...html.matchAll(/<(script|style)>([\s\S]*?)<\/\1>/g)].map((m) => m[2]).join("\n");
     expect(code).not.toMatch(/https?:\/\/(?!localhost)/);
-    // the tile's caption and the header's two Nemotron counts link to the tab, then the Report link to the owner's report
-    // in the repository, then the four tabs
-    expect([...html.matchAll(/\b(?:href|src|action)="([^"]*)"/g)].map((m) => m[1])).toEqual(["#nemotron", "#nemotron", "#nemotron", REPORT_LINK, "#findings", "#document", "#sources", "#nemotron"]);
+    // the header bar links the two reports, the tile's caption and the header's two Nemotron counts link to the tab, then
+    // the Report and Executive report links to the two reports in the repository, then the four tabs
+    expect([...html.matchAll(/\b(?:href|src|action)="([^"]*)"/g)].map((m) => m[1])).toEqual([REPORT_LINK, EXECUTIVE_LINK, "#nemotron", "#nemotron", "#nemotron", REPORT_LINK, EXECUTIVE_LINK, "#findings", "#document", "#sources", "#nemotron"]);
     expect([...html.matchAll(/fetch\(([^)]*)\)/g)].map((m) => m[1])).toEqual(['"data/index.json"', "e.file"]);
   });
 
@@ -216,8 +217,15 @@ describe("the replay page", () => {
     expect(REPORT_LINK).toBe("../examples/report.html");
     expect(existsSync(path.join(ROOT, "docs", REPORT_LINK))).toBe(true);
     expect(header).toContain(`<p class="report"><a href="${REPORT_LINK}">Report</a><br><span class="meta">The owner's report, <code>examples/report.html</code>: one HTML file over the same recorded bundle as the Document tab, opened from a clone of the repository.</span></p>`);
+    // the executive report beside it, examples/executive.html, the same way
+    expect(EXECUTIVE_LINK).toBe("../examples/executive.html");
+    expect(existsSync(path.join(ROOT, "docs", EXECUTIVE_LINK))).toBe(true);
+    expect(header).toContain(`<p class="report"><a href="${EXECUTIVE_LINK}">Executive report</a><br><span class="meta">The executive report, <code>examples/executive.html</code>: `);
     const nav = /<nav class="tabs"[\s\S]*?<\/nav>/.exec(header)![0];
     expect(nav).not.toContain(REPORT_LINK);
+    expect(nav).not.toContain(EXECUTIVE_LINK);
+    // the one design's header bar above the header: the leaf mark, then the two reports
+    expect(html).toContain(`<div class="bar"><div class="bar-in">\n${MARK}\n<nav class="sum" aria-label="Reports"><a href="${REPORT_LINK}">Report</a> · <a href="${EXECUTIVE_LINK}">Executive report</a></nav>`);
   });
 
   it("the header counts each finding once by its finding id, beside the 9 rows over 3 slices, as static HTML; each slice keeps its own counts", () => {
@@ -585,13 +593,16 @@ describe("the landing page, docs/site.html", () => {
     expect(existsSync(path.join(ROOT, "scripts", "site", "selectors.ts.txt"))).toBe(false);
   });
 
-  it("links the replay page and the owner's report, and nothing outside the repository but its repository link: no CDN, no font, no script", () => {
+  it("links the replay page, the owner's report and the executive report, and nothing outside the repository but its repository link: no CDN, no font, no script", () => {
     const html = site();
     const repo = repositoryUrl();
     expect(html).not.toMatch(/<script|<link|<img|<iframe|<object|<embed|<video|<audio|@import|@font-face|url\(|\bsrc=/i);
     const external = [...html.matchAll(/(?:[a-z][a-z0-9+.-]*:)?\/\/[^\s"'<>]+/gi)].map((m) => plain(m[0]));
     expect(external).toEqual([DECK_URL, repo ?? ""].filter((u) => /^https?:\/\//.test(u)));
-    expect([...html.matchAll(/\b(?:href|src|action)="([^"]*)"/g)].map((m) => plain(m[1]))).toEqual(["index.html", REPORT_LINK, ...(DECK_URL ? [DECK_URL] : []), ...(repo ? [repo] : [])]);
+    expect([...html.matchAll(/\b(?:href|src|action)="([^"]*)"/g)].map((m) => plain(m[1]))).toEqual(["index.html", REPORT_LINK, EXECUTIVE_LINK, ...(DECK_URL ? [DECK_URL] : []), ...(repo ? [repo] : [])]);
+    // the one design's tokens and mark (src/design/theme.ts), light and dark, the dark block's braces apart
+    expect(html).toContain(ROOT_CSS.replaceAll("}}", "} }"));
+    expect(html).toContain(MARK);
     // DECK_URL is empty and package.json names no repository: both links are left out, their template lines with them
     expect(html.includes(">Deck</a>")).toBe(DECK_URL !== "");
     expect(html.includes(">Repository</a>")).toBe(repo !== null);

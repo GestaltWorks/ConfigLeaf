@@ -14,6 +14,9 @@
 //                      when either is missing. A dry pass starts in the background; Run a pass runs another. The
 //                      console never runs act.
 //
+// The header's switcher lists the tenants the store holds runs of (in sample mode the bundle's) and turns every page
+// to the one it names; --tenant or CONSOLE_TENANT names the first.
+//
 // Prints one line when it listens (and, live, one more when Zetaris lacks what the windows need) and one per action;
 // stops on SIGINT or SIGTERM.
 // Exit 2 on a usage error or when live mode lacks REDACT_SALT, DATABASE_URL or ZETARIS_API_KEY; 1 when it cannot start.
@@ -40,7 +43,7 @@ try {
 }
 if (args.help) {
   console.log(USAGE);
-  console.log("Serves the technician's console on 127.0.0.1: the owner's report, every setting with its lock and approval, the findings, the actions and tickets, the traces and the sources; Unlock, Approve, Lock, Record exception and Run a pass. SAMPLE_MODE=true reads the recorded bundle on sql.js.");
+  console.log("Serves the technician's console on 127.0.0.1: the owner's report, the executive report, every setting with its lock and approval, the templates, the findings, the actions and tickets, the traces and the sources; Unlock, Approve, Lock, Record exception and Run a pass; a tenant switcher in the header. SAMPLE_MODE=true reads the recorded bundle on sql.js.");
   process.exit(0);
 }
 const portText = args.port ?? process.env.CONSOLE_PORT ?? String(DEFAULT_PORT);
