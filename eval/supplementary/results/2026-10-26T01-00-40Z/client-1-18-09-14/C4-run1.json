@@ -1,0 +1,214 @@
+{
+ "config": {
+  "id": "C4",
+  "text": "Nemotron 3 Ultra alone: the verdict from the rows, no SQL checks, no catalogue (baseline)",
+  "select": {
+   "kind": "none"
+  },
+  "judge": null,
+  "direct": "ultra"
+ },
+ "run": 1,
+ "valid": true,
+ "invalid_reason": null,
+ "started_at": "2026-10-26T02:34:31.443Z",
+ "finished_at": "2026-10-26T02:35:06.821Z",
+ "recording": "eval/supplementary/bundle.json",
+ "slice": {
+  "tenant": "client-1",
+  "at": "2026-10-25T18:09:14.465Z",
+  "rows": {
+   "collection_run": 101,
+   "observation": 27363,
+   "approved_setting": 336,
+   "backup_snapshot": 20,
+   "backup_item": 331,
+   "dns_record": 1102,
+   "audit_event": 1617,
+   "inventory_asset": 10,
+   "policy_rule": 26,
+   "vault_copy": 2136,
+   "copy_validation": 2016,
+   "probe": 2146,
+   "disposition": 491,
+   "action": 2,
+   "ticket": 3,
+   "referent_fingerprint": 2226,
+   "finding_cause": 0
+  }
+ },
+ "tenant": "client-1",
+ "decided_at": "2026-10-25T18:09:11.279Z",
+ "policy": {
+  "file": "policy/hackathon.json",
+  "version": 2,
+  "rows": 15,
+  "inserted": 0,
+  "rules": 26
+ },
+ "split_seed": null,
+ "set": "supplementary",
+ "counts": {
+  "items": 2,
+  "scored": 2,
+  "not_raised": 0,
+  "with_verdict": 2,
+  "not_judged": 0,
+  "agree": 2,
+  "disagree": 0,
+  "unsure": 0,
+  "false_positives": 0,
+  "labelled_no": 1,
+  "checks_selected": 0,
+  "checks_valid": 0,
+  "checks_invalid": 0,
+  "checks_ran_unmodified": 0,
+  "checks_run": 0,
+  "falsifier_ran": 0,
+  "falsifier_struck": 0,
+  "agreed_strikes": 0,
+  "wrong_strikes": 0,
+  "early_stops": 0,
+  "judge_withheld": 0,
+  "findings_assessed": 2,
+  "findings_with_disposition": 2,
+  "calls": 2,
+  "cache_hits": 0,
+  "substitutions": 0,
+  "memory_injected": 0,
+  "tokens_in": 1421,
+  "tokens_out": 1555,
+  "latency_ms_median": 17526
+ },
+ "items": [
+  {
+   "id": "S06",
+   "class": "drift_vs_approved",
+   "set": "supplementary",
+   "label": "yes",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-d235ecff843daff1"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "ESCALATE",
+   "reading": "yes",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-d235ecff843daff1",
+     "class": "drift_vs_approved",
+     "summary": "file in /etc/nginx/sites-available/host-525a57.com on host-4b4dc1 is 644c5f4af269, and its latest approval, 2026-10-25T18:08:29.101Z by operator, is c14c75198c71: the live value drifted from the approved one",
+     "decided_by": null,
+     "rule_id": null,
+     "checks": [],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "ESCALATE",
+     "reason": "The live nginx config hash (644c5f4af269) does not match the operator-approved hash (c14c75198c71) from 2026-10-25T18:08:29Z, indicating an unauthorized drift requiring technician investigation.",
+     "not_judged": null
+    }
+   ],
+   "direct": {
+    "verb": "ESCALATE",
+    "reason": "The live nginx config hash (644c5f4af269) does not match the operator-approved hash (c14c75198c71) from 2026-10-25T18:08:29Z, indicating an unauthorized drift requiring technician investigation."
+   },
+   "strikes": 0
+  },
+  {
+   "id": "S07",
+   "class": "changed_since_backup",
+   "set": "supplementary",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-ac7e08b8363ae75e"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-ac7e08b8363ae75e",
+     "class": "changed_since_backup",
+     "summary": "/etc/nginx/sites-available/host-525a57.com on host-4b4dc1 is 644c5f4af269 and its copy in the host's newest backup (snap-038fceed7aa05c02, taken 2026-10-25T03:40:05.995Z) is 77c0bfaa68ff: the live file and the backup copy differ",
+     "decided_by": null,
+     "rule_id": null,
+     "checks": [],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "The live nginx config file differs from the latest backup taken earlier today, indicating a recent change that should be reviewed before adoption.",
+     "not_judged": null
+    }
+   ],
+   "direct": {
+    "verb": "HOLD",
+    "reason": "The live nginx config file differs from the latest backup taken earlier today, indicating a recent change that should be reviewed before adoption."
+   },
+   "strikes": 0
+  }
+ ],
+ "calls": [
+  {
+   "kind": "direct",
+   "item": "S06",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_iahv0du4",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 11261,
+   "tokens_in": 701,
+   "tokens_out": 657,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_iahv0du4 openrouter/nvidia/nemotron-3-ultra-550b-a55b:free (ultra), signature verified, no memory injected, custody holds",
+   "scope": "supplementary-2026-10-26T01-00-40Z-g3-29",
+   "memory_injected": 0
+  },
+  {
+   "kind": "direct",
+   "item": "S07",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_9nx8yrb6",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 23791,
+   "tokens_in": 720,
+   "tokens_out": 898,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_9nx8yrb6 openrouter/nvidia/nemotron-3-ultra-550b-a55b:free (ultra), signature verified, no memory injected, custody holds",
+   "scope": "supplementary-2026-10-26T01-00-40Z-g3-30",
+   "memory_injected": 0
+  }
+ ],
+ "pass": null
+}

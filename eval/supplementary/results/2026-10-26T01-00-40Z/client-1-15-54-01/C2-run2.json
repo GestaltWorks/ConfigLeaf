@@ -1,0 +1,322 @@
+{
+ "config": {
+  "id": "C2",
+  "text": "C1 plus Nemotron 3.5 Lightning as the falsifier judge",
+  "select": {
+   "kind": "model",
+   "tier": "lightning"
+  },
+  "judge": "lightning",
+  "direct": null
+ },
+ "run": 2,
+ "valid": true,
+ "invalid_reason": null,
+ "started_at": "2026-10-26T01:01:17.829Z",
+ "finished_at": "2026-10-26T01:01:28.053Z",
+ "recording": "eval/supplementary/bundle.json",
+ "slice": {
+  "tenant": "client-1",
+  "at": "2026-10-25T15:54:01.957Z",
+  "rows": {
+   "collection_run": 71,
+   "observation": 19700,
+   "approved_setting": 333,
+   "backup_snapshot": 20,
+   "backup_item": 331,
+   "dns_record": 812,
+   "audit_event": 1275,
+   "inventory_asset": 10,
+   "policy_rule": 26,
+   "vault_copy": 1510,
+   "copy_validation": 1456,
+   "probe": 1443,
+   "disposition": 351,
+   "action": 0,
+   "ticket": 1,
+   "referent_fingerprint": 1575,
+   "finding_cause": 0
+  }
+ },
+ "tenant": "client-1",
+ "decided_at": "2026-10-25T15:53:58.661Z",
+ "policy": {
+  "file": "policy/hackathon.json",
+  "version": 2,
+  "rows": 15,
+  "inserted": 0,
+  "rules": 26
+ },
+ "split_seed": null,
+ "set": "supplementary",
+ "counts": {
+  "items": 2,
+  "scored": 2,
+  "not_raised": 0,
+  "with_verdict": 2,
+  "not_judged": 0,
+  "agree": 2,
+  "disagree": 0,
+  "unsure": 0,
+  "false_positives": 0,
+  "labelled_no": 2,
+  "checks_selected": 7,
+  "checks_valid": 7,
+  "checks_invalid": 0,
+  "checks_ran_unmodified": 7,
+  "checks_run": 7,
+  "falsifier_ran": 2,
+  "falsifier_struck": 0,
+  "agreed_strikes": 0,
+  "wrong_strikes": 0,
+  "early_stops": 0,
+  "judge_withheld": 0,
+  "findings_assessed": 2,
+  "findings_with_disposition": 2,
+  "calls": 4,
+  "cache_hits": 0,
+  "substitutions": 0,
+  "memory_injected": 0,
+  "tokens_in": 12002,
+  "tokens_out": 1299,
+  "latency_ms_median": 2266.5
+ },
+ "items": [
+  {
+   "id": "S01",
+   "class": "drift_vs_approved",
+   "set": "supplementary",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-d2e1aa9697e6fab7"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "ROLLBACK",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-d2e1aa9697e6fab7",
+     "class": "drift_vs_approved",
+     "summary": "file in /etc/nginx/conf.d/host-a00d2f.ai.conf on host-aa516a is 4de292773ac4, and its latest approval, 2026-10-24T19:57:38.206Z by operator, is 3f565467a831: the live value drifted from the approved one",
+     "decided_by": "policy",
+     "rule_id": "rule-e186e9d5790a7e6b",
+     "checks": [
+      {
+       "template": "change_in_last_backup",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "setting_matches_approved",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "restore_would_regress",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "actor_attributed",
+       "holds": false,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": {
+      "status": "stands",
+      "reason": "the refuting SELECT returned no rows",
+      "sql": "SELECT 1 FROM {{t:backup_item}} bi JOIN {{t:approved_setting}} ap ON bi.object_id = ap.object_id AND bi.setting_path = ap.setting_path WHERE bi.object_id = '/etc/nginx/conf.d/host-a00d2f.ai.conf' AND bi.value_hash = '3f565467a8316ea8cc825338f644baaee55d11e349a146392c2e77c10b102e94' AND ap.approved_at = '2026-10-24T19:57:38.206Z' AND ap.approved_by = 'operator' AND ap.value_hash = '3f565467a831' AND NOT EXISTS (SELECT 1 FROM {{t:observation}} o WHERE o.object_id = bi.object_id AND o.value_hash = '4de292773ac45041b6dd6347443a1a52cf8060220bd5bae25087326e72135dde' AND o.observed_at = '2026-10-25T15:53:46.292Z') LIMIT 50",
+      "rows": 0,
+      "receipt_id": "rcpt_req_30ahnafx",
+      "served_model": "openrouter/nvidia/nemotron-3.5-lightning",
+      "attempts": 1,
+      "cache_status": "miss",
+      "route": "openrouter/nvidia/nemotron-3.5-lightning",
+      "route_attempts": 1
+     },
+     "verb": "ROLLBACK",
+     "reason": "live value drifted from approved 3f565467a831; vault commit b0e36dc7 holds the approved copy, validated ok_with_gaps with 16 gaps, so rule rule-e186e9d5790a7e6b rolls it back to that copy; this configuration alone says ESCALATE: 3 of 4 preconditions fail: change_in_last_backup, setting_matches_approved, actor_attributed; the claim stands: the refuting SELECT returned no rows",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "S02",
+   "class": "changed_since_backup",
+   "set": "supplementary",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-16c204edb6e2b93b"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-16c204edb6e2b93b",
+     "class": "changed_since_backup",
+     "summary": "/etc/nginx/conf.d/host-a00d2f.ai.conf on host-aa516a is 4de292773ac4 and its copy in the host's newest backup (snap-0b816e741ae1dea6, taken 2026-10-25T03:40:31.444Z) is 3f565467a831: the live file and the backup copy differ",
+     "decided_by": "policy",
+     "rule_id": "rule-e186e9d5790a7e6b",
+     "checks": [
+      {
+       "template": "change_in_last_backup",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "restore_would_regress",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "setting_matches_approved",
+       "holds": false,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 3,
+      "valid": 3,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 3,
+     "early_stops": 0,
+     "judge": {
+      "status": "stands",
+      "reason": "the refuting SELECT returned no rows",
+      "sql": "SELECT 1 FROM {{t:backup_item}} bi JOIN {{t:backup_snapshot}} bs ON bi.snapshot_id = bs.snapshot_id WHERE bi.object_id = '/etc/nginx/conf.d/host-a00d2f.ai.conf' AND bs.source_ref = 'snap-0b816e741ae1dea6' AND bi.value_hash != '3f565467a8316ea8cc825338f644baaee55d11e349a146392c2e77c10b102e94' LIMIT 1",
+      "rows": 0,
+      "receipt_id": "rcpt_req_xghxqd8c",
+      "served_model": "openrouter/nvidia/nemotron-3.5-lightning",
+      "attempts": 1,
+      "cache_status": "miss",
+      "route": "openrouter/nvidia/nemotron-3.5-lightning",
+      "route_attempts": 1
+     },
+     "verb": "HOLD",
+     "reason": "rule rule-e186e9d5790a7e6b restores a setting to its approved value; this changed_since_backup finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-26T15:53:58.661Z; this configuration alone says ESCALATE: 2 of 3 preconditions fail: change_in_last_backup, setting_matches_approved; the claim stands: the refuting SELECT returned no rows",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  }
+ ],
+ "calls": [
+  {
+   "kind": "select",
+   "item": "S01",
+   "finding": "fnd-d2e1aa9697e6fab7",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "openrouter/nvidia/nemotron-3.5-lightning",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3.5-lightning",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_3899gsb5",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 2724,
+   "tokens_in": 1647,
+   "tokens_out": 360,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_3899gsb5 openrouter/nvidia/nemotron-3.5-lightning (lightning), signature verified, no memory injected, custody holds",
+   "scope": "supplementary-2026-10-26T01-00-40Z-g1-11",
+   "memory_injected": 0
+  },
+  {
+   "kind": "judge",
+   "item": "S01",
+   "finding": "fnd-d2e1aa9697e6fab7",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "openrouter/nvidia/nemotron-3.5-lightning",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3.5-lightning",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_30ahnafx",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 3364,
+   "tokens_in": 4338,
+   "tokens_out": 431,
+   "gate": "ok",
+   "reason": "the refuting SELECT returned no rows",
+   "scope": "supplementary-2026-10-26T01-00-40Z-g1-12",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "S02",
+   "finding": "fnd-16c204edb6e2b93b",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "openrouter/nvidia/nemotron-3.5-lightning",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3.5-lightning",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_98w6hcgj",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 1809,
+   "tokens_in": 1663,
+   "tokens_out": 275,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_98w6hcgj openrouter/nvidia/nemotron-3.5-lightning (lightning), signature verified, no memory injected, custody holds",
+   "scope": "supplementary-2026-10-26T01-00-40Z-g1-13",
+   "memory_injected": 0
+  },
+  {
+   "kind": "judge",
+   "item": "S02",
+   "finding": "fnd-16c204edb6e2b93b",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "openrouter/nvidia/nemotron-3.5-lightning",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3.5-lightning",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_xghxqd8c",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 1372,
+   "tokens_in": 4354,
+   "tokens_out": 233,
+   "gate": "ok",
+   "reason": "the refuting SELECT returned no rows",
+   "scope": "supplementary-2026-10-26T01-00-40Z-g1-14",
+   "memory_injected": 0
+  }
+ ],
+ "pass": null
+}

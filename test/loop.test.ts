@@ -89,8 +89,8 @@ describe("runCycle over fake steps", () => {
     expect(printed[7]).toBe(`${"  explain   fine".padEnd(85)}0.1 s`);
     expect(printed[10]).toBe(`${"  document  fine".padEnd(85)}0.1 s`);
     expect(printed.slice(1, 11).every((l) => l.length === 90)).toBe(true);
-    // the what-happened block between the last row and the done line
-    expect(printed.slice(11, -1)).toEqual(["what happened", "  Nothing changed on the estate; the pass found every setting in order."]);
+    // the what-happened block between the last row and the done line, after a blank line
+    expect(printed.slice(11, -1)).toEqual(["", "what happened", "  Nothing changed on the estate; the pass found every setting in order."]);
     expect(printed.at(-1)).toMatch(/^done · 10 steps · \d+\.\d s$/);
     expect(printed.join("\n")).not.toMatch(/cycle: \[|CYCLE:/);
     expect(res.summary).toMatch(/^CYCLE: tenant t1, dry run \(act plans and writes nothing to a host or a zone; --apply performs it\): 10 step\(s\): ok 10, skipped 0, failed 0, not run 0; completed; \d+\.\d s$/);
@@ -176,11 +176,19 @@ describe("runCycle over fake steps", () => {
     });
     const res = await runCycle({ tenant: "t1", apply: true, aliases: [], skip: parseSkip(["collect,probe,validate"]) }, steps, { print: (l) => printed.push(l), clock: ticking() });
     expect(res.explain).toBe(explain);
-    expect(printed).toContain(`${"  explain   4 causes      operator 1 · agent 1 · unknown 2".padEnd(85)}0.1 s`);
-    expect(printed.slice(printed.indexOf("what happened"), -1)).toEqual([
-      "what happened",
-      `  A vhost file drifted from its approved copy; the agent restored it, nginx reloaded, 1 probe passed. ${EDIT.slice(0, -1)}, 9 minutes before the agent restored it.`,
+    // the explain row counts the causes; under it a block per cause, its sentence on lines of its own
+    const row = printed.indexOf(`${"  explain   4 causes      operator 1 · agent 1 · unknown 2".padEnd(85)}0.1 s`);
+    expect(row).toBeGreaterThan(0);
+    expect(printed.slice(row + 1, row + 5)).toEqual([
+      "            ROLLBACK  drifted from the approved value · operator",
+      "                      The file was changed at 23:52 UTC on 23 Oct by user-3f2a1c over ssh",
+      "                      from ip-7c1d2e (sudo tee).",
+      "            ROLLBACK  drifted from the approved value · agent",
     ]);
+    // the block: the action's sentence and its cause, wrapped at the width, its further lines four columns in
+    const block = printed.slice(printed.indexOf("what happened") + 1, -1);
+    expect(block.every((l) => l.length <= 90 && /^ {2}\S| {4}\S/.test(l))).toBe(true);
+    expect(block.map((l) => l.trim()).join(" ")).toBe(`A vhost file drifted from its approved copy; the agent restored it, nginx reloaded, 1 probe passed. ${EDIT.slice(0, -1)}, 9 minutes before the agent restored it.`);
   });
 
   it("the explain step never stops the cycle: a read that fails reads not explained on its row, with the reason, and traces the failure", async () => {
@@ -473,7 +481,7 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
     expect(sent.rows).toBe(queries.reduce((n, e) => n + Number(/^(\d+) rows$/.exec(e.output_summary ?? "")?.[1]), 0));
     expect(sent.failed).toBe(0);
     const line = new Table(PLAIN).row("pass", passView(r, { datasource: "DRIFT", ...sent }), null)[1];
-    expect(line).toBe(`            Zetaris Lightning SQL over DRIFT · ${sent.queries} queries · ${thousands(sent.rows)} rows · 0 failed`);
+    expect(line).toBe(`            Zetaris   ${sent.queries} queries · ${thousands(sent.rows)} rows · 0 failed`);
   });
 
   it("on Zetaris the pass reads exception_in_force once, after the Decider, over drift_usl.adoption: this pass's instant with a ledger, the latest recorded pass without; a failed read is carried, never thrown; sql.js reads nothing", async () => {
@@ -532,8 +540,11 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
       order.length = 0;
       return passStep(new DataLayer(live), { tenant: TENANT, ledger: null, decidedAt: AT, world: new DriftWorld("loop_test"), tracer, refreshFiles: refresh });
     };
-    const zline = (r: PassStep) => new Table({ ...PLAIN, width: 200 }).row("pass", passView(r, { datasource: "DRIFT", queries: 2, rows: 3, failed: 0 }), null)[1];
+    /** The Zetaris facts under the pass row, one a line. */
+    const zlines = (r: PassStep) => new Table({ ...PLAIN, width: 200 }).row("pass", passView(r, { datasource: "DRIFT", queries: 2, rows: 3, failed: 0 }), null).filter((l) => /^ {12}(Zetaris|files|DQ) /.test(l));
     const recordedAt = `${AT.slice(0, 16).replace("T", " ")} UTC`;
+    const zetaris = "            Zetaris   2 queries · 3 rows · 0 failed";
+    const dq = `            DQ        exception_in_force holds for 1 of 1 adoption of the pass recorded at ${recordedAt}`;
 
     // the first pass after setup's copy of another store: the files go in, first, and the DQ read comes last
     const tracer = new MemTracer("loop_test", { model: "none" });
@@ -545,14 +556,14 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
     expect(first.summary).toContain(`; file tables refreshed: lessons.json ${Buffer.byteLength(lessons)} bytes, rules.json 2 bytes; DQ exception_in_force 1 of 1 adoption`);
     expect(tracer.events[0]).toMatchObject({ agent: "loop", action: "observe", status: "ok", input_summary: `file tables ${TENANT}` });
     expect(tracer.events[0].engine).toBeUndefined();
-    expect(zline(first)).toBe(`            Zetaris Lightning SQL over DRIFT · 2 queries · 3 rows · 0 failed · file tables refreshed · DQ exception_in_force 1 of 1 adoption of the pass recorded at ${recordedAt}`);
+    expect(zlines(first)).toEqual([zetaris, "            files     lessons and rules refreshed in Zetaris", dq]);
 
     // the same store: current, nothing put, the line as before
     const second = await passOnce();
     expect(second.files?.status).toBe("current");
     expect(order).not.toContain("put");
     expect(second.summary).toContain("; file tables current; DQ exception_in_force");
-    expect(zline(second)).toBe(`            Zetaris Lightning SQL over DRIFT · 2 queries · 3 rows · 0 failed · DQ exception_in_force 1 of 1 adoption of the pass recorded at ${recordedAt}`);
+    expect(zlines(second)).toEqual([zetaris, dq]);
 
     // npm run answer recorded a lesson: the next pass puts the new store before its DQ read
     lessons = '[{"lesson_id":"mem-1"},{"lesson_id":"mem-2"}]';
@@ -568,7 +579,7 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
     expect(failed.files).toMatchObject({ status: "failed", error: "docker could not start for /fs/lessons.json: spawn wsl.exe ENOENT" });
     expect(failed.findings.map((f) => f.verb)).toEqual(first.findings.map((f) => f.verb));
     expect(failed.summary).toContain("; file tables not refreshed: docker could not start");
-    expect(zline(failed)).toContain(" · 0 failed · file tables not refreshed · DQ exception_in_force");
+    expect(zlines(failed)).toEqual([zetaris, "            files     lessons and rules not refreshed in Zetaris", dq]);
     expect(readCopyState(stateFile)?.hash).toBe(third.files!.status === "refreshed" ? third.files!.hash : "");
     fail = false;
     expect((await passOnce()).files?.status).toBe("refreshed");
@@ -639,41 +650,85 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
     expect(res.steps[8].summary).toMatch(/^document: document\.md and report\.html written for client-a, \d+ lines, \d+ finding\(s\) open, \d+ queries; deny-list probe 0 of 1 label\(s\); decided at 2026-10-23T03:00:00\.000Z$/);
     expect(readFileSync(out, "utf8")).toContain(TENANT);
     expect(res.summary).toMatch(/^CYCLE: tenant client-a, dry run .*: 9 step\(s\): ok 5, skipped 4, failed 0, not run 0; completed;/);
-    // the screen: the pass row with its verbs, the classes in plain words and a line per ROLLBACK, FIX and ESCALATE; act's five planned actions
+    // the screen: the pass row with its verbs, the classes in plain words one a line and a block per ROLLBACK, FIX and
+    // ESCALATE; the explain row with a block per cause; act's five planned actions, a block each
     const screen = printed.map((l) => l.replace(/ +\d+\.\d s$/, ""));
+    expect(printed.every((l) => l.length <= 90)).toBe(true);
     const at = screen.findIndex((l) => l.startsWith("  pass "));
-    expect(screen.slice(at, at + 9)).toEqual([
+    const COPY = "copy [0-9a-f]{8} validated ok";
+    expect(screen.slice(at, at + 21)).toEqual([
       "  pass      12 findings   ROLLBACK 3 · FIX 1 · ADOPT 2 · HOLD 5 · ESCALATE 1",
-      "            drifted from the approved value 5 · changed since the last backup 3",
-      "            unchanged setting, its target moved 2 · approved setting missing 1",
-      "            name and its www treated differently by the proxy 1",
-      expect.stringMatching(/^            ROLLBACK  drifted from the approved value · conf\.d\/app\.conf on host-7f1c · copy [0-9a-f]{8} validated ok$/),
-      expect.stringMatching(/^            ROLLBACK  approved setting missing · conf\.d\/blog\.conf on host-7f1c · copy [0-9a-f]{8} validated ok$/),
-      expect.stringMatching(/^            ROLLBACK  drifted from the approved value · DNS record mail\.example\.invalid \(content\) · copy [0-9a-f]{8} validated ok$/),
-      "            FIX       drifted from the approved value · conf.d/shop.conf on host-7f1c · no valid copy · production affected, 1 failing probe",
-      "            ESCALATE  name and its www treated differently by the proxy · www.example.invalid · the hold ran out at 23 Oct 00:00 UTC, a technician owns it",
+      "            classes   5  drifted from the approved value",
+      "                      3  changed since the last backup",
+      "                      2  unchanged setting, its target moved",
+      "                      1  approved setting missing",
+      "                      1  name and its www treated differently by the proxy",
+      "            ROLLBACK  drifted from the approved value",
+      "                      conf.d/app.conf on host-7f1c",
+      expect.stringMatching(new RegExp(`^ {22}${COPY}$`)),
+      "            ROLLBACK  approved setting missing",
+      "                      conf.d/blog.conf on host-7f1c",
+      expect.stringMatching(new RegExp(`^ {22}${COPY}$`)),
+      "            ROLLBACK  drifted from the approved value",
+      "                      DNS record mail.example.invalid (content)",
+      expect.stringMatching(new RegExp(`^ {22}${COPY}$`)),
+      "            FIX       drifted from the approved value",
+      "                      conf.d/shop.conf on host-7f1c",
+      "                      no valid copy · production affected, 1 failing probe",
+      "            ESCALATE  name and its www treated differently by the proxy",
+      "                      www.example.invalid",
+      "                      the hold ran out at 23 Oct 00:00 UTC, a technician owns it",
     ]);
-    expect(screen.slice(at + 9, at + 16)).toEqual([
-      "  explain   8 causes      account 2 · unknown 6",
+    const explained = at + 21;
+    expect(screen[explained]).toBe("  explain   8 causes      account 2 · unknown 6");
+    const act = screen.indexOf("  act       5 actions planned");
+    // one block per cause: the verb, the object and the cause's class, then its sentence from a line of its own
+    const blocks = screen.slice(explained + 1, act);
+    expect(blocks.filter((l) => /^ {12}\S/.test(l)).map((l) => l.slice(12).replace(/ {2,}/, " | "))).toEqual([
+      "HOLD | conf.d/app.conf on host-7f1c · account", "HOLD | conf.d/app.conf on host-7f1c · account", "ESCALATE | DNS record www.example.invalid · unknown",
+      "HOLD | conf.d/api.conf on host-7f1c · unknown", "ROLLBACK | conf.d/app.conf on host-7f1c · unknown", "FIX | conf.d/shop.conf on host-7f1c · unknown",
+      "ROLLBACK | conf.d/blog.conf on host-7f1c · unknown", "ROLLBACK | DNS record mail.example.invalid · unknown",
+    ]);
+    expect(blocks.filter((l) => !/^ {12}\S/.test(l)).every((l) => /^ {22}\S/.test(l))).toBe(true);
+    expect(blocks.join(" ").replace(/ +/g, " ")).toContain(" No record of who changed it: the journal window of 90 h holds 0 writes to the file. ");
+    expect(screen.slice(act, act + 15)).toEqual([
       "  act       5 actions planned",
-      expect.stringMatching(/^            rollback_file  conf\.d\/app\.conf on host-7f1c · from vault [0-9a-f]{8} · then nginx -t, reload, 1 probe$/),
-      expect.stringMatching(/^            rollback_file  conf\.d\/blog\.conf on host-7f1c · from vault [0-9a-f]{8} · then nginx -t, reload, 1 probe$/),
-      expect.stringMatching(/^            revert_record  mail\.example\.invalid A · from vault [0-9a-f]{8} · then read back, dns probe$/),
-      "            investigate    FIX · conf.d/shop.conf on host-7f1c · checks, then the judge",
-      "            fix            refused on --apply · no fix is allowed without a valid copy",
+      "            rollback_file  conf.d/app.conf on host-7f1c",
+      expect.stringMatching(/^ {27}from vault [0-9a-f]{8}$/),
+      "                           then nginx -t, reload, 1 probe",
+      "            rollback_file  conf.d/blog.conf on host-7f1c",
+      expect.stringMatching(/^ {27}from vault [0-9a-f]{8}$/),
+      "                           then nginx -t, reload, 1 probe",
+      "            revert_record  mail.example.invalid A",
+      expect.stringMatching(/^ {27}from vault [0-9a-f]{8}$/),
+      "                           then read back, dns probe",
+      "            investigate    FIX · conf.d/shop.conf on host-7f1c",
+      "                           checks, then the judge",
+      "            fix            conf.d/shop.conf on host-7f1c",
+      "                           refused on --apply",
+      "                           no fix is allowed without a valid copy",
     ]);
-    // the what-happened block after the document row: what --apply does for the planned actions, each with its cause on
-    // the same line, the escalation with its own, at most five sentences
+    // the tickets a dry run would open, each with its issue's title under it
+    expect(screen.slice(act + 15, act + 20)).toEqual([
+      "  tickets   would open 2",
+      expect.stringMatching(/^ {12}new incident P1 · would open · fnd-[0-9a-f]{16} ESCALATE opens an incident$/),
+      "              ESCALATE proxy_split: www.example.invalid on example.invalid",
+      expect.stringMatching(/^ {12}new incident P1 · would open · fnd-[0-9a-f]{16} FIX opens an incident$/),
+      "              FIX drift_vs_approved: /etc/nginx/conf.d/shop.conf on host-7f1c",
+    ]);
+    // the what-happened block after the document row and a blank line: what --apply does for the planned actions, each
+    // with its cause, the escalation with its own, at most five sentences, each wrapped at the width
     const doc = screen.findIndex((l) => /^  document  document\.md · \d+ lines · report\.html$/.test(l));
     expect(doc).toBeGreaterThan(0);
+    expect(screen.slice(doc + 1, doc + 3)).toEqual(["", "what happened"]);
+    const sentences = screen.slice(doc + 3, -1).reduce<string[]>((xs, l) => (l.startsWith("    ") ? [...xs.slice(0, -1), `${xs.at(-1)} ${l.trim()}`] : [...xs, l.slice(2)]), []);
     const noWrite = "No record of who changed it: the journal window of 90 h holds 0 writes to the file.";
-    expect(screen.slice(doc + 1, -1)).toEqual([
-      "what happened",
-      expect.stringMatching(new RegExp(`^  A vhost file drifted from its approved copy; a run with --apply restores it from vault copy [0-9a-f]{8} and reloads nginx\\. ${noWrite.replace(/\./g, "\\.")}$`)),
-      expect.stringMatching(new RegExp(`^  An approved vhost file went missing; a run with --apply restores it from vault copy [0-9a-f]{8} and reloads nginx\\. ${noWrite.replace(/\./g, "\\.")}$`)),
-      "  2 more actions are listed under act.",
-      "  1 finding is with a technician: name and its www treated differently by the proxy at www.example.invalid. No record of who changed it: the audit log window of 24 h holds 0 events for the record.",
-      "  2 findings are adopted under policy rules; 5 are held with an expiry.",
+    expect(sentences).toEqual([
+      expect.stringMatching(new RegExp(`^A vhost file drifted from its approved copy; a run with --apply restores it from vault copy [0-9a-f]{8} and reloads nginx\\. ${noWrite.replace(/\./g, "\\.")}$`)),
+      expect.stringMatching(new RegExp(`^An approved vhost file went missing; a run with --apply restores it from vault copy [0-9a-f]{8} and reloads nginx\\. ${noWrite.replace(/\./g, "\\.")}$`)),
+      "2 more actions are listed under act.",
+      "1 finding is with a technician: name and its www treated differently by the proxy at www.example.invalid. No record of who changed it: the audit log window of 24 h holds 0 events for the record.",
+      "2 findings are adopted under policy rules; 5 are held with an expiry.",
     ]);
     // the document's Why: one line per explained finding, in the order the page lists them, its cause's sentence
     const page = readFileSync(out, "utf8");
@@ -684,7 +739,7 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
     // the owner's report beside the page: its What happened is the block the screen prints, sentence for sentence
     const report = readFileSync(path.join(dir, "report.html"), "utf8");
     const story = [...report.matchAll(/<p class="story">(.*?)<\/p>/g)].map((m) => m[1].replace(/&#39;/g, "'").replace(/&amp;/g, "&"));
-    expect(story).toEqual(screen.slice(doc + 2, -1).map((l) => l.slice(2)));
+    expect(story).toEqual(sentences);
     expect(report).toContain(`<h1>${TENANT} · configuration assurance</h1>`);
     expect(report).toContain("<span>dry run, nothing changed</span>");
     expect(Object.keys(countLabels(report, ["zz-label-absent"]))).toEqual([]);
