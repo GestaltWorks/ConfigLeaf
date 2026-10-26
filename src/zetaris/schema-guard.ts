@@ -15,11 +15,16 @@
 //     alone.
 //   - A DESCRIBE that fails is a change of the whole table (column "*", the error as what DESCRIBE gave), and so is a
 //     CLOUDFLARE listing that fails; nothing is thrown. change_window aside (OPTIONAL_TABLES): a store created before
-//     it lacks it, and the pass's window read already decides what its absence means.
+//     it lacks it, and the pass's window read already decides what its absence means. `tables` counts the DESCRIBEs
+//     that answered, so a failed one, change_window's included, is in no count.
 //   - affectedSurfaces: the surfaces whose findings read a changed DRIFT table. backup_snapshot and backup_item feed
 //     linux.nginx alone; dns_record, audit_event and inventory_asset feed linux.nginx and cloudflare.dns; every other
 //     table (the runs, the observations, the approvals, the policy, the vault copies, the probes, the ledger, the
 //     change windows) feeds every surface's decision, so a change there affects them all ("*").
+//   - guardGate: what the guard closes in a live pass, in one place. The affected surfaces' findings are not checked,
+//     with the DRIFT changes as the reason; dns_inventory_current is not read when a REST table changed or a DRIFT change
+//     reaches cloudflare.dns, its reason naming exactly those changes; exception_in_force is not read when the changes
+//     reach every surface. No guard (sql.js) closes nothing.
 //   - schemaText: "20 tables as expected", or "<ds>.<table> changed: <column>[, <column>]" per changed table, joined
 //     by "; ".
 //
@@ -79,7 +84,7 @@ export interface SchemaChange {
 }
 
 export interface SchemaGuard {
-  /** Tables described. */
+  /** Tables described: a DESCRIBE that answered; one that failed, change_window's included, counts in none. */
   tables: number;
   changes: SchemaChange[];
 }
@@ -128,9 +133,10 @@ export async function readSchemaGuard(engine: Pick<Engine, "run">, opts: RunOpti
   let tables = 0;
   const failed = (ds: string, table: string, e: unknown): SchemaChange => ({ datasource: ds, table, column: "*", want: "described", got: ((e as Error).message ?? String(e)).slice(0, 200) });
   for (const table of PASS_TABLES) {
-    tables++;
     try {
-      changes.push(...driftChanges(table, await engine.run(`DESCRIBE DATASOURCE TABLE ${datasource}.${table}`, run), datasource));
+      const described = await engine.run(`DESCRIBE DATASOURCE TABLE ${datasource}.${table}`, run);
+      tables++;
+      changes.push(...driftChanges(table, described, datasource));
     } catch (e) {
       // change_window may be absent from an older store: the pass's own window read decides then (src/loop/pass.ts).
       if (!OPTIONAL_TABLES.includes(table)) changes.push(failed(datasource, table, e));
@@ -145,9 +151,10 @@ export async function readSchemaGuard(engine: Pick<Engine, "run">, opts: RunOpti
     changes.push(failed(REST_DB, "*", e));
   }
   for (const table of rest) {
-    tables++;
     try {
-      changes.push(...restChanges(table, await engine.run(`DESCRIBE DATASOURCE TABLE ${REST_DB}.${table}`, run)));
+      const described = await engine.run(`DESCRIBE DATASOURCE TABLE ${REST_DB}.${table}`, run);
+      tables++;
+      changes.push(...restChanges(table, described));
     } catch (e) {
       changes.push(failed(REST_DB, table, e));
     }
@@ -166,6 +173,37 @@ export function affectedSurfaces(g: SchemaGuard): "*" | Set<string> {
   const drift = g.changes.filter((c) => c.datasource !== REST_DB);
   if (drift.some((c) => !FEEDS[c.table])) return "*";
   return new Set(drift.flatMap((c) => FEEDS[c.table]));
+}
+
+/** A DRIFT change reaches a surface's decisions: its table feeds that surface, or every surface. */
+const feeds = (c: SchemaChange, surface: string): boolean => c.datasource !== REST_DB && (!FEEDS[c.table] || FEEDS[c.table].includes(surface));
+
+/** What a guard's read closes in a live pass (src/loop/pass.ts); with no guard (sql.js) nothing is closed. */
+export interface GuardGate {
+  /** The surfaces whose findings go undecided and unrecorded: "*" for every one, else the set (empty when DRIFT is as expected). */
+  affected: "*" | Set<string>;
+  isAffected(surface: string): boolean;
+  /** The DRIFT changes as a NOT CHECKED reason, "schema: <changes>"; "" when DRIFT is as expected. */
+  driftWhy: string;
+  /** Why dns_inventory_current is not read: the REST changes and the DRIFT changes that reach cloudflare.dns, in one schema line; null when it is read. */
+  dnsWhy: string | null;
+  /** Why exception_in_force is not read: the DRIFT changes, when they reach every surface; null when it is read. */
+  adoptionWhy: string | null;
+}
+
+/** The gate a guard's read sets (see GuardGate): one place for every fail-closed decision the pass takes on it. */
+export function guardGate(g: SchemaGuard | undefined): GuardGate {
+  if (!g) return { affected: new Set(), isAffected: () => false, driftWhy: "", dnsWhy: null, adoptionWhy: null };
+  const affected = affectedSurfaces(g);
+  const driftWhy = g.changes.some((c) => c.datasource !== REST_DB) ? `schema: ${schemaText(g, (c) => c.datasource !== REST_DB)}` : "";
+  const dns = (c: SchemaChange): boolean => c.datasource === REST_DB || feeds(c, "cloudflare.dns");
+  return {
+    affected,
+    isAffected: (surface) => affected === "*" || affected.has(surface),
+    driftWhy,
+    dnsWhy: g.changes.some(dns) ? `schema: ${schemaText(g, dns)}` : null,
+    adoptionWhy: affected === "*" ? driftWhy : null,
+  };
 }
 
 /** "20 tables as expected", or each changed table with its columns. */

@@ -16,7 +16,8 @@ import { config, redact } from "../src/config.ts";
 import type { VaultCopy } from "../src/data/rows.ts";
 import { Store } from "../src/data/store.ts";
 import { Redactor } from "../src/redactor.ts";
-import { CLOUDFLARE_REPO, Vault } from "../src/vault/vault.ts";
+import { CLOUDFLARE_REPO, Vault, ZETARIS_REPO } from "../src/vault/vault.ts";
+import { CONTROL_SURFACE } from "../src/zetaris/control.ts";
 
 const USAGE = "usage: npm run vault:status -- [--tenant <id>] [--objects] [--schema <name>] [--dry-run] [--help]";
 
@@ -55,11 +56,12 @@ try {
   store = process.env.DATABASE_URL ? Store.fromEnv({ schema: args.schema }) : undefined;
   say(`vault:status: ${repos.length} repositor${repos.length === 1 ? "y" : "ies"}${args.tenant ? ` for ${args.tenant}` : ""}${store ? "" : "; vault_copy n/a (DATABASE_URL is blank)"}`);
   for (const r of repos) {
-    const cloudflare = r.repo === CLOUDFLARE_REPO;
-    const name = cloudflare ? `${r.tenant}/${CLOUDFLARE_REPO}` : `${r.tenant}/${pseudonymHost(redactor, r.repo)}`;
+    // The Cloudflare and the Zetaris repositories go by their own names and their surface; a host's by its pseudonym.
+    const surface = r.repo === CLOUDFLARE_REPO ? "cloudflare.dns" : r.repo === ZETARIS_REPO ? CONTROL_SURFACE : null;
+    const name = surface ? `${r.tenant}/${r.repo}` : `${r.tenant}/${pseudonymHost(redactor, r.repo)}`;
     let copies = "vault_copy n/a";
     if (store) {
-      const rows: VaultCopy[] = await store.rowsOf("vault_copy", cloudflare ? { tenant_id: r.tenant, surface: "cloudflare.dns" } : { tenant_id: r.tenant, host: pseudonymHost(redactor, r.repo) });
+      const rows: VaultCopy[] = await store.rowsOf("vault_copy", surface ? { tenant_id: r.tenant, surface } : { tenant_id: r.tenant, host: pseudonymHost(redactor, r.repo) });
       copies = `vault_copy ${rows.length} row(s), ${r.head ? rows.filter((c) => c.git_commit === r.head).length : 0} at the head`;
     }
     say(`  ${name.padEnd(24)} ${String(r.commits).padStart(4)} commit(s)  head ${r.head ? r.head.slice(0, 12) : "-".padEnd(12)}  ${r.headDate ?? "-"}  run ${r.headRun ?? "-"}  ${String(r.files).padStart(4)} file(s)  ${copies}`);

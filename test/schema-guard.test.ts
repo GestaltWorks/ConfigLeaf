@@ -5,9 +5,11 @@
 // findings not checked, none of their dispositions in the ledger, the other surfaces decided), a changed observation
 // column fails every surface closed, a pass whose SQL fails over the change decides nothing, and a changed REST field
 // leaves the findings decided and dns_inventory_current not read. Offline.
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { QueryResult } from "../src/adapters/zetaris.ts";
 import { CATALOGUE } from "../src/catalogue/templates.ts";
+import { config } from "../src/config.ts";
 import { DataLayer } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import * as Q from "../src/data/queries.ts";
@@ -15,8 +17,10 @@ import { DriftWorld } from "../src/engine/world.ts";
 import { MemoryLedger } from "../src/ledger.ts";
 import { LoopError, passStep } from "../src/loop/pass.ts";
 import { PLAIN, Table, passView } from "../src/loop/present.ts";
+import { Redactor } from "../src/redactor.ts";
+import { TRACE_REDACTOR } from "../src/trace.ts";
 import { EXPLAIN_MAX, explainQuery, planLine } from "../src/zetaris/explain.ts";
-import { PASS_TABLES, affectedSurfaces, driftChanges, readSchemaGuard, restChanges, schemaColumns, schemaText } from "../src/zetaris/schema-guard.ts";
+import { PASS_TABLES, affectedSurfaces, driftChanges, guardGate, readSchemaGuard, restChanges, schemaColumns, schemaText, type SchemaChange } from "../src/zetaris/schema-guard.ts";
 import policyBundle from "./fixtures/policy-bundle.json" with { type: "json" };
 import { MemTracer } from "./fixtures/mem-tracer.ts";
 import { PLAN, zetarisMeta, type MetaOptions } from "./fixtures/zetaris-meta.ts";
@@ -81,15 +85,48 @@ describe("the guard over fake DESCRIBE answers", () => {
     expect(restChanges("zone_a", describeOf([["result", "{\"type\":\"struct\"}"]])).map((c) => c.column)).toEqual(["result"]);
   });
 
-  it("a DESCRIBE that fails is a change of the whole table, never thrown", async () => {
+  it("guardGate, every fail-closed decision in one place: neither, REST only, DRIFT only (a DNS table, a host table, every surface's table), both", () => {
+    const rest: SchemaChange = { datasource: "CLOUDFLARE", table: "zone_a", column: "result.proxied", want: "boolean", got: "string" };
+    const dnsTable: SchemaChange = { datasource: "DRIFT", table: "dns_record", column: "proxied", want: "integer", got: null };
+    const hostTable: SchemaChange = { datasource: "DRIFT", table: "backup_item", column: "value_hash", want: "string", got: "integer" };
+    const everyTable: SchemaChange = { datasource: "DRIFT", table: "observation", column: "value_hash", want: "string", got: "integer" };
+    const gate = (...changes: SchemaChange[]) => {
+      const g = guardGate({ tables: 20, changes });
+      return { affected: g.affected === "*" ? "*" : [...g.affected].sort(), nginx: g.isAffected("linux.nginx"), dns: g.isAffected("cloudflare.dns"), driftWhy: g.driftWhy, dnsWhy: g.dnsWhy, adoptionWhy: g.adoptionWhy };
+    };
+    const REST = "CLOUDFLARE.zone_a changed: result.proxied";
+    expect(gate()).toEqual({ affected: [], nginx: false, dns: false, driftWhy: "", dnsWhy: null, adoptionWhy: null });
+    expect(gate(rest)).toEqual({ affected: [], nginx: false, dns: false, driftWhy: "", dnsWhy: `schema: ${REST}`, adoptionWhy: null });
+    expect(gate(dnsTable)).toEqual({
+      affected: ["cloudflare.dns", "linux.nginx"], nginx: true, dns: true, driftWhy: "schema: DRIFT.dns_record changed: proxied", dnsWhy: "schema: DRIFT.dns_record changed: proxied", adoptionWhy: null,
+    });
+    expect(gate(hostTable)).toEqual({ affected: ["linux.nginx"], nginx: true, dns: false, driftWhy: "schema: DRIFT.backup_item changed: value_hash", dnsWhy: null, adoptionWhy: null });
+    expect(gate(everyTable)).toEqual({
+      affected: "*", nginx: true, dns: true, driftWhy: "schema: DRIFT.observation changed: value_hash", dnsWhy: "schema: DRIFT.observation changed: value_hash", adoptionWhy: "schema: DRIFT.observation changed: value_hash",
+    });
+    // both: the DNS read names the REST change and the DRIFT change that reaches the DNS surface, and no other
+    expect(gate(rest, dnsTable).dnsWhy).toBe(`schema: ${REST}; DRIFT.dns_record changed: proxied`);
+    expect(gate(rest, hostTable)).toMatchObject({ affected: ["linux.nginx"], dnsWhy: `schema: ${REST}` });
+    // no guard (sql.js): nothing closed
+    expect(guardGate(undefined)).toMatchObject({ driftWhy: "", dnsWhy: null, adoptionWhy: null });
+    expect(guardGate(undefined).isAffected("linux.nginx")).toBe(false);
+  });
+
+  it("a DESCRIBE that fails is a change of the whole table, never thrown, and counts in no table", async () => {
     const failing = { run: async (sql: string) => { if (sql.endsWith("DRIFT.probe")) throw new Error("Zetaris 400: Table or view not found: DRIFT.probe"); return zetarisMeta(sql, { zones: [] })!; } };
     const g = await readSchemaGuard(failing, { datasource: "DRIFT" });
-    expect(g.tables).toBe(14);
+    expect(g.tables).toBe(13);
     expect(g.changes).toEqual([{ datasource: "DRIFT", table: "probe", column: "*", want: "described", got: "Zetaris 400: Table or view not found: DRIFT.probe" }]);
     expect(schemaText(g)).toBe("DRIFT.probe changed: not described");
     // change_window absent from an older store is no change: the pass's window read decides what its absence means
     const older = { run: async (sql: string) => { if (sql.endsWith("DRIFT.change_window")) throw new Error("Zetaris 400: Table or view not found: DRIFT.change_window"); return zetarisMeta(sql, { zones: [] })!; } };
-    expect((await readSchemaGuard(older, { datasource: "DRIFT" })).changes).toEqual([]);
+    const old = await readSchemaGuard(older, { datasource: "DRIFT" });
+    expect(old.changes).toEqual([]);
+    // as expected, and the count says the 13 tables it described: change_window was not among them
+    expect(schemaText(old)).toBe("13 tables as expected");
+    // a zone table whose DESCRIBE fails is a change of that table and in no count either
+    const zoneFails = { run: async (sql: string) => { if (sql.endsWith(ZONES[0])) throw new Error("Zetaris 500: REST fetch failed"); return zetarisMeta(sql, { zones: ZONES })!; } };
+    expect(await readSchemaGuard(zoneFails, { datasource: "DRIFT" })).toMatchObject({ tables: 19, changes: [{ datasource: "CLOUDFLARE", table: ZONES[0], column: "*" }] });
     expect((await readSchemaGuard(fake({ drift: { change_window: { until: null } } }), { datasource: "DRIFT" })).changes.map((c) => `${c.table}.${c.column}`)).toEqual(["change_window.until"]);
   });
 });
@@ -108,6 +145,19 @@ describe("EXPLAIN QUERY AS", () => {
     expect(refused).toEqual({ query: "dns_live", status: "not_checked", reason: "Zetaris 403: EXPLAIN QUERY is for administrators" });
     expect(tracer.events.filter((e) => e.action === "explain").map((e) => e.status)).toEqual(["ok", "not_checked"]);
     expect((await explainQuery(fake(), "bad", "DELETE FROM x")).status).toBe("not_checked");
+  });
+
+  it("redacts the plan with the trace's own redactor, the configured salt: a name in the plan reads as every other trace line names it", async () => {
+    const host = "db.kestrel-foods-zz9q.com";
+    const named = { run: async () => ({ queryId: "q", columns: ["plan"], rows: [[`== Parsed Logical Plan ==\nRelation ${host}`]], rowCount: 1, total: 1, latencyMs: 1, raw: {} }) };
+    const tracer = new MemTracer("explain_test", { model: "none" });
+    await explainQuery(named, "hero", "SELECT 1 AS a", { tracer });
+    const detail = tracer.events.find((e) => e.action === "explain")!.detail!;
+    expect(detail).toContain(`Relation ${TRACE_REDACTOR.text(host)}`);
+    expect(detail).not.toContain("kestrel");
+    // one redactor for the plan and the trace: the module draws no salt of its own
+    expect(readFileSync(new URL("../src/zetaris/explain.ts", import.meta.url), "utf8")).not.toMatch(/new Redactor\(|randomBytes/);
+    if (config.redactSalt) expect(TRACE_REDACTOR.text(host)).toBe(new Redactor(config.redactSalt, config.redactWords).text(host));
   });
 });
 
@@ -184,6 +234,23 @@ describe("the live pass step under the guard, over the policy fixture", () => {
       .rejects.toThrow(new LoopError("decided nothing: schema: DRIFT.backup_item changed: value_hash; the pass's SQL failed over it: Zetaris 400: cannot resolve backup_item.value_hash"));
     expect(Q.objects(await new DataLayer(own).run(Q.DISPOSITIONS_SQL, {}, { limit: 100_000 })).filter((d) => d.decided_at === AT)).toEqual([]);
     own.close();
+  });
+
+  it("the DNS check's gating through the pass: neither change reads it; a REST change, a DRIFT DNS table change and both leave it unread with their reasons", async () => {
+    const restOnly = JSON.stringify({ type: "array", elementType: { type: "struct", fields: [{ name: "id", type: "string" }, { name: "type", type: "string" }] } });
+    const zones = (col: string) => [...ZONES].sort().map((z) => `CLOUDFLARE.${z} changed: ${col}`).join("; ");
+    const cases: [string, MetaOptions, { notChecked: string[]; dns: unknown }][] = [
+      ["neither", {}, { notChecked: [], dns: { rule: "dns_inventory_current", live: 3, current: 3, runId: "run-x" } }],
+      ["REST only", { rest: restOnly }, { notChecked: [], dns: { rule: "dns_inventory_current", error: `schema: ${zones("result.proxied")}` } }],
+      ["DRIFT only", { drift: { dns_record: { proxied: null } } }, { notChecked: ["cloudflare.dns", "linux.nginx"], dns: { rule: "dns_inventory_current", error: "schema: DRIFT.dns_record changed: proxied" } }],
+      ["both", { rest: restOnly, drift: { dns_record: { proxied: null } } }, { notChecked: ["cloudflare.dns", "linux.nginx"], dns: { rule: "dns_inventory_current", error: `schema: DRIFT.dns_record changed: proxied; ${zones("result.proxied")}` } }],
+    ];
+    for (const [name, meta, want] of cases) {
+      const { own, layer } = await live(meta);
+      const r = await passStep(layer, { tenant: TENANT, ledger: null, decidedAt: AT, world: new DriftWorld("guard_test") });
+      expect({ notChecked: [...new Set(r.notChecked!.map((f) => f.finding.surface))].sort(), dns: r.dns }, name).toEqual(want);
+      own.close();
+    }
   });
 
   it("a changed REST field leaves every finding decided and dns_inventory_current not read, the schema line naming the zone table", async () => {

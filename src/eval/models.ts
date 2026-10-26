@@ -111,7 +111,8 @@ type Attempt = ((ChatResult & { hop?: number }) | { failed: string; modelRequest
 
 /**
  * Records every chat attempt and every receipt the gate looked up, for one configuration run; every string a record keeps
- * passes the redactor. Every call goes out under a meterless-scope the Recorder pins: the caller's, else `scope` (the
+ * passes the redactor. Its finder trusts the signing keys `finder` names (ReceiptFinder.keys), and a record's
+ * signature_ok verifies under them. Every call goes out under a meterless-scope the Recorder pins: the caller's, else `scope` (the
  * runner's "<set>-<run id>-<seq>"), else a fresh "<app id>-<16 hex>" (freshScope).
  */
 export class Recorder {
@@ -139,6 +140,7 @@ export class Recorder {
       },
     };
     this.receipts = {
+      keys: finder.keys,
       find: async (id) => {
         const r = await finder.find(id);
         if (r) this.found.set(id, r);
@@ -170,7 +172,7 @@ export class Recorder {
       return {
         kind: meta.kind, item: meta.item, finding: meta.finding, attempt: i + 1, requested_tier: meta.tier,
         model_requested: this.clean(chat.modelRequested), hop: chat.hop ?? null, route_attempts: chat.retries + 1, served_model: served === null ? null : this.clean(served), served_tier: tierOf(served),
-        receipt_id: chat.receiptId, signature_ok: receipt ? verifyReceipt(receipt) : null, cache_status: typeof cache === "string" ? cache : null,
+        receipt_id: chat.receiptId, signature_ok: receipt ? verifyReceipt(receipt, this.receipts.keys) : null, cache_status: typeof cache === "string" ? cache : null,
         latency_ms: chat.latencyMs, tokens_in: chat.tokensIn, tokens_out: chat.tokensOut,
         gate: last ? (final.ok ? "ok" : "refused") : "discarded", reason: this.clean(last ? final.reason : "custody failed; answer discarded and the call made once more"),
         scope: this.clean(chat.scope ?? chat.sentScope), memory_injected: receipt ? memoryInjectedOf(receipt) : null,

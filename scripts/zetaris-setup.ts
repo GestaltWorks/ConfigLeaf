@@ -12,15 +12,18 @@
 // created before change_window or disposition.window_id gains them here, as the console's start line asks.
 // After the last statement it collects Zetaris's control plane (src/zetaris/control.ts, what npm run collect:zetaris
 // runs) for each tenant --tenant names, or, with none, for each tenant the app Postgres holds a cloudflare.dns or a
-// zetaris.control run of: one zetaris.control run each, stored and committed to the vault, one line each. A run
-// other than complete exits 1.
+// zetaris.control run of: one zetaris.control run each, stored and committed to the vault, one line each, then the
+// commit's copies validated by zetaris-json (src/validate/run.ts), one line each. A run other than complete, or a
+// validation that stops, exits 1.
 // --plan prints the ordered statements without running them (the zones are still read); the password and the token
 // read "<redacted>".
 import { parseArgs } from "node:util";
 import { Zetaris } from "../src/adapters/zetaris.ts";
 import { config, redact } from "../src/config.ts";
 import { Store } from "../src/data/store.ts";
+import { TENANT_ID, TENANT_ID_SHAPE } from "../src/policy/schema.ts";
 import { Redactor } from "../src/redactor.ts";
+import { storeCopies, validateCopies } from "../src/validate/run.ts";
 import { hookSummary } from "../src/vault/hook.ts";
 import { Vault } from "../src/vault/vault.ts";
 import { CONTROL_SURFACE, collectControl, controlText, storeControl } from "../src/zetaris/control.ts";
@@ -29,6 +32,7 @@ import { Tracer } from "../src/trace.ts";
 
 try {
   const { values: args } = parseArgs({ options: { plan: { type: "boolean" }, tenant: { type: "string", multiple: true } } });
+  for (const t of args.tenant ?? []) if (!TENANT_ID.test(t)) throw new Error(`--tenant must be ${TENANT_ID_SHAPE}, got ${t}`);
   if (args.plan) {
     const env = envFromProcess();
     for (const line of formatPlan(plan({ ...env, zones: await liveZones(env.cloudflareToken) }), env.datasource)) console.log(line);
@@ -64,6 +68,12 @@ try {
       const status = c.run.status === "complete" && w.hook.status !== "failed" ? "ok" : "failed";
       if (status === "failed") complete = false;
       console.log(`${status.padEnd(7)} ${`collect ${CONTROL_SURFACE} ${tenant}`.padEnd(44)} ${controlText(c)}; ${w.written} observation row(s) written; vault ${h.status}${h.commit ? ` ${String(h.commit).slice(0, 12)}` : ""}  (${Date.now() - t0} ms)`);
+      if (w.hook.status === "committed" && vault) {
+        const t1 = Date.now();
+        const v = await validateCopies({ vaultDir: vault.root, tenant, zetaris: true, commit: w.hook.commit.commit, dryRun: false, store: storeCopies(rows), redactor });
+        if (v.errors) complete = false;
+        console.log(`${(v.errors ? "failed" : "ok").padEnd(7)} ${`validate ${CONTROL_SURFACE} ${tenant}`.padEnd(44)} ${v.lines.join("; ")}; copy_validation ${v.written ?? 0} row(s) written  (${Date.now() - t1} ms)`);
+      }
     }
   } finally {
     await rows.close();

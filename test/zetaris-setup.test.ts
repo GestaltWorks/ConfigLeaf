@@ -52,7 +52,22 @@ const ENV = { databaseUrl: DB_URL, pgHost: "drift-pg", datasource: "DRIFT", clou
 const USL = "lightning.metastore.drift.drift_usl";
 const CREATE_PRINTED = `CREATE DATASOURCE DRIFT DESCRIBE BY "drift-agent app Postgres on the zetaris network" OPTIONS (jdbcdriver "org.postgresql.Driver", jdbcurl "jdbc:postgresql://drift-pg:5432/drift", username "drift", password "<redacted>", schema "public", fetchsize "1000")`;
 const restPrinted = (table: string, endpoint: string) => `CREATE LIGHTNING REST TABLE ${table} FROM CLOUDFLARE REQUEST (endpoint "${endpoint}", method "GET", http_encoding "URLENCODED", response_type "JSON", insecure_ssl "false") HEADER (Authorization "Bearer <redacted>") BODY ()`;
-const step = (name: string, steps = setup.plan(ENV)) => steps.find((s) => s.name === name)!;
+/** The plan every test below reads: the step count and each step's printed number come from it. */
+const PLAN = setup.plan(ENV);
+const step = (name: string, steps = PLAN) => steps.find((s) => s.name === name)!;
+/** A step as formatPlan() and apply() print it: its place in the plan counted from 1 in two digits, a space, its name. */
+const label = (name: string, steps = PLAN): string => {
+  const i = steps.findIndex((s) => s.name === name);
+  if (i < 0) throw new Error(`the plan has no step named ${name}`);
+  return `${String(i + 1).padStart(2, "0")} ${name}`;
+};
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** The line apply() printed for a step, found by its numbered name. */
+const lineOf = (out: string[], name: string): string | undefined => out.find((l) => l.includes(label(name)));
+/** The pattern of a step's line: its status, the numbered name, then `rest`. */
+const lineRe = (status: "ok" | "skipped", name: string, rest: RegExp): RegExp => new RegExp(`^${status}${status === "ok" ? "\\s+" : " "}${escapeRe(label(name))}${rest.source}`);
+/** The pattern of a run's summary line: the plan's length in statements, `ok` of them sent and the rest skipped, none failed, then `tail`. */
+const summary = (ok: number, tail = ""): RegExp => new RegExp(`^ZETARIS SETUP: ${PLAN.length} statements, ${ok} ok, ${PLAN.length - ok} skipped, 0 failed${tail}`);
 
 const ELEVEN = ["collection", "setting", "referent", "backup_copy", "policy", "copy", "probe", "disposition", "action", "ticket", "cause"];
 /** The eleven over DRIFT, then the two file tables and the cross-source join. */
@@ -65,6 +80,14 @@ const EXCEPTION_IN_FORCE_EXPR = "lesson_id IS NOT NULL AND lesson_kind = 'except
 /** dns_inventory_current: the last complete DNS run holds the live record, with its type and proxied flag. */
 const DNS_EXPR = "held_type <> '' AND held_type = live_type AND held_proxied = live_proxied";
 const DIR = "/home/zetaris/customer-data/shared/drift-agent";
+/** The DRIFT datasource's steps, first in the plan. */
+const DRIFT_STEPS: [string, string][] = [
+  ["show datasources", ""],
+  ["create datasource DRIFT", "datasource_absent"],
+  ["list datasource tables", "datasource_present"],
+  ["register datasource tables", "tables_missing"],
+  ["refresh datasource tables", "tables_registered"],
+];
 /** The file sources' steps, between the DRIFT registration and the namespaces. */
 const FILE_STEPS: [string, string][] = [
   ["copy files to the filestore", ""],
@@ -88,6 +111,23 @@ const REST_STEPS: [string, string][] = [
   ["list CLOUDFLARE tables", ""],
   ...REST.flatMap(([t]): [string, string][] => [[`drop CLOUDFLARE.${t}`, "rest_table_stale"], [`create CLOUDFLARE.${t}`, "rest_table_absent"]]),
 ];
+/** The namespaces, then the USL's probes, REMOVE and COMPILE. */
+const USL_STEPS: [string, string][] = [
+  ["namespace lightning.metastore", ""],
+  ["namespace lightning.metastore.drift", ""],
+  ["list lightning.metastore.drift", ""],
+  ["load usl drift_usl", "usl_present"],
+  ["remove usl drift_usl", "usl_stale"],
+  ["compile usl drift_usl", "usl_absent"],
+];
+/** The tables RUN DQ runs on, in plan order. */
+const DQ_RUN_TABLES = ["collection", "copy", "action", "cause", "adoption", "dns_live"];
+/**
+ * The plan's length counted from its parts: the DRIFT, file, REST and USL steps, an activate and a count per USL table,
+ * a register and an update per rule, a RUN DQ per DQ table, and three single statements (list dq rules, show the USL,
+ * count the ledger). A plan that gains or loses a step differs from it.
+ */
+const PLAN_LENGTH = DRIFT_STEPS.length + FILE_STEPS.length + REST_STEPS.length + USL_STEPS.length + 2 * FIFTEEN.length + 2 * RULES.length + DQ_RUN_TABLES.length + 3;
 const RUN_COMPLETE_EXPR = "observed_count IS NOT NULL AND expected_count IS NOT NULL AND observed_count >= expected_count AND status = 'complete'";
 /** action_verified, scoped to the write paths. */
 const ACTION_VERIFIED_EXPR = "kind NOT IN ('rollback_file','revert_record') OR status IN ('failed','refused','not_judged') OR verification <> ''";
@@ -119,38 +159,33 @@ function activatedColumns(sql: string): string[] {
   return s.slice(0, s.indexOf(" FROM ")).split(",").map((item) => item.trim().split(/\s+/).at(-1)!.split(".").at(-1)!);
 }
 
-describe("plan()", () => {
-  const steps = setup.plan(ENV);
+/** SQL words an expression holds beside its column names. */
+const SQL_WORDS = new Set(["AND", "OR", "NOT", "IS", "NULL", "IN", "LIKE", "BETWEEN", "TRUE", "FALSE"]);
+/** An expression split at its single-quoted literals: the odd entries are the literals, the even ones the text around them. */
+const splitLiterals = (expr: string): string[] => expr.split(/('(?:[^']|'')*')/);
+/** The bare identifiers an expression names, outside its literals and without the SQL words, in order. */
+const identifiers = (expr: string): string[] => splitLiterals(expr).filter((_, i) => i % 2 === 0).flatMap((p) => p.match(/[A-Za-z_]\w*/g) ?? []).filter((w) => !SQL_WORDS.has(w.toUpperCase()));
+/** The expression with each identifier it names qualified by the table alias. */
+const qualified = (expr: string, alias: string): string => splitLiterals(expr).map((p, i) => (i % 2 ? p : p.replace(/[A-Za-z_]\w*/g, (w) => (SQL_WORDS.has(w.toUpperCase()) ? w : `${alias}.${w}`)))).join("");
 
-  it("orders the statements, each gated step on its condition", () => {
+describe("plan()", () => {
+  const steps = PLAN;
+
+  it("orders the statements, each gated step on its condition; the length is the sum of the plan's parts", () => {
     expect(steps.map((s) => [s.name, s.when ?? ""])).toEqual([
-      ["show datasources", ""],
-      ["create datasource DRIFT", "datasource_absent"],
-      ["list datasource tables", "datasource_present"],
-      ["register datasource tables", "tables_missing"],
-      ["refresh datasource tables", "tables_registered"],
+      ...DRIFT_STEPS,
       ...FILE_STEPS,
       ...REST_STEPS,
-      ["namespace lightning.metastore", ""],
-      ["namespace lightning.metastore.drift", ""],
-      ["list lightning.metastore.drift", ""],
-      ["load usl drift_usl", "usl_present"],
-      ["remove usl drift_usl", "usl_stale"],
-      ["compile usl drift_usl", "usl_absent"],
+      ...USL_STEPS,
       ...FIFTEEN.map((t) => [`activate ${t}`, ""]),
       ["list dq rules", ""],
       ...RULES.flatMap((r) => [[`register dq ${r}`, "dq_rule_absent"], [`update dq ${r}`, "dq_rule_differs"]]),
-      ["run dq collection", ""],
-      ["run dq copy", ""],
-      ["run dq action", ""],
-      ["run dq cause", ""],
-      ["run dq adoption", ""],
-      ["run dq dns_live", ""],
+      ...DQ_RUN_TABLES.map((t) => [`run dq ${t}`, ""]),
       ["show lightning.metastore.drift.drift_usl", ""],
       ...FIFTEEN.map((t) => [`count ${t}`, ""]),
       ["count LESSONS.ledger", ""],
     ]);
-    expect(steps).toHaveLength(84);
+    expect(steps).toHaveLength(PLAN_LENGTH);
     expect(setup.USL_TABLES).toEqual(FIFTEEN);
   });
 
@@ -169,8 +204,8 @@ describe("plan()", () => {
     expect(steps.filter((s) => s.secret).map((s) => s.name)).toEqual(["create datasource DRIFT", ...REST.map(([t]) => `create CLOUDFLARE.${t}`)]);
     expect(step("count dns_live", steps)).toMatchObject({ sql: `SELECT COUNT(*) AS n FROM ${USL}.dns_live`, expect: 603 });
     const printed = setup.formatPlan(steps, "DRIFT").join("\n");
-    expect(printed).toContain(`21 list CLOUDFLARE tables\n     SHOW LIGHTNING TABLES CLOUDFLARE\n22 drop CLOUDFLARE.zone_${ZA}  (only when CLOUDFLARE lists zone_${ZA} over another endpoint)`);
-    expect(printed).toContain(`23 create CLOUDFLARE.zone_${ZA}  (only when CLOUDFLARE lacks zone_${ZA} or it was dropped this run)\n     ${restPrinted(`zone_${ZA}`, REST[0][1])}`);
+    expect(printed).toContain(`${label("list CLOUDFLARE tables")}\n     SHOW LIGHTNING TABLES CLOUDFLARE\n${label(`drop CLOUDFLARE.zone_${ZA}`)}  (only when CLOUDFLARE lists zone_${ZA} over another endpoint)`);
+    expect(printed).toContain(`${label(`create CLOUDFLARE.zone_${ZA}`)}  (only when CLOUDFLARE lacks zone_${ZA} or it was dropped this run)\n     ${restPrinted(`zone_${ZA}`, REST[0][1])}`);
     expect(printed).not.toContain(TOKEN);
     expect(JSON.stringify(steps)).not.toContain(TOKEN);
   });
@@ -213,9 +248,9 @@ describe("plan()", () => {
     expect(steps.some((s) => s.name === "describe LESSONS.ledger")).toBe(false);
     expect(step("count LESSONS.ledger", steps).sql).toBe("SELECT COUNT(*) AS n FROM LESSONS.ledger");
     const printed = setup.formatPlan(steps, "DRIFT").join("\n");
-    expect(printed).toContain("06 copy files to the filestore\n");
-    expect(printed).toContain("15 drop LESSONS.lesson  (only when LESSONS lists lesson over another path or format, or with other columns)");
-    expect(printed).toContain("16 create LESSONS.lesson  (only when LESSONS lacks lesson or it was dropped this run)");
+    expect(printed).toContain(`${label("copy files to the filestore")}\n`);
+    expect(printed).toContain(`${label("drop LESSONS.lesson")}  (only when LESSONS lists lesson over another path or format, or with other columns)`);
+    expect(printed).toContain(`${label("create LESSONS.lesson")}  (only when LESSONS lacks lesson or it was dropped this run)`);
   });
 
   it("datasource: CREATE from DATABASE_URL with the host replaced, built in memory; list its tables; register; refresh", () => {
@@ -321,7 +356,7 @@ describe("plan()", () => {
     expect(sql).toContain(`FROM (${live}) l LEFT JOIN (`);
     expect(sql).not.toContain(ZC);
     // the run: cloudflare.dns, run_complete's predicate over it, and no later run that passes it (ties to the greater run_id)
-    const complete = (a: string) => RUN_COMPLETE_EXPR.replace(/\b(observed_count|expected_count|status)\b/g, `${a}.$1`);
+    const complete = (a: string) => qualified(RUN_COMPLETE_EXPR, a);
     expect(sql).toContain(`(SELECT c.run_id, c.tenant_id, c.started_at FROM DRIFT.collection_run c WHERE c.surface = 'cloudflare.dns' AND ${complete("c")} AND NOT EXISTS (SELECT 1 FROM DRIFT.collection_run w WHERE w.surface = 'cloudflare.dns' AND ${complete("w")} AND (w.started_at > c.started_at OR (w.started_at = c.started_at AND w.run_id > c.run_id)))) k ON 1 = 1`);
     expect(sql.endsWith("LEFT JOIN DRIFT.dns_record d ON d.run_id = k.run_id AND d.record_id = l.record_id")).toBe(true);
     // the flags 1, 0 or -1 when absent, the held type '' when the run lacks the record: every column the rule reads is NOT NULL
@@ -331,6 +366,20 @@ describe("plan()", () => {
     expect(sql).not.toMatch(/\.(name|content)\b/);
     expect(setup.activation("dns_live", "DRIFT2", setup.restTables(ZONES))).toContain("FROM DRIFT2.collection_run c WHERE");
     expect(() => setup.activation("dns_live", "DRIFT")).toThrow(/at least one CLOUDFLARE REST table/);
+  });
+
+  it("run_complete's expression and the dns_live activation share one column list: RUN_COMPLETE_COLUMNS is the set of identifiers the expression names, and both complete-run predicates carry each as c.<col> and w.<col> with no bare occurrence", () => {
+    const expression = setup.DQ_RULES.find((r) => r.name === "run_complete")!.expression;
+    expect([...new Set(identifiers(expression))].sort()).toEqual([...setup.RUN_COMPLETE_COLUMNS].sort());
+    const sql = setup.activation("dns_live", "DRIFT", setup.restTables(ZONES));
+    const found = sql.match(/c\.surface = 'cloudflare\.dns' AND (.+?) AND NOT EXISTS \(.+? w\.surface = 'cloudflare\.dns' AND (.+?) AND \(w\.started_at > /);
+    expect(found, "the two complete-run predicates in the dns_live SQL").not.toBeNull();
+    const bare = new RegExp(`(?<![\\w.])(?:${setup.RUN_COMPLETE_COLUMNS.join("|")})\\b`);
+    for (const [alias, predicate] of [["c", found![1]], ["w", found![2]]]) {
+      expect(sql, alias).toContain(qualified(expression, alias));
+      for (const col of setup.RUN_COMPLETE_COLUMNS) expect(predicate, `${alias}.${col}`).toContain(`${alias}.${col}`);
+      expect(predicate, `${alias} predicate`).not.toMatch(bare);
+    }
   });
 
   it("then the DQ rules (register or update), RUN DQ on collection, copy, action, cause, adoption and dns_live, the USL's table listing and a count per table", () => {
@@ -354,7 +403,7 @@ describe("plan()", () => {
     expect(step("update dq action_verified", steps).sql).toBe(`UPDATE DQ action_verified TABLE ${USL}.action SET NAME = action_verified, EXPRESSION = ${ACTION_VERIFIED_EXPR}`);
     expect(step("register dq cause_evidenced", steps).sql).toBe(`REGISTER DQ cause_evidenced TABLE ${USL}.cause AS cause_class = 'unknown' OR evidence_ids <> '[]'`);
     expect(step("update dq cause_evidenced", steps).sql).toBe(`UPDATE DQ cause_evidenced TABLE ${USL}.cause SET NAME = cause_evidenced, EXPRESSION = ${CAUSE_EVIDENCED_EXPR}`);
-    for (const t of ["collection", "copy", "action", "cause", "adoption", "dns_live"]) expect(step(`run dq ${t}`, steps)).toMatchObject({ sql: `RUN DQ TABLE ${USL}.${t}`, dqTable: t, show: true });
+    for (const t of DQ_RUN_TABLES) expect(step(`run dq ${t}`, steps)).toMatchObject({ sql: `RUN DQ TABLE ${USL}.${t}`, dqTable: t, show: true });
     expect(step("show lightning.metastore.drift.drift_usl", steps).sql).toBe(`SHOW NAMESPACES OR TABLES IN ${USL}`);
     for (const t of FIFTEEN) expect(step(`count ${t}`, steps).sql).toBe(`SELECT COUNT(*) AS n FROM ${USL}.${t}`);
   });
@@ -570,7 +619,7 @@ describe("the password and the token never appear", () => {
       for (const secret of [PW, TOKEN]) expect(printed).not.toContain(secret);
       expect(printed).toContain('password "<redacted>"');
       expect(printed).toContain('HEADER (Authorization "Bearer <redacted>") BODY ()');
-      expect(printed).toContain("02 create datasource DRIFT  (only when DRIFT is absent)");
+      expect(printed).toContain(`${label("create datasource DRIFT", steps)}  (only when DRIFT is absent)`);
     }
   });
 
@@ -685,7 +734,7 @@ describe("apply()", () => {
   it("against an instance already set up: the files copied again, a no-op otherwise, the file and REST tables, the USL and its rules kept, RUN DQ printed for six tables", async () => {
     const { r, client, tracer, out, puts, status } = await run(configured);
     expect(r.ok).toBe(true);
-    expect(r.results).toHaveLength(84);
+    expect(r.results).toHaveLength(PLAN.length);
     expect(skippedOf(status)).toEqual([
       "create datasource DRIFT", "register datasource tables", "create lightning database LESSONS", "create lightning database RULES", ...FILE_SKIPS, ...REST_SKIPS,
       "remove usl drift_usl", "compile usl drift_usl", ...RULES.flatMap((n) => [`register dq ${n}`, `update dq ${n}`]),
@@ -697,34 +746,38 @@ describe("apply()", () => {
     // every run writes the three files: a file table re-reads its file on every query (measured 25 Oct 2026)
     expect(puts).toEqual([FILES]);
     expect(r.dq?.rows).toEqual(DQ_ROWS);
-    expect(Object.keys(r.dqRuns)).toEqual(["collection", "copy", "action", "cause", "adoption", "dns_live"]);
+    expect(Object.keys(r.dqRuns)).toEqual(DQ_RUN_TABLES);
     expect(out).toContain("     name | table | type | total_record | valid_record | invalid_record");
     expect(out).toContain("     run_complete | collection | Custom Data Quality | 4 | 4 | 0");
-    expect(out.find((l) => l.includes("01 show datasources"))).toMatch(/^ok\s+01 show datasources\s+1 row, DRIFT listed {2}\(\d+ ms\)$/);
-    expect(out.find((l) => l.includes("02 create datasource DRIFT"))).toMatch(/^skipped 02 create datasource DRIFT\s+DRIFT exists$/);
-    expect(out.find((l) => l.includes("03 list datasource tables"))).toMatch(new RegExp(`^ok\\s+03 list datasource tables\\s+${TABLE_NAMES.length} rows, all ${TABLE_NAMES.length} schema tables registered {2}\\(\\d+ ms\\)$`));
-    expect(out.find((l) => l.includes("06 copy files"))).toMatch(/^ok\s+06 copy files to the filestore\s+ledger\.json 22 bytes, lessons\.json 23 bytes, rules\.json 22 bytes {2}\(\d+ ms\)$/);
-    expect(out.find((l) => l.includes("07 show lightning databases"))).toMatch(/^ok\s+07 show lightning databases\s+3 rows, LESSONS listed, RULES listed, CLOUDFLARE listed {2}\(\d+ ms\)$/);
-    expect(out.find((l) => l.includes("08 create lightning database LESSONS"))).toMatch(/^skipped 08 create lightning database LESSONS\s+LESSONS exists$/);
-    expect(out.find((l) => l.includes("10 list LESSONS tables"))).toMatch(/^ok\s+10 list LESSONS tables\s+2 rows, ledger listed, lesson listed {2}\(\d+ ms\)$/);
-    expect(out.find((l) => l.includes("14 describe LESSONS.lesson"))).toMatch(/^ok\s+14 describe LESSONS\.lesson\s+9 rows, the 9 columns {2}\(\d+ ms\)$/);
-    expect(out.find((l) => l.includes("16 create LESSONS.lesson"))).toMatch(/^skipped 16 create LESSONS\.lesson\s+LESSONS\.lesson listed as stated$/);
-    expect(out.find((l) => l.includes("21 list CLOUDFLARE tables"))).toMatch(/^ok\s+21 list CLOUDFLARE tables\s+3 rows, 3 of 3 REST tables listed over their endpoint {2}\(\d+ ms\)$/);
-    expect(out.find((l) => l.includes(`23 create CLOUDFLARE.zone_${ZA}`))).toBe(`skipped 23 create CLOUDFLARE.zone_${ZA} CLOUDFLARE.zone_${ZA} listed over its endpoint`);
-    expect(out.find((l) => l.includes("31 load usl drift_usl"))).toMatch(/^ok\s+31 load usl drift_usl\s+15 tables as compiled {2}\(\d+ ms\)$/);
-    expect(out.find((l) => l.includes("32 remove usl"))).toMatch(/^skipped 32 remove usl drift_usl\s+drift_usl holds the 15 tables as compiled$/);
-    expect(out.find((l) => l.includes("49 list dq rules"))).toMatch(/^ok\s+49 list dq rules\s+9 rows, run_complete listed, copy_validated listed, action_verified listed, cause_evidenced listed, exception_in_force listed, dns_inventory_current listed {2}\(\d+ ms\)$/);
-    expect(out.find((l) => l.includes("51 update dq run_complete"))).toMatch(/^skipped 51 update dq run_complete\s+run_complete listed as stated$/);
-    expect(out.find((l) => l.includes("59 update dq exception_in_force"))).toMatch(/^skipped 59 update dq exception_in_force\s+exception_in_force listed as stated$/);
-    expect(out.find((l) => l.includes("61 update dq dns_inventory_current"))).toMatch(/^skipped 61 update dq dns_inventory_current\s+dns_inventory_current listed as stated$/);
-    expect(out.find((l) => l.includes("69 count collection"))).toMatch(/^ok\s+69 count collection\s+= 12 {2}\(\d+ ms\)$/);
-    expect(out.find((l) => l.includes("83 count dns_live"))).toMatch(/^ok\s+83 count dns_live\s+= 12, the zones report 603 {2}\(\d+ ms\)$/);
-    expect(out.find((l) => l.includes("84 count LESSONS.ledger"))).toMatch(/^ok\s+84 count LESSONS\.ledger\s+= 12 {2}\(\d+ ms\)$/);
+    // each step's line carries its place in the plan: the status, the numbered name, then the note
+    const lines: [status: "ok" | "skipped", name: string, rest: RegExp][] = [
+      ["ok", "show datasources", /\s+1 row, DRIFT listed {2}\(\d+ ms\)$/],
+      ["skipped", "create datasource DRIFT", /\s+DRIFT exists$/],
+      ["ok", "list datasource tables", new RegExp(`\\s+${TABLE_NAMES.length} rows, all ${TABLE_NAMES.length} schema tables registered {2}\\(\\d+ ms\\)$`)],
+      ["ok", "copy files to the filestore", /\s+ledger\.json 22 bytes, lessons\.json 23 bytes, rules\.json 22 bytes {2}\(\d+ ms\)$/],
+      ["ok", "show lightning databases", /\s+3 rows, LESSONS listed, RULES listed, CLOUDFLARE listed {2}\(\d+ ms\)$/],
+      ["skipped", "create lightning database LESSONS", /\s+LESSONS exists$/],
+      ["ok", "list LESSONS tables", /\s+2 rows, ledger listed, lesson listed {2}\(\d+ ms\)$/],
+      ["ok", "describe LESSONS.lesson", /\s+9 rows, the 9 columns {2}\(\d+ ms\)$/],
+      ["skipped", "create LESSONS.lesson", /\s+LESSONS\.lesson listed as stated$/],
+      ["ok", "list CLOUDFLARE tables", /\s+3 rows, 3 of 3 REST tables listed over their endpoint {2}\(\d+ ms\)$/],
+      ["ok", "load usl drift_usl", /\s+15 tables as compiled {2}\(\d+ ms\)$/],
+      ["skipped", "remove usl drift_usl", /\s+drift_usl holds the 15 tables as compiled$/],
+      ["ok", "list dq rules", /\s+9 rows, run_complete listed, copy_validated listed, action_verified listed, cause_evidenced listed, exception_in_force listed, dns_inventory_current listed {2}\(\d+ ms\)$/],
+      ["skipped", "update dq run_complete", /\s+run_complete listed as stated$/],
+      ["skipped", "update dq exception_in_force", /\s+exception_in_force listed as stated$/],
+      ["skipped", "update dq dns_inventory_current", /\s+dns_inventory_current listed as stated$/],
+      ["ok", "count collection", /\s+= 12 {2}\(\d+ ms\)$/],
+      ["ok", "count dns_live", /\s+= 12, the zones report 603 {2}\(\d+ ms\)$/],
+      ["ok", "count LESSONS.ledger", /\s+= 12 {2}\(\d+ ms\)$/],
+    ];
+    for (const [status, name, rest] of lines) expect(lineOf(out, name), name).toMatch(lineRe(status, name, rest));
+    expect(lineOf(out, `create CLOUDFLARE.zone_${ZA}`)).toBe(`skipped ${label(`create CLOUDFLARE.zone_${ZA}`)} CLOUDFLARE.zone_${ZA} listed over its endpoint`);
     // the live re-run of 26 Oct 2026, 03:48 UTC over six zones: 90 steps, 53 ok, 37 skipped, 0 failed, 38.1 s; here three REST tables
-    expect(out.at(-1)).toMatch(/^ZETARIS SETUP: 84 statements, 53 ok, 31 skipped, 0 failed, \d+\.\d s$/);
+    expect(out.at(-1)).toMatch(summary(53, ", \\d+\\.\\d s$"));
     // env carries the zones, so no zone read: one trace line per statement
     expect(out.some((l) => l.includes("00 read the Cloudflare zones"))).toBe(false);
-    expect(tracer.events).toHaveLength(84);
+    expect(tracer.events).toHaveLength(PLAN.length);
     // every statement is a query on zetaris; the copy reads the sources and names no engine
     const copyAt = r.results.findIndex((x) => x.name === "copy files to the filestore");
     expect(tracer.events[copyAt]).toMatchObject({ agent: "zetaris-setup", action: "observe", status: "ok", input_summary: expect.stringContaining("docker exec -i") });
@@ -747,14 +800,14 @@ describe("apply()", () => {
       "register dq run_complete": "ok", "update dq run_complete": "skipped", "register dq copy_validated": "ok", "register dq action_verified": "ok",
       "register dq cause_evidenced": "ok", "update dq cause_evidenced": "skipped",
     });
-    expect(out.find((l) => l.includes("03 list datasource tables"))).toContain(`${TABLE_NAMES.length - 8} of ${TABLE_NAMES.length} schema tables unregistered: ${TABLE_NAMES.slice(8).join(", ")}`);
-    expect(out.find((l) => l.includes("31 load usl drift_usl"))).toContain("stale: 4 table(s); lacks policy, copy, probe, disposition, action, ticket, cause, lesson, rule, adoption, dns_live");
+    expect(lineOf(out, "list datasource tables")).toContain(`${TABLE_NAMES.length - 8} of ${TABLE_NAMES.length} schema tables unregistered: ${TABLE_NAMES.slice(8).join(", ")}`);
+    expect(lineOf(out, "load usl drift_usl")).toContain("stale: 4 table(s); lacks policy, copy, probe, disposition, action, ticket, cause, lesson, rule, adoption, dns_live");
     const order = client.calls.map((c) => c.sql.split(/\s+/).slice(0, 2).join(" "));
     expect(order.indexOf("REMOVE USL")).toBeLessThan(order.indexOf("COMPILE USL"));
     expect(order.indexOf("COMPILE USL")).toBeLessThan(order.indexOf("ACTIVATE USL"));
     expect(client.calls.filter((c) => c.opts.allowMultiStatement).map((c) => c.sql)).toEqual([setup.COMPILE_USL]);
     expect(sent(client, /^REGISTER DQ/)).toEqual(setup.DQ_RULES.map((d) => `REGISTER DQ ${d.name} TABLE ${USL}.${d.table} AS ${d.expression}`));
-    expect(out.at(-1)).toMatch(/^ZETARIS SETUP: 84 statements, 61 ok, 23 skipped, 0 failed/);
+    expect(out.at(-1)).toMatch(summary(61));
   });
 
   it("against the fourteen-table USL of 25 Oct, 22:27 UTC and no CLOUDFLARE database: create it and its REST tables with the token, REMOVE USL, COMPILE the fifteen, register all six, as the live run of 26 Oct, 03:47 UTC did", async () => {
@@ -767,9 +820,9 @@ describe("apply()", () => {
       return configured(sql);
     });
     expect(r.ok).toBe(true);
-    expect(out.find((l) => l.includes("07 show lightning databases"))).toContain("2 rows, LESSONS listed, RULES listed, CLOUDFLARE not listed");
-    expect(out.find((l) => l.includes("21 list CLOUDFLARE tables"))).toContain("0 rows, 0 of 3 REST tables listed over their endpoint");
-    expect(out.find((l) => l.includes("31 load usl drift_usl"))).toContain("stale: 14 table(s); lacks dns_live");
+    expect(lineOf(out, "show lightning databases")).toContain("2 rows, LESSONS listed, RULES listed, CLOUDFLARE not listed");
+    expect(lineOf(out, "list CLOUDFLARE tables")).toContain("0 rows, 0 of 3 REST tables listed over their endpoint");
+    expect(lineOf(out, "load usl drift_usl")).toContain("stale: 14 table(s); lacks dns_live");
     expect(status).toMatchObject({
       "create lightning database CLOUDFLARE": "ok", "remove usl drift_usl": "ok", "compile usl drift_usl": "ok", "activate dns_live": "ok",
       "register dq dns_inventory_current": "ok", "update dq dns_inventory_current": "skipped", "run dq dns_live": "ok",
@@ -785,7 +838,7 @@ describe("apply()", () => {
     expect(out.join("\n")).not.toContain(TOKEN);
     expect(sent(client, /^REGISTER DQ dns_inventory_current/)).toEqual([`REGISTER DQ dns_inventory_current TABLE ${USL}.dns_live AS ${DNS_EXPR}`]);
     // the live run of 26 Oct 2026, 03:47 UTC over six zones: 90 steps, 68 ok, 22 skipped, 0 failed, 44.4 s; here three REST tables
-    expect(out.at(-1)).toMatch(/^ZETARIS SETUP: 84 statements, 65 ok, 19 skipped, 0 failed/);
+    expect(out.at(-1)).toMatch(summary(65));
   });
 
   it("a REST table listed over another endpoint is dropped and created again; the others are kept", async () => {
@@ -794,7 +847,7 @@ describe("apply()", () => {
       return configured(sql);
     });
     expect(r.ok).toBe(true);
-    expect(out.find((l) => l.includes("21 list CLOUDFLARE tables"))).toContain("3 rows, 2 of 3 REST tables listed over their endpoint, 1 over another");
+    expect(lineOf(out, "list CLOUDFLARE tables")).toContain("3 rows, 2 of 3 REST tables listed over their endpoint, 1 over another");
     expect(status).toMatchObject({ [`drop CLOUDFLARE.${REST[0][0]}`]: "ok", [`create CLOUDFLARE.${REST[0][0]}`]: "ok", [`drop CLOUDFLARE.${REST[1][0]}`]: "skipped", [`create CLOUDFLARE.${REST[1][0]}`]: "skipped" });
     expect(sent(client, /^(?:DROP|CREATE) LIGHTNING/)).toEqual([`DROP LIGHTNING DATABASE TABLE CLOUDFLARE.${REST[0][0]}`, restPrinted(REST[0][0], REST[0][1]).replace("<redacted>", TOKEN)]);
   });
@@ -826,7 +879,7 @@ describe("apply()", () => {
     expect(out[0]).toMatch(/^ok {6}00 read the Cloudflare zones {17}3 zone\(s\) the token sees, 603 record\(s\), 3 REST table\(s\) of 500 records a page {2}\(\d+ ms\)$/);
     expect(tracer.events[0]).toMatchObject({ agent: "zetaris-setup", action: "observe", status: "ok", input_summary: "Cloudflare GET /zones and each zone's record count" });
     expect(tracer.events[0].engine).toBeUndefined();
-    expect(r.results).toHaveLength(84);
+    expect(r.results).toHaveLength(PLAN.length);
 
     const failed = new Scripted(configured);
     const lines: string[] = [];
@@ -846,8 +899,8 @@ describe("apply()", () => {
       return configured(sql);
     });
     expect(r.ok).toBe(true);
-    expect(out.find((l) => l.includes("10 list LESSONS tables"))).toContain(`2 rows, ledger listed over ${DIR}/ledger.jsonl as json, lesson listed`);
-    expect(out.find((l) => l.includes("31 load usl drift_usl"))).toContain("stale: 11 table(s); lacks lesson, rule, adoption, dns_live");
+    expect(lineOf(out, "list LESSONS tables")).toContain(`2 rows, ledger listed over ${DIR}/ledger.jsonl as json, lesson listed`);
+    expect(lineOf(out, "load usl drift_usl")).toContain("stale: 11 table(s); lacks lesson, rule, adoption, dns_live");
     expect(status).toMatchObject({
       "drop LESSONS.ledger": "ok", "create LESSONS.ledger": "ok", "drop LESSONS.lesson": "skipped", "create LESSONS.lesson": "skipped",
       "remove usl drift_usl": "ok", "compile usl drift_usl": "ok", "activate adoption": "ok", "register dq exception_in_force": "ok", "update dq exception_in_force": "skipped", "run dq adoption": "ok",
@@ -856,7 +909,7 @@ describe("apply()", () => {
     expect(order.indexOf("DROP LIGHTNING DATABASE TABLE LESSONS.ledger")).toBeLessThan(order.indexOf(`CREATE LIGHTNING FILESTORE TABLE ledger FROM LESSONS FORMAT JSON OPTIONS (path "${DIR}/ledger.json")`));
     expect(sent(client, /^REGISTER DQ/)).toEqual(setup.DQ_RULES.map((d) => `REGISTER DQ ${d.name} TABLE ${USL}.${d.table} AS ${d.expression}`));
     expect(sent(client, /^REGISTER DQ exception_in_force/)).toEqual([`REGISTER DQ exception_in_force TABLE ${USL}.adoption AS ${EXCEPTION_IN_FORCE_EXPR}`]);
-    expect(out.at(-1)).toMatch(/^ZETARIS SETUP: 84 statements, 63 ok, 21 skipped, 0 failed/);
+    expect(out.at(-1)).toMatch(summary(63));
   });
 
   it("a file table with other columns than the setup writes is dropped and created again; one listed as stated is kept", async () => {
@@ -865,7 +918,7 @@ describe("apply()", () => {
       return configured(sql);
     });
     expect(r.ok).toBe(true);
-    expect(out.find((l) => l.includes("14 describe LESSONS.lesson"))).toContain("9 rows, stale: lacks provenance; holds extra");
+    expect(lineOf(out, "describe LESSONS.lesson")).toContain("9 rows, stale: lacks provenance; holds extra");
     expect(status).toMatchObject({ "drop LESSONS.lesson": "ok", "create LESSONS.lesson": "ok", "drop RULES.rule": "skipped", "create RULES.rule": "skipped", "drop LESSONS.ledger": "skipped" });
     expect(sent(client, /^(?:DROP|CREATE) LIGHTNING/)).toEqual(["DROP LIGHTNING DATABASE TABLE LESSONS.lesson", `CREATE LIGHTNING FILESTORE TABLE lesson FROM LESSONS FORMAT JSON OPTIONS (path "${DIR}/lessons.json")`]);
   });
@@ -874,7 +927,7 @@ describe("apply()", () => {
     const { r, client, out } = await run(configured, () => { throw new Error("docker exec zetaris-driver-1 failed for /x (exit 1): No such container: zetaris-driver-1"); });
     expect(r.ok).toBe(false);
     expect(r.results.at(-1)).toMatchObject({ name: "copy files to the filestore", status: "failed" });
-    expect(out.at(-1)).toMatch(/^ZETARIS SETUP FAILED at 06 copy files to the filestore after \d+ ms: docker exec zetaris-driver-1 failed/);
+    expect(out.at(-1)).toMatch(new RegExp(`^ZETARIS SETUP FAILED at ${escapeRe(label("copy files to the filestore"))} after \\d+ ms: docker exec zetaris-driver-1 failed`));
     expect(sent(client, /LIGHTNING/)).toEqual([]);
   });
 
@@ -899,7 +952,7 @@ describe("apply()", () => {
       return configured(sql);
     });
     expect(r.ok).toBe(true);
-    expect(out.find((l) => l.includes("31 load usl drift_usl"))).toContain("stale: 15 table(s); columns differ in action");
+    expect(lineOf(out, "load usl drift_usl")).toContain("stale: 15 table(s); columns differ in action");
     expect(status).toMatchObject({ "remove usl drift_usl": "ok", "compile usl drift_usl": "ok", "update dq run_complete": "skipped", "update dq action_verified": "ok" });
     expect(sent(client, /^(?:REGISTER|UPDATE) DQ/)).toEqual([`UPDATE DQ action_verified TABLE ${USL}.action SET NAME = action_verified, EXPRESSION = ${ACTION_VERIFIED_EXPR}`]);
   });
@@ -964,7 +1017,7 @@ describe("apply()", () => {
     expect(r.error).toContain('password "<redacted>"');
     expect(r.error).not.toContain(PW);
     expect(r.results.at(-1)).toMatchObject({ name: "create datasource DRIFT", status: "failed" });
-    expect(out.at(-1)).toMatch(/^ZETARIS SETUP FAILED at 02 create datasource DRIFT after \d+ ms: connection refused/);
+    expect(out.at(-1)).toMatch(new RegExp(`^ZETARIS SETUP FAILED at ${escapeRe(label("create datasource DRIFT"))} after \\d+ ms: connection refused`));
     expect(tracer.events.at(-1)).toMatchObject({ status: "failed", input_summary: "CREATE DATASOURCE DRIFT (credentials redacted)" });
     expect(JSON.stringify(tracer.events)).not.toContain(PW);
     expect(out.join("\n")).not.toContain(PW);

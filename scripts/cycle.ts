@@ -46,7 +46,7 @@ import { redact } from "../src/config.ts";
 import { SKIPPABLE, parseSkip, type Skippable } from "../src/loop/cycle.ts";
 import { liveCycle, liveRefusal, liveShared, type LiveShared } from "../src/loop/live.ts";
 import { presentOptions } from "../src/loop/present.ts";
-import { TENANT } from "../src/policy/schema.ts";
+import { TENANT_ID, TENANT_ID_SHAPE } from "../src/policy/schema.ts";
 
 const USAGE = `usage: npm run cycle -- --tenant <id> [--apply] [--skip ${SKIPPABLE.join("|")}]... [--tickets-dry-run] [--verbose|--quiet] [--help]`;
 
@@ -71,7 +71,7 @@ if (args.help) {
   console.log("Runs one cycle: collect, probe, validate, pass, explain (who or what changed each setting the pass moves on), act (dry run unless --apply), tickets, document; one row per step, --verbose adds each step's full line, --quiet prints the header and the done line.");
   process.exit(0);
 }
-if (!args.tenant || !TENANT.test(args.tenant) || args.tenant === "*") usage("--tenant is required: a tenant id ([A-Za-z0-9._-], up to 64)");
+if (!args.tenant || !TENANT_ID.test(args.tenant)) usage(`--tenant is required: ${TENANT_ID_SHAPE}`);
 if (args.verbose && args.quiet) usage("--verbose and --quiet exclude each other");
 let skip: Set<Skippable>;
 try {

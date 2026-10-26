@@ -126,7 +126,7 @@ CREATE TABLE IF NOT EXISTS copy_validation (
   validation_id  TEXT PRIMARY KEY,   -- stableId("val", copy_id, validator, validated_at)
   copy_id        TEXT NOT NULL,
   tenant_id      TEXT NOT NULL,
-  validator      TEXT NOT NULL,      -- nginx-t | cf-schema
+  validator      TEXT NOT NULL,      -- nginx-t | cf-schema | zetaris-json
   result         TEXT NOT NULL,      -- ok | ok_with_gaps | fail
   missing_dependencies TEXT NOT NULL, -- newline-separated redacted paths or names; '' when none
   output_redacted TEXT NOT NULL,     -- the validator's output through the redactor, first 2000 characters; '' when none

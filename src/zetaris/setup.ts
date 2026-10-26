@@ -420,6 +420,8 @@ export const DQ_RULES: readonly DqRule[] = [
   { name: "exception_in_force", table: "adoption", expression: EXCEPTION_IN_FORCE },
   { name: "dns_inventory_current", table: "dns_live", expression: DNS_INVENTORY_CURRENT },
 ];
+/** The columns of the collection entity that run_complete's expression names: lastCompleteDnsRun qualifies exactly these with a table alias. */
+export const RUN_COMPLETE_COLUMNS = ["observed_count", "expected_count", "status"] as const;
 /** The tables RUN DQ runs on, one statement each. */
 export const DQ_TABLES: readonly UslTable[] = ["collection", "copy", "action", "cause", "adoption", "dns_live"];
 export const DQ_RULE = "run_complete";
@@ -665,7 +667,8 @@ const keep = (cols: string): string => cols.split(/\s+/).filter(Boolean).map((c)
  * run_id. run_complete's own expression over the run and over each later candidate, so "complete" is the rule's.
  */
 function lastCompleteDnsRun(ds: string): string {
-  const complete = (a: string): string => DQ_RULES.find((r) => r.name === "run_complete")!.expression.replace(/\b(observed_count|expected_count|status)\b/g, `${a}.$1`);
+  const column = new RegExp(`\\b(${RUN_COMPLETE_COLUMNS.join("|")})\\b`, "g");
+  const complete = (a: string): string => DQ_RULES.find((r) => r.name === "run_complete")!.expression.replace(column, `${a}.$1`);
   return `SELECT c.run_id, c.tenant_id, c.started_at FROM ${ds}.collection_run c WHERE c.surface = 'cloudflare.dns' AND ${complete("c")} AND NOT EXISTS (SELECT 1 FROM ${ds}.collection_run w WHERE w.surface = 'cloudflare.dns' AND ${complete("w")} AND (w.started_at > c.started_at OR (w.started_at = c.started_at AND w.run_id > c.run_id)))`;
 }
 

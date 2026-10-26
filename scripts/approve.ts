@@ -13,7 +13,8 @@
 //                              default (every object of the scope)
 //   --surface zetaris.control  the definition of every object of the tenant's latest passing zetaris.control run
 //                              (src/zetaris/control.ts): Zetaris's semantic layer, DQ rules, grants, datasources and
-//                              server version, approved as one state
+//                              server version, approved as one state; when that run did not check a statement (SHOW
+//                              GRANT refused), a warning line on stderr says what the sign-off leaves unapproved
 // approved_by is --by (default "operator") and note --note, both through the redactor; approved_at is now.
 // Every row is printed (redacted) with its state against the approvals already stored: new, replaces, current
 // or superseded. --dry-run prints and writes nothing; otherwise the new, replaces and superseded rows go through
@@ -29,12 +30,12 @@ import { pseudonymHost } from "../src/collectors/linux.ts";
 import { config, redact } from "../src/config.ts";
 import type { CollectionRun } from "../src/data/rows.ts";
 import { Store } from "../src/data/store.ts";
+import { TENANT_ID, TENANT_ID_SHAPE } from "../src/policy/schema.ts";
 import { Redactor } from "../src/redactor.ts";
 import { ApproveError, DNS_FIELDS, DNS_SURFACE, NGINX_SURFACE, approveRun, resolveObject, resolveZone, runLine, type ApprovalSelection } from "../src/vault/approve.ts";
-import { CONTROL_HOST, CONTROL_SURFACE } from "../src/zetaris/control.ts";
+import { CONTROL_HOST, CONTROL_SURFACE, notCheckedIn, notCheckedWarnings } from "../src/zetaris/control.ts";
 
 const USAGE = "usage: npm run approve -- --tenant <id> (--host <alias> [--object <real path | redacted object id>] | --zone <zone> | --record <id> | --surface zetaris.control | --all) [--by <name>] [--note <text>] [--schema <name>] [--dry-run] [--help]";
-const TENANT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 function usage(msg: string): never {
   console.error(`approve: ${msg}\n${USAGE}`);
@@ -58,7 +59,7 @@ if (args.help) {
   console.log("Writes approved_setting rows from the tenant's latest passing run: a host's nginx files (or one), a zone's records, one record, Zetaris's control plane with --surface zetaris.control, or with --all alone the account's records. --dry-run prints the rows (redacted) and writes nothing.");
   process.exit(0);
 }
-if (!args.tenant || !TENANT.test(args.tenant)) usage("--tenant is required: a tenant id ([A-Za-z0-9._-], up to 64)");
+if (!args.tenant || !TENANT_ID.test(args.tenant)) usage(`--tenant is required: ${TENANT_ID_SHAPE}`);
 const scopes = [args.host !== undefined, args.zone !== undefined, args.record !== undefined, args.surface !== undefined].filter(Boolean).length;
 if (scopes > 1) usage("name one scope: --host, --zone, --record or --surface");
 if (scopes === 0 && !args.all) usage("name a scope: --host, --zone, --record, --surface, or --all for the account's records");
@@ -90,7 +91,9 @@ try {
   if (args.surface !== undefined) {
     run = await store.latestPassingRun(tenant, CONTROL_SURFACE, CONTROL_HOST);
     if (!run) fail(`no passing ${CONTROL_SURFACE} run for ${tenant}: npm run collect:zetaris -- --tenant ${tenant} collects one`);
-    await finish(run, await store.observationsOf(run.run_id), { kind: "surface", surface: CONTROL_SURFACE, host: CONTROL_HOST });
+    const observations = await store.observationsOf(run.run_id);
+    for (const w of notCheckedWarnings(run.run_id, notCheckedIn(observations.map((o) => o.object_id), redactor))) console.error(w);
+    await finish(run, observations, { kind: "surface", surface: CONTROL_SURFACE, host: CONTROL_HOST });
   } else if (args.host !== undefined) {
     const host = pseudonymHost(redactor, args.host);
     run = await store.latestPassingRun(tenant, NGINX_SURFACE, host);

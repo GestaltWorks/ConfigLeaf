@@ -1,13 +1,22 @@
 // Zetaris's control plane as the surface zetaris.control (src/zetaris/control.ts) over fake statement answers in the
 // shapes Zetaris 2.4.3.1 returned on 26 Oct 2026: the objects and the population one read asserts, SHOW GRANT refused
 // as not_checked, a failed or short read refused by the gate, the rows and vault files with their hashes and
-// redaction. Then the whole pass over sql.js with policy/hackathon.json: the approved state passes with no finding on
+// redaction. zetaris-json (src/validate/zetaris.ts) over the vault's copies of a run: the shapes the collector writes,
+// the recorded hashes, the gaps an index names. Then the whole pass over sql.js with policy/hackathon.json: the approved state passes with no finding on
 // the surface, and an edited DQ rule, a dropped entity and a widened grant are each drift_vs_approved (a dropped
 // entity also approved_missing), every one ESCALATE under the zetaris.control rule, the edited rule's cause carrying
 // the line diff of its canonical JSON. Offline: nothing here reaches Zetaris.
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import type { QueryResult } from "../src/adapters/zetaris.ts";
+import type { CopyValidation } from "../src/data/rows.ts";
+import { validateCopies, type CopyStore } from "../src/validate/run.ts";
+import { ZETARIS_REPO } from "../src/validate/vault.ts";
+import { sha256 as validatorSha, shapeIssue, validateControlCopy } from "../src/validate/zetaris.ts";
+import { Vault } from "../src/vault/vault.ts";
 import { DataLayer } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { DriftWorld } from "../src/engine/world.ts";
@@ -18,7 +27,7 @@ import { resolvePolicy } from "../src/policy/resolve.ts";
 import { Redactor } from "../src/redactor.ts";
 import { approvalsFor } from "../src/vault/approve.ts";
 import {
-  CONTROL_HOST, CONTROL_STATEMENTS, CONTROL_SURFACE, canonical, collectControl, controlObjects, controlRows, controlText, readControl, sha256, storeControl,
+  CONTROL_HOST, CONTROL_STATEMENTS, CONTROL_SURFACE, canonical, collectControl, controlObjects, controlRows, controlText, notCheckedIn, notCheckedWarnings, readControl, sha256, storeControl,
   type ControlRead, type ControlStore,
 } from "../src/zetaris/control.ts";
 import { MemTracer } from "./fixtures/mem-tracer.ts";
@@ -154,15 +163,93 @@ describe("the objects of one read of the control plane", () => {
   });
 });
 
+describe("zetaris-json: the vault's copies of the control plane validated", () => {
+  const scratch: string[] = [];
+  afterAll(() => { for (const d of scratch) rmSync(d, { recursive: true, force: true }); });
+  const run = (read: ControlRead = answers(BASE)) => controlRows(controlObjects(read), redactor, { tenantId: T, startedAt: "2026-10-26T05:00:00.000Z", finishedAt: "2026-10-26T05:00:01.000Z" });
+  const bytesOf = (v: unknown): Uint8Array => new Uint8Array(Buffer.from(canonical(v), "utf8"));
+  const context = (ids: string[], recorded: string | null = null) => ({ ids: new Set(ids), recorded });
+
+  /** One complete run committed by the vault module into a fresh vault outside the checkout; its copies as the hook stores them. */
+  function committed(read: ControlRead = answers(BASE)) {
+    const dir = mkdtempSync(path.join(tmpdir(), "drift-zetaris-json-"));
+    scratch.push(dir);
+    const c = run(read);
+    const commit = new Vault(dir, redactor).commitRun({ tenantId: T, repo: ZETARIS_REPO, run: c.run, files: c.files });
+    const written: CopyValidation[] = [];
+    const store: CopyStore = {
+      vaultCopies: async (t, sha) => commit.copies.filter((x) => x.tenant_id === t && x.git_commit === sha),
+      inventoryAddresses: async () => [],
+      insertCopyValidations: async (rows) => (written.push(...rows), rows.length),
+    };
+    return { dir, c, commit, store, written };
+  }
+
+  it("every object the collector writes holds its shape: the writer and the validator agree on all 13", () => {
+    const c = run();
+    const ids = c.snapshot.objects.map((o) => o.id);
+    for (const o of c.snapshot.objects) {
+      expect(shapeIssue(o.id, o.value as Record<string, unknown>), o.id).toBeNull();
+      expect(validateControlCopy(o.id, bytesOf(o.value), context(ids, validatorSha(bytesOf(o.value)))), o.id).toEqual({ result: "ok", missing_dependencies: [], output: "" });
+    }
+  });
+
+  it("validate:copies over the Zetaris repository: one zetaris-json row per copy, every one ok, its recorded hash checked", async () => {
+    const { dir, commit, store, written } = committed();
+    const res = await validateCopies({ vaultDir: dir, tenant: T, zetaris: true, dryRun: false, store, redactor, validatedAt: "2026-10-26T05:10:00.000Z" });
+    expect(res.errors).toBe(0);
+    expect(res.lines).toEqual([`zetaris @${commit.commit.slice(0, 8)} (run ${commit.copies[0].run_id}): zetaris-json ok, 13 objects (ok 13, ok_with_gaps 0, fail 0), 0 gaps; 13 vault copies of 13 matched`]);
+    expect(written.map((r) => [r.copy_id, r.validator, r.result])).toEqual(commit.copies.map((x) => [x.copy_id, "zetaris-json", "ok"]));
+    // every repository: the Zetaris one is among them
+    expect((await validateCopies({ vaultDir: dir, tenant: T, dryRun: true, store, redactor })).lines.map((l) => l.split(" ")[0])).toEqual(["zetaris"]);
+    // a copy row whose recorded hash differs from the commit's bytes fails, that copy alone
+    const grant = commit.copies.find((x) => x.object_id.startsWith("grant/"))!;
+    const tampered: CopyStore = { ...store, vaultCopies: async (t, sha) => (await store.vaultCopies(t, sha)).map((x) => (x === grant ? { ...x, blob_sha256: `sha256:${"0".repeat(64)}` } : x)) };
+    const bad = await validateCopies({ vaultDir: dir, tenant: T, zetaris: true, dryRun: true, store: tampered, redactor, validatedAt: "2026-10-26T05:11:00.000Z" });
+    expect(bad.rows.filter((r) => r.result === "fail").map((r) => r.copy_id)).toEqual([grant.copy_id]);
+    expect(bad.lines[0]).toContain(`zetaris-json fail, 13 objects (ok 12, ok_with_gaps 0, fail 1)`);
+    expect(bad.lines[0]).toContain(`| first fail ${grant.object_id}: the copy's bytes hash to sha256:`);
+    expect(bad.lines.join("\n")).not.toContain("ACME-MSP");
+    // no store: the shapes are checked and the recorded hashes say they were not
+    const bare = await validateCopies({ vaultDir: dir, tenant: T, zetaris: true, dryRun: true, store: null, redactor });
+    expect(bare.lines[0]).toContain("zetaris-json ok, 13 objects (ok 13, ok_with_gaps 0, fail 0), 0 gaps; vault copies unknown (no store); recorded hashes unchecked (no store)");
+  });
+
+  it("a run with SHOW GRANT refused commits no grant object and validates whole; an index naming an object the commit lacks is a gap", async () => {
+    const { dir, store } = committed({ ...answers(BASE), grants: { error: "Zetaris 403: Access Control Read is required" } });
+    const res = await validateCopies({ vaultDir: dir, tenant: T, zetaris: true, dryRun: true, store, redactor });
+    expect(res.lines[0]).toContain("zetaris-json ok, 11 objects (ok 11, ok_with_gaps 0, fail 0), 0 gaps; 11 vault copies of 11 matched");
+    const ids = run().snapshot.objects.map((o) => o.id).filter((i) => i !== "datasource/LESSONS");
+    const index = run().snapshot.objects.find((o) => o.id === "datasources")!.value;
+    expect(validateControlCopy("datasources", bytesOf(index), context(ids))).toEqual({
+      result: "ok_with_gaps", missing_dependencies: ["datasource/LESSONS"],
+      output: "datasources names datasource/LESSONS, which the commit does not hold\nno vault_copy row was read (no store), so the recorded hash was not checked",
+    });
+  });
+
+  it("fails bytes that do not parse, bytes outside the canonical form, a shape the collector does not write and an id it does not use", () => {
+    const rule = { name: "run_complete", table: "collection", type: "Custom Data Quality", expression: "status = 'complete'" };
+    expect(validateControlCopy("dq/run_complete", new Uint8Array(Buffer.from("{ not json")), context([])).output).toBe("dq/run_complete fails to parse as JSON");
+    expect(validateControlCopy("dq/run_complete", new Uint8Array(Buffer.from(JSON.stringify(rule))), context([])).output).toMatch(/^dq\/run_complete is not in the collector's canonical form/);
+    expect(validateControlCopy("dq/run_complete", bytesOf({ ...rule, extra: "x" }), context([])).output).toBe("dq/run_complete must hold exactly the strings name run_complete, table, type and expression");
+    expect(validateControlCopy("dq/other_rule", bytesOf(rule), context([])).result).toBe("fail");
+    expect(validateControlCopy("dq/collection.run_complete", bytesOf(rule), context([])).result).toBe("ok");
+    expect(validateControlCopy("datasource/DRIFT", bytesOf({ kind: "odbc", name: "DRIFT", description: "", id: "840" }), context([])).result).toBe("fail");
+    expect(validateControlCopy("usl/drift_usl/collection", bytesOf({ name: "collection", columnSpecs: [], dqAnnotations: [] }), context([])).result).toBe("fail");
+    expect(validateControlCopy("notes/readme", bytesOf({ a: 1 }), context([])).output).toBe("notes/readme is an object id the zetaris.control collector does not write");
+    expect(validateControlCopy("grants", bytesOf(["USER X"]), context([])).output).toBe("grants is JSON of another kind than an object");
+  });
+});
+
 describe("the pass over the control plane, policy/hackathon.json", () => {
   const rules = loadPolicyFile(POLICY, { tenant: T, redactor }).rows;
   const rule = rules.find((r) => r.surface === CONTROL_SURFACE)!;
   const at = (h: number): string => `2026-10-26T0${h}:00:00.000Z`;
-  const rowsOf = (s: State, h: number) => controlRows(controlObjects(answers(s)), redactor, { tenantId: T, startedAt: at(h), finishedAt: at(h).replace(":00.000Z", ":01.000Z") });
+  const rowsOf = (read: ControlRead, h: number) => controlRows(controlObjects(read), redactor, { tenantId: T, startedAt: at(h), finishedAt: at(h).replace(":00.000Z", ":01.000Z") });
 
   /** One approval of the first state, then a pass over both runs, decided after the second; the surface's findings and their causes. */
-  async function passOver(next: State) {
-    const first = rowsOf(BASE, 5);
+  async function passOver(next: ControlRead) {
+    const first = rowsOf(answers(BASE), 5);
     const second = rowsOf(next, 7);
     const approvals = approvalsFor(first.observations, { kind: "surface", surface: CONTROL_SURFACE, host: CONTROL_HOST }, "operator", null, at(6));
     const engine = await SqlJsEngine.create();
@@ -173,7 +260,7 @@ describe("the pass over the control plane, policy/hackathon.json", () => {
     const findings = pass.findings.filter((f) => f.finding.surface === CONTROL_SURFACE);
     const causes = (await explainTenants({ decidedAt, findings }, { layer, vault: null, redactor, sink: new MemoryCauseSink(engine) })).flatMap((r) => r.causes);
     engine.close();
-    return { approvals, findings, causes };
+    return { approvals, findings, causes, second };
   }
 
   it("the policy file's zetaris.control rule governs every object of the surface: critical, locked, on drift escalate, alert always", () => {
@@ -182,24 +269,24 @@ describe("the pass over the control plane, policy/hackathon.json", () => {
   });
 
   it("the approved state: 13 approvals, and a later run of the same state raises no finding on the surface", async () => {
-    const r = await passOver(BASE);
+    const r = await passOver(answers(BASE));
     expect(r.approvals).toHaveLength(13);
     expect(r.findings).toEqual([]);
   });
 
   it("an edited DQ rule: drift_vs_approved on dq/run_complete, ESCALATE under the zetaris.control rule, the cause's diff the changed expression line", async () => {
-    const r = await passOver({ ...BASE, runComplete: "status = 'complete' OR 1 = 1" });
+    const r = await passOver(answers({ ...BASE, runComplete: "status = 'complete' OR 1 = 1" }));
     expect(r.findings.map((f) => [f.finding.class, f.finding.object_id, f.verb, f.disposition.decided_by, f.disposition.rule_id])).toEqual([
       ["drift_vs_approved", "dq/run_complete", "ESCALATE", "policy", rule.rule_id],
     ]);
-    expect(r.findings[0].disposition.reason).toMatch(/^live value drifted from approved [0-9a-f]{12}; rule rule-[0-9a-f]{16} \(critical\) sends it to a technician and the agent changes nothing$/);
+    expect(r.findings[0].disposition.reason).toMatch(/^this drift_vs_approved finding stands: live value drifted from approved [0-9a-f]{12}; rule rule-[0-9a-f]{16} \(critical\) sends it to a technician and the agent changes nothing$/);
     const diff = r.causes[0].cause.diff!.split("\n");
     expect(diff.slice(0, 2)).toEqual(["--- approved definition", "+++ live definition"]);
     expect(diff.filter((l) => /^[-+] /.test(l))).toEqual([`-  "expression": "status = 'complete'",`, `+  "expression": "status = 'complete' OR 1 = 1",`]);
   });
 
   it("a dropped entity: the USL's entity list drifts and the entity is approved_missing, both ESCALATE; a widened grant: the principal's grants drift, ESCALATE", async () => {
-    const dropped = await passOver({ ...BASE, entities: ["collection"] });
+    const dropped = await passOver(answers({ ...BASE, entities: ["collection"] }));
     expect(dropped.findings.map((f) => [f.finding.class, f.finding.object_id, f.verb]).sort()).toEqual([
       ["approved_missing", "dq/copy_validated", "ESCALATE"],
       ["approved_missing", "usl/drift_usl/copy", "ESCALATE"],
@@ -207,8 +294,26 @@ describe("the pass over the control plane, policy/hackathon.json", () => {
     ]);
     const list = dropped.findings.find((f) => f.finding.object_id === "usl/drift_usl")!;
     expect(dropped.causes.find((c) => c.finding_id === list.id)?.cause.diff).toContain(`-    "copy"`);
-    const widened = await passOver({ ...BASE, grants: [...BASE.grants, ["`DRIFT`.`APPROVED_SETTING`", "INSERT"]] });
+    const widened = await passOver(answers({ ...BASE, grants: [...BASE.grants, ["`DRIFT`.`APPROVED_SETTING`", "INSERT"]] }));
     expect(widened.findings.map((f) => [f.finding.class, f.finding.object_id, f.verb])).toEqual([["drift_vs_approved", redactor.text(`grant/${PRINCIPAL}`), "ESCALATE"]]);
     expect(widened.causes[0].cause.diff).toContain(`+      "privilege": "INSERT"`);
+  });
+
+  it("SHOW GRANT refused after a baseline with grants: both approved grant objects come back approved_missing, ESCALATE, and the run reads back as grants not checked", async () => {
+    const refused = await passOver({ ...answers(BASE), grants: { error: "Zetaris 403: Access Control Read is required" } });
+    // the baseline approved the grants listing and the one principal's grants
+    const grantIds = ["grants", redactor.text(`grant/${PRINCIPAL}`)].sort();
+    expect(refused.approvals.map((a) => a.object_id).filter((i) => i.startsWith("grant")).sort()).toEqual(grantIds);
+    expect(refused.findings.map((f) => [f.finding.class, f.finding.object_id, f.verb, f.disposition.rule_id]).sort()).toEqual(grantIds.map((i) => ["approved_missing", i, "ESCALATE", rule.rule_id]));
+    for (const f of refused.findings) {
+      expect(f.disposition.reason).toMatch(/^this approved_missing finding stands: approved [0-9a-f]{12} is absent from the run; rule rule-[0-9a-f]{16} \(critical\) sends it to a technician and the agent changes nothing$/);
+    }
+    // what the Store keeps of the refusal: the run lacks the grants listing, so notCheckedIn names the statement and approve warns
+    const ids = refused.second.observations.map((o) => o.object_id);
+    expect(notCheckedIn(ids, redactor)).toEqual(["grants"]);
+    expect(notCheckedIn(rowsOf(answers(BASE), 5).observations.map((o) => o.object_id), redactor)).toEqual([]);
+    expect(notCheckedWarnings(refused.second.run.run_id, notCheckedIn(ids, redactor))).toEqual([
+      `approve: warning: ${refused.second.run.run_id} did not check SHOW GRANT ON ALL (refused or not run): this sign-off approves no grants, the grants approved before stay the latest approvals, and the pass escalates each of them as approved_missing`,
+    ]);
   });
 });

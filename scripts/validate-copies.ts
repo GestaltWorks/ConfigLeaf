@@ -1,9 +1,11 @@
-// npm run validate:copies -- --tenant <id> [--host <alias>] [--zone <zone>] [--commit <sha>] [--max-rounds <n>] [--schema <name>] [--dry-run] [--help]
+// npm run validate:copies -- --tenant <id> [--host <alias>] [--zone <zone>] [--zetaris] [--commit <sha>] [--max-rounds <n>] [--schema <name>] [--dry-run] [--help]
 //
 // Validates one tenant's vault copies (src/validate/): the latest commit of every repository under
-// <DRIFT_VAULT_DIR>/<tenant>, of the one --host or --zone selects, or --commit of that one. nginx-t for a
-// host's nginx tree (nginx -t in nginx:1.27 through DRIFT_NGINX_T, placeholders for what the tree names
-// outside itself before round 1, then for what each round names), cf-schema for the Cloudflare records.
+// <DRIFT_VAULT_DIR>/<tenant>, of the ones --host, --zone or --zetaris select, or --commit of that one, and
+// without --commit every earlier commit whose vault copies no validation reached. nginx-t for a host's nginx
+// tree (nginx -t in nginx:1.27 through DRIFT_NGINX_T, placeholders for what the tree names outside itself
+// before round 1, then for what each round names, once per tree), cf-schema for the Cloudflare records,
+// zetaris-json for the Zetaris control-plane objects.
 // Prints one redacted line per repository (result, rounds, gap count, the gaps) and writes one
 // copy_validation row per vault copy of each validated commit through the Store (DATABASE_URL; --schema
 // for another search_path) unless --dry-run. A dry run reads the vault copies and the inventory when
@@ -17,18 +19,18 @@ import { randomBytes } from "node:crypto";
 import { parseArgs } from "node:util";
 import { config, redact } from "../src/config.ts";
 import { Store } from "../src/data/store.ts";
-import { TENANT } from "../src/policy/schema.ts";
+import { TENANT_ID, TENANT_ID_SHAPE } from "../src/policy/schema.ts";
 import { Redactor } from "../src/redactor.ts";
 import { MAX_ROUNDS } from "../src/validate/nginx.ts";
 import { storeCopies, validateCopies } from "../src/validate/run.ts";
 
-const USAGE = "usage: npm run validate:copies -- --tenant <id> [--host <alias>] [--zone <zone>] [--commit <sha>] [--max-rounds <n>] [--schema <name>] [--dry-run] [--help]";
+const USAGE = "usage: npm run validate:copies -- --tenant <id> [--host <alias>] [--zone <zone>] [--zetaris] [--commit <sha>] [--max-rounds <n>] [--schema <name>] [--dry-run] [--help]";
 
-let args: { tenant?: string; host?: string; zone?: string; commit?: string; "max-rounds"?: string; schema?: string; "dry-run"?: boolean; help?: boolean };
+let args: { tenant?: string; host?: string; zone?: string; zetaris?: boolean; commit?: string; "max-rounds"?: string; schema?: string; "dry-run"?: boolean; help?: boolean };
 try {
   args = parseArgs({
     options: {
-      tenant: { type: "string" }, host: { type: "string" }, zone: { type: "string" }, commit: { type: "string" }, "max-rounds": { type: "string" },
+      tenant: { type: "string" }, host: { type: "string" }, zone: { type: "string" }, zetaris: { type: "boolean" }, commit: { type: "string" }, "max-rounds": { type: "string" },
       schema: { type: "string" }, "dry-run": { type: "boolean" }, help: { type: "boolean" },
     },
   }).values;
@@ -39,11 +41,11 @@ try {
 
 if (args.help) {
   console.log(USAGE);
-  console.log("Validates the latest vault commit of each repository of the tenant (nginx -t for a host's nginx tree, cf-schema for the Cloudflare records), prints one redacted line per repository, and writes copy_validation rows unless --dry-run.");
+  console.log("Validates the latest vault commit of each repository of the tenant and every earlier commit no validation reached (nginx -t for a host's nginx tree, cf-schema for the Cloudflare records, zetaris-json for the Zetaris objects), prints one redacted line per repository, and writes copy_validation rows unless --dry-run.");
   process.exit(0);
 }
-if (!args.tenant || !TENANT.test(args.tenant) || args.tenant === "*") {
-  console.error(`--tenant is required: a tenant id ([A-Za-z0-9._-], up to 64)\n${USAGE}`);
+if (!args.tenant || !TENANT_ID.test(args.tenant)) {
+  console.error(`--tenant is required: ${TENANT_ID_SHAPE}\n${USAGE}`);
   process.exit(2);
 }
 const maxRounds = args["max-rounds"] === undefined ? MAX_ROUNDS : Number(args["max-rounds"]);
@@ -73,7 +75,7 @@ let store: Store | undefined;
 try {
   store = process.env.DATABASE_URL ? Store.fromEnv({ schema: args.schema }) : undefined;
   const res = await validateCopies({
-    vaultDir: config.vaultDir, tenant: args.tenant, host: args.host, zone: args.zone, commit: args.commit,
+    vaultDir: config.vaultDir, tenant: args.tenant, host: args.host, zone: args.zone, zetaris: args.zetaris === true, commit: args.commit,
     dryRun, store: store ? storeCopies(store) : null, redactor, maxRounds,
   });
   for (const l of res.lines) console.log(`validate:copies: ${l}`);

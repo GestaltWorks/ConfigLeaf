@@ -5,12 +5,14 @@
 // the Ed25519 check still passes; a tampered body must fail the gate even when the tier then matches.
 // Both real receipts carry Nightshift's injected memory (hmem.injected 3, the scope "user" every call shared
 // then), which the gate refuses; the tests whose subject is the tier or the signature also run on their bodies
-// with hmem null, signed again here (test/fixtures/signed-receipt.ts isolated).
+// with hmem null, signed again here (test/fixtures/signed-receipt.ts isolated). The test finder trusts both keys:
+// RECEIPT_KEY, which signs the real receipts, and TEST_KEY, which signs the fixture's.
+import { generateKeyPairSync, sign } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import type { ChatResult, SignedReceipt } from "../src/adapters/nightshift.ts";
+import { RECEIPT_KEY, canonicalReceiptBody, receiptKeyFingerprint, type ChatResult, type SignedReceipt } from "../src/adapters/nightshift.ts";
 import { ReceiptStore, gateChatResult, hmemOf, memoryInjectedOf, servedModelOf, tierOf } from "../src/gate.ts";
 import { MemTracer } from "./fixtures/mem-tracer.ts";
-import { isolated, signed, ultraReceipt } from "./fixtures/signed-receipt.ts";
+import { TEST_KEY, isolated, signed, ultraReceipt } from "./fixtures/signed-receipt.ts";
 import lightningJson from "./fixtures/receipt-lightning.json" with { type: "json" };
 import ultraJson from "./fixtures/receipt-ultra.json" with { type: "json" };
 
@@ -21,7 +23,7 @@ const ultra = isolated(realUltra);
 const LIGHTNING_ID = lightning.body.receipt.receipt_id as string;
 const ULTRA_ID = ultra.body.receipt.receipt_id as string;
 
-const store = (...rs: SignedReceipt[]) => ({ find: async (id: string) => rs.find((r) => r.body.receipt.receipt_id === id) ?? null });
+const store = (...rs: SignedReceipt[]) => ({ keys: [RECEIPT_KEY, TEST_KEY], find: async (id: string) => rs.find((r) => r.body.receipt.receipt_id === id) ?? null });
 
 function chat(over: Partial<ChatResult> = {}): ChatResult {
   return { content: "{}", modelRequested: "requested", modelRouted: null, receiptId: null, requestId: null, tokensIn: 0, tokensOut: 0, latencyMs: 0, retries: 0, raw: {}, ...over };
@@ -143,6 +145,30 @@ describe("gateChatResult", () => {
     const g = await gateChatResult(chat({ receiptId: ULTRA_ID }), "lightning", store(tampered));
     expect(g).toMatchObject({ ok: false, servedTier: "lightning", signatureOk: false });
     expect(g.reason).toMatch(/signature does not verify/);
+  });
+
+  it("not ok: a receipt signed correctly by a key the finder does not name gives signature_ok false, and the trace names its fingerprint", async () => {
+    const other = generateKeyPairSync("ed25519");
+    const body = structuredClone(ultra.body);
+    const forged: SignedReceipt = {
+      body,
+      pubkey_b64: other.publicKey.export({ type: "spki", format: "der" }).subarray(12).toString("base64"),
+      sig_b64: sign(null, Buffer.from(canonicalReceiptBody(body), "utf8"), other.privateKey).toString("base64"),
+    };
+    const otherKey = receiptKeyFingerprint(forged.pubkey_b64);
+    const tracer = new MemTracer("test_gate_key");
+    const g = await gateChatResult(chat({ receiptId: ULTRA_ID }), "ultra", store(forged), tracer);
+    expect(g).toMatchObject({ ok: false, servedTier: "ultra", signatureOk: false, memoryInjected: 0 });
+    expect(g.reason).toBe(`receipt ${ULTRA_ID}: signed by an untrusted signer, fingerprint ${otherKey}; the gate trusts ${RECEIPT_KEY}, ${TEST_KEY}`);
+    expect(tracer.events).toEqual([expect.objectContaining({ action: "check", status: "not_judged", signature_ok: false, detail: g.reason })]);
+    // the same receipt passes under a finder that names its key
+    expect(await gateChatResult(chat({ receiptId: ULTRA_ID }), "ultra", { keys: [otherKey], find: async () => forged })).toMatchObject({ ok: true, signatureOk: true });
+    // a finder that names no keys trusts RECEIPT_KEY alone: the committed receipt verifies, the fresh-key and test-key receipts do not
+    const pinned = (r: SignedReceipt) => gateChatResult(chat({ receiptId: ULTRA_ID }), "ultra", { find: async () => r });
+    expect((await pinned(realUltra)).signatureOk).toBe(true);
+    expect(await pinned(forged)).toMatchObject({ ok: false, signatureOk: false });
+    expect(await pinned(ultra)).toMatchObject({ ok: false, signatureOk: false });
+    expect((await pinned(ultra)).reason).toContain(`fingerprint ${TEST_KEY}; the gate trusts ${RECEIPT_KEY}`);
   });
 
   it("no receipt_id on the response: not judged whatever the response claims; the served tier still says what it claimed", async () => {

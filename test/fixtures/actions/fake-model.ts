@@ -1,12 +1,12 @@
 // A stub Nightshift for the investigation: chatWithFallback answers a Lightning request with a check selection built
 // from the finding in the prompt (two catalogue checks and one unknown template) and an Ultra request with one
-// refuting SELECT, and files a receipt per call, signed with a throwaway key (test/fixtures/signed-receipt.ts), under
-// the app id and the request id of that call, so the receipt gate and custody pass. `ultraServedBy: "lightning"` files
+// refuting SELECT, and files a receipt per call, signed with the test key (test/fixtures/signed-receipt.ts), under
+// the app id and the request id of that call; its finder names TEST_KEY, so the receipt gate and custody pass. `ultraServedBy: "lightning"` files
 // the Ultra call's receipt under a Lightning model: a substitution the gate refuses.
 import type { ChatMessage, ChatResult, SignedReceipt } from "../../../src/adapters/nightshift.ts";
 import type { JudgeModel } from "../../../src/agents/judge.ts";
 import { tierOf, type ReceiptFinder } from "../../../src/gate.ts";
-import { ULTRA_MODEL, signed } from "../signed-receipt.ts";
+import { TEST_KEY, ULTRA_MODEL, signed } from "../signed-receipt.ts";
 
 export const LIGHTNING_MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b";
 type ChatOpts = Parameters<JudgeModel["chatWithFallback"]>[0];
@@ -14,7 +14,7 @@ type ChatOpts = Parameters<JudgeModel["chatWithFallback"]>[0];
 export class FakeModel implements JudgeModel {
   readonly calls: ChatOpts[] = [];
   private readonly filed = new Map<string, SignedReceipt>();
-  readonly receipts: ReceiptFinder = { find: async (id) => this.filed.get(id) ?? null };
+  readonly receipts: ReceiptFinder = { keys: [TEST_KEY], find: async (id) => this.filed.get(id) ?? null };
   constructor(private readonly opts: { ultraServedBy?: "ultra" | "lightning" } = {}) {}
 
   async chatWithFallback(o: ChatOpts): Promise<ChatResult & { hop: number }> {
