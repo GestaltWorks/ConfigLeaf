@@ -34,7 +34,7 @@ function traceOf(lines: readonly string[]): { ts: string; agent: string; output_
 }
 
 const STAGES = ["load", "gate", "observe", "detect", "decide", "explain", "document", "report", "judge"];
-const OLD_LINES = /^(\{"ts"|\{"id":"fnd-|DISPOSITION |CAUSE |ADOPTIONS: |SAMPLE: |REPORT: )/;
+const OLD_LINES = /^(\{"ts"|\{"id":"fnd-|DISPOSITION |CAUSE |ADOPTIONS: |DNS INVENTORY: |SAMPLE: |REPORT: )/;
 /** The screen with the header's minute, the done line's time and the trace id taken out. */
 const screen = (lines: readonly string[]): string[] =>
   lines.map((l) => l.replace(/ · \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC · /, " · <minute> · ").replace(/^done · \d+\.\d s · trace .+$/, "done · <time> · trace <file>"));

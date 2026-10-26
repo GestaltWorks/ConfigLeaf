@@ -107,7 +107,7 @@ export interface InventoryAsset {
 }
 
 export type Criticality = "critical" | "high" | "normal" | "low";
-export type OnDrift = "rollback" | "investigate" | "adopt" | "hold";
+export type OnDrift = "rollback" | "investigate" | "adopt" | "hold" | "escalate";
 export type OnNoCopy = "investigate_ticket" | "ticket" | "adopt";
 export type Alert = "always" | "on_fix" | "never";
 export type PsaPriority = "P1" | "P2" | "P3" | "P4";

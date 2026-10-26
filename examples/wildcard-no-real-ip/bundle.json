@@ -967,5 +967,6 @@
   "action": [],
   "ticket": [],
   "referent_fingerprint": [],
-  "finding_cause": []
+  "finding_cause": [],
+  "change_window": []
 }

@@ -18,7 +18,7 @@ import {
   HERO_SQL, PROXIED_WITHOUT_REAL_IP_SQL, objects,
 } from "../src/data/queries.ts";
 import { TABLE_NAMES } from "../src/data/schema.ts";
-import { renderDocument, sourceOf, sourceRows, sourcesMarkdown, tablesOf } from "../src/document/render.ts";
+import { LIVE_MEASURED, fileSourceRows, renderDocument, sourceOf, sourceRows, sourcesMarkdown, tablesOf } from "../src/document/render.ts";
 import { TechnicianMemory } from "../src/engine/memory.ts";
 import { DriftWorld } from "../src/engine/world.ts";
 import { span } from "../src/explain/cause.ts";
@@ -27,7 +27,7 @@ import { MemoryLedger } from "../src/ledger.ts";
 import { dispositionIdOf } from "../src/loop/pass.ts";
 import { runPass } from "../src/pipeline.ts";
 import { Redactor } from "../src/redactor.ts";
-import { uslMarkdown } from "../src/zetaris/setup.ts";
+import { DQ_RULES, REST_DB, uslMarkdown, uslRows } from "../src/zetaris/setup.ts";
 import sample from "../sample/bundle.json" with { type: "json" };
 import policyBundle from "./fixtures/policy-bundle.json" with { type: "json" };
 import { BLOG } from "../scripts/fixtures/policy-bundle.ts";
@@ -425,6 +425,21 @@ describe("where each answer comes from", () => {
     const zetaris = readme.slice(readme.indexOf("\n## Zetaris\n"), readme.indexOf("\n## Meterless\n"));
     expect(zetaris, "### The semantic layer sits in section Zetaris").toContain("\n### The semantic layer\n");
     expect(block(readme, "### The semantic layer"), "README.md is stale: paste the output of npm run sources -- --usl").toBe(uslMarkdown().trim());
+  });
+
+  it("the sources Zetaris reads beside DRIFT: the two files, then Cloudflare live through the REST datasource, its tables the ones dns_live is built from, its count as measured on 26 Oct 2026", () => {
+    const rows = fileSourceRows();
+    expect(rows.map((r) => [r.name, r.datasource])).toEqual([["technician memory store", "LESSONS"], ["policy rules", "RULES"], ["Cloudflare live", REST_DB]]);
+    const cf = rows[2];
+    expect(cf).toMatchObject({ file: "api.cloudflare.com/client/v4/zones/<zone id>/dns_records", tables: ["CLOUDFLARE.zone_<zone id>"], rows: "58 records in 6 zones on 26 Oct 2026" });
+    // the table the row names is the one the semantic layer's dns_live entity reads, and the rule is the registered one
+    expect(uslRows().find((r) => r.entity === "dns_live")!.builtFrom).toContain(cf.tables[0]);
+    expect(DQ_RULES.some((r) => r.name === "dns_inventory_current" && r.table === "dns_live")).toBe(true);
+    // the live run of npm run zetaris:setup of 26 Oct 2026, 03:47 UTC: count dns_live = 58, the zones report 58
+    expect(LIVE_MEASURED).toEqual({ at: "26 Oct 2026", zones: 6, records: 58 });
+    const md = sourcesMarkdown();
+    expect(md).toContain("Zetaris also reads one source itself, live: the Cloudflare DNS API, which `npm run zetaris:setup` registers as the REST datasource `CLOUDFLARE`, one table per zone, fetched again at each query. The DQ rule `dns_inventory_current` on `drift_usl.dns_live` holds every record live at the provider to the last complete DNS collection run, joined on Cloudflare's record id;");
+    expect(md).toContain("| Cloudflare live (`api.cloudflare.com/client/v4/zones/<zone id>/dns_records`) | `CLOUDFLARE` | `CLOUDFLARE.zone_<zone id>` | 58 records in 6 zones on 26 Oct 2026 | ");
   });
 
   it("the owner's document carries the same section, for a tenant with rows and for one with none", async () => {

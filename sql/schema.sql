@@ -98,7 +98,7 @@ CREATE TABLE IF NOT EXISTS policy_rule (
   setting_glob   TEXT NOT NULL,      -- same glob rule, over setting_path
   criticality    TEXT NOT NULL,      -- critical | high | normal | low
   lock           INTEGER NOT NULL,   -- 0/1; 1 = a drifted setting is rolled back at the next cycle
-  on_drift       TEXT NOT NULL,      -- rollback | investigate | adopt | hold
+  on_drift       TEXT NOT NULL,      -- rollback | investigate | adopt | hold | escalate
   on_no_copy     TEXT NOT NULL,      -- investigate_ticket | ticket | adopt
   hold_max_hours INTEGER NOT NULL,   -- a HOLD under this rule expires this many hours after it is decided
   alert          TEXT NOT NULL,      -- always | on_fix | never

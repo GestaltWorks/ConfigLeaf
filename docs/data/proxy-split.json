@@ -15,8 +15,8 @@
  "files": [
   {
    "path": "examples/proxy-split/bundle.json",
-   "bytes": 66959,
-   "sha256": "sha256:6e2df8868862385854c76eec69650f248766507869afd121d004797b6b0e76b4"
+   "bytes": 66982,
+   "sha256": "sha256:fe4fec97a6c62be3b5e77411449c765d58c280580cf0e7e97e9c3c11386c8911"
   },
   {
    "path": "examples/proxy-split/findings.json",

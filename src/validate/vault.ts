@@ -37,6 +37,8 @@ const COMMIT = /^[0-9a-f]{4,64}$/i;
 const ISO_MS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 export const OUTPUT_MAX = 2000;
 export const CLOUDFLARE_REPO = "cloudflare";
+/** The Zetaris control plane's repository (src/zetaris/control.ts): JSON objects, no nginx tree and no record, so no validator reads it. */
+export const ZETARIS_REPO = "zetaris";
 
 /** <vaultDir>/<tenant>/<name>, both ids checked. */
 export function repositoryDir(vaultDir: string, tenant: string, name: string): string {
@@ -51,7 +53,7 @@ export function vaultRepositories(vaultDir: string, tenant: string): { hosts: st
   const dir = path.join(vaultDir, tenant);
   if (!existsSync(dir)) return { hosts: [], cloudflare: false };
   const repos = readdirSync(dir).filter((n) => ID.test(n) && statSync(path.join(dir, n)).isDirectory() && existsSync(path.join(dir, n, ".git"))).sort();
-  return { hosts: repos.filter((n) => n !== CLOUDFLARE_REPO), cloudflare: repos.includes(CLOUDFLARE_REPO) };
+  return { hosts: repos.filter((n) => n !== CLOUDFLARE_REPO && n !== ZETARIS_REPO), cloudflare: repos.includes(CLOUDFLARE_REPO) };
 }
 
 function git(repo: string, args: readonly string[], input?: Buffer): { status: number; stdout: Buffer } {
