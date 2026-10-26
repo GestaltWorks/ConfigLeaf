@@ -138,6 +138,8 @@ const DEFAULT_CHECKS: Record<FindingClass, readonly string[]> = {
   orphan_vhost: ["run_complete", "other_settings_reference", "backup_recent"],
   // An approved object absent from the run: the run is whole, a backup since the approval exists, and the newest backup holds the approved value.
   approved_missing: ["run_complete", "backup_recent", "change_in_last_backup"],
+  // A mail record Microsoft 365 requires, against the zone: the Microsoft 365 run is whole, and whether anything at the name changed in the window.
+  m365_mail_record: ["run_complete", "referent_unchanged"],
 };
 
 /**

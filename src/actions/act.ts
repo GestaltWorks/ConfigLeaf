@@ -16,6 +16,13 @@
 //     host, to Cloudflare, to Nightshift or to the action table. Apply: each action runs in disposition_id order and
 //     its row, reason and record included, goes to the sink as soon as it ends, so a stop mid-way keeps the record of
 //     what was done; a record re-created by POST carries its approvals to its new id through the same sink.
+//   - Contract: under --apply, the rollback_file and revert_record of a ROLLBACK and the investigate of a FIX run only
+//     against an execution contract (src/guard/contract.ts): the action, the object, the exact capability set, five
+//     minutes and an Ed25519 signature under the deployment's key. The plan step issues it when it plans the action
+//     (ActorDeps.contracts), or the caller presents one (ActOptions.contracts, by action id). Before any session, write
+//     or model call the Actor checks it and refuses an unsigned, altered, foreign-key, expired or out-of-scope contract:
+//     the action row is refused with the reason, a trace line (agent actor, action guard) says "contract refused" and
+//     why, and nothing runs. A contract that passes is the first line of the action's record. No authority, no action.
 //   - Verification probes (probeNames): one probe run of surface probe.verify per call, so the pass's own probe run,
 //     surface probe, stays the one it reads for production.
 //   - An outcome's status is one of rows.ts ActionStatus: done, unverified (written, and no verification probe ran or
@@ -34,8 +41,9 @@ import type { JudgeModel } from "../agents/judge.ts";
 import type { DataLayer } from "../data/layer.ts";
 import type { SqlJsEngine } from "../data/engines/sqljs.ts";
 import { DISPOSITIONS_SQL, approvedCopies, latestApprovals, objects, observationsOf, policyRules, tenantActions } from "../data/queries.ts";
-import type { Action, ActionKind, ActionStatus, ApprovedSetting, Disposition, DispositionVerb } from "../data/rows.ts";
+import { actionId, type Action, type ActionKind, type ActionStatus, type ApprovedSetting, type Disposition, type DispositionVerb } from "../data/rows.ts";
 import type { ReceiptFinder } from "../gate.ts";
+import { contractLine, type ContractAuthority, type ContractCheck, type ContractScope, type GatedKind } from "../guard/contract.ts";
 import type { Finding } from "../pipeline.ts";
 import type { CopyCandidate } from "../policy/decide.ts";
 import type { PopulationRecord } from "../probe/rules.ts";
@@ -45,7 +53,7 @@ import type { Tracer } from "../trace.ts";
 import type { Vault } from "../vault/vault.ts";
 import { FIX_REFUSED, investigate, planInvestigate } from "./investigate.ts";
 import {
-  actionOf, dispositionOf, formatOutcome, formatPlan, outcome, planItem, plural, targetOf,
+  actionOf, dispositionOf, formatOutcome, formatPlan, outcome, planItem, plural, recordText, targetOf,
   type ActionOutcome, type ActorReads, type Approval, type PlanItem, type ProbeFn, type Row,
 } from "./plan.ts";
 import { planRevert, prepareRevert, revertRecord, type RecordApi } from "./revert.ts";
@@ -95,6 +103,11 @@ export interface ActorDeps {
   tracer?: Tracer;
   /** The wait between a rollback's reload and its verification probes (src/actions/rollback.ts RELOAD_SETTLE_MS live); absent, none. */
   settleMs?: number;
+  /**
+   * Issues and checks the execution contracts a ROLLBACK or a FIX needs under --apply (src/guard/contract.ts). Null or
+   * absent, every such action is refused: without an authority there is nothing to issue a contract with or to check one by.
+   */
+  contracts?: ContractAuthority | null;
 }
 
 export interface ActOptions {
@@ -103,6 +116,13 @@ export interface ActOptions {
   only?: readonly OnlyKind[];
   /** The pass's run ids; default the run of each (surface, host)'s latest decided disposition. */
   runIds?: readonly string[];
+  /**
+   * The contracts presented for an apply, by action_id: a saved plan's, or a test's. Each is checked as given, and an
+   * action with none presented is refused as unsigned. Absent, the plan step issues each contract itself when it plans
+   * the action (see act()). An empty map is an error under --apply (ActorError): it would switch the issuing off and
+   * refuse every action.
+   */
+  contracts?: ReadonlyMap<string, unknown>;
 }
 
 export interface ActResult {
@@ -175,6 +195,8 @@ export async function act(opts: ActOptions, deps: ActorDeps): Promise<ActResult>
   const { layer, tracer, redactor } = deps;
   const now = deps.now ?? (() => new Date());
   if (opts.apply && !deps.sink) throw new ActorError("--apply records every action; it needs the action table (a sink)");
+  // An empty map would switch the plan step's own issuing off and refuse every action as unsigned: a mistake, so it is an error.
+  if (opts.apply && opts.contracts?.size === 0) throw new ActorError("ActOptions.contracts is an empty map: present a contract for each action, or leave it out and the plan step issues them");
   const q = { tracer, agent: "actor", limit: 100_000 };
 
   const ledger = objects(await layer.run(DISPOSITIONS_SQL, {}, q)).map(dispositionOf).filter((d) => d.tenant_id === opts.tenantId);
@@ -223,6 +245,53 @@ export async function act(opts: ActOptions, deps: ActorDeps): Promise<ActResult>
   let written: number | null = opts.apply ? 0 : null;
   const keep = (k: ActionKind): boolean => !opts.only?.length || opts.only.includes((k === "fix" ? "investigate" : k) as OnlyKind);
 
+  // The execution contract (src/guard/contract.ts). A ROLLBACK and a FIX need one under --apply, for the action that
+  // writes or calls a model (not for the fix row, which only records its refusal). The plan step issues it when the
+  // action's plan is made, which is just before the action runs, so its five minutes cover that action alone; the Actor
+  // then checks it at the boundary, before any session, write or model call. Presented contracts (opts.contracts) are
+  // checked as given.
+  const needsContract = (d: Disposition, kind: ActionKind): kind is GatedKind => (d.verb === "ROLLBACK" || d.verb === "FIX") && kind !== "fix";
+  const authorize = (d: Disposition, kind: GatedKind): { ok: true; line: string } | { ok: false; outcome: ActionOutcome } => {
+    const at = now();
+    const scope: ContractScope = { tenant_id: d.tenant_id, action: kind, action_id: actionId(d.tenant_id, d.disposition_id, kind), disposition_id: d.disposition_id, object: targetOf(d) };
+    const authority = deps.contracts ?? null;
+    let presented: unknown = opts.contracts?.get(scope.action_id);
+    if (authority && !opts.contracts) {
+      const issued = authority.issue(scope, at);
+      tracer?.emit({
+        agent: "actor", action: "guard", status: "ok", input_summary: `contract ${kind} ${scope.object}`,
+        output_summary: `contract issued ${issued.body.receipt.contract_id}`, detail: `plan step; expires ${issued.body.receipt.expires_at}`,
+      });
+      presented = issued;
+    }
+    const check: ContractCheck = !authority
+      ? { ok: false, refusal: "unsigned", reason: "the Actor holds no contract authority, so no contract can be issued or checked" }
+      : authority.verify(presented, scope, at);
+    tracer?.emit({
+      agent: "actor", action: "guard", status: check.ok ? "ok" : "failed", input_summary: `contract ${kind} ${scope.object}`,
+      output_summary: check.ok ? `contract verified ${check.contract.contract_id}` : `contract refused ${check.refusal}`,
+      detail: check.ok ? `capabilities ${check.contract.capabilities.join(", ")}; expires ${check.contract.expires_at}` : check.reason,
+    });
+    if (check.ok) return { ok: true, line: contractLine(check.contract) };
+    return { ok: false, outcome: outcome(d, kind, { status: "refused", reason: redactor.text(`execution contract refused (${check.refusal}): ${check.reason}`), started_at: at.toISOString(), finished_at: at.toISOString() }) };
+  };
+  /** `run` behind the contract: the refusal as an outcome, or the outcome with the verified contract as its first record line. */
+  const gated = async (d: Disposition, kind: ActionKind, run: () => Promise<ActionOutcome>): Promise<ActionOutcome> => {
+    if (!needsContract(d, kind)) return run();
+    const a = authorize(d, kind);
+    if (!a.ok) return a.outcome;
+    let o: ActionOutcome;
+    try {
+      o = await run();
+    } catch (e) {
+      // An action that throws after its contract passed is a failed action with a row, not a stop of the whole run.
+      const at = now().toISOString();
+      o = outcome(d, kind, { status: "failed", reason: redactor.text(`the action stopped with an error: ${(e as Error)?.message ?? String(e)}`), started_at: at, finished_at: at });
+    }
+    const lines = [redactor.text(a.line), ...o.record];
+    return { ...o, record: lines, action: { ...o.action, record: recordText(lines) } };
+  };
+
   const record = async (o: ActionOutcome): Promise<void> => {
     outcomes.push(o);
     recorded.push(o.action);
@@ -251,16 +320,16 @@ export async function act(opts: ActOptions, deps: ActorDeps): Promise<ActResult>
           }
         } else if ("alias" in prep) {
           if (!opts.apply) plan.push(planItem(d, kind, planRollback(d, prep)));
-          else await record(await rollbackFile(d, prep, kindDeps));
+          else await record(await gated(d, kind, () => rollbackFile(d, prep, kindDeps)));
         } else {
           if (!opts.apply) plan.push(planItem(d, kind, planRevert(d, prep)));
-          else await record(await revertRecord(d, prep, kindDeps));
+          else await record(await gated(d, kind, () => revertRecord(d, prep, kindDeps)));
         }
         continue;
       }
       if (kind === "investigate") {
         if (!opts.apply) plan.push(planItem(d, kind, planInvestigate(d, deps)));
-        else await record(await investigate(d, invDeps));
+        else await record(await gated(d, kind, () => investigate(d, invDeps)));
         continue;
       }
       // kind fix: after its investigation, refused under this policy.

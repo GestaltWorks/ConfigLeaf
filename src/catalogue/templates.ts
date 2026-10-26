@@ -20,11 +20,12 @@ import { RUN_COMPLETE_SQL } from "../data/queries.ts";
  * changed_since_backup (a file the host's newest backup lacks or holds with other bytes),
  * drift_vs_approved (a setting whose live value differs from its latest approval) and approved_missing
  * (an approved setting whose object the latest passing run holds no observation of: a deleted vhost file,
- * a deleted record) through the detectors of data/queries.ts.
+ * a deleted record) through the detectors of data/queries.ts, and m365_mail_record (a record Microsoft 365 requires
+ * for a verified domain's mail that the domain's Cloudflare zone lacks or serves with another value, src/m365.ts).
  */
 export const FINDING_CLASSES = [
   "found_but_different", "changed_since_backup", "drift_vs_approved", "dns_change",
-  "proxy_split", "proxied_without_real_ip", "orphan_record", "orphan_vhost", "approved_missing",
+  "proxy_split", "proxied_without_real_ip", "orphan_record", "orphan_vhost", "approved_missing", "m365_mail_record",
 ] as const;
 export type FindingClass = (typeof FINDING_CLASSES)[number];
 
@@ -176,7 +177,7 @@ ORDER BY a.approved_at, a.approval_id`,
   {
     id: "referent_unchanged",
     purpose: "Nothing the name resolves to changed inside the window; rows are the evidence of change, from consecutive DNS observations and from audit events on its records.",
-    appliesTo: ["found_but_different", "dns_change", "proxy_split"],
+    appliesTo: ["found_but_different", "dns_change", "proxy_split", "m365_mail_record"],
     params: z.object({ tenant_id: id(), name: z.string().min(1).max(253), since: iso(), until: iso() }),
     sql: `SELECT 'dns_record' AS evidence, a.record_id AS resource_id, a.content AS old_value, b.content AS new_value, b.observed_at AS seen_at
 FROM {{t:dns_record}} a

@@ -274,7 +274,7 @@ const RULES = new Map(loadPolicyFile(POLICY, { tenant: "client-1", redactor: new
 describe("runEval", () => {
   it("C0 under policy/hackathon.json version 2, as SAMPLE_MODE decides: every finding of the recording HOLD by the rule that governs it; two passes give the same findings, verbs and reasons", async () => {
     const r = await evalWith({ configs: ["C0"], runs: 2, items: undefined });
-    expect(r.policy).toEqual({ file: POLICY, version: 2, rows: 16, inserted: 16, rules: 16 });
+    expect(r.policy).toEqual({ file: POLICY, version: 2, rows: 17, inserted: 17, rules: 17 });
     expect(r.determinism.C0).toEqual({ compared: "the passes of runs 1 and 2", differences: [] });
     const c = r.runs[0].counts;
     expect([c.items, c.scored, c.not_raised, c.with_verdict, c.not_judged, c.agree, c.disagree, c.unsure, c.false_positives, c.labelled_no]).toEqual([38, 31, 7, 31, 0, 29, 0, 2, 0, 29]);
@@ -302,7 +302,7 @@ describe("runEval", () => {
     expect(e01.subjects[0].reason).toMatch(/^rule rule-[0-9a-f]{16} restores a setting to its approved value; this proxy_split finding .* held until 2026-10-24T11:59:23\.745Z$/);
     const md = renderSummary(r, { recording: "test/fixtures/recorded-bundle.json", out: "test" });
     expect(md).toContain("| C0 | the passes of runs 1 and 2 | 0 |");
-    expect(md).toContain(`Policy ${POLICY} version 2: 16 rule(s) loaded into the recording before its passes (16 inserted), 16 read for client-1;`);
+    expect(md).toContain(`Policy ${POLICY} version 2: 17 rule(s) loaded into the recording before its passes (17 inserted), 17 read for client-1;`);
   });
 
   it("then the default: a finding no rule governs keeps the configuration's own verb, a struck claim ADOPT; a governed one keeps the rule's", async () => {
