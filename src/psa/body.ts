@@ -3,10 +3,12 @@
 //
 // Contract: plain text in six sections, each a heading and one line per fact: What (the finding's summary and
 // where it stands), Evidence (each check with its template, holds or fails and its row count; each check that
-// could not run with its reason; the exposure line; each probe of the object's names with its probe id; each line
+// could not run with its reason; the exposure line; each probe of the object's names with its probe id; the live
+// pass's judge when it ran on the finding (src/agents/falsifier.ts): struck, held or not counted with the reason and
+// what it did to the decision, then its refuting SELECT, row count, receipt, signature and served model; each line
 // of each action's record, under the action's id), Decision (verb, who decided, the rule and its terms, the reason,
 // the expiry), Work done (each action: kind, status, hashes before and after, vault commit, verification probe ids,
-// then the Actor's sentence for it), Receipts (the model receipts of those actions) and Ledger (disposition,
+// then the Actor's sentence for it), Receipts (the model receipts of those actions, then the pass judge's) and Ledger (disposition,
 // finding, run and ticket ids). A disposition the explain step explained (src/explain/) adds a seventh, Why, right
 // after Evidence: who or what changed the setting in one sentence (the stored summary, with ", N minutes before the
 // agent restored it" once the disposition's rollback_file or revert_record wrote), then its timeline, one line per
@@ -27,6 +29,7 @@
 
 import type { FindingSummary } from "../catalogue/select.ts";
 import type { Action, Disposition, DispositionVerb, FindingCause, PolicyRule, PsaPriority } from "../data/rows.ts";
+import { judgeDetail, signatureText } from "../agents/falsifier.ts";
 import { timelineLine, withRestore, type Evidence } from "../explain/cause.ts";
 import type { ActionView, TicketFinding, TicketType } from "./index.ts";
 
@@ -84,8 +87,25 @@ function evidenceLines(f: TicketFinding, probes: ProbeEvidence, actions: readonl
   if (probes.run_id === null) out.push("- probes: no probe run in this pass");
   else if (!probes.rows.length) out.push(`- probes: no probe in ${probes.run_id} targets a name the object serves`);
   else for (const p of probes.rows) out.push(`- probe ${p.probe_id} ${p.kind} ${p.target}: ${p.status}; observed ${p.observed}; expected ${p.expected}`);
-  out.push(...recordLines(actions));
+  out.push(...judgeLines(f), ...recordLines(actions));
   return out;
+}
+
+/** The live pass's verdict on the finding, when its judge ran: what it said, what it did to the decision, then its SELECT, rows, receipt and model. */
+function judgeLines(f: TicketFinding): string[] {
+  const j = f.judge;
+  if (!j || j === "skipped") return [];
+  const said = j.outcome === "struck" ? `Nemotron 3 Ultra struck the claim: ${j.reason}`
+    : j.outcome === "held" ? `the claim held against Nemotron 3 Ultra's refuting SELECT: ${j.reason}`
+    : `not counted: ${j.reason}`;
+  return [`- judge: ${said}; ${j.effect}`, `  - ${judgeDetail(j)}`];
+}
+
+/** The judge's receipt, when the verdict named one: its id, the model it says served, its signature. */
+function judgeReceiptLine(f: TicketFinding): string | null {
+  const j = f.judge;
+  if (!j || j === "skipped" || !j.receipt_id) return null;
+  return `- judge ${j.receipt_id}: served ${j.served_model ?? "none"}, ${signatureText(j.verified)}`;
 }
 
 function ruleText(rule: PolicyRule | null): string {
@@ -128,9 +148,11 @@ function workLines(d: Disposition, actions: readonly ActionView[]): string[] {
   return ["### Work done", ...(actions.length ? actions.flatMap((a) => [actionLine(a), ...(a.reason.trim() ? [`  - ${a.reason.trim()}`] : [])]) : [`- no action is recorded for disposition ${d.disposition_id}`])];
 }
 
-function receiptLines(actions: readonly ActionView[]): string[] {
+/** The actions' receipts, then the live pass's judge receipt when `f` carries one; "- none" only when there is neither. */
+function receiptLines(actions: readonly ActionView[], f?: TicketFinding): string[] {
   const ids = [...new Set(actions.flatMap((a) => a.receipts.split(",").map((s) => s.trim()).filter(Boolean)))];
-  return ["### Receipts", `- ${ids.length ? ids.join(", ") : "none"}`];
+  const judge = f ? judgeReceiptLine(f) : null;
+  return ["### Receipts", ...(ids.length || !judge ? [`- ${ids.length ? ids.join(", ") : "none"}`] : []), ...(judge ? [judge] : [])];
 }
 
 function ledgerLines(d: Disposition, ticketId: string): string[] {
@@ -155,7 +177,7 @@ export function ticketBody(p: BodyParts & { ticketId: string; type: TicketType; 
     ...(p.why ? [...whyLines(p.why, p.actions), ""] : []),
     ...decisionLines(p.disposition, p.rule, { type: p.type, priority: p.priority }), "",
     ...workLines(p.disposition, p.actions), "",
-    ...receiptLines(p.actions), "",
+    ...receiptLines(p.actions, p.finding), "",
     ...ledgerLines(p.disposition, p.ticketId),
   ].join("\n"));
 }
