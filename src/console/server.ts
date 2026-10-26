@@ -50,6 +50,8 @@
 //     A write invalidates every tenant's snapshot, so the next page reads the store again.
 //   - Sample mode starts with the sample's own pass at its decision instant, as npm run sample decides, recorded into
 //     the sql.js ledger; live mode starts its first dry pass in the background and serves the ledger until it ends.
+//   - GET /api/v1 and its three endpoints (src/console/api.ts): the read-only JSON of the pages' own data, answered before the
+//     page routes, after the Host rule, with the same headers; the dispatch is the only API code here.
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, statSync } from "node:fs";
@@ -71,6 +73,7 @@ import { FileTracer, traceIdOf } from "../loop/trace.ts";
 import type { Tracer } from "../trace.ts";
 import { WindowError, freeText, newWindow } from "../policy/window.ts";
 import { DNS_FIELDS, approveRun, ApproveError, type ApprovalSelection } from "../vault/approve.ts";
+import { apiAnswer } from "./api.ts";
 import {
   barCounts, barHtml, actionsPage, decodeKey, encodeKey, documentPage, duplicateText, errorPage, executivePage, findingsPage, latestRules, objectPage, overviewPage, passForm, plainUrls, policyPage, settingsPage, sourcesPage,
   stripHtml, templatesOf, templatesPage, traceViewPage, tracesPage, workPage, type SourceCount, type TraceEventRow, type TraceFile, type View,
@@ -491,6 +494,10 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
   async function handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     if (!hosts.has((req.headers.host ?? "").toLowerCase())) return send(res, 421, "text/plain; charset=utf-8", "the console answers on 127.0.0.1 only\n");
     const url = new URL(req.url ?? "/", origin);
+    if (url.pathname === "/api" || url.pathname.startsWith("/api/")) {
+      const a = await apiAnswer(req.method ?? "GET", url, { tenants: b.tenants, tenant: () => current, text: (s) => b.redactor.text(s), print, view: async (tenant) => { if (st(tenant).first === null) await firstPass(tenant); return view(tenant); } });
+      return send(res, a.status, "application/json; charset=utf-8", req.method === "HEAD" ? "" : a.body);
+    }
     if (req.method === "GET" || req.method === "HEAD") {
       // the page's tenant: the one its URL names (every link a page renders carries it), else the default the switcher set
       const asked = url.searchParams.get("tenant");

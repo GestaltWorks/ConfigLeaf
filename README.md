@@ -485,6 +485,143 @@ Approve wrote the live file as the approved value and closed the window, and the
 failed read, the actions and the pages offline; the migration runs in `test/store.test.ts` against a throwaway
 Postgres schema.
 
+## Programmatic use
+
+Two entry points, both over the recorded estate with no credentials.
+
+The pass is a function: `runPass(layer, opts)` in `src/pipeline.ts` takes a `DataLayer` and returns the findings, each
+with its verb and the Decider's reason; `npm run sample` calls it. Saved as `pass.ts` in the repository root, this runs
+with `npx tsx pass.ts` in about six seconds and decides the 27 findings of the sample, the operator's accepted
+exceptions applied:
+
+```ts
+import { readFileSync } from "node:fs";
+import { SqlJsEngine } from "./src/data/engines/sqljs.ts";
+import { DataLayer } from "./src/data/layer.ts";
+import { loadSamplePolicy } from "./src/document/sample.ts";
+import { TechnicianMemory } from "./src/engine/memory.ts";
+import { runPass } from "./src/pipeline.ts";
+
+const bundle = JSON.parse(readFileSync("sample/bundle.json", "utf8"));
+const engine = await SqlJsEngine.create();
+engine.loadBundle(bundle);          // the recorded rows into sql.js
+loadSamplePolicy(engine, bundle);   // the shipped policy for the recording's tenants
+const memory = new TechnicianMemory({ storage: "read", directory: "examples/memory" });   // the accepted exceptions
+const decidedAt = "2026-10-25T14:17:53.416Z";   // the sample's own decision instant
+const pass = await runPass(new DataLayer(engine), { memory, decidedAt, at: decidedAt });
+
+console.log(pass.verbs);
+for (const f of pass.findings.filter((f) => f.verb !== "ADOPT")) console.log(f.verb, f.finding.class, f.finding.object_id, f.disposition.rule_id);
+```
+
+```text
+{ ADOPT: 23, HOLD: 3, ESCALATE: 1, ROLLBACK: 0, FIX: 0 }
+ESCALATE proxy_split bce1ca2bb7caa2de9b6823d5f6ecd3f2 rule-8e75e1d767980665
+HOLD orphan_record c8b1963847dafe3548b1a4b93f520c0a rule-b8d9962485c3ced4
+HOLD orphan_record b0a17a719bd2118a535a763379ab7ba9 rule-b8d9962485c3ced4
+HOLD orphan_record 25a23b5c40a3de0ea11b6054a7b54d07 rule-b8d9962485c3ced4
+```
+
+The technician's console serves the same data as read-only JSON under `/api/v1` (`src/console/api.ts`): `GET /api/v1`
+indexes the endpoints, `/summary` gives the counts of the summary bar, `/findings` every finding the Findings page lists
+and `/settings` every object of the Settings page, filtered by `group`, `lock`, `status` and `q`. Each takes
+`?tenant=<id>` as the pages do, answers JSON on the console's own headers and redacts what the pages redact. The hosted
+demo console serves the same endpoints over the recorded estate: use its address for `http://127.0.0.1:8090`. In sample
+mode:
+
+```bash
+SAMPLE_MODE=true npm run console &
+curl -s http://127.0.0.1:8090/api/v1/summary
+curl -s http://127.0.0.1:8090/api/v1/findings | head -n 23
+curl -s 'http://127.0.0.1:8090/api/v1/settings?status=with%20a%20technician' | head -n 26
+```
+
+```json
+{
+  "tenant": "client-1",
+  "decided_at": "2026-10-25T14:17:53.416Z",
+  "source": "sample",
+  "counts": {
+    "findings_open": 27,
+    "ESCALATE": 1,
+    "FIX": 0,
+    "ROLLBACK": 0,
+    "HOLD": 3,
+    "ADOPT": 23,
+    "locked": 79,
+    "windows_open": 0,
+    "objects": 112
+  },
+  "last_cycle": {
+    "id": "cycle_mvo5600q",
+    "at": "2026-10-25T18:08:54.094Z",
+    "trace": "examples/traces/cycle_mvo5600q.jsonl"
+  }
+}
+```
+
+```json
+{
+  "tenant": "client-1",
+  "decided_at": "2026-10-25T14:17:53.416Z",
+  "count": 27,
+  "findings": [
+    {
+      "id": "fnd-b4a40091cdb4f906",
+      "class": "proxy_split",
+      "class_label": "name and its www treated differently by the proxy",
+      "verb": "ESCALATE",
+      "status": "with a technician",
+      "reason": "hold under rule rule-8e75e1d767980665 expired 2026-10-25T03:21:06.870Z; the finding stands",
+      "object": {
+        "key": "Y2xvdWRmbGFyZS5kbnMfH2JjZTFjYTJiYjdjYWEyZGU5YjY4MjNkNWY2ZWNkM2Yy",
+        "surface": "cloudflare.dns",
+        "host": null,
+        "id": "bce1ca2bb7caa2de9b6823d5f6ecd3f2",
+        "setting": "proxied",
+        "where": "host-524b42.quest proxied"
+      },
+      "rule_id": "rule-8e75e1d767980665",
+      "expires_at": null
+    },
+    ...
+```
+
+```json
+{
+  "tenant": "client-1",
+  "filter": {
+    "group": null,
+    "lock": null,
+    "status": "with a technician",
+    "q": null
+  },
+  "count": 1,
+  "total": 112,
+  "windows_error": null,
+  "objects": [
+    {
+      "key": "Y2xvdWRmbGFyZS5kbnMfH2JjZTFjYTJiYjdjYWEyZGU5YjY4MjNkNWY2ZWNkM2Yy",
+      "id": "bce1ca2bb7caa2de9b6823d5f6ecd3f2",
+      "name": "host-524b42.quest (CNAME)",
+      "kind": "record",
+      "surface": "cloudflare.dns",
+      "group": "zone host-4c795e.quest",
+      "host": null,
+      "zone": "host-4c795e.quest",
+      "live": {
+        "value": "CNAME host-4c795e.quest proxied",
+        "hash": "sha256:7dce9c5851ec521b6cd5e902d19823ec85ce839f546db2ac3f8746956255f5e6",
+        "absent": false
+      },
+      ...
+```
+
+An unknown tenant is 400, an unknown path 404 and any method but GET and HEAD 405, each a JSON `{ status, error, message }`.
+Changing a setting stays a form POST to `/do/lock`, `/do/unlock`, `/do/approve` or `/do/pass` with
+`Accept: application/json`; `GET /api/v1` lists the fields each takes, and each answers `{ ok, title, lines }` and needs
+the console's CSRF token.
+
 ## Why it changed
 
 The explain step runs after the pass and before act, as agent `explainer` in the trace, and reads only rows the agent
