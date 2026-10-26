@@ -52,7 +52,7 @@ describe("npm run why", () => {
     expect(r.out).toContain("the finding's name host-18efce.ai is the lesson's scope key, same tenant, same class: an exact match");
     expect(r.out).toMatch(/score 0\.\d\d for "proxied_without_real_ip host-18efce\.ai" in the reference's hybrid ranking \(retrieval threshold 0\.35\)/);
     expect(r.out).toContain("conflicts   none met");
-    expect(r.out).toContain("rules       none approved from this lesson");
+    expect(r.out).toContain("rule        no approved rule covers this lesson");
     expect(r.out).toContain("ledger      1 entry for mem-7");
     expect(r.out).toContain("create  by technician-memory");
     expect(digest(COMMITTED)).toBe(before);
@@ -77,9 +77,12 @@ describe("npm run why", () => {
       tenantId: "client-1", findingClass: "proxied_without_real_ip", scopeKey: "host-18efce.ai", reason: "Renewed through the winter, still intentional", expiresAt: "2027-01-31T00:00:00.000Z",
       provenance: { kind: "cli", at: "2026-10-26T09:00:00.000Z", by: "lead technician" }, resolutions: [{ with: "mem-7", strategy: "supersede" }, { with: "mem-14", strategy: "supersede" }],
     });
-    const proposal = dreamOver(m).find((p) => p.type === "insight")!;
+    // dreaming reads the lessons in force: the 18 proxied_without_real_ip lessons of one reason and expiry become one rule, and
+    // the renewed lesson, which has another expiry, is left out
+    const proposal = dreamOver(m).proposals.find((p) => p.findingClass === "proxied_without_real_ip")!;
+    expect(proposal.derivedFrom).toHaveLength(18);
+    expect(proposal.derivedFrom).not.toContain(renewed.id);
     const rule = approveDream(m, proposal.id, "lead technician");
-    expect(rule.derivedFrom).toContain(renewed.id);
 
     const r = why(ADOPTED, dir);
     expect(r.err).toBe("");
@@ -88,8 +91,20 @@ describe("npm run why", () => {
     expect(r.out).toContain(`conflict-${renewed.id}-mem-7: recorded against mem-7`);
     expect(r.out).toContain(`settled supersede (winner ${renewed.id}) by lead technician at 2026-10-26T09:00:00.`);
     expect(r.out).toContain(`conflict-${renewed.id}-mem-14: recorded against mem-14`);
-    expect(r.out).toContain(`rule        ${rule.id} (insight, proposal ${proposal.id}) approved by lead technician at 2026-10-26T09:00:00.`);
-    expect(r.out).toMatch(new RegExp(`derived from ${rule.derivedFrom.length} lesson\\(s\\): mem-\\d+`));
+    expect(r.out).toContain("rule        no approved rule covers this lesson");
     expect(r.out).toContain("conflict_resolved supersede, winner " + renewed.id);
-  }, 120_000);
+
+    // a finding the rule covers: host-f324df.com, taught twice (mem-1 and mem-21), now covered by the rule
+    const covered = why("fnd-de3c5e8ebdc2d209", dir);
+    expect(covered.err).toBe("");
+    expect(covered.status).toBe(0);
+    expect(covered.out).toContain("decision    ADOPT until 2026-11-30T00:00:00.000Z, decided by operator");
+    expect(covered.out).toContain(`covered by  rule ${rule.id}, derived from 18 lessons: ADOPT proxied_without_real_ip on 11 scope(s), in force until 2026-11-30T00:00:00.000Z`);
+    expect(covered.out).toContain(`approved by lead technician at 2026-10-26T09:00:00.000Z from proposal ${proposal.id}; derivedFrom mem-1 mem-2 mem-3`);
+    expect(covered.out).toContain("mem-1: \"Personal estate, known and intentional:");
+    expect(covered.out).toContain("mem-21: \"Personal estate, known and intentional:");
+    expect(covered.out).toContain("source technician:cli; superseded by " + rule.id);
+    expect(covered.out).toContain(`dream_approved proposal ${proposal.id}, derived from 18 lesson(s)  by lead technician`);
+    expect(covered.out).not.toContain("no approved rule covers");
+  }, 240_000);
 });

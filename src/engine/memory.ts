@@ -35,6 +35,11 @@
 // `npm run answer` opens it; a store opened without records as it always has, and recall skips a superseded lesson
 // whichever way the store is opened.
 //
+// A rule (recordRule, src/engine/dreaming.ts) is an exception for one class over several scope keys, approved from the
+// reference's dreaming in place of the lessons it is derived from. It is stored as an exception lesson with `scopeKeys` and
+// `derivedFrom` lineage, behind the same gate, and it supersedes those lessons. Recall hands the Decider the rule with
+// `scopeKey` set to the key the finding matched, so the pipeline reads it as it reads a lesson: same verb, same expiry.
+//
 // This is the agent's own memory. It is not the Nightshift runtime's injected "hmem" context, which
 // the receipt gate (src/gate.ts) treats as a custody question, not as memory.
 
@@ -81,13 +86,31 @@ interface LessonBase {
   supersededBy?: string;
 }
 export interface AnswerLesson extends LessonBase { kind: "answer"; question: string; answer: string; scope: { type: ScopeType; key: string } }
-export interface ExceptionLesson extends LessonBase { kind: "exception"; findingClass: FindingClass; scopeKey: string; reason: string }
+export interface ExceptionLesson extends LessonBase {
+  kind: "exception";
+  findingClass: FindingClass;
+  scopeKey: string;
+  reason: string;
+  /**
+   * A rule (npm run answer -- --approve-dream) is an exception for one class over several scope keys, in place of the
+   * lessons it was derived from. `scopeKeys` is every key it covers, sorted, and `scopeKey` is the first; recall hands the
+   * Decider the rule with `scopeKey` set to the key the finding matched. Absent on a lesson the technician taught.
+   */
+  scopeKeys?: string[];
+  /** The lessons the rule was derived from: the lineage `npm run why` shows. Those lessons are superseded by the rule. */
+  derivedFrom?: string[];
+  /** The dreaming proposal (drm-...) the rule was approved from. */
+  proposalId?: string;
+}
 export type Lesson = AnswerLesson | ExceptionLesson;
 
 /** How the technician settles one conflict the gate found: the new lesson replaces `with` (kept, marked superseded), or both stay in force. */
 export interface ConflictResolution { with: string; strategy: "supersede" | "keep_both" }
 export interface AnswerInput { tenantId: string; question: string; answer: string; scope: { type: ScopeType; key: string }; expiresAt: string; provenance: LessonProvenance; resolutions?: ConflictResolution[] }
 export interface ExceptionInput { tenantId: string; findingClass: FindingClass; scopeKey: string; reason: string; expiresAt: string; provenance: LessonProvenance; resolutions?: ConflictResolution[] }
+
+/** A rule approved from dreaming (TechnicianMemory.recordRule): the keys and the reason and expiry are the ones the `derivedFrom` lessons state. */
+export interface RuleInput { tenantId: string; findingClass: FindingClass; scopeKeys: string[]; reason: string; expiresAt: string; provenance: LessonProvenance; derivedFrom: string[]; proposalId: string; resolutions?: ConflictResolution[] }
 
 /** A lesson in force that the one being recorded contradicts, and why. */
 export interface LessonConflict {
@@ -120,11 +143,14 @@ export class ConflictError extends MemoryError {
 
 /** One lesson in one line: id, kind, what it covers, until when, who taught it and when, and what it says. */
 export function describeLesson(l: Lesson): string {
-  const head = l.kind === "exception"
-    ? `${l.id}  exception  ${l.findingClass} on ${l.scopeKey} (${l.tenantId})`
-    : `${l.id}  answer     ${l.scope.type} ${l.scope.key} (${l.tenantId})`;
+  const head = l.kind === "exception" && l.scopeKeys
+    ? `${l.id}  rule       ${l.findingClass} on ${l.scopeKeys.length} scope key(s) (${l.tenantId})`
+    : l.kind === "exception"
+      ? `${l.id}  exception  ${l.findingClass} on ${l.scopeKey} (${l.tenantId})`
+      : `${l.id}  answer     ${l.scope.type} ${l.scope.key} (${l.tenantId})`;
   const said = l.kind === "exception" ? l.reason : `Q ${l.question} A ${l.answer}`;
-  return `${head}  until ${l.expiresAt}  by ${l.provenance.by} at ${l.recordedAt}${l.supersededBy ? `  superseded by ${l.supersededBy}` : ""}: ${said}`;
+  const lineage = l.kind === "exception" && l.derivedFrom ? `  derived from ${l.derivedFrom.length} lesson(s)` : "";
+  return `${head}  until ${l.expiresAt}  by ${l.provenance.by} at ${l.recordedAt}${lineage}${l.supersededBy ? `  superseded by ${l.supersededBy}` : ""}: ${said}`;
 }
 
 export interface TechnicianMemoryOptions {
@@ -155,6 +181,10 @@ const expiresAfterTaught = (v: { expiresAt: string; provenance: { at: string } }
 const EXPIRY_MSG = { message: "expiresAt must be after provenance.at: a lesson cannot expire before it was taught", path: ["expiresAt"] };
 const AnswerSchema = z.object({ tenantId: key, question: text, answer: text, scope: z.object({ type: z.enum(SCOPE_TYPES), key: scopeKey }), expiresAt: iso, provenance: Prov }).refine(expiresAfterTaught, EXPIRY_MSG);
 const ExceptionSchema = z.object({ tenantId: key, findingClass: z.enum(FINDING_CLASSES), scopeKey, reason: text, expiresAt: iso, provenance: Prov }).refine(expiresAfterTaught, EXPIRY_MSG);
+const RuleSchema = z.object({
+  tenantId: key, findingClass: z.enum(FINDING_CLASSES), scopeKeys: z.array(scopeKey).min(1).max(500), reason: text, expiresAt: iso, provenance: Prov,
+  derivedFrom: z.array(z.string().min(1).max(64)).min(2).max(500), proposalId: z.string().regex(/^drm-[0-9a-f]{12}$/),
+}).refine(expiresAfterTaught, EXPIRY_MSG);
 
 function parse<T>(schema: z.ZodType<T>, input: unknown, what: string): T {
   const r = schema.safeParse(input);
@@ -168,6 +198,8 @@ function parse<T>(schema: z.ZodType<T>, input: unknown, what: string): T {
 const TAG = {
   kind: "lesson:", tenant: "tenant:", scopeType: "scope_type:", scopeKey: "scope_key:", cls: "class:", expires: "expires:", recorded: "recorded:",
   question: "question:", answer: "answer:", reason: "reason:", provKind: "prov_kind:", provAt: "prov_at:", provBy: "prov_by:", provRun: "prov_run:",
+  // A rule: every scope key it covers (space-joined; a key is one token) and the proposal it was approved from. "scope_key:" is not a prefix of "scope_keys:".
+  scopeKeys: "scope_keys:", proposal: "dream_id:",
 } as const;
 const tagOf = (tags: readonly string[], prefix: string): string | undefined => {
   const t = tags.find((x) => x.startsWith(prefix));
@@ -189,7 +221,9 @@ export function lessonOf(r: MemoryRecord): Lesson | null {
   }
   const cls = tagOf(r.tags, TAG.cls), scopeKey = tagOf(r.tags, TAG.scopeKey), reason = tagOf(r.tags, TAG.reason);
   if (!cls || !scopeKey || reason === undefined || !(FINDING_CLASSES as readonly string[]).includes(cls)) return null;
-  return { ...base, kind, findingClass: cls as FindingClass, scopeKey, reason };
+  const keys = tagOf(r.tags, TAG.scopeKeys), proposal = tagOf(r.tags, TAG.proposal);
+  const rule = keys && r.derivedFrom?.length ? { scopeKeys: keys.split(" "), derivedFrom: [...r.derivedFrom], ...(proposal ? { proposalId: proposal } : {}) } : {};
+  return { ...base, kind, findingClass: cls as FindingClass, scopeKey, reason, ...rule };
 }
 
 /**
@@ -208,23 +242,26 @@ const normQuestion = (q: string): string => q.toLowerCase().replace(/\s+/g, " ")
 
 /** What the conflict gate compares: a lesson as it would be stored, the free text already redacted. `text` is the part the reference's detector reads. */
 type Claim =
-  | { kind: "exception"; tenantId: string; key: string; findingClass: FindingClass; expiresAt: string; text: string }
+  | { kind: "exception"; tenantId: string; keys: string[]; findingClass: FindingClass; expiresAt: string; text: string }
   | { kind: "answer"; tenantId: string; key: string; scopeType: ScopeType; question: string; answer: string; expiresAt: string; text: string };
 
 const claimOf = (l: Lesson): Claim => l.kind === "exception"
-  ? { kind: "exception", tenantId: l.tenantId, key: l.scopeKey, findingClass: l.findingClass, expiresAt: l.expiresAt, text: l.reason }
+  ? { kind: "exception", tenantId: l.tenantId, keys: l.scopeKeys ?? [l.scopeKey], findingClass: l.findingClass, expiresAt: l.expiresAt, text: l.reason }
   : { kind: "answer", tenantId: l.tenantId, key: l.scope.key, scopeType: l.scope.type, question: l.question, answer: l.answer, expiresAt: l.expiresAt, text: `Q ${l.question} A ${l.answer}` };
 
-/** The same scope key: an exception's key and class (recall matches the key on any of a finding's host, name or address), an answer's key and scope type. */
+/** The key two exception claims share, or undefined. */
+const sharedKey = (a: Claim & { kind: "exception" }, b: Claim & { kind: "exception" }): string | undefined => a.keys.find((k) => b.keys.includes(k));
+
+/** The same scope key: an exception's class and a key in common (recall matches the key on any of a finding's host, name or address), an answer's key and scope type. */
 const sameScope = (a: Claim, b: Claim): boolean => a.kind === "exception" && b.kind === "exception"
-  ? a.findingClass === b.findingClass && a.key === b.key
+  ? a.findingClass === b.findingClass && sharedKey(a, b) !== undefined
   : a.kind === "answer" && b.kind === "answer" && a.scopeType === b.scopeType && a.key === b.key;
 
 /** A disagreement the two claims state in their fields, or null. `held` is in force already; `fresh` is the one being recorded. */
 function disagreement(held: Claim, fresh: Claim): string | null {
   if (held.kind === "exception" && fresh.kind === "exception") {
     return held.findingClass === fresh.findingClass && held.expiresAt !== fresh.expiresAt
-      ? `both accept ${fresh.findingClass} on ${fresh.key} and expire at different instants (${held.expiresAt} and ${fresh.expiresAt})`
+      ? `both accept ${fresh.findingClass} on ${sharedKey(held, fresh) ?? fresh.keys[0]} and expire at different instants (${held.expiresAt} and ${fresh.expiresAt})`
       : null;
   }
   if (held.kind === "answer" && fresh.kind === "answer") {
@@ -295,13 +332,14 @@ export class TechnicianMemory {
    * every one by id; throws ConflictError, naming both sides, when one is open, and MemoryError when a resolution names a
    * lesson that is not in conflict.
    */
-  private gate(fresh: Claim, resolutions: readonly ConflictResolution[]): LessonConflict[] {
+  private gate(fresh: Claim, resolutions: readonly ConflictResolution[], except: ReadonlySet<string> = new Set()): LessonConflict[] {
     if (!this.gated) {
       if (resolutions.length) throw new MemoryError("resolution refused: this store is open without the conflict gate, so there is nothing to settle");
       return [];
     }
     const now = this.nowIso();
-    const held = this.lessons(fresh.tenantId).filter((l) => !l.supersededBy && l.expiresAt > now && sameScope(claimOf(l), fresh));
+    // `except` holds the lessons a rule is derived from: the rule replaces them, so they are no conflict for it.
+    const held = this.lessons(fresh.tenantId).filter((l) => !l.supersededBy && !except.has(l.id) && l.expiresAt > now && sameScope(claimOf(l), fresh));
     // The reference's detector, over a scratch store holding the lessons' free text and the new one's: nothing here is written.
     const scratch = new HMEM({ clock: this.clock });
     const peerOf = new Map(held.map((l) => [scratch.add({ content: claimOf(l).text, source: "gate:held" }).id, l.id]));
@@ -330,7 +368,7 @@ export class TechnicianMemory {
     const open = conflicts.filter((c) => !resolutions.some((r) => r.with === c.with.id));
     if (open.length) {
       const fresher = fresh.kind === "exception"
-        ? `exception for ${fresh.findingClass} on ${fresh.key} (${fresh.tenantId}) until ${fresh.expiresAt}: ${fresh.text}`
+        ? `${fresh.keys.length > 1 ? "rule" : "exception"} for ${fresh.findingClass} on ${fresh.keys.length > 3 ? `${fresh.keys.slice(0, 3).join(" ")} … +${fresh.keys.length - 3} more` : fresh.keys.join(" ")} (${fresh.tenantId}) until ${fresh.expiresAt}: ${fresh.text}`
         : `answer on ${fresh.key} (${fresh.tenantId}) until ${fresh.expiresAt}: ${fresh.text}`;
       throw new ConflictError(
         `lesson refused: it contradicts ${open.length === 1 ? "a lesson" : `${open.length} lessons`} in force on the same scope key. New: ${fresher}. Held: ${open.map((c) => `${describeLesson(c.with)} (${c.reason})`).join(" | ")}. `
@@ -395,7 +433,7 @@ export class TechnicianMemory {
     const recordedAt = this.nowIso();
     const reason = clean(v.reason), by = clean(v.provenance.by);
     const resolutions = input.resolutions ?? [];
-    const conflicts = this.gate({ kind: "exception", tenantId: v.tenantId, key: v.scopeKey, findingClass: v.findingClass, expiresAt: v.expiresAt, text: reason }, resolutions);
+    const conflicts = this.gate({ kind: "exception", tenantId: v.tenantId, keys: [v.scopeKey], findingClass: v.findingClass, expiresAt: v.expiresAt, text: reason }, resolutions);
     const rec = this.hmem.add({
       content: `Accepted exception for ${v.findingClass} on ${v.scopeKey} (${v.tenantId}) until ${v.expiresAt}: ${reason}`,
       type: "preference", layer: "long_term", confidence: 1,
@@ -417,6 +455,60 @@ export class TechnicianMemory {
   }
 
   /**
+   * (c) A rule approved from dreaming (src/engine/dreaming.ts): one exception for a class over several scope keys, in place of
+   * the lessons it is derived from. Those lessons must be exceptions in force on the rule's tenant and class that state the rule's
+   * reason and expiry, and their scope keys must be the rule's keys exactly, so the rule decides what they decided. They are
+   * superseded by it (kept on record, marked supersededBy, never recalled) and the ledger holds an update for each and a
+   * dream_approved for the rule. The rule goes through the conflict gate like any lesson: a lesson outside the sources that
+   * contradicts it on one of its keys refuses it, naming both, unless the technician settles that conflict by id.
+   */
+  recordRule(input: RuleInput): ExceptionLesson {
+    this.writable("rule");
+    const v = parse(RuleSchema, input, "rule");
+    const recordedAt = this.nowIso();
+    const reason = clean(v.reason), by = clean(v.provenance.by);
+    const keys = [...new Set(v.scopeKeys)].sort();
+    const sources = [...new Set(v.derivedFrom)].map((id) => this.index.get(id));
+    const now = recordedAt;
+    const bad = sources.findIndex((s) => !s || s.kind !== "exception" || s.derivedFrom || s.supersededBy || s.tenantId !== v.tenantId || s.findingClass !== v.findingClass
+      || s.expiresAt !== v.expiresAt || s.expiresAt <= now || normQuestion(s.reason) !== normQuestion(reason) || !keys.includes(s.scopeKey));
+    if (bad >= 0) throw new MemoryError(`rule refused: ${[...new Set(v.derivedFrom)][bad]} is not an exception in force for ${v.findingClass} on ${v.tenantId} that states this reason and expiry on one of the rule's scope keys`);
+    const covered = new Set((sources as ExceptionLesson[]).map((s) => s.scopeKey));
+    if (covered.size !== keys.length) throw new MemoryError(`rule refused: its scope keys are not exactly the keys of the lessons it is derived from (${keys.length} keys, the lessons cover ${covered.size})`);
+    const ids = (sources as ExceptionLesson[]).map((s) => s.id);
+    if (ids.length < 2) throw new MemoryError("rule refused: a rule is derived from at least two lessons");
+    const resolutions = input.resolutions ?? [];
+    const conflicts = this.gate({ kind: "exception", tenantId: v.tenantId, keys, findingClass: v.findingClass, expiresAt: v.expiresAt, text: reason }, resolutions, new Set(ids));
+    const rec = this.hmem.add({
+      content: `Rule for ${v.findingClass} on ${keys.length} scope key${keys.length === 1 ? "" : "s"} (${v.tenantId}) until ${v.expiresAt}: ${reason}`,
+      type: "preference", layer: "long_term", confidence: 0.75,
+      tags: [
+        `${TAG.kind}exception`, `${TAG.tenant}${v.tenantId}`, `${TAG.cls}${v.findingClass}`, `${TAG.scopeKey}${keys[0]}`, `${TAG.scopeKeys}${keys.join(" ")}`,
+        `${TAG.expires}${v.expiresAt}`, `${TAG.recorded}${recordedAt}`, `${TAG.reason}${reason}`, `${TAG.proposal}${v.proposalId}`,
+        ...this.provTags(v.provenance, by),
+      ],
+      source: "dreaming",
+      provenance: { origin: "dream", learnedAt: Date.parse(v.provenance.at), label: `rule approved by ${by} from proposal ${v.proposalId}` },
+      chatId: v.tenantId,
+      derivedFrom: ids,
+    });
+    const rule = lessonOf(rec);
+    if (!rule || rule.kind !== "exception" || !rule.derivedFrom) throw new MemoryError(`rule ${rec.id} did not round-trip through the store`);
+    this.index.set(rule.id, rule);
+    this.hmem.ledger.log(rule.id, "dream_approved", by, { details: { proposalId: v.proposalId, derivedFrom: ids, scopeKeys: keys.length } });
+    for (const s of sources as ExceptionLesson[]) {
+      const old = this.hmem.store.get(s.id)!;
+      const previousState = snapshot(old);
+      old.supersededBy = rule.id; // kept on record, covered by the rule, never recalled
+      this.hmem.ledger.log(old.id, "update", by, { previousState, newState: snapshot(old), details: { supersededBy: rule.id, proposalId: v.proposalId } });
+      this.index.set(old.id, { ...s, supersededBy: rule.id });
+    }
+    this.settle(rule, conflicts, resolutions, by);
+    this.hmem.store.persist();
+    return rule;
+  }
+
+  /**
    * The lessons that apply to this finding: same tenant, and an exception of the finding's class whose
    * scope key is one of the finding's scope values, or an answer whose scope value the finding carries.
    * Split by expiry at `at` (now by default; an expiry exactly at `at` has lapsed). Each hit is a
@@ -430,10 +522,13 @@ export class TechnicianMemory {
     const expired: Lesson[] = [];
     for (const l of [...this.index.values()].sort(byRecorded)) {
       if (l.tenantId !== finding.tenant_id || l.supersededBy) continue; // a superseded lesson is on record, never recalled
-      const applies = l.kind === "exception" ? l.findingClass === finding.class && every.has(l.scopeKey) : scopes[l.scope.type].includes(l.scope.key);
-      if (!applies) continue;
+      // A rule covers several keys; the Decider gets it with scopeKey set to the key this finding matched (name, then host, then address).
+      const matched = l.kind === "exception"
+        ? (l.findingClass === finding.class ? [...scopes.name, ...scopes.host, ...scopes.address].find((v) => (l.scopeKeys ?? [l.scopeKey]).includes(v)) : undefined)
+        : scopes[l.scope.type].includes(l.scope.key) ? l.scope.key : undefined;
+      if (matched === undefined) continue;
       const lapsed = l.expiresAt <= now;
-      (lapsed ? expired : applicable).push(l);
+      (lapsed ? expired : applicable).push(l.kind === "exception" && l.scopeKeys ? { ...l, scopeKey: matched } : l);
       this.hmem.ledger.log(l.id, "read", this.actor, { details: { finding_class: finding.class, tenant_id: finding.tenant_id, at: now, expired: lapsed } });
     }
     return { applicable, expired, at: now };

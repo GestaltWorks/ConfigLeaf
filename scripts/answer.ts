@@ -27,10 +27,13 @@
 // and no longer recalled; --keep-both <id> stores it beside the old one. The ledger records the conflict and who settled it,
 // which `npm run why` prints.
 //
-// --approve-dream approves one proposal of `npm run dream` by its id (drm- and 12 hex). Dreaming runs again over the lessons
-// as they stand, so an id from before a lesson changed is refused. The approved rule is a record with `derivedFrom`
-// lineage to its lessons; it changes no decision, since the Decider recalls lessons by exact scope key. This command is the
-// only writer of the store.
+// --approve-dream approves one rule proposal of `npm run dream` by its id (drm- and 12 hex). Dreaming runs again over the
+// lessons as they stand, so an id from before a lesson changed is refused. The rule is recorded through the same gate as a
+// lesson, as one exception for the class over the proposal's scope keys with `derivedFrom` lineage, and it supersedes the
+// lessons it is derived from (kept on record, no longer recalled). The Decider recalls the rule where it recalled those
+// lessons and decides the same findings the same way, since the rule states each lesson's class, reason and expiry and
+// covers exactly their scope keys; `npm run why` prints "covered by rule". --supersede and --keep-both settle a conflict
+// with a lesson outside the proposal. This command is the only writer of the store.
 //
 // Lessons live in the directory DRIFT_MEMORY_DIR names (state.json, ledger.jsonl; src/config.ts), --memory-dir
 // for one command: when it is blank, .world/memory (gitignored), or examples/memory in sample mode, the committed store a clean clone
@@ -103,6 +106,27 @@ async function refreshZetaris(): Promise<void> {
 
 const describe = describeLesson;
 
+const resolutions: ConflictResolution[] = [
+  ...(args.supersede ?? []).map((id): ConflictResolution => ({ with: id, strategy: "supersede" })),
+  ...(args["keep-both"] ?? []).map((id): ConflictResolution => ({ with: id, strategy: "keep_both" })),
+];
+
+/** The gate's refusal: both sides named, the way to settle each by id, exit 1; nothing was stored. */
+function refuseConflict(err: ConflictError, what: string, on = ""): never {
+  console.error(`refused: this ${what} contradicts ${err.conflicts.length} lesson(s) in force${on ? ` ${on}` : ""}; nothing is stored`);
+  for (const c of err.conflicts) {
+    console.error(`  held  ${describe(c.with)}`);
+    console.error(`        ${c.reason}`);
+  }
+  console.error(`  new   ${err.candidate}`);
+  console.error("settle each conflict by id and run the command again:");
+  for (const c of err.conflicts) {
+    console.error(`  --supersede ${c.with.id}    the new ${what} replaces ${c.with.id}, which stays on record, marked superseded, and is no longer recalled`);
+    console.error(`  --keep-both ${c.with.id}    both stay in force`);
+  }
+  process.exit(1);
+}
+
 if (args.list) {
   const lessons = memory.lessons(args.tenant);
   console.log(`${lessons.length} lesson(s) in ${where}${args.tenant ? ` for ${args.tenant}` : ""}`);
@@ -121,10 +145,13 @@ if (args.forget) {
 
 if (args["approve-dream"]) {
   try {
-    const rule = approveDream(memory, args["approve-dream"], args.by!);
-    console.log(`approved ${rule.proposalId} as ${rule.id}: ${rule.type} derived from ${rule.derivedFrom.length} lesson(s): ${rule.derivedFrom.join(" ")}`);
-    console.log(`approved by ${rule.approvedBy} at ${rule.approvedAt}; stored in ${where}; npm run why -- --finding <id> shows the rule beside the lessons it derives from`);
+    const rule = approveDream(memory, args["approve-dream"], args.by!, resolutions);
+    console.log(`approved ${rule.proposalId} as ${rule.id}: ADOPT ${rule.findingClass} on ${rule.scopeKeys.length} scope(s), tenant ${rule.tenantId}, until ${rule.expiresAt}, derived from ${rule.derivedFrom.length} lesson(s): ${rule.derivedFrom.join(" ")}`);
+    console.log(`superseded ${rule.derivedFrom.length} lesson(s): kept on record and no longer recalled; the rule decides the same findings the same way`);
+    for (const r of resolutions) console.log(`settled ${r.with}: ${r.strategy === "supersede" ? `superseded by ${rule.id}, kept on record and no longer recalled` : `kept beside ${rule.id}, both in force`}`);
+    console.log(`approved by ${rule.provenance.by} at ${rule.recordedAt}; stored in ${where}; npm run why -- --finding <id> shows "covered by rule ${rule.id}"`);
   } catch (err) {
+    if (err instanceof ConflictError) refuseConflict(err, "rule");
     if (err instanceof MemoryError) fail(err.message, 1);
     throw err;
   }
@@ -157,10 +184,6 @@ if (!key) fail(`finding ${finding!.id} has no ${type} to scope a lesson on (host
 const now = new Date().toISOString();
 const provenance = { kind: "cli", at: now, by: args.by!, runId: f.run_id };
 const until = args.until ?? new Date(Date.parse(now) + 30 * 86_400_000).toISOString();
-const resolutions: ConflictResolution[] = [
-  ...(args.supersede ?? []).map((id): ConflictResolution => ({ with: id, strategy: "supersede" })),
-  ...(args["keep-both"] ?? []).map((id): ConflictResolution => ({ with: id, strategy: "keep_both" })),
-];
 
 try {
   const lesson: Lesson = args.accept
@@ -178,20 +201,7 @@ try {
     console.log(`the Decider will not ask "${lesson.question}" again on ${type} ${key} until ${lesson.expiresAt}`);
   }
 } catch (err) {
-  if (err instanceof ConflictError) {
-    console.error(`refused: this lesson contradicts ${err.conflicts.length} lesson(s) in force on ${key} (${f.tenant_id}); nothing is stored`);
-    for (const c of err.conflicts) {
-      console.error(`  held  ${describe(c.with)}`);
-      console.error(`        ${c.reason}`);
-    }
-    console.error(`  new   ${err.candidate}`);
-    console.error("settle each conflict by id and run the command again:");
-    for (const c of err.conflicts) {
-      console.error(`  --supersede ${c.with.id}    the new lesson replaces ${c.with.id}, which stays on record, marked superseded, and is no longer recalled`);
-      console.error(`  --keep-both ${c.with.id}    both stay in force`);
-    }
-    process.exit(1);
-  }
+  if (err instanceof ConflictError) refuseConflict(err, "lesson", `on ${key} (${f.tenant_id})`);
   if (err instanceof MemoryError) fail(err.message, 1);
   throw err;
 }

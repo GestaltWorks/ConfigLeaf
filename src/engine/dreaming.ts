@@ -1,175 +1,196 @@
-// Dreaming over the technician's lessons (the vendored H-MEM DreamingService, vendor/hmem/src/dreaming.ts).
+// Dreaming over the technician's lessons: the vendored H-MEM DreamingService (vendor/hmem/src/dreaming.ts) clusters, and
+// ConfigLeaf turns each cluster into a rule proposal.
 //
-// `dreamOver` proposes: the reference clusters related records and writes each cluster up as an insight (a long-term
-// fact) or an invariant (a long-term preference), and a domain relabel for a record it files under "general". It runs
-// over a scratch store holding only the lessons in force, so nothing is written by proposing, an approved rule never
-// feeds the next dream, and a lapsed or superseded lesson is not a belief to generalise from.
+// The reference clusters related records (content similarity, tag overlap, shared domain and entities) and writes each
+// cluster up as an insight or an invariant whose content is the cluster's text joined. That text is no rule. `dreamOver`
+// keeps the reference's clustering and reads what the lessons of each cluster share: the tenant, the class, the reason and
+// the expiry. Lessons that share all four are one rule proposal: "ADOPT <class> on these scope keys, for this reason, until
+// this expiry, derived from these lessons". A cluster, or part of one, with no two lessons sharing all four yields no
+// proposal, and the result says why (`withheld`).
 //
-// `approveDream` is the one writer, and `npm run answer -- --approve-dream <id>` is the one door to it. The reference's
-// approve() writes through the DreamingService's own store; the scratch store is not the live one, so the record is
-// materialised here in the reference's own shape (insight: factual, invariant: preference; long_term, confidence 0.75,
-// source "dreaming", origin "dream", derivedFrom the proposal's sources) and the ledger gets create and dream_approved.
-// An approved rule is inert for the Decider, which recalls lessons by exact scope key, so a rule's reach decides nothing: it is
-// a recorded generalisation with its lineage, which `npm run why` shows beside the lessons it derives from.
-//
-// The reference's model-free dreaming groups related records, and the content of its insight and invariant is the joined
-// text of the cluster's records. `restates` says so in the data, from the sources themselves, so a command that prints a
-// proposal presents a concatenation as a concatenation.
+// Proposing writes nothing: dreaming runs over a scratch store holding the first-hand lessons in force (a rule, a lapsed
+// lesson and a superseded one are no beliefs to generalise from), and the reference's proposal ledger lines stay in that
+// scratch store. `approveDream` is the one writer, and `npm run answer -- --approve-dream <id>` is the one door to it. It
+// records the rule through TechnicianMemory.recordRule, behind the conflict gate: one exception for the class over the
+// scope keys, with `derivedFrom` lineage, superseding the lessons it replaces. The Decider recalls the rule where it
+// recalled those lessons, with the same verb and expiry, because the rule states the class, reason and expiry of each source
+// and covers exactly their scope keys. `npm run why` prints "covered by rule ...".
 import { createHash } from "node:crypto";
-import { HMEM, type DreamProposalType, type MemoryRecord } from "../../vendor/hmem/src/index.ts";
-import { MemoryError, cleanFree, type Lesson, type TechnicianMemory } from "./memory.ts";
+import { DEFAULTS, HMEM } from "../../vendor/hmem/src/index.ts";
+import type { FindingClass } from "../catalogue/templates.ts";
+import { MemoryError, cleanFree, type ConflictResolution, type ExceptionLesson, type Lesson, type TechnicianMemory } from "./memory.ts";
 
-/** What the lessons of a proposal have in common, counted from the lessons. */
-export interface Shared {
+/** A rule: an exception lesson over several scope keys with `derivedFrom` lineage. */
+export type Rule = ExceptionLesson & { scopeKeys: string[]; derivedFrom: string[] };
+
+export const isRule = (l: Lesson): l is Rule => l.kind === "exception" && Boolean(l.scopeKeys) && Boolean(l.derivedFrom?.length);
+
+/** Every rule in the store, oldest first, those a later rule superseded included. */
+export const rulesOf = (memory: TechnicianMemory): Rule[] => memory.lessons().filter(isRule);
+
+export interface RuleProposal {
+  /** `drm-` and 12 hex over the rule's fields and sources: the same lessons give the same id, a changed set gives another. */
+  id: string;
+  tenantId: string;
+  findingClass: FindingClass;
+  reason: string;
+  expiresAt: string;
+  /** Sorted. */
+  scopeKeys: string[];
+  /** The lessons the rule replaces, by id. */
+  derivedFrom: string[];
+  /** The reference's proposals whose clusters held these lessons, such as "dream-1 insight". */
+  clusters: string[];
+}
+
+/** Lessons the reference clustered that no rule covers, and why. */
+export interface Withheld {
+  clusters: string[];
+  lessons: string[];
+  why: string;
+}
+
+export interface DreamResult {
+  /** First-hand lessons in force: what dreaming read. */
   lessons: number;
-  tenants: string[];
-  /** Exception classes and "answer", most frequent first. */
-  kinds: [string, number][];
-  scopeKeys: number;
-  reasons: number;
-  expiries: string[];
+  /** The reference's insight and invariant proposals: the clusters. */
+  clusters: number;
+  proposals: RuleProposal[];
+  withheld: Withheld[];
+  /** The reference's relabel proposals, listed and not approvable. */
+  relabels: { id: string; content: string; domain: string }[];
+  /** Rules in force. */
+  approved: Rule[];
 }
 
-export interface DreamView {
-  /** `drm-` and 12 hex over the proposal's type, sources and content: the same lessons give the same id, a changed set gives another. */
-  id: string;
-  /** The reference's own id in this run (dream-N); not stable across runs. */
-  vendorId: string;
-  type: DreamProposalType;
-  content: string;
-  /** The lessons the proposal derives from. */
-  derivedFrom: string[];
-  suggestedDomain?: string;
-  shared: Shared;
-  /** True when the content is only the sources' text joined under a header: the proposal groups its lessons and adds no statement of its own. */
-  restates: boolean;
-  /** The rule that carries this proposal, when it has been approved. */
-  approvedAs: string | null;
+const norm = (s: string): string => s.toLowerCase().replace(/\s+/g, " ").trim();
+const byId = (a: string, b: string): number => a.localeCompare(b, undefined, { numeric: true });
+
+/** The lessons dreaming reads: first-hand lessons in force at the memory's clock, not superseded and not rules. */
+export function inForce(memory: TechnicianMemory): Lesson[] {
+  const now = new Date(memory.hmem.clock()).toISOString();
+  return memory.lessons().filter((l) => !l.supersededBy && l.expiresAt > now && !isRule(l));
 }
 
-/** An approved proposal: a record with `derivedFrom` lineage back to the lessons. */
-export interface Rule {
-  id: string;
-  type: Exclude<DreamProposalType, "domain">;
-  content: string;
-  derivedFrom: string[];
-  /** The stable proposal id (drm-...) it was approved under. */
-  proposalId: string;
-  approvedBy: string;
-  approvedAt: string;
+const ruleId = (p: Omit<RuleProposal, "id" | "clusters">): string =>
+  `drm-${createHash("sha256").update(JSON.stringify([p.tenantId, p.findingClass, p.reason, p.expiresAt, p.scopeKeys, p.derivedFrom])).digest("hex").slice(0, 12)}`;
+
+/** Why the lessons of a cluster are in no rule, from the lessons themselves. */
+function whyWithheld(left: readonly Lesson[]): string {
+  const parts: string[] = [];
+  const answers = left.filter((l) => l.kind === "answer");
+  const exceptions = left.filter((l): l is ExceptionLesson => l.kind === "exception");
+  if (answers.length) parts.push(`${answers.length} answer lesson(s) carry no class, so no rule covers them`);
+  if (exceptions.length) {
+    const n = (f: (l: ExceptionLesson) => string): number => new Set(exceptions.map(f)).size;
+    parts.push(`${exceptions.length} exception lesson(s) share no class, reason and expiry with another lesson of the cluster (${n((l) => l.findingClass)} class(es), ${n((l) => norm(l.reason))} reason(s), ${n((l) => l.expiresAt)} expiry(ies) among them)`);
+  }
+  return parts.join("; ");
 }
 
-const tagOf = (r: MemoryRecord, prefix: string): string | undefined => r.tags.find((t) => t.startsWith(prefix))?.slice(prefix.length);
+/** What dreaming proposes over the lessons in force. Writes nothing, not even to the ledger. */
+export function dreamOver(memory: TechnicianMemory): DreamResult {
+  const lessons = inForce(memory);
+  const held = new Map(lessons.map((l) => [l.id, l]));
+  const scratch = new HMEM({ clock: memory.hmem.clock });
+  scratch.store.restoreAll(lessons.map((l) => structuredClone(memory.hmem.store.get(l.id)!)), memory.hmem.store.snapshotAll().seq);
+  const vendor = scratch.dreaming.dream();
+  const clusters = vendor.filter((p) => p.type !== "domain");
 
-/** A rule from its H-MEM record, or null for a record that is not an approved dream. */
-export function ruleOf(r: MemoryRecord): Rule | null {
-  const type = r.provenance.origin === "dream" ? (tagOf(r, "dream:") as Rule["type"] | undefined) : undefined;
-  if ((type !== "insight" && type !== "invariant") || !r.derivedFrom?.length) return null;
-  return { id: r.id, type, content: r.content, derivedFrom: [...r.derivedFrom], proposalId: tagOf(r, "dream_id:") ?? "", approvedBy: tagOf(r, "approved_by:") ?? "", approvedAt: new Date(r.timestamp).toISOString() };
-}
+  // Lessons that share tenant, class, reason and expiry, across the reference's clusters.
+  const groups = new Map<string, { sample: ExceptionLesson; ids: Set<string>; from: Set<string> }>();
+  for (const p of clusters) {
+    for (const id of p.derivedFrom) {
+      const l = held.get(id);
+      if (l?.kind !== "exception") continue;
+      const key = JSON.stringify([l.tenantId, l.findingClass, norm(l.reason), l.expiresAt]);
+      const g = groups.get(key) ?? { sample: l, ids: new Set<string>(), from: new Set<string>() };
+      g.ids.add(id);
+      g.from.add(`${p.id} ${p.type}`);
+      groups.set(key, g);
+    }
+  }
+  const proposals: RuleProposal[] = [];
+  for (const g of groups.values()) {
+    if (g.ids.size < DEFAULTS.dreamClusterMinSize) continue;
+    const derivedFrom = [...g.ids].sort(byId);
+    const scopeKeys = [...new Set(derivedFrom.map((id) => (held.get(id) as ExceptionLesson).scopeKey))].sort();
+    const fields = { tenantId: g.sample.tenantId, findingClass: g.sample.findingClass, reason: g.sample.reason, expiresAt: g.sample.expiresAt, scopeKeys, derivedFrom };
+    proposals.push({ id: ruleId(fields), ...fields, clusters: [...g.from].sort(byId) });
+  }
+  proposals.sort((a, b) => b.derivedFrom.length - a.derivedFrom.length || a.findingClass.localeCompare(b.findingClass) || a.id.localeCompare(b.id));
 
-/** Every approved rule in the store, oldest first. */
-export function rulesOf(memory: TechnicianMemory): Rule[] {
-  return memory.hmem.store.all().map(ruleOf).filter((r): r is Rule => r !== null).sort((a, b) => a.approvedAt.localeCompare(b.approvedAt) || a.id.localeCompare(b.id, undefined, { numeric: true }));
-}
-
-/** The approved rules that derive from one lesson. */
-export const rulesFrom = (memory: TechnicianMemory, lessonId: string): Rule[] => rulesOf(memory).filter((r) => r.derivedFrom.includes(lessonId));
-
-const HEADER = /^(?:Across \d+ related memories \([^)]*\):|Stable pattern in [^:]*:)?[\s+;]*$/;
-
-/** True when taking every source's text out of the proposal leaves only its header and separators. */
-function restatesSources(content: string, sources: readonly string[]): boolean {
-  return HEADER.test(sources.reduce((rest, s) => rest.replace(s, ""), content));
-}
-
-function sharedOf(lessons: readonly Lesson[]): Shared {
-  const kinds = new Map<string, number>();
-  for (const l of lessons) kinds.set(l.kind === "exception" ? l.findingClass : "answer", (kinds.get(l.kind === "exception" ? l.findingClass : "answer") ?? 0) + 1);
+  // What no rule covers, per cluster, once; clusters that leave the same lessons for the same reason are one line.
+  const covered = new Set(proposals.flatMap((p) => p.derivedFrom));
+  const withheld = new Map<string, Withheld>();
+  for (const p of clusters) {
+    const left = p.derivedFrom.filter((id) => !covered.has(id)).map((id) => held.get(id)).filter((l): l is Lesson => l !== undefined);
+    if (!left.length) continue;
+    const ids = left.map((l) => l.id).sort(byId);
+    const why = whyWithheld(left);
+    const w = withheld.get(JSON.stringify([ids, why])) ?? { clusters: [], lessons: ids, why };
+    w.clusters.push(`${p.id} ${p.type}`);
+    withheld.set(JSON.stringify([ids, why]), w);
+  }
   return {
     lessons: lessons.length,
-    tenants: [...new Set(lessons.map((l) => l.tenantId))].sort(),
-    kinds: [...kinds].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
-    scopeKeys: new Set(lessons.map((l) => (l.kind === "exception" ? l.scopeKey : l.scope.key))).size,
-    reasons: new Set(lessons.map((l) => (l.kind === "exception" ? l.reason : `${l.question} ${l.answer}`))).size,
-    expiries: [...new Set(lessons.map((l) => l.expiresAt))].sort(),
+    clusters: clusters.length,
+    proposals,
+    withheld: [...withheld.values()],
+    relabels: vendor.filter((p) => p.type === "domain").map((p) => ({ id: p.id, content: p.content, domain: p.suggestedDomain ?? "?" })),
+    approved: rulesOf(memory).filter((r) => !r.supersededBy && r.expiresAt > new Date(memory.hmem.clock()).toISOString()),
   };
 }
 
-const proposalId = (type: string, derivedFrom: readonly string[], content: string): string =>
-  `drm-${createHash("sha256").update(JSON.stringify([type, [...derivedFrom].sort(), content])).digest("hex").slice(0, 12)}`;
-
-/** The lessons dreaming reads: in force at the memory's clock and not superseded. */
-export function inForce(memory: TechnicianMemory): Lesson[] {
-  const now = new Date(memory.hmem.clock()).toISOString();
-  return memory.lessons().filter((l) => !l.supersededBy && l.expiresAt > now);
-}
-
-/** What the reference's dreaming proposes over the lessons in force. Writes nothing, not even to the ledger. */
-export function dreamOver(memory: TechnicianMemory): DreamView[] {
-  const lessons = inForce(memory);
-  const byId = new Map(lessons.map((l) => [l.id, l]));
-  const scratch = new HMEM({ clock: memory.hmem.clock });
-  scratch.store.restoreAll(lessons.map((l) => structuredClone(memory.hmem.store.get(l.id)!)), memory.hmem.store.snapshotAll().seq);
-  const approved = new Map(rulesOf(memory).map((r) => [r.proposalId, r.id]));
-  return scratch.dreaming.dream().map((p): DreamView => {
-    const sources = p.derivedFrom.map((id) => byId.get(id)).filter((l): l is Lesson => l !== undefined);
-    const id = proposalId(p.type, p.derivedFrom, p.content);
-    return {
-      id, vendorId: p.id, type: p.type, content: p.content, derivedFrom: [...p.derivedFrom], ...(p.suggestedDomain ? { suggestedDomain: p.suggestedDomain } : {}),
-      shared: sharedOf(sources),
-      restates: p.type !== "domain" && restatesSources(p.content, p.derivedFrom.map((s) => scratch.store.get(s)?.content ?? "")),
-      approvedAs: approved.get(id) ?? null,
-    };
-  });
-}
-
 /**
- * Approve one proposal by its stable id: dreaming is run again over the lessons as they stand, so an id from a run before a
- * lesson changed is refused, and the record is written with its lineage. Refused for a store opened read-only, for an id no
- * proposal has now, for one already approved, and for a domain relabel (the Decider does not read a lesson's domain).
+ * Approve one rule proposal by its stable id. Dreaming runs again over the lessons as they stand, so an id from before a lesson
+ * changed is refused. The rule is recorded through the conflict gate (`resolutions` settle a conflict with a lesson outside the
+ * proposal's sources, as for any lesson) and supersedes the lessons it is derived from. Refused for a store opened read-only,
+ * for an id no proposal has now, for one already approved, and for an empty role.
  */
-export function approveDream(memory: TechnicianMemory, id: string, role: string): Rule {
+export function approveDream(memory: TechnicianMemory, id: string, role: string, resolutions: ConflictResolution[] = []): Rule {
   if (memory.readOnly) throw new MemoryError(`approve refused: the store at ${memory.directory} is open read-only; npm run answer approves`);
-  const view = dreamOver(memory).find((v) => v.id === id);
-  if (!view) throw new MemoryError(`no proposal ${id} over the lessons as they stand now; run npm run dream again for the current ids`);
-  if (view.approvedAs) throw new MemoryError(`proposal ${id} is already approved as ${view.approvedAs}`);
-  if (view.type === "domain") throw new MemoryError(`proposal ${id} relabels lessons into the domain ${view.suggestedDomain ?? "?"}; the Decider reads no lesson's domain, so the proposal is listed and has no approval`);
+  const done = rulesOf(memory).find((r) => r.proposalId === id);
+  if (done) throw new MemoryError(`proposal ${id} is already approved as ${done.id}`);
+  const proposal = dreamOver(memory).proposals.find((p) => p.id === id);
+  if (!proposal) throw new MemoryError(`no rule proposal ${id} over the lessons as they stand now; run npm run dream again for the current ids`);
   const by = cleanFree(role).trim().slice(0, 128);
   if (!by) throw new MemoryError("approve refused: --by names the role that approves, and it is empty");
-  const rec = memory.hmem.add({
-    content: view.content,
-    type: view.type === "insight" ? "factual" : "preference",
-    layer: "long_term",
-    tags: [`dream:${view.type}`, `dream_id:${view.id}`, `approved_by:${by}`],
-    confidence: 0.75,
-    source: "dreaming",
-    provenance: { origin: "dream", learnedAt: memory.hmem.clock(), label: `approved ${view.type} proposal ${view.id}` },
-    derivedFrom: view.derivedFrom,
+  const rule = memory.recordRule({
+    tenantId: proposal.tenantId, findingClass: proposal.findingClass, scopeKeys: proposal.scopeKeys, reason: proposal.reason, expiresAt: proposal.expiresAt,
+    provenance: { kind: "dream", at: new Date(memory.hmem.clock()).toISOString(), by }, derivedFrom: proposal.derivedFrom, proposalId: proposal.id, resolutions,
   });
-  memory.hmem.ledger.log(rec.id, "dream_approved", by, { details: { proposalId: view.id, type: view.type, derivedFrom: view.derivedFrom, vendorId: view.vendorId } });
-  return ruleOf(rec)!;
+  return rule as Rule;
 }
 
 const clip = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
-const ids = (xs: readonly string[], n = 6): string => (xs.length <= n ? xs.join(" ") : `${xs.slice(0, n).join(" ")} … +${xs.length - n} more`);
+const ids = (xs: readonly string[], n = 8): string => (xs.length <= n ? xs.join(" ") : `${xs.slice(0, n).join(" ")} … +${xs.length - n} more`);
 
-/** The proposals as the command prints them: what each derives from, what its lessons share, what it says, and how to approve it. */
-export function renderDream(views: readonly DreamView[], lessonsInForce: number): string[] {
-  const out = [`${views.length} proposal(s) over ${lessonsInForce} lesson(s) in force; nothing is written by proposing`];
-  for (const v of views) {
-    const s = v.shared;
+/** The result as the command prints it. */
+export function renderDream(r: DreamResult): string[] {
+  const out = [`${r.proposals.length} rule proposal(s) from ${r.clusters} cluster(s) of dreaming over ${r.lessons} lesson(s) in force; nothing is written by proposing`];
+  for (const p of r.proposals) {
     out.push("");
-    out.push(`${v.id}  ${v.type}${v.approvedAs ? `  (approved as ${v.approvedAs})` : ""}  derives from ${v.derivedFrom.length} lesson(s): ${ids(v.derivedFrom)}`);
-    if (v.type === "domain") {
-      out.push(`  relabels   ${v.suggestedDomain ?? "?"}: ${clip(v.content, 140)}`);
-      out.push("  listed only: the Decider reads no lesson's domain, so the proposal has no approval");
-      continue;
-    }
-    out.push(`  they share ${s.kinds.map(([k, n]) => `${k} x${n}`).join(", ")}; tenant ${s.tenants.join(", ")}; ${s.scopeKeys} scope key(s); ${s.reasons} distinct reason(s); expiry ${s.expiries.join(", ")}`);
-    out.push(`  content    ${clip(v.content, 150)} (${v.content.length} characters)`);
-    out.push(`  reading    ${v.restates ? "restates its lessons: the content is their text joined under a header, with no rule of its own" : "carries text of its own beside its lessons' text"}`);
-    if (!v.approvedAs) out.push(`  approve    npm run answer -- --approve-dream ${v.id} [--by <role>]`);
+    out.push(`${p.id}  ADOPT ${p.findingClass} on ${p.scopeKeys.length} scope(s), tenant ${p.tenantId}, until ${p.expiresAt}, derived from ${p.derivedFrom.length} lesson(s)`);
+    out.push(`  reason       ${clip(p.reason, 150)}`);
+    out.push(`  scopes       ${ids(p.scopeKeys, 12)}`);
+    out.push(`  derivedFrom  ${ids(p.derivedFrom, 40)}`);
+    out.push(`  clustered    by the reference's dreaming as ${p.clusters.join(", ")}`);
+    out.push(`  approving    supersedes those ${p.derivedFrom.length} lesson(s), which stay on record and leave recall, and records this one rule in their place`);
+    out.push(`  decisions    stay the same: the rule states the class, reason and expiry of each of those lessons and covers exactly their ${p.scopeKeys.length} scope key(s)`);
+    out.push(`  approve      npm run answer -- --approve-dream ${p.id} [--by <role>]`);
+  }
+  if (!r.clusters) {
+    out.push("", r.lessons ? `no proposal: dreaming found no cluster, since no lesson is related enough to another (relatedness ${DEFAULTS.dreamRelatedness})` : "no proposal: no lesson is in force");
+  }
+  for (const w of r.withheld) {
+    out.push("", `no rule for ${w.lessons.length} lesson(s) of ${w.clusters.join(", ")}: ${ids(w.lessons)}`);
+    out.push(`  why          ${w.why}`);
+  }
+  for (const l of r.relabels) out.push("", `relabel ${l.id} to the domain ${l.domain}: listed only, since the Decider reads no lesson's domain (${clip(l.content, 100)})`);
+  if (r.approved.length) {
+    out.push("", `${r.approved.length} rule(s) approved and in force:`);
+    for (const a of r.approved) out.push(`  ${a.id}  ADOPT ${a.findingClass} on ${a.scopeKeys.length} scope(s), until ${a.expiresAt}, derived from ${a.derivedFrom.length} lesson(s), approved by ${a.provenance.by} at ${a.recordedAt}`);
   }
   return out;
 }

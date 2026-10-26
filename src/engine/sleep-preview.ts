@@ -13,7 +13,6 @@
 // removes. The reference has no demotion move; consolidate promotes.
 import { HMEM, type MemoryRecord } from "../../vendor/hmem/src/index.ts";
 import { lessonOf, type Lesson, type TechnicianMemory } from "./memory.ts";
-import { rulesOf } from "./dreaming.ts";
 
 export interface SleepItem {
   id: string;
@@ -35,8 +34,10 @@ export interface SleepView {
   ifExecuted: { lessonsBefore: number; lessonsAfter: number; scopeKeysLost: string[] } | null;
 }
 
-/** The scope a lesson covers, as one string: tenant, class (or "answer") and key. */
-const coverage = (l: Lesson): string => `${l.tenantId} ${l.kind === "exception" ? l.findingClass : "answer"} ${l.kind === "exception" ? l.scopeKey : l.scope.key}`;
+/** The scopes a lesson covers, one string each: tenant, class (or "answer") and key. A rule covers one per scope key. */
+const coverage = (l: Lesson): string[] => l.kind === "exception"
+  ? (l.scopeKeys ?? [l.scopeKey]).map((k) => `${l.tenantId} ${l.findingClass} ${k}`)
+  : [`${l.tenantId} answer ${l.scope.key}`];
 
 /** What the plan does to the store, executed on a scratch copy: the lessons readable before and after, and the coverage lost. */
 function simulate(memory: TechnicianMemory): NonNullable<SleepView["ifExecuted"]> {
@@ -47,17 +48,20 @@ function simulate(memory: TechnicianMemory): NonNullable<SleepView["ifExecuted"]
   const before = readable(scratch.store.all());
   scratch.sleep.execute();
   const after = readable(scratch.store.all());
-  const kept = new Set(after.map(coverage));
-  return { lessonsBefore: before.length, lessonsAfter: after.length, scopeKeysLost: [...new Set(before.map(coverage))].filter((c) => !kept.has(c)).sort() };
+  const kept = new Set(after.flatMap(coverage));
+  return { lessonsBefore: before.length, lessonsAfter: after.length, scopeKeysLost: [...new Set(before.flatMap(coverage))].filter((c) => !kept.has(c)).sort() };
 }
 
 /** The sleep cycle's plan for the store at the memory's clock. Reads only: a store opened "read" is never written, and the scratch copy is dropped. */
 export function previewSleep(memory: TechnicianMemory): SleepView {
   const plan = memory.hmem.sleep.preview();
-  const rules = new Set(rulesOf(memory).map((r) => r.id));
   const item = (id: string): SleepItem => {
     const l = memory.lesson(id);
-    return { id, what: l ? `${l.kind === "exception" ? `exception ${l.findingClass}` : `answer ${l.scope.type}`} on ${l.kind === "exception" ? l.scopeKey : l.scope.key} (${l.tenantId})` : rules.has(id) ? "approved rule" : "record that is not a lesson" };
+    const what = !l ? "record that is not a lesson"
+      : l.kind === "answer" ? `answer ${l.scope.type} on ${l.scope.key} (${l.tenantId})`
+        : l.scopeKeys ? `rule ${l.findingClass} on ${l.scopeKeys.length} scope(s) (${l.tenantId})`
+          : `exception ${l.findingClass} on ${l.scopeKey} (${l.tenantId})`;
+    return { id, what };
   };
   const now = new Date(memory.hmem.clock()).toISOString();
   const empty = plan.toConsolidate.length === 0 && plan.toArchive.length === 0 && plan.toSynthesize.length === 0;

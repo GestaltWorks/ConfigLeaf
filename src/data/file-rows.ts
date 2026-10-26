@@ -21,7 +21,7 @@ export function lessonRows(memory: TechnicianMemory): LessonRow[] {
     tenant_id: l.tenantId,
     kind: l.kind,
     finding_class: l.kind === "exception" ? l.findingClass : null,
-    scope_key: l.kind === "exception" ? l.scopeKey : l.scope.key,
+    scope_key: l.kind === "exception" ? (l.scopeKeys ?? [l.scopeKey]).join(" ") : l.scope.key, // a rule (npm run dream) covers several keys, one token each
     reason: l.kind === "exception" ? l.reason : l.answer,
     recorded_at: l.recordedAt,
     expires_at: l.expiresAt,
