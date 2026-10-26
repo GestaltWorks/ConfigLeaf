@@ -31,8 +31,11 @@ const CLAUSE_START = /\b(?:WHERE|ON|HAVING)\b/gi;
  * Does the SQL hold an OR that Spark could push whole into one USL scan? For each OR (or NOT over a group), the predicate
  * it belongs to: the parenthesised group around it, or, when that group is a subquery or there is none, the WHERE, ON or
  * HAVING clause around it at its own depth; for a NOT, the group after it. The predicate is safe when it holds a subquery
- * (Spark pushes no predicate with one into a scan) or names columns of two or more table aliases (no single scan holds
- * them); otherwise the OR may reach a scan, and the query is fenced. Literals are stripped first, so a quoted OR is data.
+ * (Spark pushes no predicate with one into a scan), or when it is an OR that names columns of two or more table aliases
+ * and no alias has a conjunct of its own in every disjunct (no single scan holds it, and Spark extracts no part of it for
+ * one); otherwise the OR may reach a scan, and the query is fenced. A NOT over a group is fenced whatever it names.
+ * Literals are stripped first, so a quoted OR is data; a comment or a backquoted name only makes it fence more, and the
+ * guard refuses a comment before any SQL is sent (layer.ts assertSelectOnly).
  */
 export function fencedOr(sql: string): boolean {
   const s = stripLiterals(sql);
@@ -65,8 +68,9 @@ export function fencedOr(sql: string): boolean {
     return s.slice(start, end);
   };
   for (const m of s.matchAll(OR_TOKEN)) {
+    const not = /^NOT/i.test(m[0]);
     let predicate: string;
-    if (/^NOT/i.test(m[0])) {
+    if (not) {
       const [lo, hi] = enclosing(m.index + m[0].length);
       predicate = s.slice(lo, hi);
     } else {
@@ -74,10 +78,59 @@ export function fencedOr(sql: string): boolean {
       predicate = lo === 0 || /^\s*SELECT\b/i.test(s.slice(lo, hi)) ? clause(m.index, lo, hi) : s.slice(lo, hi);
     }
     if (/\bSELECT\b/i.test(predicate)) continue;
-    const aliases = new Set([...predicate.matchAll(/\b([A-Za-z_]\w*)\s*\.\s*[A-Za-z_]/g)].map((a) => a[1].toLowerCase()));
-    if (aliases.size <= 1) return true;
+    // A NOT over a group is fenced whatever it names; an OR when it names one alias or none, or when Spark could
+    // still push part of it into one side of a join (extractable).
+    if (not || aliasesOf(predicate).size <= 1 || extractable(predicate)) return true;
   }
   return false;
+}
+
+/** The table aliases a predicate names columns of (`o.host` names o), lower-cased. A backquoted or bare column names none. */
+function aliasesOf(predicate: string): Set<string> {
+  return new Set([...predicate.matchAll(/\b([A-Za-z_]\w*)\s*\.\s*[A-Za-z_]/g)].map((a) => a[1].toLowerCase()));
+}
+
+/** `text` cut at each match of `sep` outside parentheses. */
+function splitTop(text: string, sep: RegExp): string[] {
+  const out: string[] = [];
+  let [d, from] = [0, 0];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "(") d++;
+    else if (text[i] === ")") d--;
+    else if (d === 0) {
+      sep.lastIndex = i;
+      const m = sep.exec(text);
+      if (m && m.index === i) { out.push(text.slice(from, i)); from = i + m[0].length; i = from - 1; }
+    }
+  }
+  return [...out, text.slice(from)];
+}
+
+/**
+ * An OR over two or more aliases that Spark (3.1 and later, PushExtraPredicateThroughJoin) can still push in part: when
+ * every disjunct holds a conjunct on one alias alone, the OR of those conjuncts is pushed into that alias's scan.
+ */
+function extractable(predicate: string): boolean {
+  const disjuncts = splitTop(predicate.replace(/^\s*(?:WHERE|ON|HAVING)\b/i, ""), /\bOR\b/iy);
+  if (disjuncts.length < 2) return false;
+  const single = disjuncts.map((d) => new Set(splitTop(unwrap(d.trim()), /\bAND\b/iy).map(aliasesOf).filter((a) => a.size === 1).map((a) => [...a][0])));
+  return [...single[0]].some((a) => single.every((s) => s.has(a)));
+}
+
+/** `(x)` as x when its first parenthesis closes at its end, repeatedly; any other text as it is. */
+function unwrap(text: string): string {
+  let t = text;
+  while (t.startsWith("(") && t.endsWith(")")) {
+    let d = 0;
+    let closes = -1;
+    for (let i = 0; i < t.length; i++) {
+      if (t[i] === "(") d++;
+      else if (t[i] === ")" && --d === 0) { closes = i; break; }
+    }
+    if (closes !== t.length - 1) break;
+    t = t.slice(1, -1).trim();
+  }
+  return t;
 }
 
 export class ZetarisEngine implements Engine {

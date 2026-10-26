@@ -63,7 +63,14 @@ const FOURTEEN = [...ELEVEN, "lesson", "rule", "adoption"];
 const FIFTEEN = [...FOURTEEN, "dns_live"];
 /** Then one entity per catalogue table no entity above is built from alone: each the table's columns. */
 const MIRRORS = ["dns_record", "inventory_asset", "approved_setting", "backup_snapshot", "backup_item", "vault_copy", "copy_validation", "referent_fingerprint", "audit_event", "change_window"];
-const ALL = [...FIFTEEN, ...MIRRORS];
+/** The DDL's order: change_window before disposition, whose window_id references it; the other mirrors after dns_live. */
+const ALL = [...FIFTEEN.slice(0, 7), "change_window", ...FIFTEEN.slice(7), ...MIRRORS.filter((t) => t !== "change_window")];
+/** A model's column specs as LOAD USL gives them (measured 26 Oct 2026): a key column carries primaryKey, a foreign key foreignKey with the referenced table's qualified name. */
+const specsOf = (table: string, cols: readonly string[]) => cols.map((name) => {
+  const line = setup.COMPILE_USL.slice(setup.COMPILE_USL.indexOf(`CREATE TABLE ${table} (\n`)).split("\n)")[0].split("\n").find((l) => l.trim().split(" ")[0] === name) ?? "";
+  const fk = / FOREIGN KEY REFERENCES (\w+)\((\w+)\)/.exec(line);
+  return { name, ...(line.includes(" PRIMARY KEY") ? { primaryKey: { columns: [] } } : {}), ...(fk ? { foreignKey: { columns: [], refColumns: [fk[2]], refTable: [`lightning.metastore.drift.drift_usl.${fk[1]}`] } } : {}) };
+});
 /** What staleness() says a model of `tables` lacks of ALL, in ALL order. */
 const lacking = (tables: readonly string[]): string => ALL.filter((t) => !tables.includes(t)).join(", ");
 const RULES = ["run_complete", "copy_validated", "action_verified", "cause_evidenced", "exception_in_force", "dns_inventory_current"];
@@ -280,11 +287,15 @@ describe("plan()", () => {
     // then the catalogue's own tables: a record of one DNS run keyed run_id:record_id, its run a collection; a copy's
     // validation keyed to its vault_copy; a fingerprint to its setting; change_window last (measured 26 Oct 2026: zone,
     // name, content, action and until pass the validator)
-    expect(ddl.sql).toContain("CREATE TABLE dns_record (\n  dns_record_id varchar(256) NOT NULL PRIMARY KEY,\n  record_id varchar(64) NOT NULL,\n  run_id varchar(128) NOT NULL FOREIGN KEY REFERENCES collection(run_id),\n");
+    expect(ddl.sql).toContain("CREATE TABLE dns_record (\n  dns_record_id varchar(1024) NOT NULL PRIMARY KEY,\n  record_id varchar(64) NOT NULL,\n  run_id varchar(128) NOT NULL FOREIGN KEY REFERENCES collection(run_id),\n");
+    // a disposition held by a change window references it, and change_window comes first: every foreign key names a table above it
+    expect(ddl.sql).toContain("  closed_at varchar(40)\n);\nCREATE TABLE disposition (\n");
+    expect(ddl.sql).toContain("  window_id varchar(128) FOREIGN KEY REFERENCES change_window(window_id)\n);\nCREATE TABLE action (\n");
+    for (const [i, t] of ALL.entries()) for (const m of setup.COMPILE_USL.slice(setup.COMPILE_USL.indexOf(`CREATE TABLE ${t} (\n`)).split("\n)")[0].matchAll(/REFERENCES (\w+)\(/g)) expect(ALL.indexOf(m[1]), `${t} references ${m[1]}`).toBeLessThan(i);
     expect(ddl.sql).toContain("  copy_id varchar(128) NOT NULL FOREIGN KEY REFERENCES vault_copy(copy_id),\n");
     expect(ddl.sql).toContain("  obs_id varchar(128) NOT NULL FOREIGN KEY REFERENCES setting(setting_id),\n");
     expect(ddl.sql).toContain("  snapshot_id varchar(128) NOT NULL FOREIGN KEY REFERENCES backup_snapshot(snapshot_id),\n");
-    expect(ddl.sql.endsWith("  until varchar(40) NOT NULL,\n  reason varchar(1024) NOT NULL,\n  closed_at varchar(40)\n)")).toBe(true);
+    expect(ddl.sql.endsWith("  new_value varchar(65535),\n  occurred_at varchar(40) NOT NULL\n)")).toBe(true);
     // the file tables' USL columns are the columns the setup writes and sql.js holds
     expect([...setup.USL_COLUMNS.lesson]).toEqual(fileTableDef("lesson")!.columns);
     expect([...setup.USL_COLUMNS.rule]).toEqual(fileTableDef("rule")!.columns);
@@ -317,8 +328,12 @@ describe("plan()", () => {
     // cause: every column of finding_cause bare, class read as cause_class
     expect(step("activate cause", steps).sql).toBe(`ACTIVATE USL TABLE ${USL}.cause AS SELECT cause_id, tenant_id, finding_id, disposition_id, class AS cause_class, actor, mechanism, occurred_at, source_host, evidence_ids, diff, summary, window_from, window_to, decided_at FROM DRIFT.finding_cause`);
     // a table whose key is several columns gets one, its columns joined by ':'
-    expect(step("activate dns_record", steps).sql).toBe(`ACTIVATE USL TABLE ${USL}.dns_record AS SELECT CONCAT(run_id, ':', record_id) AS dns_record_id, record_id, run_id, tenant_id, zone, name, type, content, CAST(ttl AS INT) AS ttl, CAST(proxied AS INT) AS proxied, observed_at FROM DRIFT.dns_record`);
-    expect(step("activate backup_item", steps).sql).toBe(`ACTIVATE USL TABLE ${USL}.backup_item AS SELECT CONCAT(snapshot_id, ':', object_id, ':', setting_path) AS item_id, snapshot_id, object_id, setting_path, value_hash FROM DRIFT.backup_item`);
+    expect(step("activate dns_record", steps).sql).toBe(`ACTIVATE USL TABLE ${USL}.dns_record AS SELECT ${setup.joinedKey(["run_id", "record_id"])} AS dns_record_id, record_id, run_id, tenant_id, zone, name, type, content, CAST(ttl AS INT) AS ttl, CAST(proxied AS INT) AS proxied, observed_at FROM DRIFT.dns_record`);
+    expect(step("activate backup_item", steps).sql).toBe(`ACTIVATE USL TABLE ${USL}.backup_item AS SELECT ${setup.joinedKey(["snapshot_id", "object_id", "setting_path"])} AS item_id, snapshot_id, object_id, setting_path, value_hash FROM DRIFT.backup_item`);
+    // every key of several columns escapes its separator, the two joins' keys included
+    expect(step("activate referent", steps).sql).toContain(`SELECT ${setup.joinedKey(["o.obs_id", "d.record_id", "d.run_id"])} AS ref_id, `);
+    expect(step("activate backup_copy", steps).sql).toContain(`SELECT ${setup.joinedKey(["b.snapshot_id", "b.object_id", "b.setting_path"])} AS copy_id, `);
+    for (const s of steps.filter((x) => x.name.startsWith("activate "))) expect(s.sql, s.name).not.toMatch(/CONCAT\((?!REPLACE\(REPLACE\()/);
     expect(step("activate inventory_asset", steps).sql).toBe(`ACTIVATE USL TABLE ${USL}.inventory_asset AS SELECT asset_id, tenant_id, host, address, kind, source AS source_kind, observed_at FROM DRIFT.inventory_asset`);
     // the file tables: lesson and rule over their Lightning databases; adoption is the catalogue's ADOPTION_SQL on one line, DRIFT x LESSONS
     expect(step("activate lesson", steps).sql).toBe(`ACTIVATE USL TABLE ${USL}.lesson AS SELECT COALESCE(lesson_id, '') AS lesson_id, COALESCE(tenant_id, '') AS tenant_id, COALESCE(kind, '') AS kind, finding_class, COALESCE(scope_key, '') AS scope_key, COALESCE(reason, '') AS reason, COALESCE(recorded_at, '') AS recorded_at, COALESCE(expires_at, '') AS expires_at, COALESCE(provenance, '') AS provenance FROM LESSONS.lesson`);
@@ -438,14 +453,19 @@ describe("plan()", () => {
   });
 
   it("staleness(): LOAD USL's model against the twenty-five tables and their columns", () => {
-    const model = (tables: Record<string, readonly string[]>) => ({ queryId: "q", columns: ["json"], rows: [[JSON.stringify({ tables: Object.entries(tables).map(([name, cols]) => ({ name, columnSpecs: cols.map((c) => ({ name: c })) })) })]], rowCount: 1, total: 1, latencyMs: 1, raw: {} });
+    const model = (tables: Record<string, readonly string[]>) => ({ queryId: "q", columns: ["json"], rows: [[JSON.stringify({ tables: Object.entries(tables).map(([name, cols]) => ({ name, columnSpecs: specsOf(name, cols) })) })]], rowCount: 1, total: 1, latencyMs: 1, raw: {} });
     const current = { ...setup.USL_COLUMNS };
     const only = (names: readonly string[]) => Object.fromEntries(names.map((n) => [n, current[n as keyof typeof current]]));
     expect(setup.staleness(model(current))).toBeNull();
     expect(setup.staleness(model(only(ELEVEN.slice(0, 4))))).toBe(`4 table(s); lacks ${lacking(ELEVEN.slice(0, 4))}`);
     expect(setup.staleness(model(only(ELEVEN)))).toBe(`11 table(s); lacks ${lacking(ELEVEN)}`);
     // the fifteen-table USL of 26 Oct, 03:47 UTC: what the live run of 06:20 UTC removed and compiled again
-    expect(setup.staleness(model(only(FIFTEEN)))).toBe(`15 table(s); lacks ${MIRRORS.join(", ")}`);
+    expect(setup.staleness(model(only(FIFTEEN)))).toBe(`15 table(s); lacks ${lacking(FIFTEEN)}`);
+    // the keys as LOAD USL reports them: the twenty-five of 06:20 UTC, before disposition.window_id referenced change_window
+    const noWindowKey = { queryId: "q", columns: ["json"], rows: [[JSON.stringify({ tables: Object.entries(current).map(([name, cols]) => ({ name, columnSpecs: specsOf(name, cols).map((s) => (name === "disposition" && s.name === "window_id" ? { name: s.name } : s)) })) })]], rowCount: 1, total: 1, latencyMs: 1, raw: {} };
+    expect(setup.staleness(noWindowKey)).toBe("25 table(s); keys differ in disposition");
+    expect(setup.USL_KEYS.disposition).toBe("disposition_id pk; run_id > collection(run_id); window_id > change_window(window_id)");
+    expect(setup.USL_KEYS.referent_fingerprint).toBe("fingerprint_id pk; obs_id > setting(setting_id)");
     const { cause: _k2, ...lessCause } = current;
     expect(setup.staleness(model(lessCause))).toBe("24 table(s); lacks cause");
     expect(setup.staleness(model({ ...current, extra: ["x"] }))).toBe("26 table(s); holds extra beyond the 25");
@@ -531,6 +551,8 @@ describe("uslRows() and uslMarkdown(): the semantic layer's table", () => {
       }
     }
     expect(rows.find((r) => r.entity === "action")!.foreignKeys).toEqual([{ column: "disposition_id", references: "disposition(disposition_id)" }]);
+    // a disposition a change window gave names that window
+    expect(rows.find((r) => r.entity === "disposition")!.foreignKeys).toEqual([{ column: "run_id", references: "collection(run_id)" }, { column: "window_id", references: "change_window(window_id)" }]);
     expect(rows.find((r) => r.entity === "cause")).toMatchObject({ primaryKey: "cause_id", foreignKeys: [{ column: "disposition_id", references: "disposition(disposition_id)" }], formed: "`class` as `cause_class`" });
     // the key across the two datasources: an adoption's lesson is a LESSONS row
     expect(rows.find((r) => r.entity === "adoption")).toMatchObject({ primaryKey: "disposition_id", foreignKeys: [{ column: "lesson_id", references: "lesson(lesson_id)" }] });
@@ -706,7 +728,7 @@ const LIST_COLS = ["name", "table", "type", "expression"];
 const CONSTRAINTS = [["run_id", "collection", "Primary key constraints", ""], ["copy_id", "copy", "Primary key constraints", ""], ["action_id", "action", "Primary key constraints", ""]];
 const STATED = setup.DQ_RULES.map((r) => [r.name, r.table, "Custom Data Quality", r.expression]);
 const SCHEMA_TABLES_LISTED = TABLE_NAMES.map((t) => [t, "Table", t, "", "", "", "840", "1"]);
-const model = (tables: Record<string, readonly string[]>) => result(["json"], [[JSON.stringify({ name: "drift_usl", tables: Object.entries(tables).map(([name, cols]) => ({ name, columnSpecs: cols.map((c) => ({ name: c })) })) })]]);
+const model = (tables: Record<string, readonly string[]>) => result(["json"], [[JSON.stringify({ name: "drift_usl", tables: Object.entries(tables).map(([name, cols]) => ({ name, columnSpecs: specsOf(name, cols) })) })]]);
 const CURRENT_MODEL = { ...setup.USL_COLUMNS };
 const FOUR_TABLE_MODEL = { collection: setup.USL_COLUMNS.collection, setting: setup.USL_COLUMNS.setting, referent: setup.USL_COLUMNS.referent, backup_copy: setup.USL_COLUMNS.backup_copy };
 const ELEVEN_TABLE_MODEL = Object.fromEntries(ELEVEN.map((t) => [t, setup.USL_COLUMNS[t as keyof typeof setup.USL_COLUMNS]]));
@@ -798,7 +820,7 @@ describe("apply()", () => {
     expect(out.find((l) => l.includes("70 update dq exception_in_force"))).toMatch(/^skipped 70 update dq exception_in_force\s+exception_in_force listed as stated$/);
     expect(out.find((l) => l.includes("72 update dq dns_inventory_current"))).toMatch(/^skipped 72 update dq dns_inventory_current\s+dns_inventory_current listed as stated$/);
     expect(out.find((l) => l.includes("80 count collection"))).toMatch(/^ok\s+80 count collection\s+= 12 {2}\(\d+ ms\)$/);
-    expect(out.find((l) => l.includes("94 count dns_live"))).toMatch(/^ok\s+94 count dns_live\s+= 12, the zones report 603 {2}\(\d+ ms\)$/);
+    expect(out.find((l) => l.includes("95 count dns_live"))).toMatch(/^ok\s+95 count dns_live\s+= 12, the zones report 603 {2}\(\d+ ms\)$/);
     expect(out.find((l) => l.includes("105 count LESSONS.ledger"))).toMatch(/^ok\s+105 count LESSONS\.ledger\s+= 12 {2}\(\d+ ms\)$/);
     // the live re-run of 26 Oct 2026, 03:48 UTC over six zones: 90 steps, 53 ok, 37 skipped, 0 failed, 38.1 s; here three REST tables
     expect(out.at(-1)).toMatch(/^ZETARIS SETUP: 105 statements, 73 ok, 32 skipped, 0 failed, \d+\.\d s$/);
@@ -1032,6 +1054,21 @@ describe("apply()", () => {
     });
     expect(r.ok).toBe(true);
     expect(status).toMatchObject({ "create datasource DRIFT": "skipped", "list datasource tables": "ok", "register datasource tables": "skipped", "refresh datasource tables": "ok" });
+  });
+
+  it("a stale USL whose new DDL the check refuses: the run stops at the check, and REMOVE USL, COMPILE and every ACTIVATE are never sent, so the deployed USL stands", async () => {
+    const { r, client, out, status } = await run((sql) => {
+      if (sql.startsWith("LOAD USL")) return model(FOUR_TABLE_MODEL);
+      if (sql === setup.CHECK_USL) return new ZetarisError("Zetaris 400: Invalid DDL statement. Please provide a valid CREATE TABLE statement using Spark SQL or ANSI SQL syntax.", 400);
+      return configured(sql);
+    });
+    expect(r.ok).toBe(false);
+    expect(status).toMatchObject({ "load usl drift_usl": "ok", "check usl drift_usl": "failed" });
+    expect(r.results.at(-1)).toMatchObject({ name: "check usl drift_usl", status: "failed" });
+    expect(r.error).toContain("Invalid DDL statement");
+    expect(sent(client, /^(?:REMOVE USL|ACTIVATE|REGISTER DQ|UPDATE DQ|RUN DQ)/)).toEqual([]);
+    expect(client.calls.filter((c) => c.sql.startsWith("COMPILE USL")).map((c) => c.sql)).toEqual([setup.CHECK_USL]);
+    expect(out.at(-1)).toMatch(/^ZETARIS SETUP FAILED at 32 check usl drift_usl after \d+ ms: Zetaris 400: Invalid DDL statement/);
   });
 
   it("stops on any other error, with the message redacted and scrubbed of the literal password, everywhere it is written", async () => {

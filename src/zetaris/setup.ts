@@ -171,7 +171,7 @@ import { API, Cloudflare, RECORDS_PER_PAGE } from "../collectors/cloudflare.ts";
 import { config, redact } from "../config.ts";
 import { ADOPTION_SQL, EXCEPTION_IN_FORCE, FILE_DATASOURCES, fileTableDef } from "../data/files.ts";
 import type { Engine, RunOptions } from "../data/layer.ts";
-import { TABLE_NAMES, tableDef } from "../data/schema.ts";
+import { SCHEMA_TABLES, TABLE_NAMES, tableDef, type TableDef } from "../data/schema.ts";
 import type { Tracer, TraceEvent } from "../trace.ts";
 import { COPY_STATE_FILE, FILESTORE_DIR, filesHash, putFiles, recordCopy, refreshFiles, type PutResult, type Refresh, type RefreshDeps } from "./filestore.ts";
 
@@ -287,6 +287,20 @@ const USL_DDL = {
     "latency_ms int",
     "observed_at varchar(40) NOT NULL",
   ],
+  // Before disposition, whose window_id references it: every foreign key in the DDL names a table above it.
+  change_window: [
+    "window_id varchar(128) NOT NULL PRIMARY KEY",
+    "tenant_id varchar(64) NOT NULL",
+    "surface varchar(64) NOT NULL",
+    "host varchar(128)",
+    "object_id varchar(512) NOT NULL",
+    "setting_path varchar(512) NOT NULL",
+    "opened_by varchar(255) NOT NULL",
+    "opened_at varchar(40) NOT NULL",
+    "until varchar(40) NOT NULL",
+    "reason varchar(1024) NOT NULL",
+    "closed_at varchar(40)",
+  ],
   disposition: [
     "disposition_id varchar(128) NOT NULL PRIMARY KEY",
     "tenant_id varchar(64) NOT NULL",
@@ -303,7 +317,7 @@ const USL_DDL = {
     "finding_id varchar(255) NOT NULL",
     "run_id varchar(128) NOT NULL FOREIGN KEY REFERENCES collection(run_id)",
     "decided_at varchar(40) NOT NULL",
-    "window_id varchar(128)",
+    "window_id varchar(128) FOREIGN KEY REFERENCES change_window(window_id)",
   ],
   action: [
     "action_id varchar(128) NOT NULL PRIMARY KEY",
@@ -402,7 +416,7 @@ const USL_DDL = {
     "held_proxied int NOT NULL",
   ],
   dns_record: [
-    "dns_record_id varchar(256) NOT NULL PRIMARY KEY",
+    "dns_record_id varchar(1024) NOT NULL PRIMARY KEY",
     "record_id varchar(64) NOT NULL",
     "run_id varchar(128) NOT NULL FOREIGN KEY REFERENCES collection(run_id)",
     "tenant_id varchar(64) NOT NULL",
@@ -444,7 +458,7 @@ const USL_DDL = {
     "source_ref varchar(1024)",
   ],
   backup_item: [
-    "item_id varchar(1200) NOT NULL PRIMARY KEY",
+    "item_id varchar(4096) NOT NULL PRIMARY KEY",
     "snapshot_id varchar(128) NOT NULL FOREIGN KEY REFERENCES backup_snapshot(snapshot_id)",
     "object_id varchar(512) NOT NULL",
     "setting_path varchar(512) NOT NULL",
@@ -473,7 +487,7 @@ const USL_DDL = {
     "validated_at varchar(40) NOT NULL",
   ],
   referent_fingerprint: [
-    "fingerprint_id varchar(256) NOT NULL PRIMARY KEY",
+    "fingerprint_id varchar(1024) NOT NULL PRIMARY KEY",
     "obs_id varchar(128) NOT NULL FOREIGN KEY REFERENCES setting(setting_id)",
     "dns_run_id varchar(128) NOT NULL",
     "fingerprint varchar(8192) NOT NULL",
@@ -490,19 +504,6 @@ const USL_DDL = {
     "old_value varchar(65535)",
     "new_value varchar(65535)",
     "occurred_at varchar(40) NOT NULL",
-  ],
-  change_window: [
-    "window_id varchar(128) NOT NULL PRIMARY KEY",
-    "tenant_id varchar(64) NOT NULL",
-    "surface varchar(64) NOT NULL",
-    "host varchar(128)",
-    "object_id varchar(512) NOT NULL",
-    "setting_path varchar(512) NOT NULL",
-    "opened_by varchar(255) NOT NULL",
-    "opened_at varchar(40) NOT NULL",
-    "until varchar(40) NOT NULL",
-    "reason varchar(1024) NOT NULL",
-    "closed_at varchar(40)",
   ],
 } as const;
 
@@ -577,20 +578,78 @@ export function readsOf(entity: UslTable): string[] {
   return Object.entries(READ_AS).filter(([, r]) => r.entity === entity).map(([table]) => table);
 }
 
-/** The LIMIT of a fenced read: above any row count, so it bounds nothing; Spark pushes no filter below a LIMIT. */
+/**
+ * The invariant mirror() rests on, across USL_DDL, READ_AS and sql/schema.sql: for each entity built from one DRIFT table,
+ * its columns are the table's columns (renamed as READ_AS says) and the key it adds, the added key is NOT NULL PRIMARY KEY,
+ * and every other column is NOT NULL in the DDL exactly when sql/schema.sql declares it NOT NULL or a key. One line per
+ * breach; empty when the files agree. `ddl` and `tables`: USL_DDL and sql/schema.sql's tables, or others in a test.
+ */
+export function mirrorMismatches(ddl: Readonly<Record<string, readonly string[]>> = USL_DDL, tables: readonly TableDef[] = SCHEMA_TABLES): string[] {
+  const out: string[] = [];
+  for (const [table, r] of Object.entries(READ_AS)) {
+    const def = tables.find((t) => t.name === table);
+    if (!def) continue;
+    const declared = new Map((ddl[r.entity] ?? []).map((l) => [l.split(" ")[0], l]));
+    const named = def.columns.map((c) => r.renames?.[c] ?? c);
+    const want = [...named, ...(r.key ? [r.key.column] : [])];
+    for (const c of want.filter((x) => !declared.has(x))) out.push(`${r.entity} lacks ${c} of ${table}`);
+    for (const c of [...declared.keys()].filter((x) => !want.includes(x))) out.push(`${r.entity}.${c} is no column of ${table}`);
+    if (r.key && !/ NOT NULL PRIMARY KEY\b/.test(declared.get(r.key.column) ?? "")) out.push(`${r.entity}.${r.key.column} is not NOT NULL PRIMARY KEY`);
+    for (const [i, c] of def.columns.entries()) {
+      const line = declared.get(named[i]);
+      if (line === undefined) continue;
+      const [inDdl, inSchema] = [line.includes(" NOT NULL"), (def.notNull ?? []).includes(c)];
+      if (inDdl !== inSchema) out.push(`${r.entity}.${named[i]} is ${inDdl ? "NOT NULL" : "nullable"} in USL_DDL, ${inSchema ? "NOT NULL" : "nullable"} in sql/schema.sql`);
+    }
+  }
+  return out;
+}
+
+/**
+ * The LIMIT of a fenced read (src/data/engines/zetaris.ts fencedOr). Spark's optimizer pushes no Filter below a Limit, since
+ * that would change which rows the limit keeps, so a predicate over `(SELECT ... FROM <entity> LIMIT n) t` stays above
+ * the scan and USLTableScan never compiles it. n is the largest INT (Spark's LIMIT takes an INT expression), so it bounds
+ * no table; a Limit with no row count known below it is not removed. Measured live 26 Oct 2026 on 2.4.3.1 by EXPLAIN QUERY
+ * AS: the optimized plan keeps the Filter above GlobalLimit and LocalLimit, and the scan reads the pruned columns with no
+ * pushed filter; the OR shapes that came back wrong pushed return what DRIFT returns fenced. Rests on optimizer behaviour,
+ * so the live parity cases that hold an OR over one table (approved_missing over host '', other_settings_reference) are
+ * its regression check on an upgrade.
+ */
 export const FENCE_LIMIT = 2_147_483_647;
+
+/**
+ * A key of several columns as one text: each column with % written %25 and : written %3A, then joined by ':'. No column
+ * value holds a ':' once escaped, so two different rows never share a key (a setting_path such as server[a:443] would).
+ */
+export function joinedKey(columns: readonly string[]): string {
+  return `CONCAT(${columns.map((c) => `REPLACE(REPLACE(${c}, '%', '%25'), ':', '%3A')`).join(", ':', ")})`;
+}
+
+/** Why READ_AS entry `r` cannot read `table` as `columns`, or null: a rename of a column the table lacks, or a column the entity lacks. */
+function misread(table: string, r: ReadAs, columns: readonly string[]): string | null {
+  const entity = (USL_COLUMNS as Readonly<Record<string, readonly string[] | undefined>>)[r.entity];
+  if (!entity) return `READ_AS reads ${table} through ${r.entity}, which USL_DDL lacks`;
+  const stray = Object.keys(r.renames ?? {}).filter((c) => !columns.includes(c));
+  if (stray.length) return `READ_AS renames ${stray.join(", ")} of ${table}, which ${table} lacks`;
+  const lacking = columns.map((c) => r.renames?.[c] ?? c).filter((c) => !entity.includes(c));
+  return lacking.length ? `${r.entity} lacks ${lacking.join(", ")}, which reading ${table} needs` : null;
+}
 
 /**
  * The relation {{t:<table>}} names on Zetaris: the entity's qualified name when it holds the table's columns under
  * their own names in their order; otherwise a SELECT of the table's columns from the entity, each renamed one AS its
  * table name, so the catalogue's one SQL text reads either engine (DataLayer.render gives it the query's alias, as it
  * does an overlay). `fence`: always that SELECT, with LIMIT FENCE_LIMIT, so Spark evaluates every filter above the
- * scan and pushes none into it (src/data/engines/zetaris.ts says when). undefined for a table READ_AS lacks.
+ * scan and pushes none into it (src/data/engines/zetaris.ts says when). undefined for a table READ_AS lacks. Throws
+ * SetupError when the entry and the DDL disagree: a renamed column the table lacks, or a column the entity lacks.
+ * `read`: READ_AS, or another mapping in a test.
  */
-export function uslRelation(table: string, opts: { fence?: boolean } = {}): string | undefined {
-  const r = Object.hasOwn(READ_AS, table) ? READ_AS[table] : undefined;
+export function uslRelation(table: string, opts: { fence?: boolean } = {}, read: Readonly<Record<string, ReadAs>> = READ_AS): string | undefined {
+  const r = Object.hasOwn(read, table) ? read[table] : undefined;
   const columns = tableColumns(table);
   if (!r || !columns) return undefined;
+  const why = misread(table, r, columns);
+  if (why) throw new SetupError(why);
   const entity = `${USL}.${r.entity}`;
   if (!opts.fence && columns.join(",") === USL_COLUMNS[r.entity].join(",")) return entity;
   const named = columns.map((c) => r.renames?.[c] ?? c);
@@ -600,8 +659,8 @@ export function uslRelation(table: string, opts: { fence?: boolean } = {}): stri
 /**
  * The activation of an entity READ_AS builds from one DRIFT table: each declared column from the table's column of
  * that name (or the one it renames), bare, so a predicate on it reaches the datasource as it is written; an int CAST to
- * INT; the added key CONCAT of its columns. Every column READ_AS reads is NOT NULL in sql/schema.sql where the DDL
- * declares it NOT NULL, so no COALESCE is needed to meet the declaration.
+ * INT; the added key joinedKey() of its columns. A column the DDL declares NOT NULL is NOT NULL in sql/schema.sql, so
+ * no COALESCE is needed to meet the declaration: mirrorMismatches() holds the two files to that, and the tests to it.
  */
 function mirror(entity: UslTable, ds: string): string {
   const table = BUILT_FROM.get(entity);
@@ -610,7 +669,7 @@ function mirror(entity: UslTable, ds: string): string {
   const back = new Map(Object.entries(r.renames ?? {}).map(([c, e]) => [e, c]));
   const cols = (USL_DDL[entity] as readonly string[]).map((line) => {
     const [name, type] = line.split(" ");
-    if (r.key?.column === name) return `CONCAT(${r.key.of.join(", ':', ")}) AS ${name}`;
+    if (r.key?.column === name) return `${joinedKey(r.key.of)} AS ${name}`;
     const expr = type === "int" ? `CAST(${back.get(name) ?? name} AS INT)` : (back.get(name) ?? name);
     return expr === name ? name : `${expr} AS ${name}`;
   });
@@ -663,11 +722,11 @@ const USL_FORMED: Partial<Record<UslTable, string>> = {
   rule: "one row per rule of the policy file, as `rules.json` in the Zetaris filestore; `lock` as `locked`, `hold_max_hours` as `hold_hours`, `note` as `description`",
   adoption: "each `disposition` decided ADOPT by the operator, under an accepted exception, LEFT JOINed across the two datasources to the `LESSONS.lesson` row its reason names, on the tenant and the lesson id",
   dns_live: "each record the DNS API returns at the query, the `result` array of every `CLOUDFLARE.zone_<zone id>` REST table exploded (one table per zone and page), LEFT JOINed across the datasources to the last complete `cloudflare.dns` run of `collection_run` and to that run's `dns_record` row of the same Cloudflare record id; ids are joined on, never a name or a content",
-  dns_record: "`dns_record_id` is `run_id:record_id`, a Cloudflare record id being unique within one DNS run only",
+  dns_record: "`dns_record_id` is `run_id` and `record_id` joined by `:` (a `:` in a value escaped), a Cloudflare record id being unique within one DNS run only",
   inventory_asset: "`source` as `source_kind`",
-  backup_item: "`item_id` is `snapshot_id:object_id:setting_path`",
+  backup_item: "`item_id` is `snapshot_id`, `object_id` and `setting_path` joined by `:` (a `:` in a value escaped)",
   vault_copy: "`source` as `source_kind`",
-  referent_fingerprint: "`fingerprint_id` is `obs_id:dns_run_id`",
+  referent_fingerprint: "`fingerprint_id` is `obs_id` and `dns_run_id` joined by `:` (a `:` in a value escaped)",
   audit_event: "`source` as `source_kind`",
 };
 
@@ -916,9 +975,9 @@ function lastCompleteDnsRun(ds: string): string {
 export function activation(table: UslTable, ds: string, rest: readonly RestTable[] = []): string {
   switch (table) {
     case "referent":
-      return `SELECT CONCAT(o.obs_id, ':', d.record_id, ':', d.run_id) AS ref_id, COALESCE(o.obs_id, '') AS setting_id, COALESCE(o.tenant_id, '') AS tenant_id, COALESCE(o.refers_to_type, '') AS target_type, COALESCE(o.refers_to_id, '') AS target_name, COALESCE(d.content, '') AS resolves_to, CAST(d.proxied AS INT) AS proxied, COALESCE(d.observed_at, '') AS resolved_at, COALESCE(d.run_id, '') AS dns_run_id FROM ${ds}.observation o JOIN ${ds}.dns_record d ON d.tenant_id = o.tenant_id AND d.name = o.refers_to_id WHERE o.refers_to_type = 'dns_name'`;
+      return `SELECT ${joinedKey(["o.obs_id", "d.record_id", "d.run_id"])} AS ref_id, COALESCE(o.obs_id, '') AS setting_id, COALESCE(o.tenant_id, '') AS tenant_id, COALESCE(o.refers_to_type, '') AS target_type, COALESCE(o.refers_to_id, '') AS target_name, COALESCE(d.content, '') AS resolves_to, CAST(d.proxied AS INT) AS proxied, COALESCE(d.observed_at, '') AS resolved_at, COALESCE(d.run_id, '') AS dns_run_id FROM ${ds}.observation o JOIN ${ds}.dns_record d ON d.tenant_id = o.tenant_id AND d.name = o.refers_to_id WHERE o.refers_to_type = 'dns_name'`;
     case "backup_copy":
-      return `SELECT CONCAT(b.snapshot_id, ':', b.object_id, ':', b.setting_path) AS copy_id, COALESCE(s.tenant_id, '') AS tenant_id, COALESCE(s.host, '') AS host, COALESCE(s.kind, '') AS kind, COALESCE(b.object_id, '') AS object_id, COALESCE(b.setting_path, '') AS setting_path, COALESCE(b.value_hash, '') AS value_hash, COALESCE(s.taken_at, '') AS taken_at FROM ${ds}.backup_item b JOIN ${ds}.backup_snapshot s ON s.snapshot_id = b.snapshot_id`;
+      return `SELECT ${joinedKey(["b.snapshot_id", "b.object_id", "b.setting_path"])} AS copy_id, COALESCE(s.tenant_id, '') AS tenant_id, COALESCE(s.host, '') AS host, COALESCE(s.kind, '') AS kind, COALESCE(b.object_id, '') AS object_id, COALESCE(b.setting_path, '') AS setting_path, COALESCE(b.value_hash, '') AS value_hash, COALESCE(s.taken_at, '') AS taken_at FROM ${ds}.backup_item b JOIN ${ds}.backup_snapshot s ON s.snapshot_id = b.snapshot_id`;
     case "copy":
       // The latest validation per copy (latest validated_at, then validation_id): the correlation sits in the subquery's WHERE.
       return `SELECT COALESCE(c.copy_id, '') AS copy_id, COALESCE(c.tenant_id, '') AS tenant_id, COALESCE(c.surface, '') AS surface, c.host, COALESCE(c.object_id, '') AS object_id, COALESCE(c.run_id, '') AS run_id, COALESCE(c.git_commit, '') AS git_commit, COALESCE(c.blob_sha256, '') AS blob_sha256, COALESCE(c.taken_at, '') AS taken_at, COALESCE(c.source, '') AS source_kind, l.validator, l.result, l.validated_at, CAST(CASE WHEN l.result IN ('ok', 'ok_with_gaps') THEN 1 ELSE 0 END AS INT) AS validated FROM ${ds}.vault_copy c LEFT JOIN (SELECT v.copy_id, v.validator, v.result, v.validated_at FROM ${ds}.copy_validation v WHERE NOT EXISTS (SELECT 1 FROM ${ds}.copy_validation w WHERE w.copy_id = v.copy_id AND (w.validated_at > v.validated_at OR (w.validated_at = v.validated_at AND w.validation_id > v.validation_id)))) l ON l.copy_id = c.copy_id`;
@@ -1117,26 +1176,47 @@ function listsUsl(r: QueryResult): boolean {
   return r.rows.some((row) => (i >= 0 ? row[i] === USL_NAME : row.includes(USL_NAME)));
 }
 
+/** A column spec of LOAD USL's model, as measured 26 Oct 2026 (the zetaris.control run records it): a key column carries primaryKey, a foreign key foreignKey with the referenced table's qualified name and column. */
+interface ColumnSpec { name?: unknown; primaryKey?: unknown; foreignKey?: { refTable?: unknown; refColumns?: unknown } }
+
+/** Each table's keys as USL_DDL declares them, in column order: "<column> pk" and "<column> > <entity>(<column>)". */
+export const USL_KEYS: Readonly<Record<UslTable, string>> = Object.fromEntries(USL_TABLES.map((t) => [t, (USL_DDL[t] as readonly string[]).flatMap((l) => {
+  const name = l.split(" ")[0];
+  const fk = / FOREIGN KEY REFERENCES (\w+)\((\w+)\)/.exec(l);
+  return [...(l.includes(" PRIMARY KEY") ? [`${name} pk`] : []), ...(fk ? [`${name} > ${fk[1]}(${fk[2]})`] : [])];
+}).join("; ")])) as Record<UslTable, string>;
+
+/** A model table's keys in USL_KEYS's form. */
+function modelKeys(specs: readonly ColumnSpec[]): string {
+  return specs.flatMap((c) => {
+    const ref = c.foreignKey ? `${String([c.foreignKey.refTable].flat()[0] ?? "").split(".").at(-1)}(${[c.foreignKey.refColumns].flat().join(",")})` : "";
+    return [...(c.primaryKey ? [`${String(c.name)} pk`] : []), ...(ref ? [`${String(c.name)} > ${ref}`] : [])];
+  }).join("; ");
+}
+
 /**
  * LOAD USL's model against COMPILE_USL: the reason it is stale, or null when its tables and their columns
- * are exactly USL_COLUMNS. A model that fails to parse is stale.
+ * are exactly USL_COLUMNS and their keys USL_KEYS. A model that fails to parse is stale.
  */
 export function staleness(r: QueryResult): string | null {
-  let model: { tables?: { name?: unknown; columnSpecs?: { name?: unknown }[] }[] };
+  let model: { tables?: { name?: unknown; columnSpecs?: ColumnSpec[] }[] };
   try {
     model = JSON.parse(r.rows[0]?.[0] ?? "");
   } catch {
     return "LOAD USL returned no model that parses";
   }
-  const have = new Map((model.tables ?? []).map((t) => [String(t.name), (t.columnSpecs ?? []).map((c) => String(c.name))]));
+  const tables = new Map((model.tables ?? []).map((t) => [String(t.name), t.columnSpecs ?? []]));
+  const have = new Map([...tables].map(([t, specs]) => [t, specs.map((c) => String(c.name))]));
   const want = USL_TABLES;
   const missing = want.filter((t) => !have.has(t));
   const extra = [...have.keys()].filter((t) => !(want as string[]).includes(t)).sort();
   const changed = want.filter((t) => have.has(t) && have.get(t)!.join(",") !== USL_COLUMNS[t].join(","));
+  const rekeyed = want.filter((t) => have.has(t) && !changed.includes(t) && modelKeys(tables.get(t)!) !== USL_KEYS[t]);
   const parts = [
     missing.length ? `lacks ${missing.join(", ")}` : "",
     extra.length ? `holds ${extra.join(", ")} beyond the ${want.length}` : "",
     changed.length ? `columns differ in ${changed.join(", ")}` : "",
+    rekeyed.length ? `keys differ in ${rekeyed.join(", ")}` : "",
   ].filter(Boolean);
   return parts.length ? `${have.size} table(s); ${parts.join("; ")}` : null;
 }

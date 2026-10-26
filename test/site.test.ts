@@ -189,7 +189,8 @@ describe("the replay page", () => {
     expect(src).toContain(`Beside it Zetaris reads the technician's memory store as <code>LESSONS</code> and the policy file as <code>RULES</code>, both files in its filestore, and the Cloudflare DNS API as <code>${REST_DB}</code>, a REST datasource it fetches at each query.`);
     expect(src).toContain(`holds ${word(USL_TABLES.length)} entities (${USL_TABLES.map((t) => `<code>${t}</code>`).join(", ")})`);
     expect(src).toContain(`six DQ rules (${DQ_RULES.map((r) => `<code>${r.name}</code> on <code>${r.table}</code>`).join(", ")})`);
-    expect(/<footer>[\s\S]*?<\/footer>/.exec(html)![0]).toContain(`<code>${DS}.&lt;table&gt;</code>`);
+    expect(/<footer>[\s\S]*?<\/footer>/.exec(html)![0]).toContain(`each table read as its Zetaris semantic-layer entity (<code>${NAMESPACE}.${USL_NAME}.&lt;entity&gt;</code>) as the text a live pass sends`);
+    expect(html).not.toContain(`${DS}.&lt;table&gt;`);
     expect(html).toContain('"as the live pass sends it to Zetaris"');
   });
 
