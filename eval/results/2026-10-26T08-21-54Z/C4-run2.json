@@ -1,0 +1,1373 @@
+{
+ "config": {
+  "id": "C4",
+  "text": "Nemotron 3 Ultra alone: the verdict from the rows, no SQL checks, no catalogue (baseline)",
+  "select": {
+   "kind": "none"
+  },
+  "judge": null,
+  "direct": "ultra"
+ },
+ "run": 2,
+ "valid": true,
+ "invalid_reason": null,
+ "started_at": "2026-10-26T22:15:56.356Z",
+ "finished_at": "2026-10-26T22:18:42.157Z",
+ "recording": "test/fixtures/recorded-bundle.json",
+ "tenant": "client-1",
+ "decided_at": "2026-10-24T07:59:23.745Z",
+ "policy": {
+  "file": "policy/hackathon.json",
+  "version": 2,
+  "rows": 17,
+  "inserted": 17,
+  "rules": 17
+ },
+ "split_seed": "eaad75c7a2dca621fbae34c92b20a1658bf9778ab8b0de03cfdfe9b8ed4e94c2",
+ "set": "heldout",
+ "counts": {
+  "items": 23,
+  "scored": 20,
+  "not_raised": 3,
+  "with_verdict": 20,
+  "not_judged": 0,
+  "agree": 13,
+  "disagree": 7,
+  "unsure": 0,
+  "false_positives": 7,
+  "labelled_no": 20,
+  "checks_selected": 0,
+  "checks_valid": 0,
+  "checks_invalid": 0,
+  "checks_ran_unmodified": 0,
+  "checks_run": 0,
+  "falsifier_ran": 0,
+  "falsifier_struck": 0,
+  "agreed_strikes": 0,
+  "wrong_strikes": 0,
+  "early_stops": 0,
+  "judge_withheld": 0,
+  "findings_assessed": 20,
+  "findings_with_disposition": 20,
+  "calls": 20,
+  "cache_hits": 0,
+  "substitutions": 0,
+  "memory_injected": 0,
+  "tokens_in": 10929,
+  "tokens_out": 9940,
+  "latency_ms_median": 6320
+ },
+ "items": [
+  {
+   "id": "E01",
+   "class": "proxy_split",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-b4a40091cdb4f906"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "ESCALATE",
+   "reading": "yes",
+   "agree": false,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-b4a40091cdb4f906",
+     "class": "proxy_split",
+     "summary": "host-524b42.quest is proxied and aliases host-4c795e.quest, whose A record is direct to ip-6fb86d: the origin the proxy hides is published on the name it points at",
+     "decided_by": null,
+     "rule_id": null,
+     "checks": [],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "ESCALATE",
+     "reason": "The proxied CNAME host-524b42.quest points to host-4c795e.quest which has a direct A record exposing the origin IP, defeating the proxy's purpose.",
+     "not_judged": null
+    }
+   ],
+   "direct": {
+    "verb": "ESCALATE",
+    "reason": "The proxied CNAME host-524b42.quest points to host-4c795e.quest which has a direct A record exposing the origin IP, defeating the proxy's purpose."
+   },
+   "strikes": 0
+  },
+  {
+   "id": "E02",
+   "class": "proxied_without_real_ip",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-45d5f3f4a2eb0b2e"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "ESCALATE",
+   "reading": "yes",
+   "agree": false,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-45d5f3f4a2eb0b2e",
+     "class": "proxied_without_real_ip",
+     "summary": "host-18efce.ai is proxied through Cloudflare to ip-6b6bba, and server[host-18efce.ai:443].real_ip in /etc/nginx/conf.d/word-005ed8-prod.conf on host-aa516a is absent: the block that serves it sees Cloudflare's addresses as its visitors",
+     "decided_by": null,
+     "rule_id": null,
+     "checks": [],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "ESCALATE",
+     "reason": "DNS shows host-18efce.ai is proxied through Cloudflare but nginx config lacks real_ip directive to extract client IPs from Cloudflare headers.",
+     "not_judged": null
+    }
+   ],
+   "direct": {
+    "verb": "ESCALATE",
+    "reason": "DNS shows host-18efce.ai is proxied through Cloudflare but nginx config lacks real_ip directive to extract client IPs from Cloudflare headers."
+   },
+   "strikes": 0
+  },
+  {
+   "id": "E05",
+   "class": "proxied_without_real_ip",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-b91b1690878eaf0e"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "ESCALATE",
+   "reading": "yes",
+   "agree": false,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-b91b1690878eaf0e",
+     "class": "proxied_without_real_ip",
+     "summary": "*.host-503b27.ai is proxied through Cloudflare to ip-6b6bba, and no server block on host-aa516a trusts a Cloudflare range (http.real_ip in /etc/nginx/nginx.conf is absent): every name under the wildcard sees Cloudflare's addresses as its visitors",
+     "decided_by": null,
+     "rule_id": null,
+     "checks": [],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "ESCALATE",
+     "reason": "The nginx configuration lacks Cloudflare real IP trust, causing all visitor IPs to appear as Cloudflare addresses, which requires technician remediation.",
+     "not_judged": null
+    }
+   ],
+   "direct": {
+    "verb": "ESCALATE",
+    "reason": "The nginx configuration lacks Cloudflare real IP trust, causing all visitor IPs to appear as Cloudflare addresses, which requires technician remediation."
+   },
+   "strikes": 0
+  },
+  {
+   "id": "E06",
+   "class": "orphan_record",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-d62857e241af66e2"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "ESCALATE",
+   "reading": "yes",
+   "agree": false,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-d62857e241af66e2",
+     "class": "orphan_record",
+     "summary": "host-3fef97.club (A, direct) lands on ip-6b6bba, host-aa516a, where no enabled server block names it: requests for it reach the default server",
+     "decided_by": null,
+     "rule_id": null,
+     "checks": [],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "ESCALATE",
+     "reason": "The DNS record points to an IP with no matching server block, causing traffic to hit the default server, which indicates a likely misconfiguration requiring technician review.",
+     "not_judged": null
+    }
+   ],
+   "direct": {
+    "verb": "ESCALATE",
+    "reason": "The DNS record points to an IP with no matching server block, causing traffic to hit the default server, which indicates a likely misconfiguration requiring technician review."
+   },
+   "strikes": 0
+  },
+  {
+   "id": "E09",
+   "class": "proxied_without_real_ip",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-4503aff67c556c58"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "ESCALATE",
+   "reading": "yes",
+   "agree": false,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-4503aff67c556c58",
+     "class": "proxied_without_real_ip",
+     "summary": "host-62f7a4.com is proxied through Cloudflare to ip-6fb86d, and server[host-62f7a4.com:443].real_ip in /etc/nginx/sites-available/host-62f7a4.com on host-4b4dc1 is absent: the block that serves it sees Cloudflare's addresses as its visitors",
+     "decided_by": null,
+     "rule_id": null,
+     "checks": [],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "ESCALATE",
+     "reason": "The nginx configuration lacks real_ip directives to extract client IPs from Cloudflare headers, causing loss of visitor identity and potential security issues.",
+     "not_judged": null
+    }
+   ],
+   "direct": {
+    "verb": "ESCALATE",
+    "reason": "The nginx configuration lacks real_ip directives to extract client IPs from Cloudflare headers, causing loss of visitor identity and potential security issues."
+   },
+   "strikes": 0
+  },
+  {
+   "id": "E11",
+   "class": "orphan_record",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-58b251b5fce8fbff"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "ESCALATE",
+   "reading": "yes",
+   "agree": false,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-58b251b5fce8fbff",
+     "class": "orphan_record",
+     "summary": "host-50b116.com (A, proxied) lands on ip-6fb86d, host-4b4dc1, where no enabled server block names it: requests for it reach the default server",
+     "decided_by": null,
+     "rule_id": null,
+     "checks": [],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "ESCALATE",
+     "reason": "The DNS record points to a server with no matching virtual host, causing traffic to hit the default server, requiring technician review to align DNS and server configuration.",
+     "not_judged": null
+    }
+   ],
+   "direct": {
+    "verb": "ESCALATE",
+    "reason": "The DNS record points to a server with no matching virtual host, causing traffic to hit the default server, requiring technician review to align DNS and server configuration."
+   },
+   "strikes": 0
+  },
+  {
+   "id": "E12",
+   "class": "orphan_record",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-8fc67ccb1e4eebfa"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "ESCALATE",
+   "reading": "yes",
+   "agree": false,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-8fc67ccb1e4eebfa",
+     "class": "orphan_record",
+     "summary": "host-c10fff.com (A, proxied) lands on ip-6fb86d, host-4b4dc1, where no enabled server block names it: requests for it reach the default server",
+     "decided_by": null,
+     "rule_id": null,
+     "checks": [],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "ESCALATE",
+     "reason": "DNS record points to a server with no matching server block, causing traffic to hit the default server instead of the intended site.",
+     "not_judged": null
+    }
+   ],
+   "direct": {
+    "verb": "ESCALATE",
+    "reason": "DNS record points to a server with no matching server block, causing traffic to hit the default server instead of the intended site."
+   },
+   "strikes": 0
+  },
+  {
+   "id": "E14",
+   "class": "orphan_vhost",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-3661fcc541693ada"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-3661fcc541693ada",
+     "class": "orphan_vhost",
+     "summary": "host-89f6e7.com is a server_name in /etc/nginx/sites-available/host-9ac4f1.com on host-4b4dc1 (enabled) with no record of that name in the collected zones and no wildcard covering its zone",
+     "decided_by": null,
+     "rule_id": null,
+     "checks": [],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "Orphan vhost host-89f6e7.com exists in nginx config but lacks DNS zone record or wildcard coverage; requires customer confirmation whether this is intentional (staging/internal) or stale config needing cleanup.",
+     "not_judged": null
+    }
+   ],
+   "direct": {
+    "verb": "HOLD",
+    "reason": "Orphan vhost host-89f6e7.com exists in nginx config but lacks DNS zone record or wildcard coverage; requires customer confirmation whether this is intentional (staging/internal) or stale config needing cleanup."
+   },
+   "strikes": 0
+  },
+  {
+   "id": "E15",
+   "class": "orphan_vhost",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-add52203af12de8a"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-add52203af12de8a",
+     "class": "orphan_vhost",
+     "summary": "host-9ac4f1.com is a server_name in /etc/nginx/sites-available/host-9ac4f1.com on host-4b4dc1 (enabled) with no record of that name in the collected zones and no wildcard covering its zone",
+     "decided_by": null,
+     "rule_id": null,
+     "checks": [],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "Orphan vhost host-9ac4f1.com exists in nginx config but has no DNS zone record; hold for technician review to determine if config should be removed or DNS provisioned.",
+     "not_judged": null
+    }
+   ],
+   "direct": {
+    "verb": "HOLD",
+    "reason": "Orphan vhost host-9ac4f1.com exists in nginx config but has no DNS zone record; hold for technician review to determine if config should be removed or DNS provisioned."
+   },
+   "strikes": 0
+  },
+  {
+   "id": "E18",
+   "class": "dns_change_history",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-61de32aa64e37148"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "ADOPT",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-61de32aa64e37148",
+     "class": "dns_change",
+     "summary": "record 510ec8f604eada42808a4a1ab2287ac6 (host-e1e296.com A) has 1 change(s) in the audit log between 2026-07-02T21:48:33.241Z and 2026-07-02T21:48:33.241Z; the last one, at 2026-07-02T21:48:33.241Z, set it to A ip-6b6bba, proxied false",
+     "decided_by": null,
+     "rule_id": null,
+     "checks": [],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "ADOPT",
+     "reason": "The DNS change was a user-initiated update confirmed by audit logs, showing no drift from intended configuration.",
+     "not_judged": null
+    }
+   ],
+   "direct": {
+    "verb": "ADOPT",
+    "reason": "The DNS change was a user-initiated update confirmed by audit logs, showing no drift from intended configuration."
+   },
+   "strikes": 0
+  },
+  {
+   "id": "E19",
+   "class": "dns_change_history",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-68c8214c8bf0b788"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "ADOPT",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-68c8214c8bf0b788",
+     "class": "dns_change",
+     "summary": "record 4c6d209470c71ee2c4668f5f435a4ae1 (host-f324df.com A) has 1 change(s) in the audit log between 2026-07-02T21:48:52.906Z and 2026-07-02T21:48:52.906Z; the last one, at 2026-07-02T21:48:52.906Z, set it to A ip-6fb86d, proxied true",
+     "decided_by": null,
+     "rule_id": null,
+     "checks": [],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "ADOPT",
+     "reason": "The live DNS record matches the user-initiated change recorded in the audit log, showing no drift.",
+     "not_judged": null
+    }
+   ],
+   "direct": {
+    "verb": "ADOPT",
+    "reason": "The live DNS record matches the user-initiated change recorded in the audit log, showing no drift."
+   },
+   "strikes": 0
+  },
+  {
+   "id": "E20",
+   "class": "dns_change_history",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-ed80417d790eab35"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "ADOPT",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-ed80417d790eab35",
+     "class": "dns_change",
+     "summary": "record 82de28f7baf86a005babc11f85b45bc4 (host-18efce.ai A) has 2 change(s) in the audit log between 2026-07-03T21:07:59.237Z and 2026-07-07T18:01:30.530Z; the last one, at 2026-07-07T18:01:30.530Z, set it to A ip-6b6bba, proxied true",
+     "decided_by": null,
+     "rule_id": null,
+     "checks": [],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "ADOPT",
+     "reason": "The current proxied=true state matches the last user-initiated change on 2026-07-07, showing no unauthorized drift.",
+     "not_judged": null
+    }
+   ],
+   "direct": {
+    "verb": "ADOPT",
+    "reason": "The current proxied=true state matches the last user-initiated change on 2026-07-07, showing no unauthorized drift."
+   },
+   "strikes": 0
+  },
+  {
+   "id": "E21",
+   "class": "dns_change_history",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-00169c595cf4600f"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "ADOPT",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-00169c595cf4600f",
+     "class": "dns_change",
+     "summary": "record 1f75c652a377966a1c93c8803d203808 (*.host-503b27.ai A) has 1 change(s) in the audit log between 2026-07-03T21:25:19.373Z and 2026-07-03T21:25:19.373Z; the last one, at 2026-07-03T21:25:19.373Z, set it to A ip-6b6bba, proxied false",
+     "decided_by": null,
+     "rule_id": null,
+     "checks": [],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "ADOPT",
+     "reason": "The DNS change was user-initiated and matches the audit event, indicating an authorized configuration update.",
+     "not_judged": null
+    }
+   ],
+   "direct": {
+    "verb": "ADOPT",
+    "reason": "The DNS change was user-initiated and matches the audit event, indicating an authorized configuration update."
+   },
+   "strikes": 0
+  },
+  {
+   "id": "E22",
+   "class": "dns_change_history",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-4efd199d2014ec6f"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "ADOPT",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-4efd199d2014ec6f",
+     "class": "dns_change",
+     "summary": "record 25a23b5c40a3de0ea11b6054a7b54d07 (host-c10fff.com A) has 1 change(s) in the audit log between 2026-07-06T18:46:40.994Z and 2026-07-06T18:46:40.994Z; the last one, at 2026-07-06T18:46:40.994Z, set it to A ip-6fb86d, proxied true",
+     "decided_by": null,
+     "rule_id": null,
+     "checks": [],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "ADOPT",
+     "reason": "The live DNS record matches the user-initiated change from the audit log, showing no configuration drift.",
+     "not_judged": null
+    }
+   ],
+   "direct": {
+    "verb": "ADOPT",
+    "reason": "The live DNS record matches the user-initiated change from the audit log, showing no configuration drift."
+   },
+   "strikes": 0
+  },
+  {
+   "id": "E23",
+   "class": "dns_change_history",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-38e1062be36b45b0"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "ADOPT",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-38e1062be36b45b0",
+     "class": "dns_change",
+     "summary": "record 9ee8076d949534eb9ceef147017db541 (host-492568.ai A) has 1 change(s) in the audit log between 2026-07-07T18:29:23.079Z and 2026-07-07T18:29:23.079Z; the last one, at 2026-07-07T18:29:23.079Z, set it to A ip-6b6bba, proxied false",
+     "decided_by": null,
+     "rule_id": null,
+     "checks": [],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "ADOPT",
+     "reason": "The live DNS record matches the user-initiated change from the audit event, showing no drift between intended and actual state.",
+     "not_judged": null
+    }
+   ],
+   "direct": {
+    "verb": "ADOPT",
+    "reason": "The live DNS record matches the user-initiated change from the audit event, showing no drift between intended and actual state."
+   },
+   "strikes": 0
+  },
+  {
+   "id": "E25",
+   "class": "dns_change_history",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-563eadc738047023"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "ADOPT",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-563eadc738047023",
+     "class": "dns_change",
+     "summary": "record 6b6b8a5464881541716a106e7f10661b (host-17a03d.info A) has 2 change(s) in the audit log between 2026-08-12T20:24:40.514Z and 2026-08-12T20:46:27.442Z; the last one, at 2026-08-12T20:46:27.442Z, set it to A ip-6fb86d, proxied false",
+     "decided_by": null,
+     "rule_id": null,
+     "checks": [],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "ADOPT",
+     "reason": "The live DNS record matches the last user-initiated change from audit logs with no drift detected.",
+     "not_judged": null
+    }
+   ],
+   "direct": {
+    "verb": "ADOPT",
+    "reason": "The live DNS record matches the last user-initiated change from audit logs with no drift detected."
+   },
+   "strikes": 0
+  },
+  {
+   "id": "E26",
+   "class": "dns_change_history",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-148f416637cf96fe"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "ADOPT",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-148f416637cf96fe",
+     "class": "dns_change",
+     "summary": "record 92d1b88e598e4fdd0a47a92d07b9def9 (host-c2af6d.info A) has 2 change(s) in the audit log between 2026-08-12T20:24:40.978Z and 2026-08-12T20:46:23.199Z; the last one, at 2026-08-12T20:46:23.199Z, set it to A ip-6fb86d, proxied false",
+     "decided_by": null,
+     "rule_id": null,
+     "checks": [],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "ADOPT",
+     "reason": "The audit trail shows two intentional user-initiated DNS changes and the current record matches the most recent change.",
+     "not_judged": null
+    }
+   ],
+   "direct": {
+    "verb": "ADOPT",
+    "reason": "The audit trail shows two intentional user-initiated DNS changes and the current record matches the most recent change."
+   },
+   "strikes": 0
+  },
+  {
+   "id": "E27",
+   "class": "dns_bulk_delete",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-c88ff653b44300be"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "ADOPT",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-c88ff653b44300be",
+     "class": "dns_change",
+     "summary": "8 DNS record(s) deleted on 2026-10-11 between 2026-10-11T00:17:11.206Z and 2026-10-11T12:21:57.973Z; the last, record 663a1b04b78c12ede3dbe4a20f2d174e (host-1f459a.info TXT), at 2026-10-11T12:21:57.973Z",
+     "decided_by": null,
+     "rule_id": null,
+     "checks": [],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "ADOPT",
+     "reason": "Audit events confirm a TXT record was created then deleted in zone host-17a03d.info, matching the dns_bulk_delete detector classification.",
+     "not_judged": null
+    }
+   ],
+   "direct": {
+    "verb": "ADOPT",
+    "reason": "Audit events confirm a TXT record was created then deleted in zone host-17a03d.info, matching the dns_bulk_delete detector classification."
+   },
+   "strikes": 0
+  },
+  {
+   "id": "E28",
+   "class": "dns_bulk_delete",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-618cb25a815b9bff"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "ADOPT",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-618cb25a815b9bff",
+     "class": "dns_change",
+     "summary": "6 DNS record(s) deleted on 2026-05-22 between 2026-05-22T00:51:56.723Z and 2026-05-22T01:03:44.344Z; the last, record 98c20b583fbb2e1b933921b443b9243a (host-65c144.ai TXT), at 2026-05-22T01:03:44.344Z",
+     "decided_by": null,
+     "rule_id": null,
+     "checks": [],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "ADOPT",
+     "reason": "The record was created and deleted within milliseconds, consistent with a transient validation token.",
+     "not_judged": null
+    }
+   ],
+   "direct": {
+    "verb": "ADOPT",
+    "reason": "The record was created and deleted within milliseconds, consistent with a transient validation token."
+   },
+   "strikes": 0
+  },
+  {
+   "id": "E29",
+   "class": "dns_bulk_delete",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-38f07fae40ba78c6"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "ADOPT",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-38f07fae40ba78c6",
+     "class": "dns_change",
+     "summary": "6 DNS record(s) deleted on 2026-06-03 between 2026-06-03T17:07:29.041Z and 2026-06-03T20:58:31.068Z; the last, record 1d7c7c480af0b51580a652852bda5034 (host-24f835.quest TXT), at 2026-06-03T20:58:31.068Z",
+     "decided_by": null,
+     "rule_id": null,
+     "checks": [],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "ADOPT",
+     "reason": "The audit trail shows a TXT record created and deleted within 0.13 seconds as part of an apparent bulk operation, so the live state (absent) matches the intended outcome.",
+     "not_judged": null
+    }
+   ],
+   "direct": {
+    "verb": "ADOPT",
+    "reason": "The audit trail shows a TXT record created and deleted within 0.13 seconds as part of an apparent bulk operation, so the live state (absent) matches the intended outcome."
+   },
+   "strikes": 0
+  },
+  {
+   "id": "E33",
+   "class": "drift_vs_approved",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": null,
+   "not_raised": "the recording raises no drift_vs_approved finding",
+   "verdict": null,
+   "reading": null,
+   "agree": null,
+   "not_judged": null,
+   "subjects": [],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E35",
+   "class": "drift_vs_approved",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": null,
+   "not_raised": "the recording raises no drift_vs_approved finding",
+   "verdict": null,
+   "reading": null,
+   "agree": null,
+   "not_judged": null,
+   "subjects": [],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E36",
+   "class": "drift_vs_approved",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": null,
+   "not_raised": "the recording raises no drift_vs_approved finding",
+   "verdict": null,
+   "reading": null,
+   "agree": null,
+   "not_judged": null,
+   "subjects": [],
+   "direct": null,
+   "strikes": 0
+  }
+ ],
+ "calls": [
+  {
+   "kind": "direct",
+   "item": "E01",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_tx3cnamu",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 11045,
+   "tokens_in": 752,
+   "tokens_out": 849,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_tx3cnamu openrouter/nvidia/nemotron-3-ultra-550b-a55b:free (ultra), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-374",
+   "memory_injected": 0
+  },
+  {
+   "kind": "direct",
+   "item": "E02",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_mekg8a97",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 5259,
+   "tokens_in": 815,
+   "tokens_out": 268,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_mekg8a97 openrouter/nvidia/nemotron-3-ultra-550b-a55b:free (ultra), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-375",
+   "memory_injected": 0
+  },
+  {
+   "kind": "direct",
+   "item": "E05",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_hylbc3k1",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 8293,
+   "tokens_in": 511,
+   "tokens_out": 493,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_hylbc3k1 openrouter/nvidia/nemotron-3-ultra-550b-a55b:free (ultra), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-376",
+   "memory_injected": 0
+  },
+  {
+   "kind": "direct",
+   "item": "E06",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_qurj448s",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 3800,
+   "tokens_in": 327,
+   "tokens_out": 581,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_qurj448s openrouter/nvidia/nemotron-3-ultra-550b-a55b:free (ultra), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-377",
+   "memory_injected": 0
+  },
+  {
+   "kind": "direct",
+   "item": "E09",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_rq1wcuqr",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 9755,
+   "tokens_in": 560,
+   "tokens_out": 459,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_rq1wcuqr openrouter/nvidia/nemotron-3-ultra-550b-a55b:free (ultra), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-378",
+   "memory_injected": 0
+  },
+  {
+   "kind": "direct",
+   "item": "E11",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_zkiz35wz",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 5418,
+   "tokens_in": 332,
+   "tokens_out": 463,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_zkiz35wz openrouter/nvidia/nemotron-3-ultra-550b-a55b:free (ultra), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-379",
+   "memory_injected": 0
+  },
+  {
+   "kind": "direct",
+   "item": "E12",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_63gbhez6",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 5657,
+   "tokens_in": 460,
+   "tokens_out": 333,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_63gbhez6 openrouter/nvidia/nemotron-3-ultra-550b-a55b:free (ultra), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-380",
+   "memory_injected": 0
+  },
+  {
+   "kind": "direct",
+   "item": "E14",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_fzrashem",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 4577,
+   "tokens_in": 423,
+   "tokens_out": 313,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_fzrashem openrouter/nvidia/nemotron-3-ultra-550b-a55b:free (ultra), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-381",
+   "memory_injected": 0
+  },
+  {
+   "kind": "direct",
+   "item": "E15",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_8tfhr7k3",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 3838,
+   "tokens_in": 417,
+   "tokens_out": 323,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_8tfhr7k3 openrouter/nvidia/nemotron-3-ultra-550b-a55b:free (ultra), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-382",
+   "memory_injected": 0
+  },
+  {
+   "kind": "direct",
+   "item": "E18",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_57tbrjjl",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 5998,
+   "tokens_in": 366,
+   "tokens_out": 413,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_57tbrjjl openrouter/nvidia/nemotron-3-ultra-550b-a55b:free (ultra), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-383",
+   "memory_injected": 0
+  },
+  {
+   "kind": "direct",
+   "item": "E19",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_df4b74co",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 9790,
+   "tokens_in": 467,
+   "tokens_out": 653,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_df4b74co openrouter/nvidia/nemotron-3-ultra-550b-a55b:free (ultra), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-384",
+   "memory_injected": 0
+  },
+  {
+   "kind": "direct",
+   "item": "E20",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_xece7ec5",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 5847,
+   "tokens_in": 631,
+   "tokens_out": 432,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_xece7ec5 openrouter/nvidia/nemotron-3-ultra-550b-a55b:free (ultra), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-385",
+   "memory_injected": 0
+  },
+  {
+   "kind": "direct",
+   "item": "E21",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_ob6iirx0",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 15494,
+   "tokens_in": 380,
+   "tokens_out": 474,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_ob6iirx0 openrouter/nvidia/nemotron-3-ultra-550b-a55b:free (ultra), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-386",
+   "memory_injected": 0
+  },
+  {
+   "kind": "direct",
+   "item": "E22",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_jub7bgah",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 8601,
+   "tokens_in": 465,
+   "tokens_out": 596,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_jub7bgah openrouter/nvidia/nemotron-3-ultra-550b-a55b:free (ultra), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-387",
+   "memory_injected": 0
+  },
+  {
+   "kind": "direct",
+   "item": "E23",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_zomqnn5a",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 10792,
+   "tokens_in": 466,
+   "tokens_out": 629,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_zomqnn5a openrouter/nvidia/nemotron-3-ultra-550b-a55b:free (ultra), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-388",
+   "memory_injected": 0
+  },
+  {
+   "kind": "direct",
+   "item": "E25",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_slhcg4r4",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 6642,
+   "tokens_in": 657,
+   "tokens_out": 447,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_slhcg4r4 openrouter/nvidia/nemotron-3-ultra-550b-a55b:free (ultra), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-389",
+   "memory_injected": 0
+  },
+  {
+   "kind": "direct",
+   "item": "E26",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_317itvvk",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 5692,
+   "tokens_in": 637,
+   "tokens_out": 473,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_317itvvk openrouter/nvidia/nemotron-3-ultra-550b-a55b:free (ultra), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-390",
+   "memory_injected": 0
+  },
+  {
+   "kind": "direct",
+   "item": "E27",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_quve0nni",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 19745,
+   "tokens_in": 768,
+   "tokens_out": 525,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_quve0nni openrouter/nvidia/nemotron-3-ultra-550b-a55b:free (ultra), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-391",
+   "memory_injected": 0
+  },
+  {
+   "kind": "direct",
+   "item": "E28",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_g9rpzoyi",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 9569,
+   "tokens_in": 741,
+   "tokens_out": 791,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_g9rpzoyi openrouter/nvidia/nemotron-3-ultra-550b-a55b:free (ultra), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-392",
+   "memory_injected": 0
+  },
+  {
+   "kind": "direct",
+   "item": "E29",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_35dcrga3",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 4064,
+   "tokens_in": 754,
+   "tokens_out": 425,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_35dcrga3 openrouter/nvidia/nemotron-3-ultra-550b-a55b:free (ultra), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-393",
+   "memory_injected": 0
+  }
+ ],
+ "pass": null
+}

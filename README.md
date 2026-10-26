@@ -32,7 +32,7 @@ carries a signed receipt, verified offline.
 | C3: C1, with Nemotron 3 Ultra as the falsifier | 9 of 9, 8 of 8 and 8 of 8 (0, 1 and 1 not judged) | 0 of 9 | 9, 8 and 8 of 10 |
 | C4: Nemotron 3 Ultra alone, no SQL | 3, 4 and 3 of 9 (2 not judged) | 6, 5 and 6 of 9 | not asked |
 
-The 23 held-out items run once, on the frozen code, after the feature freeze (the protocol's rule). Their result lands in `eval/results/` and is quoted here whatever it says; until then the table above is the development set only.
+**Held out:** the 23 pre-registered held-out items, never used for tuning, ran once on the frozen code on 26 Oct 2026 and say the same thing. The SQL checks agree on 20 of 20 with no false alarm; Ultra alone agrees on 11 to 13 of 20 and raises a false alarm on 7 to 9; with Ultra as the falsifier the system raises none and strikes 8, 9 and 9 of 10 deliberately false claims. All 375 of its receipts verify offline (`eval/results/2026-10-26T08-21-54Z`).
 
 - **Zetaris**: every query of a live pass runs through Lightning SQL over the `DRIFT` datasource, with the `drift_usl` semantic layer and its DQ rules over it ([Zetaris](#zetaris)).
 - **Meterless**: the World Model holds the observations and the fingerprints FOUND-BUT-DIFFERENT compares, H-MEM holds the technician's lessons, and Nightshift serves Nemotron and signs a receipt for every call ([Meterless](#meterless)).
@@ -704,6 +704,20 @@ the adapter sends every call under a fresh `meterless-scope`, memory injected 0 
 all 384 published receipts. The run of 25 Oct 2026 09:25 UTC, `eval/results/2026-10-25T09-25-44Z`, went out under
 Nightshift's shared memory scope, and 281 of its 380 published receipts carry injected memory (each receipt's `hmem`
 field). The changelog of [eval/PROTOCOL.md](eval/PROTOCOL.md) carries the detail.
+
+### Held-out set, run once on the frozen code, `eval/results/2026-10-26T08-21-54Z`
+
+15 configuration runs (3 of each of C0, C1, C2, C3, C4): 413 call records, 375 with a verified receipt, 0 substitutions, 0 cache hits. Median output tokens per answered call: Lightning selecting 5,197, Lightning judging 3,643, Ultra judging 2,489.5, Ultra alone 472.5.
+
+| config | what runs | agree / judged | findings decided by | labelled no, read yes | planted claims struck | checks valid / selected | items not judged | calls | receipts verified | substitutions | cache hits | median output tokens |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| C0 | SQL only: the class's default precondition checks, no model (what SAMPLE_MODE runs) | 20/20 | policy 20 | 0/20 | - | - | 0 | 0 | 0 | 0 | 0 | - |
+| C1 | C0 plus Nemotron 3.5 Lightning selecting and parameterising checks from the catalogue | 20/20, 18/18, 20/20 | policy 20, 18, 20 | 0/20 | - | 78/78, 69/71, 77/77 | 0, 2, 0 | 20 | 20 | 0 | 0 | Lightning selecting 4,774.5 |
+| C2 | C1 plus Nemotron 3.5 Lightning as the falsifier judge | 4/4, 8/8, 4/4 | policy 4, 8, 4 | 0/20 | 6/10, 7/10, 6/10 | 65/68, 73/74, 74/75 | 16, 12, 16 | 47, 49, 49 | 34, 42, 31 | 0 | 0 | Lightning selecting 5,068.5; Lightning judging 3,643 |
+| C3 | C1 plus Nemotron 3 Ultra as the falsifier judge | 17/17, 18/18, 20/20 | policy 17, 18, 20 | 0/20 | 8/10, 9/10, 9/10 | 69/71, 78/78, 78/78 | 3, 2, 0 | 48, 50, 50 | 48, 50, 50 | 0 | 0 | Lightning selecting 5,402; Ultra judging 2,489.5 |
+| C4 | Nemotron 3 Ultra alone: the verdict from the rows, no SQL checks, no catalogue (baseline) | 13/20, 13/20, 11/20 | the model | 7/20, 7/20, 9/20 | - | - | 0 | 20 | 20 | 0 | 0 | Ultra alone 472.5 |
+
+The 23 held-out items, never used for tuning, ran once on 26 Oct 2026 from 08:21 UTC on the frozen code (main `42c3ca7`), under the protocol, labels and split committed before any model ran. Nemotron 3 Ultra alone (C4) agrees on 13, 13 and 11 of 20 and reads yes on 7, 7 and 9 of the 20 labelled no; the SQL checks (C0, C1) agree on every item they judge and read yes on none; with Ultra as the falsifier (C3) the runs agree on 17 of 17, 18 of 18 and 20 of 20 judged, read yes on 0 of 20, and strike 8, 9 and 9 of the ten planted false claims. 375 of the 413 calls answered with a signed receipt, and all 375 verify offline under the pinned key with memory injected in none; the other 38 failed at the route and were filed not judged, never retried into a better number.
 
 ### Development set under per-call scope, `eval/results/2026-10-25T23-34-17Z`
 
