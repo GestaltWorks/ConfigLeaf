@@ -126,7 +126,7 @@ describe("pass over the authored fixture, model: none", () => {
     // the redactor leaves the bundle's vocabulary alone: surfaces, the setting path, the SQL text
     expect(ev.find((e) => e.action === "detect" && e.status === "ok" && e.input_summary?.startsWith("server."))?.input_summary).toBe("server.location./.proxy_pass in /etc/nginx/conf.d/app.conf on host-7f1c");
     expect(heroQueries(ev)).toHaveLength(2);
-    // 1 runs + 12 gate + 2 observation reads (one per surface of the 5 passing host runs: linux.etc, linux.nginx) + 2 resolution
+    // 1 runs + 1 gate read (one tenant) + 2 observation reads (one per surface of the 5 passing host runs: linux.etc, linux.nginx) + 2 resolution
     // reads (one per DNS run the 5 pair with) + 2 hero (two host groups pass the gate) + 4 hero checks
     // + survey: 1 audit span + 1 proxy_split + 4 per nginx host group whose latest run passed (host-7f1c) + 4 proxy_split checks
     // + exposure: 2 SELECTs for each of the two findings that rest on a record (rec-a1, rec-b2): the record's row in the DNS run and
@@ -134,7 +134,7 @@ describe("pass over the authored fixture, model: none", () => {
     // + the Decider's policy read (one tenant) + drift_vs_approved over the three latest passing runs (linux.etc and linux.nginx on
     //   host-7f1c, the DNS run) + changed_since_backup over the nginx one: 0 rows each (the approvals hold the live values, no `file` row)
     // + approved_missing over the same three runs: 0 rows each (every approved object is in its run); no prior-HOLD read (no rule)
-    expect(okQueries(ev)).toHaveLength(1 + 12 + 2 + 2 + 2 + 4 + 1 + 1 + 4 + 4 + 2 * 2 + 1 + 3 + 1 + 3);
+    expect(okQueries(ev)).toHaveLength(1 + 1 + 2 + 2 + 2 + 4 + 1 + 1 + 4 + 4 + 2 * 2 + 1 + 3 + 1 + 3);
     expect(ev.filter((e) => e.action === "query" && e.status === "failed")).toEqual([]);
   });
 
@@ -203,7 +203,7 @@ describe("pass over the authored fixture, model: none", () => {
     // exposure: 2 SELECTs for the proxy_split's record (rec-b2 in run-dns-1020);
     // the policy read, drift_vs_approved over host-7f1c's two latest runs and run-dns-1020, changed_since_backup over its nginx run,
     // approved_missing over the same three runs
-    expect(okQueries(tracer.events)).toHaveLength(1 + 12 + 2 + 1 + 1 + 1 + 4 + 2 + 1 + 3 + 1 + 3);
+    expect(okQueries(tracer.events)).toHaveLength(1 + 1 + 2 + 1 + 1 + 1 + 4 + 2 + 1 + 3 + 1 + 3);
   });
 
   it("a name with an A and an AAAA record gives two findings, each carrying its own record and checked against it", async () => {
@@ -395,17 +395,17 @@ describe("pass over the recorded bundle (the real estate, redacted), model: none
     expect(ev.filter((e) => e.action === "detect" && e.status === "not_checked")).toEqual([]);
     expect(ev.filter((e) => e.action === "decide")).toHaveLength(38);
     expect(ev.filter((e) => e.action === "judge" && e.status === "skipped")).toHaveLength(38);
-    // 1 runs + 4 gate + 1 observation read (both host runs are linux.nginx) + 1 resolution read (both pair with the one DNS run)
+    // 1 runs + 1 gate read (one tenant) + 1 observation read (both host runs are linux.nginx) + 1 resolution read (both pair with the one DNS run)
     // + 2 hero + 1 audit span + 1 proxy_split + 2 hosts x 4 survey queries + checks (4 x 24 + 3 x 3)
     // + exposure (test/exposure.test.ts measures it): 15 distinct (record, state) pairs -> 15 record rows + 15 first-event queries + 4 earlier-body counts
     // + the policy read + drift_vs_approved over both host runs and the DNS run + changed_since_backup over both host runs + 4 checks x 11 backup findings
     // + approved_missing over both host runs and the DNS run (0 rows: the recording holds no approval)
-    expect(okQueries(ev)).toHaveLength(1 + 4 + 1 + 1 + 2 + 1 + 1 + 8 + 4 * 24 + 3 * 3 + 15 + 15 + 4 + 1 + 3 + 2 + 4 * 11 + 3);
+    expect(okQueries(ev)).toHaveLength(1 + 1 + 1 + 1 + 2 + 1 + 1 + 8 + 4 * 24 + 3 * 3 + 15 + 15 + 4 + 1 + 3 + 2 + 4 * 11 + 3);
     // the decide lines the default settled carry the default policy, and one decider line counts what the locked rules lack
     expect(ev.filter((e) => e.action === "decide").every((e) => e.detail === DEFAULT_POLICY_DETAIL)).toBe(true);
     expect(ev.filter((e) => e.input_summary === "policy").map((e) => [e.agent, e.action, e.output_summary, e.detail])).toEqual([[
       "decider", "triage", "locked settings without an approved value: 0",
-      "0 policy rule(s) read; verbs ADOPT 5, ESCALATE 33; decided by policy 0, operator 0, default 38; no probe run in this pass; no ledger; model: none",
+      "0 policy rule(s) read; verbs ADOPT 5, ESCALATE 33; decided by policy 0, operator 0, default 38; no probe run in this pass; no ledger; model: none (no judge wired)",
     ]]);
   });
 
@@ -790,7 +790,7 @@ describe("the Decider under the MSP's policy (test/fixtures/policy-bundle.json)"
     expect(decide[5].detail).toContain(`production affected (1 failing probe in ${PROBE_RUN}: http shop.example.invalid); approved ${h12(approvedOf(SHOP))}, 1 copy row(s), no valid copy`);
     expect(tracer.events.filter((e) => e.input_summary === "policy").map((e) => [e.output_summary, e.detail])).toEqual([[
       "locked settings without an approved value: 1",
-      `17 policy rule(s) read; verbs ADOPT 2, HOLD 4, ESCALATE 1, ROLLBACK 3, FIX 1; decided by policy 11, operator 0, default 0; probe run(s) ${PROBE_RUN}; ledger: 11 disposition(s) and 6 referent fingerprint(s) written; model: none`,
+      `17 policy rule(s) read; verbs ADOPT 2, HOLD 4, ESCALATE 1, ROLLBACK 3, FIX 1; decided by policy 11, operator 0, default 0; probe run(s) ${PROBE_RUN}; ledger: 11 disposition(s) and 6 referent fingerprint(s) written; model: none (no judge wired)`,
     ]]);
     expect(tracer.events.every((e) => e.model_requested === "none") && tracer.events.every((e) => !(e.action === "query" && e.status === "failed"))).toBe(true);
   });
