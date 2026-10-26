@@ -1,7 +1,9 @@
 // The README's eval table (src/eval/table.ts evalTable, printed by scripts/eval-table.ts) over the committed
-// development results eval/results/2026-10-25T09-25-44Z: the counts it reads off the run files and planted.json, the
-// facts the README's two sentences under the table state, and each README block under "## Evaluation" whose heading
-// names a results directory, which begins with the script's output for that directory byte for byte.
+// development results: eval/results/2026-10-25T23-34-17Z, the run under per-call scope, for the counts it reads off
+// the run files and planted.json and the facts the README's sentences under its table state;
+// eval/results/2026-10-25T09-25-44Z, the run under the shared scope, for the P09 facts its block states; and each
+// README block under "## Evaluation" whose heading names a results directory, which begins with the script's output
+// for that directory byte for byte.
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -9,7 +11,10 @@ import { describe, expect, it } from "vitest";
 import { evalTable, HEAD, readPlanted, readRuns, thousands } from "../src/eval/table.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const DEV = "eval/results/2026-10-25T09-25-44Z";
+/** The development run under per-call scope, started 25 Oct 2026 23:34 UTC: the current result. */
+const DEV = "eval/results/2026-10-25T23-34-17Z";
+/** The development run under Nightshift's shared memory scope, started 25 Oct 2026 09:25 UTC. */
+const SHARED = "eval/results/2026-10-25T09-25-44Z";
 const at = (p: string): string => fileURLToPath(new URL(`../${p}`, import.meta.url));
 const read = (p: string): string => readFileSync(at(p), "utf8").replace(/\r\n/g, "\n");
 
@@ -32,40 +37,45 @@ describe("the eval table over the committed development results", () => {
     expect(HEAD.join(" ")).not.toMatch(/rank|best/i);
   });
 
-  it("C0 to C3 read none of the 9 items labelled no as yes; C4 reads 6 of 9 as yes in every run", () => {
+  it("C0 to C3 read none of the 9 items labelled no as yes; C4 reads 6, 5 and 6 of 9 as yes", () => {
     for (const id of ["C0", "C1", "C2", "C3"]) expect(col(id, "labelled no, read yes"), id).toBe("0/9");
-    expect(col("C4", "labelled no, read yes")).toBe("6/9");
+    expect(col("C4", "labelled no, read yes")).toBe("6/9, 5/9, 6/9");
     expect(col("C0", "agree / judged")).toBe("9/9");
-    expect(col("C1", "agree / judged")).toBe("8/8, 8/8, 9/9");
-    expect(col("C4", "agree / judged")).toBe("3/9");
+    expect(col("C1", "agree / judged")).toBe("9/9");
+    expect(col("C2", "agree / judged")).toBe("0/0, 1/1, 1/1");
+    expect(col("C3", "agree / judged")).toBe("9/9, 8/8, 8/8");
+    expect(col("C4", "agree / judged")).toBe("3/9, 4/9, 3/9");
   });
 
-  it("the planted false claims: Lightning strikes 9, 9 and 8 of 10, Ultra 9 of 10 in every run", () => {
-    expect(col("C2", "planted claims struck")).toBe("9/10, 9/10, 8/10");
-    expect(col("C3", "planted claims struck")).toBe("9/10");
+  it("the planted false claims: Lightning strikes 3, 2 and 2 of 10, Ultra 9, 8 and 8", () => {
+    expect(col("C2", "planted claims struck")).toBe("3/10, 2/10, 2/10");
+    expect(col("C3", "planted claims struck")).toBe("9/10, 8/10, 8/10");
     for (const id of ["C0", "C1", "C4"]) expect(col(id, "planted claims struck"), id).toBe("-");
+    const planted = readPlanted(at(DEV));
+    const invalid = (run: number): number => planted.filter((p) => p.config === "C2" && p.run === run && p.status === "invalid_output").length;
+    expect([1, 2, 3].map(invalid)).toEqual([4, 3, 3]);
   });
 
   it("Lightning's valid checks over checks selected, and the items not judged per run", () => {
-    expect(col("C1", "checks valid / selected")).toBe("58/63, 59/63, 76/77");
+    expect(col("C1", "checks valid / selected")).toBe("76/80, 78/78, 79/80");
     expect(col("C0", "checks valid / selected")).toBe("-");
-    expect(col("C1", "items not judged")).toBe("3, 3, 0");
-    expect(col("C2", "items not judged")).toBe("6, 2, 4");
-    expect(col("C3", "items not judged")).toBe("1, 0, 3");
+    expect(col("C1", "items not judged")).toBe("0");
+    expect(col("C2", "items not judged")).toBe("9, 8, 10");
+    expect(col("C3", "items not judged")).toBe("0, 1, 1");
   });
 
-  it("389 call records, 383 with a verified receipt, 0 substitutions, 0 cache hits, and the medians of tokens_out over answered records", () => {
+  it("390 call records, 390 with a verified receipt, 0 substitutions, 0 cache hits, and the medians of tokens_out over answered records", () => {
     const lead = out.split("\n")[0];
-    expect(lead).toContain("15 configuration runs (3 of each of C0, C1, C2, C3, C4): 389 call records, 383 with a verified receipt, 0 substitutions, 0 cache hits.");
-    expect(lead).toContain("Median output tokens per answered call: Lightning selecting 4,724, Lightning judging 2,953, Ultra judging 615, Ultra alone 358.");
+    expect(lead).toContain("15 configuration runs (3 of each of C0, C1, C2, C3, C4): 390 call records, 390 with a verified receipt, 0 substitutions, 0 cache hits.");
+    expect(lead).toContain("Median output tokens per answered call: Lightning selecting 308.5, Lightning judging 146.5, Ultra judging 1,247, Ultra alone 426.");
     const calls = readRuns(at(DEV)).flatMap((r) => r.calls);
-    expect(calls.length).toBe(389);
-    expect(calls.filter((c) => c.signature_ok === true).length).toBe(383);
-    expect(calls.filter((c) => c.served_model === null).length).toBe(6);
-    expect(col("C2", "calls")).toBe("49, 49, 47");
-    expect(col("C2", "receipts verified")).toBe("45, 48, 46");
-    expect(col("C3", "median output tokens")).toContain("Ultra judging 615");
-    expect(col("C4", "median output tokens")).toBe("Ultra alone 358");
+    expect(calls.length).toBe(390);
+    expect(calls.filter((c) => c.signature_ok === true).length).toBe(390);
+    expect(calls.filter((c) => c.served_model === null).length).toBe(0);
+    expect(col("C2", "calls")).toBe("49, 49, 48");
+    expect(col("C2", "receipts verified")).toBe("49, 49, 48");
+    expect(col("C3", "median output tokens")).toContain("Ultra judging 1,247");
+    expect(col("C4", "median output tokens")).toBe("Ultra alone 426");
     for (const id of ["C0", "C1", "C2", "C3", "C4"]) {
       expect(col(id, "substitutions"), id).toBe("0");
       expect(col(id, "cache hits"), id).toBe("0");
@@ -79,12 +89,25 @@ describe("the eval table over the committed development results", () => {
       expect(new Set(decided.map((s) => s.decided_by)), `${r.config.id} run ${r.run}`).toEqual(new Set(["policy"]));
     }
     expect(col("C0", "findings decided by")).toBe("policy 20");
-    expect(col("C1", "findings decided by")).toBe("policy 15, 16, 20");
+    expect(col("C1", "findings decided by")).toBe("policy 20");
+    expect(col("C2", "findings decided by")).toBe("policy 11, 12, 10");
     expect(col("C4", "findings decided by")).toBe("the model");
   });
 
-  it("both judges leave P09 standing in all six runs with one SELECT, which joins the day's deletes to dns_record, where a deleted record has no row", () => {
-    const p09 = readPlanted(at(DEV)).filter((p) => p.id === "P09");
+  it("Ultra leaves P09 standing in all three runs, P02 in run 2 and P07 in run 3; each P09 SELECT of Ultra's reads dns_record rows observed before the deletion day, and the recording's DNS rows are all of 24 Oct", () => {
+    const ultra = readPlanted(at(DEV)).filter((p) => p.config === "C3");
+    expect([1, 2, 3].map((run) => ultra.filter((p) => p.run === run && p.status !== "refuted").map((p) => p.id))).toEqual([["P09"], ["P02", "P09"], ["P07", "P09"]]);
+    const p09 = ultra.filter((p) => p.id === "P09");
+    expect(p09.map((p) => p.status)).toEqual(["stands", "stands", "stands"]);
+    for (const p of p09) expect(p.sql, `C3 run ${p.run}`).toContain("observed_at < '2026-10-11'");
+    const bundle = JSON.parse(read("test/fixtures/recorded-bundle.json")) as { dns_record: { observed_at: string; run_id: string }[] };
+    expect(bundle.dns_record.length).toBe(58);
+    expect(new Set(bundle.dns_record.map((r) => r.run_id)).size).toBe(1);
+    expect(bundle.dns_record.every((r) => r.observed_at.startsWith("2026-10-24"))).toBe(true);
+  });
+
+  it("under the shared scope, both judges leave P09 standing in all six runs with one SELECT, which joins the day's deletes to dns_record, where a deleted record has no row", () => {
+    const p09 = readPlanted(at(SHARED)).filter((p) => p.id === "P09");
     expect(p09.map((p) => `${p.config}/${p.run}/${p.status}`)).toEqual(["C2/1/stands", "C2/2/stands", "C2/3/stands", "C3/1/stands", "C3/2/stands", "C3/3/stands"]);
     const sql = [...new Set(p09.map((p) => p.sql))];
     expect(sql.length).toBe(1);
@@ -124,7 +147,7 @@ describe("the README carries the table as npm run eval:table prints it", () => {
 
   it("every block names a committed results directory and begins with the script's output for it, byte for byte", { timeout: 60_000 }, () => {
     const found = blocks();
-    expect(found.map((b) => b.stamp)).toContain("2026-10-25T09-25-44Z");
+    expect(found.map((b) => b.stamp)).toEqual(["2026-10-25T23-34-17Z", "2026-10-25T09-25-44Z"]);
     for (const { stamp, body } of found) {
       const r = spawnSync(process.execPath, ["--import", "tsx", "scripts/eval-table.ts", `eval/results/${stamp}`], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
       expect(r.status, r.stderr).toBe(0);
@@ -135,15 +158,18 @@ describe("the README carries the table as npm run eval:table prints it", () => {
     }
   });
 
-  it("the Nemotron section gives the development set's four token medians as the lead line states them", () => {
+  it("the Nemotron section gives each development run's four token medians as its lead line states them", () => {
     const md = read("README.md");
     const start = md.indexOf("\n## Nemotron\n");
     expect(start, "## Nemotron is missing").toBeGreaterThanOrEqual(0);
     const rest = md.slice(start + 1);
     const section = rest.slice(0, rest.indexOf("\n## ")).replace(/\s+/g, " ");
-    const lead = evalTable(at(DEV)).split("\n")[0];
-    const medians = lead.slice(lead.indexOf("answered call: ") + "answered call: ".length, -1).split(", ");
-    expect(medians).toEqual(["Lightning selecting 4,724", "Lightning judging 2,953", "Ultra judging 615", "Ultra alone 358"]);
-    for (const m of medians) expect(section, m).toContain(m);
+    const mediansOf = (dir: string): string[] => {
+      const lead = evalTable(at(dir)).split("\n")[0];
+      return lead.slice(lead.indexOf("answered call: ") + "answered call: ".length, -1).split(", ");
+    };
+    expect(mediansOf(DEV)).toEqual(["Lightning selecting 308.5", "Lightning judging 146.5", "Ultra judging 1,247", "Ultra alone 426"]);
+    expect(mediansOf(SHARED)).toEqual(["Lightning selecting 4,724", "Lightning judging 2,953", "Ultra judging 615", "Ultra alone 358"]);
+    for (const m of [...mediansOf(DEV), ...mediansOf(SHARED)]) expect(section, m).toContain(m);
   });
 });

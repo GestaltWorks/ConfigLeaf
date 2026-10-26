@@ -31,8 +31,12 @@ const tmp = mkdtempSync(path.join(os.tmpdir(), "drift-site-"));
 const WORDS = [...new Set([...config.redactWords, ...config.exportDenyWords])];
 /** ZETARIS_DATASOURCE: DRIFT, the default and .env.example's. */
 const DS = config.zetaris.datasource;
-/** The development run of 25 Oct 2026, the values the Nemotron tab's tests hold to whichever stamp is newest. */
+/**
+ * The two development runs of 25 Oct 2026, the values the Nemotron tab's tests hold to whichever stamp is newest: the
+ * run under Nightshift's shared memory scope (09:25 UTC) and the run under per-call scope (23:34 UTC).
+ */
 const DEV = path.join(ROOT, "eval", "results", "2026-10-25T09-25-44Z");
+const ISOLATED = path.join(ROOT, "eval", "results", "2026-10-25T23-34-17Z");
 /** Element text as the Nemotron tab writes it: &, < and > escaped. */
 const text = (s: string): string => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
@@ -271,7 +275,23 @@ describe("the replay page", () => {
     for (const j of all) if (j.sql) expect(nm).toContain(`<pre>${text(j.sql)}</pre>`);
   });
 
-  it("over the development run of 25 Oct 2026: 389 calls, 383 receipts verified, 0 substitutions; 162 judge SELECTs, 161 re-run equal, the recorded text of 1 does not run", async () => {
+  it("over the development run under per-call scope, 25 Oct 2026 23:34 UTC: 390 calls, 390 receipts verified, 0 substitutions; 134 judge SELECTs, 130 re-run equal, the recorded text of 4 does not run", async () => {
+    const v = built.nemotron.totals.stamp === path.basename(ISOLATED) ? built.nemotron : await nemotronView(ISOLATED);
+    expect(v.totals).toEqual({ stamp: "2026-10-25T23-34-17Z", set: "dev", calls: 390, signatureVerified: 390, cacheHits: 0, substitutions: 0, judgeSelects: 134, rerunEqual: 130, notRunnable: 4 });
+    expect(v.claims.map((c) => c.id)).toEqual(["P01", "P02", "P03", "P04", "P05", "P06", "P07", "P08", "P09", "P10"]);
+    const tried = judgesOf(v).filter((j) => j.rerun !== "not_run");
+    // 50 planted (60 claims, 10 of Lightning's replies invalid output), 54 C3 item judges, 30 C2 item judges
+    expect([tried.filter((j) => j.claim).length, tried.filter((j) => j.item && j.config === "C3").length, tried.filter((j) => j.item && j.config === "C2").length]).toEqual([50, 54, 30]);
+    // the eval's redactor wrote a pseudonym over column operands such as agg.cnt, and the engine reads the pseudonym's
+    // fragment as an unrecognized token; the reason keeps the parts the redactor leaves as they are together, so the
+    // token, which the redactor would read as a key's value after "token: ", stays out and the SQL shows it in place
+    const off = judgesOf(v).filter((j) => j.rerun === "does_not_run");
+    expect(off.map((j) => `${j.config}/${j.run}/${j.claim ?? j.item}`)).toEqual(["C3/1/P09", "C3/1/E24", "C3/3/E17", "C3/3/E24"]);
+    for (const j of off) expect(j).toMatchObject({ status: "stands", rowsRecorded: 0, rowsAtBuild: null, why: "the engine refuses it: sqljs: unrecognized token" });
+    expect(off.find((j) => j.item === "E24")!.sql).toContain("host-10d1f4.cnt != 2");
+  });
+
+  it("over the development run under the shared scope, 25 Oct 2026 09:25 UTC: 389 calls, 383 receipts verified, 0 substitutions; 162 judge SELECTs, 161 re-run equal, the recorded text of 1 does not run", async () => {
     const v = built.nemotron.totals.stamp === path.basename(DEV) ? built.nemotron : await nemotronView(DEV);
     expect(v.totals).toEqual({ stamp: "2026-10-25T09-25-44Z", set: "dev", calls: 389, signatureVerified: 383, cacheHits: 0, substitutions: 0, judgeSelects: 162, rerunEqual: 161, notRunnable: 1 });
     expect(v.claims.map((c) => c.id)).toEqual(["P01", "P02", "P03", "P04", "P05", "P06", "P07", "P08", "P09", "P10"]);

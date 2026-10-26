@@ -1,0 +1,41 @@
+{
+ "tenant": "client-1",
+ "withheld": [
+  {
+   "receipt_id": "rcpt_req_yr3lslwl",
+   "reasons": [
+    "redactor changes free text"
+   ]
+  },
+  {
+   "receipt_id": "rcpt_req_gj3nti5h",
+   "reasons": [
+    "redactor changes free text"
+   ]
+  },
+  {
+   "receipt_id": "rcpt_req_wdkffb4n",
+   "reasons": [
+    "redactor changes free text"
+   ]
+  },
+  {
+   "receipt_id": "rcpt_req_cfbj1d71",
+   "reasons": [
+    "redactor changes free text"
+   ]
+  },
+  {
+   "receipt_id": "rcpt_req_ku4d93ij",
+   "reasons": [
+    "redactor changes free text"
+   ]
+  },
+  {
+   "receipt_id": "rcpt_req_i6nq8pem",
+   "reasons": [
+    "redactor changes free text"
+   ]
+  }
+ ]
+}

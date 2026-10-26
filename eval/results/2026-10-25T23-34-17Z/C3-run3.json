@@ -1,0 +1,2467 @@
+{
+ "config": {
+  "id": "C3",
+  "text": "C1 plus Nemotron 3 Ultra as the falsifier judge",
+  "select": {
+   "kind": "model",
+   "tier": "lightning"
+  },
+  "judge": "ultra",
+  "direct": null
+ },
+ "run": 3,
+ "valid": true,
+ "invalid_reason": null,
+ "started_at": "2026-10-25T23:57:40.836Z",
+ "finished_at": "2026-10-26T00:11:43.530Z",
+ "recording": "test/fixtures/recorded-bundle.json",
+ "tenant": "client-1",
+ "decided_at": "2026-10-24T07:59:23.745Z",
+ "policy": {
+  "file": "policy/hackathon.json",
+  "version": 2,
+  "rows": 15,
+  "inserted": 15,
+  "rules": 15
+ },
+ "split_seed": "eaad75c7a2dca621fbae34c92b20a1658bf9778ab8b0de03cfdfe9b8ed4e94c2",
+ "set": "dev",
+ "counts": {
+  "items": 15,
+  "scored": 11,
+  "not_raised": 4,
+  "with_verdict": 10,
+  "not_judged": 1,
+  "agree": 8,
+  "disagree": 0,
+  "unsure": 2,
+  "false_positives": 0,
+  "labelled_no": 9,
+  "checks_selected": 78,
+  "checks_valid": 76,
+  "checks_invalid": 2,
+  "checks_ran_unmodified": 76,
+  "checks_run": 76,
+  "falsifier_ran": 17,
+  "falsifier_struck": 0,
+  "agreed_strikes": 0,
+  "wrong_strikes": 0,
+  "early_stops": 0,
+  "judge_withheld": 2,
+  "findings_assessed": 20,
+  "findings_with_disposition": 19,
+  "calls": 48,
+  "cache_hits": 0,
+  "substitutions": 0,
+  "memory_injected": 0,
+  "tokens_in": 151635,
+  "tokens_out": 62385,
+  "latency_ms_median": 6548.5
+ },
+ "items": [
+  {
+   "id": "E03",
+   "class": "proxied_without_real_ip",
+   "set": "dev",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-a08488f45ff63140"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-a08488f45ff63140",
+     "class": "proxied_without_real_ip",
+     "summary": "host-27618a.ai is proxied through Cloudflare to ip-6b6bba, and server[host-27618a.ai:443].real_ip in /etc/nginx/conf.d/host-503b27.ai.conf on host-aa516a is absent: the block that serves it sees Cloudflare's addresses as its visitors",
+     "decided_by": "policy",
+     "rule_id": "rule-66810b66396a3b15",
+     "checks": [
+      {
+       "template": "host_in_inventory",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "referent_unchanged",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "other_settings_reference",
+       "holds": false,
+       "rows": 12
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": {
+      "status": "stands",
+      "reason": "the refuting SELECT returned no rows",
+      "sql": "SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM {{t:dns_record}} WHERE name = 'host-27618a.ai' AND type = 'A' AND content = 'ip-6b6bba' AND proxied = 1) OR NOT EXISTS (SELECT 1 FROM {{t:observation}} WHERE object_id = '/etc/nginx/conf.d/host-503b27.ai.conf' AND host = 'host-aa516a' AND setting_path = 'server[host-27618a.ai:443].real_ip' AND value_redacted = 'absent') LIMIT 50",
+      "rows": 0,
+      "receipt_id": "rcpt_req_3ifl5g3s",
+      "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "attempts": 1,
+      "cache_status": "miss",
+      "route": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "route_attempts": 1
+     },
+     "verb": "HOLD",
+     "reason": "rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T07:59:23.745Z; this configuration alone says ESCALATE: 3 of 4 preconditions fail: host_in_inventory, previous_value_recoverable, other_settings_reference; the claim stands: the refuting SELECT returned no rows",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E04",
+   "class": "proxied_without_real_ip",
+   "set": "dev",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-05b163bfda4c027f"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-05b163bfda4c027f",
+     "class": "proxied_without_real_ip",
+     "summary": "host-d39933.cloud is proxied through Cloudflare to ip-6b6bba, and server[host-e49c58.cloud:443].real_ip in /etc/nginx/conf.d/host-e49c58.cloud.conf on host-aa516a is absent: the block that serves it sees Cloudflare's addresses as its visitors",
+     "decided_by": "policy",
+     "rule_id": "rule-66810b66396a3b15",
+     "checks": [
+      {
+       "template": "host_in_inventory",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "change_in_last_backup",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "referent_unchanged",
+       "holds": true,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": {
+      "status": "stands",
+      "reason": "the refuting SELECT returned no rows",
+      "sql": "SELECT 1 AS refute WHERE EXISTS (SELECT 1 FROM {{t:dns_record}} dr WHERE dr.name = 'host-d39933.cloud' AND dr.type = 'A' AND (dr.content != 'ip-6b6bba' OR dr.proxied != 1)) OR EXISTS (SELECT 1 FROM {{t:observation}} o WHERE o.object_id = '/etc/nginx/conf.d/host-e49c58.cloud.conf' AND o.host = 'host-aa516a' AND o.setting_path = 'server[host-e49c58.cloud:443].real_ip' AND (o.value_redacted != 'absent' OR o.value_redacted IS NULL)) OR NOT EXISTS (SELECT 1 FROM {{t:observation}} o WHERE o.object_id = '/etc/nginx/conf.d/host-e49c58.cloud.conf' AND o.host = 'host-aa516a' AND o.setting_path = 'server[host-e49c58.cloud:443].real_ip') LIMIT 50",
+      "rows": 0,
+      "receipt_id": "rcpt_req_i6nq8pem",
+      "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "attempts": 1,
+      "cache_status": "miss",
+      "route": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "route_attempts": 1
+     },
+     "verb": "HOLD",
+     "reason": "rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T07:59:23.745Z; this configuration alone says ESCALATE: 3 of 4 preconditions fail: host_in_inventory, change_in_last_backup, previous_value_recoverable; the claim stands: the refuting SELECT returned no rows",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E07",
+   "class": "proxied_without_real_ip",
+   "set": "dev",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-d5622dbd2bf43e3e"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-d5622dbd2bf43e3e",
+     "class": "proxied_without_real_ip",
+     "summary": "host-22b64a.com is proxied through Cloudflare to ip-6fb86d, and server[host-22b64a.com:443].real_ip in /etc/nginx/sites-available/host-525a57.com on host-4b4dc1 is absent: the block that serves it sees Cloudflare's addresses as its visitors",
+     "decided_by": "policy",
+     "rule_id": "rule-66810b66396a3b15",
+     "checks": [
+      {
+       "template": "host_in_inventory",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "dns_target_in_inventory",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "actor_attributed",
+       "holds": false,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": {
+      "status": "stands",
+      "reason": "the refuting SELECT returned no rows",
+      "sql": "SELECT 'dns_mismatch' AS reason FROM (SELECT 1) WHERE NOT EXISTS (SELECT 1 FROM {{t:dns_record}} WHERE name = 'host-22b64a.com' AND type = 'A' AND content = 'ip-6fb86d' AND proxied = 1) UNION ALL SELECT 'nginx_mismatch' AS reason FROM (SELECT 1) WHERE NOT EXISTS (SELECT 1 FROM {{t:observation}} WHERE object_id = '/etc/nginx/sites-available/host-525a57.com' AND setting_path = 'server[host-22b64a.com:443].real_ip' AND value_redacted = 'absent' AND host = 'host-4b4dc1') LIMIT 50",
+      "rows": 0,
+      "receipt_id": "rcpt_req_v8vc2vor",
+      "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "attempts": 1,
+      "cache_status": "miss",
+      "route": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "route_attempts": 1
+     },
+     "verb": "HOLD",
+     "reason": "rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T07:59:23.745Z; this configuration alone says ESCALATE: 3 of 4 preconditions fail: host_in_inventory, previous_value_recoverable, actor_attributed; the claim stands: the refuting SELECT returned no rows",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E08",
+   "class": "proxied_without_real_ip",
+   "set": "dev",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-2f1b5857f0426b68"
+    ]
+   },
+   "not_raised": null,
+   "verdict": null,
+   "reading": null,
+   "agree": null,
+   "not_judged": "judge invalid_output: no JSON object in the reply",
+   "subjects": [
+    {
+     "finding_id": "fnd-2f1b5857f0426b68",
+     "class": "proxied_without_real_ip",
+     "summary": "host-524b42.quest is proxied through Cloudflare to ip-6fb86d, and server[host-4c795e.quest:443].real_ip in /etc/nginx/sites-available/host-4c795e.quest on host-4b4dc1 is absent: the block that serves it sees Cloudflare's addresses as its visitors",
+     "decided_by": null,
+     "rule_id": null,
+     "checks": [
+      {
+       "template": "host_in_inventory",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "dns_target_in_inventory",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "actor_attributed",
+       "holds": true,
+       "rows": 2
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": true,
+       "rows": 1
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": {
+      "status": "invalid_output",
+      "reason": "no JSON object in the reply",
+      "sql": null,
+      "rows": null,
+      "receipt_id": "rcpt_req_dxkemjw6",
+      "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "attempts": 1,
+      "cache_status": "miss",
+      "route": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "route_attempts": 1
+     },
+     "verb": null,
+     "reason": "",
+     "not_judged": "judge invalid_output: no JSON object in the reply"
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E10",
+   "class": "proxied_without_real_ip",
+   "set": "dev",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-de3c5e8ebdc2d209"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-de3c5e8ebdc2d209",
+     "class": "proxied_without_real_ip",
+     "summary": "host-f324df.com is proxied through Cloudflare to ip-6fb86d, and server[host-f324df.com:443].real_ip in /etc/nginx/sites-available/host-f324df.com on host-4b4dc1 is absent: the block that serves it sees Cloudflare's addresses as its visitors",
+     "decided_by": "policy",
+     "rule_id": "rule-66810b66396a3b15",
+     "checks": [
+      {
+       "template": "host_in_inventory",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "referent_unchanged",
+       "holds": false,
+       "rows": 1
+      },
+      {
+       "template": "backup_recent",
+       "holds": true,
+       "rows": 9
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": {
+      "status": "stands",
+      "reason": "the refuting SELECT returned no rows",
+      "sql": "SELECT 1 FROM (SELECT 1) WHERE NOT EXISTS (SELECT 1 FROM {{t:dns_record}} WHERE name = 'host-f324df.com' AND type = 'A' AND content = 'ip-6fb86d' AND proxied = 1) OR NOT EXISTS (SELECT 1 FROM {{t:observation}} WHERE object_id = '/etc/nginx/sites-available/host-f324df.com' AND host = 'host-4b4dc1' AND setting_path = 'server[host-f324df.com:443].real_ip' AND value_redacted = 'absent') LIMIT 50",
+      "rows": 0,
+      "receipt_id": "rcpt_req_5sdkvkkl",
+      "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "attempts": 1,
+      "cache_status": "miss",
+      "route": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "route_attempts": 1
+     },
+     "verb": "HOLD",
+     "reason": "rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T07:59:23.745Z; this configuration alone says ESCALATE: 3 of 4 preconditions fail: host_in_inventory, previous_value_recoverable, referent_unchanged; the claim stands: the refuting SELECT returned no rows",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E13",
+   "class": "orphan_vhost",
+   "set": "dev",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-51038b9539a0174a"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-51038b9539a0174a",
+     "class": "orphan_vhost",
+     "summary": "host-085e02.com is a server_name in /etc/nginx/sites-available/host-085e02.com on host-4b4dc1 (on disk, not enabled) with no record of that name in the collected zones and no wildcard covering its zone",
+     "decided_by": "policy",
+     "rule_id": "rule-b8d9962485c3ced4",
+     "checks": [
+      {
+       "template": "host_in_inventory",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "other_settings_reference",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      }
+     ],
+     "rejected": [
+      "unknown template: orphan_vhost"
+     ],
+     "selection": {
+      "selected": 4,
+      "valid": 3,
+      "invalid": [
+       "unknown template: orphan_vhost"
+      ],
+      "other": null
+     },
+     "ran_unmodified": 3,
+     "early_stops": 0,
+     "judge": {
+      "withheld": "verdict cannot move: 1 check(s) not checked; a judge cannot supply missing evidence, so the finding escalates whatever it answers"
+     },
+     "verb": "HOLD",
+     "reason": "rule rule-b8d9962485c3ced4 (normal) holds this orphan_vhost finding until 2026-10-27T07:59:23.745Z; this configuration alone says ESCALATE: 1 of 3 preconditions fail: host_in_inventory; 1 check(s) could not be bound from the finding or were refused by the guard",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E16",
+   "class": "dns_change_history",
+   "set": "dev",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-1f04f06d7e8dbf78"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-1f04f06d7e8dbf78",
+     "class": "dns_change",
+     "summary": "record 6dfbfac693d6faabbaa448bbefe8cf3f (host-922448.ai CNAME) has 1 change(s) in the audit log between 2026-03-24T01:24:17.225Z and 2026-03-24T01:24:17.225Z; the last one, at 2026-03-24T01:24:17.225Z, set it to CNAME host-9eff2c.com, proxied false",
+     "decided_by": "policy",
+     "rule_id": "rule-a3f26f34efab2ebb",
+     "checks": [
+      {
+       "template": "host_in_inventory",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "dns_target_in_inventory",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "referent_unchanged",
+       "holds": false,
+       "rows": 1
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": {
+      "status": "stands",
+      "reason": "the refuting SELECT returned no rows",
+      "sql": "SELECT 1 WHERE (SELECT COUNT(*) FROM {{t:audit_event}} WHERE resource_id = '6dfbfac693d6faabbaa448bbefe8cf3f' AND occurred_at = '2026-03-24T01:24:17.225Z') != 1 OR EXISTS (SELECT 1 FROM {{t:audit_event}} WHERE resource_id = '6dfbfac693d6faabbaa448bbefe8cf3f' AND occurred_at = '2026-03-24T01:24:17.225Z' AND (new_value NOT LIKE '%\"content\":\"host-9eff2c.com\"%' OR new_value NOT LIKE '%\"proxied\":false%' OR new_value NOT LIKE '%\"type\":\"CNAME\"%')) LIMIT 50",
+      "rows": 0,
+      "receipt_id": "rcpt_req_c5xyur56",
+      "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "attempts": 1,
+      "cache_status": "miss",
+      "route": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "route_attempts": 1
+     },
+     "verb": "HOLD",
+     "reason": "rule rule-a3f26f34efab2ebb restores a setting to its approved value; this dns_change finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-24T11:59:23.745Z; this configuration alone says ESCALATE: 3 of 4 preconditions fail: host_in_inventory, previous_value_recoverable, referent_unchanged; the claim stands: the refuting SELECT returned no rows",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E17",
+   "class": "dns_change_history",
+   "set": "dev",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-85cae5feed225eeb"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-85cae5feed225eeb",
+     "class": "dns_change",
+     "summary": "record bce1ca2bb7caa2de9b6823d5f6ecd3f2 (host-524b42.quest CNAME) has 3 change(s) in the audit log between 2026-04-16T21:11:15.232Z and 2026-04-16T21:47:29.277Z; the last one, at 2026-04-16T21:47:29.277Z, set it to CNAME host-4c795e.quest, proxied true",
+     "decided_by": "policy",
+     "rule_id": "rule-a3f26f34efab2ebb",
+     "checks": [
+      {
+       "template": "host_in_inventory",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "dns_target_in_inventory",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": true,
+       "rows": 1
+      },
+      {
+       "template": "referent_unchanged",
+       "holds": false,
+       "rows": 3
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": {
+      "status": "stands",
+      "reason": "the refuting SELECT returned no rows",
+      "sql": "SELECT 1 FROM (SELECT (SELECT COUNT(*) FROM {{t:audit_event}} WHERE resource_id = 'bce1ca2bb7caa2de9b6823d5f6ecd3f2' AND occurred_at >= '2026-04-16T21:11:15.232Z' AND occurred_at <= '2026-04-16T21:47:29.277Z') AS cnt, (SELECT new_value FROM {{t:audit_event}} WHERE resource_id = 'bce1ca2bb7caa2de9b6823d5f6ecd3f2' AND occurred_at = (SELECT MAX(occurred_at) FROM {{t:audit_event}} WHERE resource_id = 'bce1ca2bb7caa2de9b6823d5f6ecd3f2' AND occurred_at >= '2026-04-16T21:11:15.232Z' AND occurred_at <= '2026-04-16T21:47:29.277Z') LIMIT 1) AS last_val) AS sub WHERE host-63ab14.cnt != 3 OR sub.last_val IS NULL OR sub.last_val NOT LIKE '%\"content\":\"host-4c795e.quest\"%' OR sub.last_val NOT LIKE '%\"proxied\":true%' OR sub.last_val NOT LIKE '%\"type\":\"CNAME\"%'",
+      "rows": 0,
+      "receipt_id": "rcpt_req_i7zz8q3c",
+      "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "attempts": 1,
+      "cache_status": "miss",
+      "route": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "route_attempts": 1
+     },
+     "verb": "HOLD",
+     "reason": "rule rule-a3f26f34efab2ebb restores a setting to its approved value; this dns_change finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-24T11:59:23.745Z; this configuration alone says ESCALATE: 2 of 4 preconditions fail: host_in_inventory, referent_unchanged; the claim stands: the refuting SELECT returned no rows",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E24",
+   "class": "dns_change_history",
+   "set": "dev",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-58cbe55bf0d1075e"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-58cbe55bf0d1075e",
+     "class": "dns_change",
+     "summary": "record df52e7a315f8b41b446c5eeecf7ff6cb (*.host-17a03d.info A) has 2 change(s) in the audit log between 2026-08-12T20:24:40.084Z and 2026-08-12T20:46:31.204Z; the last one, at 2026-08-12T20:46:31.204Z, set it to A ip-6fb86d, proxied false",
+     "decided_by": "policy",
+     "rule_id": "rule-a3f26f34efab2ebb",
+     "checks": [
+      {
+       "template": "host_in_inventory",
+       "holds": true,
+       "rows": 1
+      },
+      {
+       "template": "dns_target_in_inventory",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": true,
+       "rows": 1
+      },
+      {
+       "template": "referent_unchanged",
+       "holds": false,
+       "rows": 2
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": {
+      "status": "stands",
+      "reason": "the refuting SELECT returned no rows",
+      "sql": "SELECT 1 FROM (SELECT COUNT(*) AS cnt, MAX(occurred_at) AS last_at, (SELECT new_value FROM {{t:audit_event}} WHERE resource_id = 'df52e7a315f8b41b446c5eeecf7ff6cb' AND occurred_at = '2026-08-12T20:46:31.204Z' LIMIT 1) AS last_val FROM {{t:audit_event}} WHERE resource_id = 'df52e7a315f8b41b446c5eeecf7ff6cb' AND occurred_at >= '2026-08-12T20:24:40.084Z' AND occurred_at <= '2026-08-12T20:46:31.204Z') agg WHERE host-10d1f4.cnt != 2 OR agg.last_at != '2026-08-12T20:46:31.204Z' OR agg.last_val IS NULL OR agg.last_val NOT LIKE '%\"content\":\"ip-6fb86d\"%' OR agg.last_val NOT LIKE '%\"proxied\":false%'",
+      "rows": 0,
+      "receipt_id": "rcpt_req_vd46lz0r",
+      "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "attempts": 1,
+      "cache_status": "miss",
+      "route": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "route_attempts": 1
+     },
+     "verb": "HOLD",
+     "reason": "rule rule-a3f26f34efab2ebb restores a setting to its approved value; this dns_change finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-24T11:59:23.745Z; this configuration alone says ESCALATE: 1 of 4 preconditions fail: referent_unchanged; the claim stands: the refuting SELECT returned no rows",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E30",
+   "class": "drift_vs_approved",
+   "set": "dev",
+   "label": "no",
+   "kind": "pass",
+   "matched": null,
+   "not_raised": "the recording raises no drift_vs_approved finding",
+   "verdict": null,
+   "reading": null,
+   "agree": null,
+   "not_judged": null,
+   "subjects": [],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E31",
+   "class": "drift_vs_approved",
+   "set": "dev",
+   "label": "no",
+   "kind": "pass",
+   "matched": null,
+   "not_raised": "the recording raises no drift_vs_approved finding",
+   "verdict": null,
+   "reading": null,
+   "agree": null,
+   "not_judged": null,
+   "subjects": [],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E32",
+   "class": "drift_vs_approved",
+   "set": "dev",
+   "label": "no",
+   "kind": "pass",
+   "matched": null,
+   "not_raised": "the recording raises no drift_vs_approved finding",
+   "verdict": null,
+   "reading": null,
+   "agree": null,
+   "not_judged": null,
+   "subjects": [],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E34",
+   "class": "drift_vs_approved",
+   "set": "dev",
+   "label": "no",
+   "kind": "pass",
+   "matched": null,
+   "not_raised": "the recording raises no drift_vs_approved finding",
+   "verdict": null,
+   "reading": null,
+   "agree": null,
+   "not_judged": null,
+   "subjects": [],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E37",
+   "class": "changed_since_backup",
+   "set": "dev",
+   "label": "unsure",
+   "kind": "pass",
+   "matched": {
+    "via": "refs",
+    "findings": [
+     "fnd-5659bc0009e919cd",
+     "fnd-716490e540d42790",
+     "fnd-d5f5c501592e697d",
+     "fnd-e10b50c7948c5848",
+     "fnd-ea23604748d61d14",
+     "fnd-886be3c070350b34"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": null,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-5659bc0009e919cd",
+     "class": "changed_since_backup",
+     "summary": "/etc/letsencrypt/renewal/host-18efce.ai.conf on host-aa516a is absent from the host's newest backup (snap-d53a5d4c13322e31, taken 2026-10-24T03:40:41.921Z): a restore from that backup holds no copy of this file",
+     "decided_by": "policy",
+     "rule_id": "rule-b8d9962485c3ced4",
+     "checks": [
+      {
+       "template": "change_in_last_backup",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "restore_would_regress",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "backup_recent",
+       "holds": true,
+       "rows": 1
+      },
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": {
+      "status": "stands",
+      "reason": "the refuting SELECT returned no rows",
+      "sql": "SELECT 1 FROM {{t:backup_item}} WHERE snapshot_id = 'snap-d53a5d4c13322e31' AND object_id = '/etc/letsencrypt/renewal/host-18efce.ai.conf' LIMIT 1",
+      "rows": 0,
+      "receipt_id": "rcpt_req_abt4u8if",
+      "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "attempts": 1,
+      "cache_status": "miss",
+      "route": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "route_attempts": 1
+     },
+     "verb": "HOLD",
+     "reason": "rule rule-b8d9962485c3ced4 (normal) holds this changed_since_backup finding until 2026-10-27T07:59:23.745Z; this configuration alone says ESCALATE: 1 of 4 preconditions fail: change_in_last_backup; the claim stands: the refuting SELECT returned no rows",
+     "not_judged": null
+    },
+    {
+     "finding_id": "fnd-716490e540d42790",
+     "class": "changed_since_backup",
+     "summary": "/etc/letsencrypt/renewal/host-492568.ai.conf on host-aa516a is absent from the host's newest backup (snap-d53a5d4c13322e31, taken 2026-10-24T03:40:41.921Z): a restore from that backup holds no copy of this file",
+     "decided_by": "policy",
+     "rule_id": "rule-b8d9962485c3ced4",
+     "checks": [
+      {
+       "template": "change_in_last_backup",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "restore_would_regress",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "actor_attributed",
+       "holds": false,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": {
+      "status": "stands",
+      "reason": "the refuting SELECT returned no rows",
+      "sql": "SELECT 1 FROM {{t:backup_item}} WHERE snapshot_id = 'snap-d53a5d4c13322e31' AND object_id = '/etc/letsencrypt/renewal/host-492568.ai.conf' LIMIT 1",
+      "rows": 0,
+      "receipt_id": "rcpt_req_wi459m7c",
+      "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "attempts": 1,
+      "cache_status": "miss",
+      "route": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "route_attempts": 1
+     },
+     "verb": "HOLD",
+     "reason": "rule rule-b8d9962485c3ced4 (normal) holds this changed_since_backup finding until 2026-10-27T07:59:23.745Z; this configuration alone says ESCALATE: 2 of 4 preconditions fail: change_in_last_backup, actor_attributed; the claim stands: the refuting SELECT returned no rows",
+     "not_judged": null
+    },
+    {
+     "finding_id": "fnd-d5f5c501592e697d",
+     "class": "changed_since_backup",
+     "summary": "/etc/letsencrypt/renewal/host-503b27.ai.conf on host-aa516a is absent from the host's newest backup (snap-d53a5d4c13322e31, taken 2026-10-24T03:40:41.921Z): a restore from that backup holds no copy of this file",
+     "decided_by": "policy",
+     "rule_id": "rule-b8d9962485c3ced4",
+     "checks": [
+      {
+       "template": "change_in_last_backup",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "restore_would_regress",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 3,
+      "valid": 3,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 3,
+     "early_stops": 0,
+     "judge": {
+      "status": "stands",
+      "reason": "the refuting SELECT returned no rows",
+      "sql": "SELECT 1 FROM {{t:backup_item}} WHERE snapshot_id = 'snap-d53a5d4c13322e31' AND object_id = '/etc/letsencrypt/renewal/host-503b27.ai.conf' LIMIT 1",
+      "rows": 0,
+      "receipt_id": "rcpt_req_muwvtwcq",
+      "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "attempts": 1,
+      "cache_status": "miss",
+      "route": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "route_attempts": 1
+     },
+     "verb": "HOLD",
+     "reason": "rule rule-b8d9962485c3ced4 (normal) holds this changed_since_backup finding until 2026-10-27T07:59:23.745Z; this configuration alone says ESCALATE: 1 of 3 preconditions fail: change_in_last_backup; the claim stands: the refuting SELECT returned no rows",
+     "not_judged": null
+    },
+    {
+     "finding_id": "fnd-e10b50c7948c5848",
+     "class": "changed_since_backup",
+     "summary": "/etc/letsencrypt/renewal/host-a00d2f.ai.conf on host-aa516a is absent from the host's newest backup (snap-d53a5d4c13322e31, taken 2026-10-24T03:40:41.921Z): a restore from that backup holds no copy of this file",
+     "decided_by": "policy",
+     "rule_id": "rule-b8d9962485c3ced4",
+     "checks": [
+      {
+       "template": "change_in_last_backup",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "restore_would_regress",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      }
+     ],
+     "rejected": [
+      "unknown template: other"
+     ],
+     "selection": {
+      "selected": 4,
+      "valid": 3,
+      "invalid": [
+       "unknown template: other"
+      ],
+      "other": null
+     },
+     "ran_unmodified": 3,
+     "early_stops": 0,
+     "judge": {
+      "withheld": "verdict cannot move: 1 check(s) not checked; a judge cannot supply missing evidence, so the finding escalates whatever it answers"
+     },
+     "verb": "HOLD",
+     "reason": "rule rule-b8d9962485c3ced4 (normal) holds this changed_since_backup finding until 2026-10-27T07:59:23.745Z; this configuration alone says ESCALATE: 1 of 3 preconditions fail: change_in_last_backup; 1 check(s) could not be bound from the finding or were refused by the guard",
+     "not_judged": null
+    },
+    {
+     "finding_id": "fnd-ea23604748d61d14",
+     "class": "changed_since_backup",
+     "summary": "/etc/letsencrypt/renewal/host-c907ae.ai.conf on host-aa516a is absent from the host's newest backup (snap-d53a5d4c13322e31, taken 2026-10-24T03:40:41.921Z): a restore from that backup holds no copy of this file",
+     "decided_by": "policy",
+     "rule_id": "rule-b8d9962485c3ced4",
+     "checks": [
+      {
+       "template": "host_in_inventory",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "change_in_last_backup",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "backup_recent",
+       "holds": true,
+       "rows": 1
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 3,
+      "valid": 3,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 3,
+     "early_stops": 0,
+     "judge": {
+      "status": "stands",
+      "reason": "the refuting SELECT returned no rows",
+      "sql": "SELECT 1 FROM {{t:backup_item}} WHERE snapshot_id = 'snap-d53a5d4c13322e31' AND object_id = '/etc/letsencrypt/renewal/host-c907ae.ai.conf' LIMIT 50",
+      "rows": 0,
+      "receipt_id": "rcpt_req_l61mem28",
+      "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "attempts": 1,
+      "cache_status": "miss",
+      "route": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "route_attempts": 1
+     },
+     "verb": "HOLD",
+     "reason": "rule rule-b8d9962485c3ced4 (normal) holds this changed_since_backup finding until 2026-10-27T07:59:23.745Z; this configuration alone says ESCALATE: 2 of 3 preconditions fail: host_in_inventory, change_in_last_backup; the claim stands: the refuting SELECT returned no rows",
+     "not_judged": null
+    },
+    {
+     "finding_id": "fnd-886be3c070350b34",
+     "class": "changed_since_backup",
+     "summary": "/etc/letsencrypt/renewal/host-c9c1ae.club.conf on host-aa516a is absent from the host's newest backup (snap-d53a5d4c13322e31, taken 2026-10-24T03:40:41.921Z): a restore from that backup holds no copy of this file",
+     "decided_by": "policy",
+     "rule_id": "rule-b8d9962485c3ced4",
+     "checks": [
+      {
+       "template": "change_in_last_backup",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "restore_would_regress",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "actor_attributed",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": {
+      "status": "stands",
+      "reason": "the refuting SELECT returned no rows",
+      "sql": "SELECT 1 FROM {{t:backup_item}} bi JOIN {{t:backup_snapshot}} bs ON bi.snapshot_id = bs.snapshot_id WHERE bi.snapshot_id = 'snap-d53a5d4c13322e31' AND bi.object_id = '/etc/letsencrypt/renewal/host-c9c1ae.club.conf' AND bs.host = 'host-aa516a' LIMIT 1",
+      "rows": 0,
+      "receipt_id": "rcpt_req_9831buo9",
+      "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "attempts": 1,
+      "cache_status": "miss",
+      "route": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "route_attempts": 1
+     },
+     "verb": "HOLD",
+     "reason": "rule rule-b8d9962485c3ced4 (normal) holds this changed_since_backup finding until 2026-10-27T07:59:23.745Z; this configuration alone says ESCALATE: 2 of 4 preconditions fail: change_in_last_backup, actor_attributed; the claim stands: the refuting SELECT returned no rows",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E38",
+   "class": "changed_since_backup",
+   "set": "dev",
+   "label": "unsure",
+   "kind": "pass",
+   "matched": {
+    "via": "refs",
+    "findings": [
+     "fnd-4fb13976860818af",
+     "fnd-6d51e4d2fd3fd39f",
+     "fnd-5448095a827b5bc6",
+     "fnd-be865fadc4461041",
+     "fnd-95ded60ec0aea326"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": null,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-4fb13976860818af",
+     "class": "changed_since_backup",
+     "summary": "/etc/letsencrypt/renewal/host-17a03d.info.conf on host-4b4dc1 is absent from the host's newest backup (snap-4f73ac1594ec4e7c, taken 2026-10-24T03:40:03.985Z): a restore from that backup holds no copy of this file",
+     "decided_by": "policy",
+     "rule_id": "rule-b8d9962485c3ced4",
+     "checks": [
+      {
+       "template": "change_in_last_backup",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "restore_would_regress",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "actor_attributed",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": {
+      "status": "stands",
+      "reason": "the refuting SELECT returned no rows",
+      "sql": "SELECT 1 FROM {{t:backup_item}} bi JOIN {{t:backup_snapshot}} bs ON bi.snapshot_id = bs.snapshot_id WHERE bi.snapshot_id = 'snap-4f73ac1594ec4e7c' AND bi.object_id = '/etc/letsencrypt/renewal/host-17a03d.info.conf' AND bs.host = 'host-4b4dc1' LIMIT 50",
+      "rows": 0,
+      "receipt_id": "rcpt_req_wye9g0fy",
+      "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "attempts": 1,
+      "cache_status": "miss",
+      "route": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "route_attempts": 1
+     },
+     "verb": "HOLD",
+     "reason": "rule rule-b8d9962485c3ced4 (normal) holds this changed_since_backup finding until 2026-10-27T07:59:23.745Z; this configuration alone says ESCALATE: 2 of 4 preconditions fail: change_in_last_backup, actor_attributed; the claim stands: the refuting SELECT returned no rows",
+     "not_judged": null
+    },
+    {
+     "finding_id": "fnd-6d51e4d2fd3fd39f",
+     "class": "changed_since_backup",
+     "summary": "/etc/letsencrypt/renewal/host-4c795e.quest.conf on host-4b4dc1 is absent from the host's newest backup (snap-4f73ac1594ec4e7c, taken 2026-10-24T03:40:03.985Z): a restore from that backup holds no copy of this file",
+     "decided_by": "policy",
+     "rule_id": "rule-b8d9962485c3ced4",
+     "checks": [
+      {
+       "template": "change_in_last_backup",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "restore_would_regress",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "actor_attributed",
+       "holds": false,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": {
+      "status": "stands",
+      "reason": "the refuting SELECT returned no rows",
+      "sql": "SELECT 1 FROM {{t:backup_item}} WHERE snapshot_id = 'snap-4f73ac1594ec4e7c' AND object_id = '/etc/letsencrypt/renewal/host-4c795e.quest.conf' LIMIT 50",
+      "rows": 0,
+      "receipt_id": "rcpt_req_dzkk3v29",
+      "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "attempts": 1,
+      "cache_status": "miss",
+      "route": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "route_attempts": 1
+     },
+     "verb": "HOLD",
+     "reason": "rule rule-b8d9962485c3ced4 (normal) holds this changed_since_backup finding until 2026-10-27T07:59:23.745Z; this configuration alone says ESCALATE: 2 of 4 preconditions fail: change_in_last_backup, actor_attributed; the claim stands: the refuting SELECT returned no rows",
+     "not_judged": null
+    },
+    {
+     "finding_id": "fnd-5448095a827b5bc6",
+     "class": "changed_since_backup",
+     "summary": "/etc/letsencrypt/renewal/host-525a57.com.conf on host-4b4dc1 is absent from the host's newest backup (snap-4f73ac1594ec4e7c, taken 2026-10-24T03:40:03.985Z): a restore from that backup holds no copy of this file",
+     "decided_by": "policy",
+     "rule_id": "rule-b8d9962485c3ced4",
+     "checks": [
+      {
+       "template": "change_in_last_backup",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "restore_would_regress",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "actor_attributed",
+       "holds": false,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": {
+      "status": "stands",
+      "reason": "the refuting SELECT returned no rows",
+      "sql": "SELECT 1 FROM {{t:backup_item}} WHERE snapshot_id = 'snap-4f73ac1594ec4e7c' AND object_id = '/etc/letsencrypt/renewal/host-525a57.com.conf' AND setting_path = 'file' LIMIT 50",
+      "rows": 0,
+      "receipt_id": "rcpt_req_ko2pjwpt",
+      "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "attempts": 1,
+      "cache_status": "miss",
+      "route": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "route_attempts": 1
+     },
+     "verb": "HOLD",
+     "reason": "rule rule-b8d9962485c3ced4 (normal) holds this changed_since_backup finding until 2026-10-27T07:59:23.745Z; this configuration alone says ESCALATE: 2 of 4 preconditions fail: change_in_last_backup, actor_attributed; the claim stands: the refuting SELECT returned no rows",
+     "not_judged": null
+    },
+    {
+     "finding_id": "fnd-be865fadc4461041",
+     "class": "changed_since_backup",
+     "summary": "/etc/letsencrypt/renewal/host-9ac4f1.com.conf on host-4b4dc1 is absent from the host's newest backup (snap-4f73ac1594ec4e7c, taken 2026-10-24T03:40:03.985Z): a restore from that backup holds no copy of this file",
+     "decided_by": "policy",
+     "rule_id": "rule-b8d9962485c3ced4",
+     "checks": [
+      {
+       "template": "change_in_last_backup",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "restore_would_regress",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "other_settings_reference",
+       "holds": true,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": {
+      "status": "stands",
+      "reason": "the refuting SELECT returned no rows",
+      "sql": "SELECT 1 FROM {{t:backup_item}} WHERE snapshot_id = 'snap-4f73ac1594ec4e7c' AND object_id = '/etc/letsencrypt/renewal/host-9ac4f1.com.conf' LIMIT 1",
+      "rows": 0,
+      "receipt_id": "rcpt_req_q45qflmx",
+      "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "attempts": 1,
+      "cache_status": "miss",
+      "route": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "route_attempts": 1
+     },
+     "verb": "HOLD",
+     "reason": "rule rule-b8d9962485c3ced4 (normal) holds this changed_since_backup finding until 2026-10-27T07:59:23.745Z; this configuration alone says ESCALATE: 1 of 4 preconditions fail: change_in_last_backup; the claim stands: the refuting SELECT returned no rows",
+     "not_judged": null
+    },
+    {
+     "finding_id": "fnd-95ded60ec0aea326",
+     "class": "changed_since_backup",
+     "summary": "/etc/letsencrypt/renewal/host-f324df.com.conf on host-4b4dc1 is absent from the host's newest backup (snap-4f73ac1594ec4e7c, taken 2026-10-24T03:40:03.985Z): a restore from that backup holds no copy of this file",
+     "decided_by": "policy",
+     "rule_id": "rule-b8d9962485c3ced4",
+     "checks": [
+      {
+       "template": "change_in_last_backup",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "restore_would_regress",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "actor_attributed",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": {
+      "status": "stands",
+      "reason": "the refuting SELECT returned no rows",
+      "sql": "SELECT 1 FROM {{t:backup_item}} WHERE snapshot_id = 'snap-4f73ac1594ec4e7c' AND object_id = '/etc/letsencrypt/renewal/host-f324df.com.conf' AND setting_path = 'file' LIMIT 50",
+      "rows": 0,
+      "receipt_id": "rcpt_req_8kcwn2ro",
+      "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "attempts": 1,
+      "cache_status": "miss",
+      "route": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+      "route_attempts": 1
+     },
+     "verb": "HOLD",
+     "reason": "rule rule-b8d9962485c3ced4 (normal) holds this changed_since_backup finding until 2026-10-27T07:59:23.745Z; this configuration alone says ESCALATE: 2 of 4 preconditions fail: change_in_last_backup, actor_attributed; the claim stands: the refuting SELECT returned no rows",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  }
+ ],
+ "calls": [
+  {
+   "kind": "select",
+   "item": "E03",
+   "finding": "fnd-a08488f45ff63140",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "openrouter/nvidia/nemotron-3.5-lightning",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3.5-lightning",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_9fqw2bzd",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 1625,
+   "tokens_in": 1714,
+   "tokens_out": 324,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_9fqw2bzd openrouter/nvidia/nemotron-3.5-lightning (lightning), signature verified, no memory injected, custody holds",
+   "scope": "dev-2026-10-25T23-34-17Z-304",
+   "memory_injected": 0
+  },
+  {
+   "kind": "judge",
+   "item": "E03",
+   "finding": "fnd-a08488f45ff63140",
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_3ifl5g3s",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 12003,
+   "tokens_in": 4148,
+   "tokens_out": 1533,
+   "gate": "ok",
+   "reason": "the refuting SELECT returned no rows",
+   "scope": "dev-2026-10-25T23-34-17Z-305",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E04",
+   "finding": "fnd-05b163bfda4c027f",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "openrouter/nvidia/nemotron-3.5-lightning",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3.5-lightning",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_6hvxmq4x",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 1562,
+   "tokens_in": 1702,
+   "tokens_out": 358,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_6hvxmq4x openrouter/nvidia/nemotron-3.5-lightning (lightning), signature verified, no memory injected, custody holds",
+   "scope": "dev-2026-10-25T23-34-17Z-306",
+   "memory_injected": 0
+  },
+  {
+   "kind": "judge",
+   "item": "E04",
+   "finding": "fnd-05b163bfda4c027f",
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_i6nq8pem",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 49361,
+   "tokens_in": 4138,
+   "tokens_out": 3942,
+   "gate": "ok",
+   "reason": "the refuting SELECT returned no rows",
+   "scope": "dev-2026-10-25T23-34-17Z-307",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E07",
+   "finding": "fnd-d5622dbd2bf43e3e",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "openrouter/nvidia/nemotron-3.5-lightning",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3.5-lightning",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_iekwvrbi",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 1258,
+   "tokens_in": 1712,
+   "tokens_out": 311,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_iekwvrbi openrouter/nvidia/nemotron-3.5-lightning (lightning), signature verified, no memory injected, custody holds",
+   "scope": "dev-2026-10-25T23-34-17Z-308",
+   "memory_injected": 0
+  },
+  {
+   "kind": "judge",
+   "item": "E07",
+   "finding": "fnd-d5622dbd2bf43e3e",
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_v8vc2vor",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 4437,
+   "tokens_in": 4146,
+   "tokens_out": 823,
+   "gate": "ok",
+   "reason": "the refuting SELECT returned no rows",
+   "scope": "dev-2026-10-25T23-34-17Z-309",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E08",
+   "finding": "fnd-2f1b5857f0426b68",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "openrouter/nvidia/nemotron-3.5-lightning",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3.5-lightning",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_rf8fxyss",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 2107,
+   "tokens_in": 1714,
+   "tokens_out": 307,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_rf8fxyss openrouter/nvidia/nemotron-3.5-lightning (lightning), signature verified, no memory injected, custody holds",
+   "scope": "dev-2026-10-25T23-34-17Z-310",
+   "memory_injected": 0
+  },
+  {
+   "kind": "judge",
+   "item": "E08",
+   "finding": "fnd-2f1b5857f0426b68",
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_dxkemjw6",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 72824,
+   "tokens_in": 4567,
+   "tokens_out": 8192,
+   "gate": "ok",
+   "reason": "no JSON object in the reply",
+   "scope": "dev-2026-10-25T23-34-17Z-311",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E10",
+   "finding": "fnd-de3c5e8ebdc2d209",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "openrouter/nvidia/nemotron-3.5-lightning",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3.5-lightning",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_omv1hwnj",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 1346,
+   "tokens_in": 1698,
+   "tokens_out": 274,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_omv1hwnj openrouter/nvidia/nemotron-3.5-lightning (lightning), signature verified, no memory injected, custody holds",
+   "scope": "dev-2026-10-25T23-34-17Z-312",
+   "memory_injected": 0
+  },
+  {
+   "kind": "judge",
+   "item": "E10",
+   "finding": "fnd-de3c5e8ebdc2d209",
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_5sdkvkkl",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 10914,
+   "tokens_in": 4271,
+   "tokens_out": 753,
+   "gate": "ok",
+   "reason": "the refuting SELECT returned no rows",
+   "scope": "dev-2026-10-25T23-34-17Z-313",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E13",
+   "finding": "fnd-51038b9539a0174a",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "openrouter/nvidia/nemotron-3.5-lightning",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3.5-lightning",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_duiua2ow",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 1011,
+   "tokens_in": 1664,
+   "tokens_out": 261,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_duiua2ow openrouter/nvidia/nemotron-3.5-lightning (lightning), signature verified, no memory injected, custody holds",
+   "scope": "dev-2026-10-25T23-34-17Z-314",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E16",
+   "finding": "fnd-1f04f06d7e8dbf78",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "openrouter/nvidia/nemotron-3.5-lightning",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3.5-lightning",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_laemt7jl",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 2030,
+   "tokens_in": 1744,
+   "tokens_out": 291,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_laemt7jl openrouter/nvidia/nemotron-3.5-lightning (lightning), signature verified, no memory injected, custody holds",
+   "scope": "dev-2026-10-25T23-34-17Z-315",
+   "memory_injected": 0
+  },
+  {
+   "kind": "judge",
+   "item": "E16",
+   "finding": "fnd-1f04f06d7e8dbf78",
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_c5xyur56",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 64246,
+   "tokens_in": 4174,
+   "tokens_out": 3056,
+   "gate": "ok",
+   "reason": "the refuting SELECT returned no rows",
+   "scope": "dev-2026-10-25T23-34-17Z-316",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E17",
+   "finding": "fnd-85cae5feed225eeb",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "openrouter/nvidia/nemotron-3.5-lightning",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3.5-lightning",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_c6i5um10",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 1638,
+   "tokens_in": 1763,
+   "tokens_out": 286,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_c6i5um10 openrouter/nvidia/nemotron-3.5-lightning (lightning), signature verified, no memory injected, custody holds",
+   "scope": "dev-2026-10-25T23-34-17Z-317",
+   "memory_injected": 0
+  },
+  {
+   "kind": "judge",
+   "item": "E17",
+   "finding": "fnd-85cae5feed225eeb",
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_i7zz8q3c",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 44482,
+   "tokens_in": 4468,
+   "tokens_out": 3824,
+   "gate": "ok",
+   "reason": "the refuting SELECT returned no rows",
+   "scope": "dev-2026-10-25T23-34-17Z-318",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E24",
+   "finding": "fnd-58cbe55bf0d1075e",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "openrouter/nvidia/nemotron-3.5-lightning",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3.5-lightning",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_rzfmq0d6",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 1328,
+   "tokens_in": 1760,
+   "tokens_out": 271,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_rzfmq0d6 openrouter/nvidia/nemotron-3.5-lightning (lightning), signature verified, no memory injected, custody holds",
+   "scope": "dev-2026-10-25T23-34-17Z-319",
+   "memory_injected": 0
+  },
+  {
+   "kind": "judge",
+   "item": "E24",
+   "finding": "fnd-58cbe55bf0d1075e",
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_vd46lz0r",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 87017,
+   "tokens_in": 4315,
+   "tokens_out": 5750,
+   "gate": "ok",
+   "reason": "the refuting SELECT returned no rows",
+   "scope": "dev-2026-10-25T23-34-17Z-320",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E37",
+   "finding": "fnd-5659bc0009e919cd",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "openrouter/nvidia/nemotron-3.5-lightning",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3.5-lightning",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_eyx1ct5g",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 3433,
+   "tokens_in": 1642,
+   "tokens_out": 285,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_eyx1ct5g openrouter/nvidia/nemotron-3.5-lightning (lightning), signature verified, no memory injected, custody holds",
+   "scope": "dev-2026-10-25T23-34-17Z-321",
+   "memory_injected": 0
+  },
+  {
+   "kind": "judge",
+   "item": "E37",
+   "finding": "fnd-5659bc0009e919cd",
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_abt4u8if",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 5886,
+   "tokens_in": 4237,
+   "tokens_out": 728,
+   "gate": "ok",
+   "reason": "the refuting SELECT returned no rows",
+   "scope": "dev-2026-10-25T23-34-17Z-322",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E37",
+   "finding": "fnd-716490e540d42790",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "openrouter/nvidia/nemotron-3.5-lightning",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3.5-lightning",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_5ggvs0od",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 1535,
+   "tokens_in": 1646,
+   "tokens_out": 330,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_5ggvs0od openrouter/nvidia/nemotron-3.5-lightning (lightning), signature verified, no memory injected, custody holds",
+   "scope": "dev-2026-10-25T23-34-17Z-323",
+   "memory_injected": 0
+  },
+  {
+   "kind": "judge",
+   "item": "E37",
+   "finding": "fnd-716490e540d42790",
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_wi459m7c",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 7416,
+   "tokens_in": 4252,
+   "tokens_out": 973,
+   "gate": "ok",
+   "reason": "the refuting SELECT returned no rows",
+   "scope": "dev-2026-10-25T23-34-17Z-324",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E37",
+   "finding": "fnd-d5f5c501592e697d",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "openrouter/nvidia/nemotron-3.5-lightning",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3.5-lightning",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_ag4g6jnq",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 1372,
+   "tokens_in": 1653,
+   "tokens_out": 241,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_ag4g6jnq openrouter/nvidia/nemotron-3.5-lightning (lightning), signature verified, no memory injected, custody holds",
+   "scope": "dev-2026-10-25T23-34-17Z-325",
+   "memory_injected": 0
+  },
+  {
+   "kind": "judge",
+   "item": "E37",
+   "finding": "fnd-d5f5c501592e697d",
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_muwvtwcq",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 16851,
+   "tokens_in": 4259,
+   "tokens_out": 956,
+   "gate": "ok",
+   "reason": "the refuting SELECT returned no rows",
+   "scope": "dev-2026-10-25T23-34-17Z-326",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E37",
+   "finding": "fnd-e10b50c7948c5848",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "openrouter/nvidia/nemotron-3.5-lightning",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3.5-lightning",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_f6momeay",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 1459,
+   "tokens_in": 1646,
+   "tokens_out": 251,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_f6momeay openrouter/nvidia/nemotron-3.5-lightning (lightning), signature verified, no memory injected, custody holds",
+   "scope": "dev-2026-10-25T23-34-17Z-327",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E37",
+   "finding": "fnd-ea23604748d61d14",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "openrouter/nvidia/nemotron-3.5-lightning",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3.5-lightning",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_6xb8rrab",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 1974,
+   "tokens_in": 1650,
+   "tokens_out": 270,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_6xb8rrab openrouter/nvidia/nemotron-3.5-lightning (lightning), signature verified, no memory injected, custody holds",
+   "scope": "dev-2026-10-25T23-34-17Z-328",
+   "memory_injected": 0
+  },
+  {
+   "kind": "judge",
+   "item": "E37",
+   "finding": "fnd-ea23604748d61d14",
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_l61mem28",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 6859,
+   "tokens_in": 4246,
+   "tokens_out": 739,
+   "gate": "ok",
+   "reason": "the refuting SELECT returned no rows",
+   "scope": "dev-2026-10-25T23-34-17Z-329",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E37",
+   "finding": "fnd-886be3c070350b34",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "openrouter/nvidia/nemotron-3.5-lightning",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3.5-lightning",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_7094btmd",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 1338,
+   "tokens_in": 1646,
+   "tokens_out": 321,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_7094btmd openrouter/nvidia/nemotron-3.5-lightning (lightning), signature verified, no memory injected, custody holds",
+   "scope": "dev-2026-10-25T23-34-17Z-330",
+   "memory_injected": 0
+  },
+  {
+   "kind": "judge",
+   "item": "E37",
+   "finding": "fnd-886be3c070350b34",
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_9831buo9",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 13600,
+   "tokens_in": 4249,
+   "tokens_out": 1522,
+   "gate": "ok",
+   "reason": "the refuting SELECT returned no rows",
+   "scope": "dev-2026-10-25T23-34-17Z-331",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E38",
+   "finding": "fnd-4fb13976860818af",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "openrouter/nvidia/nemotron-3.5-lightning",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3.5-lightning",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_qnu8eqo1",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 2083,
+   "tokens_in": 1652,
+   "tokens_out": 328,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_qnu8eqo1 openrouter/nvidia/nemotron-3.5-lightning (lightning), signature verified, no memory injected, custody holds",
+   "scope": "dev-2026-10-25T23-34-17Z-332",
+   "memory_injected": 0
+  },
+  {
+   "kind": "judge",
+   "item": "E38",
+   "finding": "fnd-4fb13976860818af",
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_wye9g0fy",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 11495,
+   "tokens_in": 4253,
+   "tokens_out": 1004,
+   "gate": "ok",
+   "reason": "the refuting SELECT returned no rows",
+   "scope": "dev-2026-10-25T23-34-17Z-333",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E38",
+   "finding": "fnd-6d51e4d2fd3fd39f",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "openrouter/nvidia/nemotron-3.5-lightning",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3.5-lightning",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_ryh2x2ub",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 2241,
+   "tokens_in": 1645,
+   "tokens_out": 314,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_ryh2x2ub openrouter/nvidia/nemotron-3.5-lightning (lightning), signature verified, no memory injected, custody holds",
+   "scope": "dev-2026-10-25T23-34-17Z-334",
+   "memory_injected": 0
+  },
+  {
+   "kind": "judge",
+   "item": "E38",
+   "finding": "fnd-6d51e4d2fd3fd39f",
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_dzkk3v29",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 13749,
+   "tokens_in": 4284,
+   "tokens_out": 1155,
+   "gate": "ok",
+   "reason": "the refuting SELECT returned no rows",
+   "scope": "dev-2026-10-25T23-34-17Z-335",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E38",
+   "finding": "fnd-5448095a827b5bc6",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "openrouter/nvidia/nemotron-3.5-lightning",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3.5-lightning",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_g5w35xz6",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 1827,
+   "tokens_in": 1653,
+   "tokens_out": 326,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_g5w35xz6 openrouter/nvidia/nemotron-3.5-lightning (lightning), signature verified, no memory injected, custody holds",
+   "scope": "dev-2026-10-25T23-34-17Z-336",
+   "memory_injected": 0
+  },
+  {
+   "kind": "judge",
+   "item": "E38",
+   "finding": "fnd-5448095a827b5bc6",
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_ko2pjwpt",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 11038,
+   "tokens_in": 4306,
+   "tokens_out": 1278,
+   "gate": "ok",
+   "reason": "the refuting SELECT returned no rows",
+   "scope": "dev-2026-10-25T23-34-17Z-337",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E38",
+   "finding": "fnd-be865fadc4461041",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "openrouter/nvidia/nemotron-3.5-lightning",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3.5-lightning",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_ln9dnbqi",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 2202,
+   "tokens_in": 1647,
+   "tokens_out": 353,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_ln9dnbqi openrouter/nvidia/nemotron-3.5-lightning (lightning), signature verified, no memory injected, custody holds",
+   "scope": "dev-2026-10-25T23-34-17Z-338",
+   "memory_injected": 0
+  },
+  {
+   "kind": "judge",
+   "item": "E38",
+   "finding": "fnd-be865fadc4461041",
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_q45qflmx",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 32156,
+   "tokens_in": 4245,
+   "tokens_out": 1247,
+   "gate": "ok",
+   "reason": "the refuting SELECT returned no rows",
+   "scope": "dev-2026-10-25T23-34-17Z-339",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E38",
+   "finding": "fnd-95ded60ec0aea326",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "openrouter/nvidia/nemotron-3.5-lightning",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3.5-lightning",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_gt9g25ez",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 2995,
+   "tokens_in": 1648,
+   "tokens_out": 318,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_gt9g25ez openrouter/nvidia/nemotron-3.5-lightning (lightning), signature verified, no memory injected, custody holds",
+   "scope": "dev-2026-10-25T23-34-17Z-340",
+   "memory_injected": 0
+  },
+  {
+   "kind": "judge",
+   "item": "E38",
+   "finding": "fnd-95ded60ec0aea326",
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_8kcwn2ro",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 7806,
+   "tokens_in": 4242,
+   "tokens_out": 999,
+   "gate": "ok",
+   "reason": "the refuting SELECT returned no rows",
+   "scope": "dev-2026-10-25T23-34-17Z-341",
+   "memory_injected": 0
+  },
+  {
+   "kind": "judge",
+   "item": "P01",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_qmt1uxav",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 7017,
+   "tokens_in": 4547,
+   "tokens_out": 617,
+   "gate": "ok",
+   "reason": "1 row(s) satisfy the refuting SELECT",
+   "scope": "dev-2026-10-25T23-34-17Z-342",
+   "memory_injected": 0
+  },
+  {
+   "kind": "judge",
+   "item": "P02",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_riqvpibh",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 9986,
+   "tokens_in": 3957,
+   "tokens_out": 639,
+   "gate": "ok",
+   "reason": "1 row(s) satisfy the refuting SELECT",
+   "scope": "dev-2026-10-25T23-34-17Z-343",
+   "memory_injected": 0
+  },
+  {
+   "kind": "judge",
+   "item": "P03",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_tf5d9b94",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 6238,
+   "tokens_in": 3926,
+   "tokens_out": 927,
+   "gate": "ok",
+   "reason": "1 row(s) satisfy the refuting SELECT",
+   "scope": "dev-2026-10-25T23-34-17Z-344",
+   "memory_injected": 0
+  },
+  {
+   "kind": "judge",
+   "item": "P04",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_2p7cckhh",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 6170,
+   "tokens_in": 3889,
+   "tokens_out": 481,
+   "gate": "ok",
+   "reason": "9 row(s) satisfy the refuting SELECT",
+   "scope": "dev-2026-10-25T23-34-17Z-345",
+   "memory_injected": 0
+  },
+  {
+   "kind": "judge",
+   "item": "P05",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 2,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_5tlx1ir9",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 26287,
+   "tokens_in": 3925,
+   "tokens_out": 1658,
+   "gate": "ok",
+   "reason": "13 row(s) satisfy the refuting SELECT",
+   "scope": "dev-2026-10-25T23-34-17Z-346",
+   "memory_injected": 0
+  },
+  {
+   "kind": "judge",
+   "item": "P06",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_xl6n9h5i",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 21880,
+   "tokens_in": 3917,
+   "tokens_out": 1931,
+   "gate": "ok",
+   "reason": "1 row(s) satisfy the refuting SELECT",
+   "scope": "dev-2026-10-25T23-34-17Z-347",
+   "memory_injected": 0
+  },
+  {
+   "kind": "judge",
+   "item": "P07",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_nk9786k0",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 66897,
+   "tokens_in": 4927,
+   "tokens_out": 6149,
+   "gate": "ok",
+   "reason": "the refuting SELECT returned no rows",
+   "scope": "dev-2026-10-25T23-34-17Z-348",
+   "memory_injected": 0
+  },
+  {
+   "kind": "judge",
+   "item": "P08",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_bjovdu8m",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 9871,
+   "tokens_in": 3932,
+   "tokens_out": 883,
+   "gate": "ok",
+   "reason": "1 row(s) satisfy the refuting SELECT",
+   "scope": "dev-2026-10-25T23-34-17Z-349",
+   "memory_injected": 0
+  },
+  {
+   "kind": "judge",
+   "item": "P09",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_qheomqum",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 33386,
+   "tokens_in": 4260,
+   "tokens_out": 3554,
+   "gate": "ok",
+   "reason": "the refuting SELECT returned no rows",
+   "scope": "dev-2026-10-25T23-34-17Z-350",
+   "memory_injected": 0
+  },
+  {
+   "kind": "judge",
+   "item": "P10",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_hoi7ztk4",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 9960,
+   "tokens_in": 3956,
+   "tokens_out": 1052,
+   "gate": "ok",
+   "reason": "1 row(s) satisfy the refuting SELECT",
+   "scope": "dev-2026-10-25T23-34-17Z-351",
+   "memory_injected": 0
+  }
+ ],
+ "pass": null
+}

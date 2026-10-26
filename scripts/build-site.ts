@@ -105,8 +105,11 @@ const AS_ZETARIS = new DataLayer(new ZetarisEngine());
 const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen"];
 const word = (n: number): string => NUMBER_WORDS[n] ?? String(n);
 
-/** The page and every data file together. */
-export const MAX_BYTES = 300_000;
+/**
+ * The page and every data file together. 300,000 from 24 Oct 2026; 350,000 from 25 Oct 2026, when the Nemotron tab over
+ * eval/results/2026-10-25T23-34-17Z, whose Ultra judge SELECTs run longer, took the build to 314,907 bytes.
+ */
+export const MAX_BYTES = 350_000;
 /** The header's Report link: the owner's report (npm run examples writes it), relative to docs/ in a clone of the repository. */
 export const REPORT_LINK = "../examples/report.html";
 /** Rows shown per query; the count and the rows hash cover every row. */
@@ -624,9 +627,13 @@ async function judgeSelect(layer: DataLayer, at: Omit<JudgeSelectView, "status" 
   const rows = typeof j.rows === "number" ? j.rows : null;
   const shown = { ...at, status: j.status, rowsRecorded: rows, receiptId: j.receipt_id ?? null, servedModel: j.served_model ?? null, sql };
   if (sql === null || rows === null || j.status === "invalid_output" || j.status === "not_judged") return { ...shown, rerun: "not_run", rowsAtBuild: null, why: null };
-  // A refusal's message, each ": " part kept that the redactor leaves as it is: an operand such as "b6a1ec.host" reads
-  // as a name to it, and the SQL beside the reason shows the operand in place.
-  const reason = (err: unknown): string => (err as Error).message.split(": ").filter((part) => AS_IS.text(part) === part).join(": ");
+  // A refusal's message, each ": " part kept while the redactor leaves the parts kept so far as they are: an operand
+  // such as "b6a1ec.host" reads as a name to it, and `unrecognized token: "10d1f4"` (a pseudonym's fragment) as a
+  // key and its value; the SQL beside the reason shows the operand in place.
+  const reason = (err: unknown): string => (err as Error).message.split(": ").reduce<string[]>((kept, part) => {
+    const next = [...kept, part].join(": ");
+    return AS_IS.text(next) === next ? [...kept, part] : kept;
+  }, []).join(": ");
   let guarded: string;
   try {
     guarded = guardRefutation(sql, layer.tables);

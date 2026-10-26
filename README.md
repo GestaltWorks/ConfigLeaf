@@ -22,12 +22,13 @@ npm run site                                            # the replay page in doc
 SAMPLE_MODE=true npm run document -- --tenant client-1  # the owner's document and report: examples/document.md, examples/report.html
 ```
 
-| Development set, `eval/results/2026-10-25T09-25-44Z`, 25 Oct 2026 | Measured |
-|---|---|
-| Nemotron 3 Ultra alone (C4) | agrees on 3 of 9; reads yes on 6 of the 9 labelled no |
-| The SQL checks with Ultra as the falsifier (C3) | agrees on 9 of 9, 9 of 9 and 8 of 8 over three runs; reads yes on 0 of 9 |
-| Planted false claims the falsifier strikes (C3) | 9 of 10 in each run |
-| Model calls | 389, 383 of them receipted, 380 receipts published and verified offline |
+| Development set, three runs of each configuration | Current: per-call scope, `eval/results/2026-10-25T23-34-17Z`, 25 Oct 2026 23:34 UTC | Shared scope, `eval/results/2026-10-25T09-25-44Z`, 25 Oct 2026 09:25 UTC |
+|---|---|---|
+| Nemotron 3 Ultra alone (C4) | agrees on 3, 4 and 3 of 9; reads yes on 6, 5 and 6 of the 9 labelled no | agrees on 3 of 9; reads yes on 6 of the 9 labelled no |
+| The SQL checks with Ultra as the falsifier (C3) | agrees on 9 of 9, 8 of 8 and 8 of 8; reads yes on 0 of 9 | agrees on 9 of 9, 9 of 9 and 8 of 8; reads yes on 0 of 9 |
+| Planted false claims the falsifier strikes (C3) | 9, 8 and 8 of 10 | 9 of 10 in each run |
+| Model calls | 390, all receipted, 384 receipts published and verified offline | 389, 383 of them receipted, 380 receipts published and verified offline |
+| Nightshift's own memory in the prompt (`hmem` on the published receipts) | 0 of 384 | 281 of 380 |
 
 - **Zetaris**: every query of a live pass runs through Lightning SQL over the `DRIFT` datasource, with the `drift_usl` semantic layer and its DQ rules over it ([Zetaris](#zetaris)).
 - **Meterless**: the World Model holds the observations and the fingerprints FOUND-BUT-DIFFERENT compares, H-MEM holds the technician's lessons, and Nightshift serves Nemotron and signs a receipt for every call ([Meterless](#meterless)).
@@ -125,7 +126,7 @@ SAMPLE_MODE=true npm run preflight -- --proposal examples/proposals/a-unproxy-ww
 SAMPLE_MODE=true npm run document -- --tenant client-1  # the owner's document and report -> examples/document.md, examples/report.html
 npm run answer -- --finding <fnd-id> --accept --until <ISO 8601 UTC> --reason "..."   # teach one exception -> DRIFT_MEMORY_DIR; --list, --forget <id>
 npm run eval -- --set dev --configs C0                  # the pre-registered eval with no model -> eval/results/<UTC stamp>/
-npm run receipts:verify -- lab                          # the lab's signed receipts, offline; eval/results/2026-10-25T09-25-44Z for the development run's, against its call records
+npm run receipts:verify -- lab                          # the lab's signed receipts, offline; eval/results/2026-10-25T23-34-17Z for the development run's, against its call records
 npm run site                                            # rebuild the replay page in docs/ from examples/ and the newest eval/results/
 npm run sources                                         # the table under "Where each answer comes from", read off the SQL
 npm test
@@ -185,7 +186,7 @@ Measured on the operator's estate, tenant `client-1`, and the writes on the lab 
 
 | Command | Proves | Measured |
 |---|---|---|
-| `npm test` | Every module against fixtures, fakes and a throwaway Postgres schema; the live halves run behind their flags. | 1,159 tests in 44 files on the operator's machine: 1,041 run and pass, 0 fail, and 118 wait for their live flags (112 for `PARITY_LIVE`, 3 for `VALIDATE_LIVE`, 1 each for `EVAL_LIVE`, `PROBE_LIVE` and `TICKETS_LIVE`), 25 Oct 2026 23:30 UTC. |
+| `npm test` | Every module against fixtures, fakes and a throwaway Postgres schema; the live halves run behind their flags. | 1,161 tests in 44 files on the operator's machine: 1,043 run and pass, 0 fail, and 118 wait for their live flags (112 for `PARITY_LIVE`, 3 for `VALIDATE_LIVE`, 1 each for `EVAL_LIVE`, `PROBE_LIVE` and `TICKETS_LIVE`), 26 Oct 2026 00:34 UTC. |
 | `PARITY_LIVE=true npx vitest run test/parity.test.ts` | Every query the agent runs returns the same columns, rows and totals on sql.js and on Zetaris over the same rows. | The suite holds 111 cases. On 25 Oct 2026, at the export instant of the 13:53 UTC cycle, 107 of 107 cases equal, 17,364 observation rows read whole on both engines. The live half compares the recording's rows, and `DRIFT` holds rows written since that export, so the live half runs against a fresh export (`npm run export:bundle`). |
 | `SAMPLE_MODE=true npm run sample` | The whole pass over `sample/bundle.json`, with no credentials, no model and no `.env`, deciding with the committed lessons in `examples/memory`. | 80 runs, 14,174 observations, 27 findings: ADOPT 23 under the operator's accepted exceptions, HOLD 3 and ESCALATE 1 by policy, decided at 2026-10-25T14:17:53.416Z; the explain step over the pass, 1 cause, the ESCALATE's, unknown with its 18 h window stated; the 58 lines outside the trace (27 findings, 27 `DISPOSITION`, 1 `CAUSE`, the `ADOPTIONS` line, the summary and the `REPORT` line) byte-identical over two runs, the `ADOPTIONS` line reading 23 ADOPT under an accepted exception, 23 joined to a lesson in force (`exception_in_force` over the ledger and the `lesson` table sql.js holds as Zetaris holds `LESSONS.lesson`), and with every `.env` value blanked the same finding, disposition, cause and summary lines, the `REPORT` line's deny-list probe counting 0 configured labels (49 with `.env`); each of the 791 trace lines carries its own `ts`, `latency_ms` and `trace_id`, 25 Oct 2026. |
 | `npm run collect:cloudflare`, `npm run collect:linux` | The collectors read the live estate in full, each population asserted before the first row. | 58 of 58 records in 6 zones, 1,014 of 1,014 audit rows, 24 of 24 and 14 of 14 vhost files, at 13:53 UTC, 25 Oct 2026. |
@@ -201,8 +202,8 @@ Measured on the operator's estate, tenant `client-1`, and the writes on the lab 
 | `npm run tickets` | One GitHub issue per ticket row, opened, commented on and closed by the ticket rules. | the smoke opened, commented on and closed issue #1 and a cycle opened issue #2 for the `proxy_split` HOLD, 24 Oct 2026; the first cycle after that HOLD expired commented on #2, 25 Oct 2026. On the lab, issue #3 opened as the FIX's incident with the investigation under Evidence and stays open, and issue #4 opened and closed as the rollback's change with its verification probe, 25 Oct 2026. `sample/bundle.json` carries the three ticket rows, #2 on the estate and #3 and #4 on the lab, each URL redacted. |
 | `npm run document` | The owner's document: one page per tenant from 15 named queries, 16 when it lists a cause, through the deny-list probe before it is written. | Under `SAMPLE_MODE=true`: 27 findings open, ADOPT 23, HOLD 3 and ESCALATE 1, decided at 2026-10-25T14:17:53.416Z, the Why one line, the ESCALATE's cause; `examples/document.md` byte-identical on a second render, 25 Oct 2026. |
 | `npm run eval -- --set dev --configs C0 --runs 2` | The pre-registered eval of [eval/PROTOCOL.md](eval/PROTOCOL.md). | C0 on the 15 development items under `policy/hackathon.json` version 2: 11 scored, 11 with a verdict, agreement 9 of 9 (Wilson 95% 0.701 to 1.000), 0 of 9 labelled no read yes, 0 differences between runs, 25 Oct 2026. |
-| `npm run receipts:verify -- eval/results/2026-10-25T09-25-44Z`, `npm run receipts:verify -- lab` | The runtime's signed receipt for each receipted model call, published beside the call record that names it and checked offline with no `.env` and no network: the Ed25519 signature, the served model and tier, `app` `drift-agent-<tenant>`, `request_id`, `cache.status` and the preview the gate read. | The development run: 383 of 389 call records carry a receipt, and the other 6, C2 judge calls, carry none, every route of the failover ladder failing (the last with a 502) and the gate refusing them; of the 383 receipts, 380 are published with 380 of 380 signatures verified and 3 are withheld by the export's probe and listed in `receipts-withheld.json`; 0 served model, tier, app or cache mismatches; 368 counted calls whose preview opens with the request line, and the 12 custody refusals of C4 as recorded. The lab: 3 of 3 verified under `drift-agent-lab-1`. One signing key throughout, the key of the 23 Oct probe receipts, 25 Oct 2026. CI runs it over every committed `receipts.json` on every push to main and every pull request ([ci.yml](.github/workflows/ci.yml)). |
-| `npm run site` | The replay page, built from [examples/](examples/), the committed lessons in `examples/memory`, the repository's SQL and the newest [eval/results/](eval/results/) (`--results` names another): every finding with every check re-run to its recorded count before anything is published, the owner's document as its Document tab, "Where each answer comes from" as its Sources tab, both rendered to HTML at build time, and the [Nemotron tab](docs/index.html#nemotron): the eval's calls, requested and served, and every judge SELECT recorded with a row count re-guarded and re-run over the recording, the build refused on any count that differs. | 9 findings over the three slices (ADOPT 4, HOLD 3, ESCALATE 2, the one `proxy_split` in two slices), 33 checks re-run equal, the 196-line document decided at 2026-10-25T14:17:53.416Z, the 9 class rows; the Nemotron tab over `eval/results/2026-10-25T09-25-44Z` (dev): 389 calls, 383 receipts verified at run time (380 published and verified offline, 3 withheld), 0 substitutions, 162 judge SELECTs, 161 re-run equal and the recorded text of 1 (C2 run 2, P10) refused by the engine; 282,559 bytes of the 300,000-byte budget, a rebuild byte-identical, 25 Oct 2026. |
+| `npm run receipts:verify -- eval/results/2026-10-25T23-34-17Z`, `npm run receipts:verify -- eval/results/2026-10-25T09-25-44Z`, `npm run receipts:verify -- lab` | The runtime's signed receipt for each receipted model call, published beside the call record that names it and checked offline with no `.env` and no network: the Ed25519 signature, the served model and tier, `app` `drift-agent-<tenant>`, `request_id`, `cache.status` and the preview the gate read. | The development run of 25 Oct 2026 23:34 UTC, under per-call scope: 390 of 390 call records carry a receipt; 384 are published with 384 of 384 signatures verified and 6 are withheld by the export's probe and listed in `receipts-withheld.json`; 0 served model, tier, app or cache mismatches; 372 counted calls whose preview opens with the request line, and the 12 custody refusals of C4 as recorded; `hmem` null on all 384, 26 Oct 2026. The run of 25 Oct 2026 09:25 UTC, under the shared scope: 383 of 389 call records carry a receipt, and the other 6, C2 judge calls, carry none, every route of the failover ladder failing (the last with a 502) and the gate refusing them; of the 383 receipts, 380 are published with 380 of 380 signatures verified and 3 are withheld by the export's probe and listed in `receipts-withheld.json`; 0 served model, tier, app or cache mismatches; 368 counted calls whose preview opens with the request line, and the 12 custody refusals of C4 as recorded, 25 Oct 2026. The lab: 3 of 3 verified under `drift-agent-lab-1`. One signing key throughout, the key of the 23 Oct probe receipts, 26 Oct 2026. CI runs it over every committed `receipts.json` on every push to main and every pull request ([ci.yml](.github/workflows/ci.yml)). |
+| `npm run site` | The replay page, built from [examples/](examples/), the committed lessons in `examples/memory`, the repository's SQL and the newest [eval/results/](eval/results/) (`--results` names another): every finding with every check re-run to its recorded count before anything is published, the owner's document as its Document tab, "Where each answer comes from" as its Sources tab, both rendered to HTML at build time, and the [Nemotron tab](docs/index.html#nemotron): the eval's calls, requested and served, and every judge SELECT recorded with a row count re-guarded and re-run over the recording, the build refused on any count that differs. | 9 findings over the three slices (ADOPT 4, HOLD 3, ESCALATE 2, the one `proxy_split` in two slices), 33 checks re-run equal, the 196-line document decided at 2026-10-25T14:17:53.416Z, the 9 class rows; the Nemotron tab over `eval/results/2026-10-25T23-34-17Z` (dev): 390 calls, 390 receipts verified at run time (384 published and verified offline, 6 withheld), 0 substitutions, 134 judge SELECTs, 130 re-run equal and the recorded text of 4 (C3 run 1, P09 and E24; C3 run 3, E17 and E24) refused by the engine; 314,907 bytes of the 350,000-byte budget, a rebuild byte-identical, 26 Oct 2026. |
 | `npm run conformance`, `npm run conformance:hmem` | The vendored Meterless suites pass: the World Model suite runs through `src/engine/world.ts`, and the H-MEM suite runs through the reference class that `src/engine/memory.ts` re-exports. | World Model 8 of 8; H-MEM 13 of 13 and the `TechnicianMemory` wrapper check, 25 Oct 2026; and in CI on every push to main and every pull request ([ci.yml](.github/workflows/ci.yml)). |
 | `npm run spike:nightshift` | Nightshift serves Lightning and Ultra by explicit id, signs a receipt for each call that verifies offline, and tracks the app as a job whose event stream replays its turns. | 9 of 9 PASS: 142 model ids listed, Lightning in 3,107 ms and Ultra in 1,625 ms on their OpenRouter routes, 100 of 100 listed receipts verified, this run's 2 receipts in the list, 65 turn events replayed, 25 Oct 2026. |
 | `npm run zetaris:setup` | The idempotent setup of the `DRIFT` datasource, the `LESSONS` and `RULES` file sources, the fourteen-entity USL and its five DQ rules. | 71 statements, 0 failed; `run_complete` 140 of 140 runs valid, `exception_in_force` 184 of 184 adoptions valid, 25 Oct 2026 22:57 UTC. |
@@ -392,12 +393,43 @@ gives it and each run's value, in run order, when they differ.
 
 The labels set the limit of every measure: the 38 items hold 36 no, 2 unsure and 0 yes, both unsure items in the
 development set, so the eval measures agreement on items labelled no and the false positives among them, and the 23
-held-out items are all labelled no. The development-set calls ran with Nightshift's own memory injected into 281 of
-the 380 published prompts (each receipt's `hmem` field); the adapter now sends every call under a fresh
-`meterless-scope`, and the development set re-runs under that isolation before the held-out run (the changelog of
-[eval/PROTOCOL.md](eval/PROTOCOL.md) carries the detail).
+held-out items are all labelled no.
 
-### Development set, `eval/results/2026-10-25T09-25-44Z`
+The development set has two committed runs, with the same items, labels, split, configurations and measures. The
+current one, `eval/results/2026-10-25T23-34-17Z`, ran on 25 Oct 2026 from 23:34 UTC under per-call scope isolation:
+the adapter sends every call under a fresh `meterless-scope`, memory injected 0 of 390 calls, and `hmem` is null on
+all 384 published receipts. The run of 25 Oct 2026 09:25 UTC, `eval/results/2026-10-25T09-25-44Z`, went out under
+Nightshift's shared memory scope, and 281 of its 380 published receipts carry injected memory (each receipt's `hmem`
+field). The changelog of [eval/PROTOCOL.md](eval/PROTOCOL.md) carries the detail.
+
+### Development set under per-call scope, `eval/results/2026-10-25T23-34-17Z`
+
+15 configuration runs (3 of each of C0, C1, C2, C3, C4): 390 call records, 390 with a verified receipt, 0 substitutions, 0 cache hits. Median output tokens per answered call: Lightning selecting 308.5, Lightning judging 146.5, Ultra judging 1,247, Ultra alone 426.
+
+| config | what runs | agree / judged | findings decided by | labelled no, read yes | planted claims struck | checks valid / selected | items not judged | calls | receipts verified | substitutions | cache hits | median output tokens |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| C0 | SQL only: the class's default precondition checks, no model (what SAMPLE_MODE runs) | 9/9 | policy 20 | 0/9 | - | - | 0 | 0 | 0 | 0 | 0 | - |
+| C1 | C0 plus Nemotron 3.5 Lightning selecting and parameterising checks from the catalogue | 9/9 | policy 20 | 0/9 | - | 76/80, 78/78, 79/80 | 0 | 20 | 20 | 0 | 0 | Lightning selecting 308.5 |
+| C2 | C1 plus Nemotron 3.5 Lightning as the falsifier judge | 0/0, 1/1, 1/1 | policy 11, 12, 10 | 0/9 | 3/10, 2/10, 2/10 | 78/79, 79/80, 75/77 | 9, 8, 10 | 49, 49, 48 | 49, 49, 48 | 0 | 0 | Lightning selecting 309; Lightning judging 146.5 |
+| C3 | C1 plus Nemotron 3 Ultra as the falsifier judge | 9/9, 8/8, 8/8 | policy 20, 19, 19 | 0/9 | 9/10, 8/10, 8/10 | 75/77, 73/74, 76/78 | 0, 1, 1 | 48, 49, 48 | 48, 49, 48 | 0 | 0 | Lightning selecting 305; Ultra judging 1,247 |
+| C4 | Nemotron 3 Ultra alone: the verdict from the rows, no SQL checks, no catalogue (baseline) | 3/9, 4/9, 3/9 | the model | 6/9, 5/9, 6/9 | - | - | 2 | 13 | 13 | 0 | 0 | Ultra alone 426 |
+
+Nemotron 3 Ultra alone (C4) agrees on 3, 4 and 3 of 9 items and reads yes on 6, 5 and 6 of the 9 labelled no; with
+Ultra as the judge inside the system (C3) the runs agree on 9 of 9, 8 of 8 and 8 of 8 and read yes on 0 of 9. C4's
+Wilson interval in runs 1 and 3, 0.121 to 0.646, lies below every C0, C1 and C3 interval (lowest bound 0.676), and
+its run 2 interval, 0.189 to 0.733, overlaps them; C2 judges 0, 1 and 1 items labelled no, its two intervals (0.207 to
+1.000) overlap every other, and the C0 to C3 intervals overlap one another. The recording is
+`test/fixtures/recorded-bundle.json`, tenant `client-1`; its pass raises 38 findings (25 Oct 2026).
+
+On this set the policy file decides every C0 to C3 verdict (decided_by policy on every finding with a disposition), so
+Nemotron's measured work here is the checks Lightning chooses from the catalogue and the refuting SELECTs both judges
+write against the ten planted false claims. Ultra (C3) strikes 9, 8 and 8 of the ten, 25 of 30 over the three runs;
+Lightning as the judge (C2) strikes 3, 2 and 2, 7 of 30, and 4, 3 and 3 of its replies are invalid output, a bare
+table name the guard refuses or a column the table lacks. Ultra leaves P09 (a deletion day stated quiet) standing in
+all three runs, P02 in run 2 and P07 in run 3. Each of Ultra's P09 SELECTs reads `dns_record` rows observed before the
+deletion day, 11 Oct 2026, and the recording's 58 DNS rows come from one collection run on 24 Oct 2026.
+
+### Development set under the shared scope, `eval/results/2026-10-25T09-25-44Z`
 
 15 configuration runs (3 of each of C0, C1, C2, C3, C4): 389 call records, 383 with a verified receipt, 0 substitutions, 0 cache hits. Median output tokens per answered call: Lightning selecting 4,724, Lightning judging 2,953, Ultra judging 615, Ultra alone 358.
 
@@ -545,32 +577,37 @@ on a fresh retry files the finding `not_judged`, and it escalates. On 24 Oct 202
 `drift-agent-client-1`, every receipt verified and custody holding on the first attempt. On 25 Oct 2026 Nemotron ran
 inside the Actor on the lab, beside the eval: for a FIX, Lightning selected four valid checks on receipt
 `rcpt_req_nn4ag0yu` and Ultra's refuting SELECT returned no rows on receipt `rcpt_req_iehg9gmt`, both receipts
-verified and custody holding under `drift-agent-lab-1`. On the development set of 25 Oct 2026 the median output tokens
-per answered call are Lightning selecting 4,724, Lightning judging 2,953, Ultra judging 615 and Ultra alone 358 (the
-table under Evaluation).
+verified and custody holding under `drift-agent-lab-1`. On the development run of 25 Oct 2026 23:34 UTC, under
+per-call scope, the median output tokens per answered call are Lightning selecting 308.5, Lightning judging 146.5,
+Ultra judging 1,247 and Ultra alone 426; on the run of 09:25 UTC, under the shared scope, they are Lightning selecting
+4,724, Lightning judging 2,953, Ultra judging 615 and Ultra alone 358 (the tables under Evaluation).
 
-The signed receipts sit beside the call records that name them. `eval/results/2026-10-25T09-25-44Z/` holds the
-development run's call records (`calls[]` of each `C*-run*.json`, and `planted.json`) and `receipts.json`, the
-runtime's receipts for them, each exactly as signed; `receipts-withheld.json` names the 3 of 383 the export's probe
-kept back, each a 180-character preview the runtime cut inside a pseudonymised file name, which the redactor reads as
-a new host name; `nightshift-job.json` is the tenant app's job entry at export time. `lab/receipts.json` holds the
-lab's 3. `npm run receipts:verify -- <dir>` checks a directory offline, and CI runs it over every committed
-`receipts.json`. `npm run receipts:export` writes the bundle after a run. Measured 25 Oct 2026, read only:
-`GET /v1/meterless/receipts` returns the newest 100 receipts, and 200 with `?limit=200`, `?limit=500` or
-`?limit=1000`, fewer than the development run's 383. The export reads that GET with `?limit=200` by default, so it
-runs right after the run it exports, while that run's receipts are among the newest 200; `--from runtime` reads the
-runtime's own log, `receipts.jsonl` in its data directory, which starts at 24 Oct 02:12 UTC, and the export of the
-development run read it and found 383 of 383. The receipts also say what Nightshift added to each prompt: its own
-H-MEM put 1 to 3 of its memory records into the context sent for 281 of the 380 published development calls, 800
-records in all, and for all 3 of the lab's (`hmem.injected`, `egress.sent.context_sources`).
+The signed receipts sit beside the call records that name them. `eval/results/2026-10-25T23-34-17Z/` and
+`eval/results/2026-10-25T09-25-44Z/` each hold a development run's call records (`calls[]` of each `C*-run*.json`, and
+`planted.json`) and `receipts.json`, the runtime's receipts for them, each exactly as signed; `receipts-withheld.json`
+names the receipts the export's probe kept back, 6 of 390 and 3 of 383, each a 180-character preview the runtime cut
+inside a pseudonymised file name, which the redactor reads as a new host name; `nightshift-job.json` is the tenant
+app's job entry at export time. `lab/receipts.json` holds the lab's 3. `npm run receipts:verify -- <dir>` checks a
+directory offline, and CI runs it over every committed `receipts.json`. `npm run receipts:export` writes the bundle
+after a run. Measured 25 Oct 2026, read only: `GET /v1/meterless/receipts` returns the newest 100 receipts, and 200
+with `?limit=200`, `?limit=500` or `?limit=1000`, fewer than either development run's receipts, 383 and 390. The
+export reads that GET with `?limit=200` by default, so it runs right after the run it exports, while that run's
+receipts are among the newest 200; `--from runtime` reads the runtime's own log, `receipts.jsonl` in its data
+directory, which starts at 24 Oct 02:12 UTC; the exports of the two development runs read it and found 383 of 383 and
+390 of 390. The receipts also say what Nightshift added to each prompt (`hmem.injected`,
+`egress.sent.context_sources`): under the shared scope its own H-MEM put 1 to 3 of its memory records into the context
+sent for 281 of the 380 published calls of the 09:25 UTC run, 800 records in all, and for all 3 of the lab's; under
+per-call scope, for 0 of the 384 published calls of the 23:34 UTC run.
 
 The replay page's [Nemotron tab](docs/index.html#nemotron) lays out the newest results directory as static HTML: the
 calls by configuration and role, tier and model requested and model served; each run's checks selected, valid and run
 unmodified; every planted claim and every item judge with its status, receipt, served model and SELECT. `npm run site`
 re-guards and re-runs each judge SELECT recorded with a row count over the recording, with the policy rows the runs
-name, and refuses to publish on a count that differs. On the development run, 25 Oct 2026: 161 of 162 re-run equal,
-and the recorded text of 1 (C2 run 2, P10) does not run, since the results hold each SELECT as the eval's redactor
-left it after the run and the redactor read the alias in `bs2.host` as a host name.
+name, and refuses to publish on a count that differs. The results hold each SELECT as the eval's redactor left it
+after the run, and the redactor reads some column operands as host names. On the development run of 23:34 UTC, built
+26 Oct 2026: 130 of 134 re-run equal, and the recorded text of 4 (C3 run 1, P09 and E24; C3 run 3, E17 and E24) does
+not run, a pseudonym written over operands such as `agg.cnt`. On the run of 09:25 UTC, 25 Oct 2026: 161 of 162 re-run
+equal, and the recorded text of 1 (C2 run 2, P10) does not run, the alias in `bs2.host` read as a host name.
 
 ## Limits
 
@@ -580,7 +617,7 @@ left it after the run and the redactor read the alias in `bs2.host` as a host na
 - FOUND-BUT-DIFFERENT on real rows: at 16:49 UTC on 25 Oct 2026 a staged record change raised it on production, 2 `found_but_different` findings on the :443 and :80 `server_name` of one vhost, byte-identical since the 16:32 UTC run while their name resolved to another address, each held 72 h under rule 15; the same cycle's `revert_record` put the record back through the provider, `done`. [examples/traces/cycle_mvo2bil0.jsonl](examples/traces/cycle_mvo2bil0.jsonl) holds that cycle. `sample/bundle.json`, exported after the 13:53 UTC cycle, holds no hero finding; pre-flight raises two in simulation, and `test/fixtures/authored-bundle.json` carries the full story for the tests.
 - `drift_vs_approved`, `changed_since_backup` and `approved_missing` find 0 in `sample/bundle.json` (exported after the 13:53 UTC cycle of 25 Oct 2026); in the operator's rehearsal that day the 16:49 UTC cycle raised `drift_vs_approved` 1 and the 18:08 UTC cycle raised `drift_vs_approved` 1 and `changed_since_backup` 1 on the estate (`examples/traces/cycle_mvo2bil0.jsonl`, `examples/traces/cycle_mvo5600q.jsonl`); ROLLBACK and FIX also run on the lab estate and on `test/fixtures/policy-bundle.json`.
 - The 23 accepted exceptions in `examples/memory` hold until 2026-11-30T00:00:00Z, and recall runs at the clock: from that instant the sample pass, the examples and the replay page give those 23 findings ESCALATE (exception lapsed), and `npm run examples`, `npm run document` and `npm run site` regenerate the committed outputs the tests hold to the store. The 23 lessons sit on 15 names: a name served by a :443 and a :80 block raises two findings, one lesson was taught per finding, and the Decider applies the earlier lesson on a name, so withdrawing one of a pair leaves its twin in force (25 Oct 2026).
-- `verifyReceipt` trusts the public key each receipt carries. The published set is signed by one key: the development run's 380 receipts and the lab's 3 verify under `sha256:6ee50b5d11fdd693e1ee80635ea1868bb1addefb5823768192849709928ff8c1` (the sha256 of the raw Ed25519 key), the key of the 23 Oct probe receipts in `test/fixtures/`, and `npm run receipts:verify` names every distinct key it finds, 25 Oct 2026. Pinning that key in config would close a receipt forged with a fresh key.
+- `verifyReceipt` trusts the public key each receipt carries. The published set is signed by one key: the development runs' 384 and 380 receipts and the lab's 3 verify under `sha256:6ee50b5d11fdd693e1ee80635ea1868bb1addefb5823768192849709928ff8c1` (the sha256 of the raw Ed25519 key), the key of the 23 Oct probe receipts in `test/fixtures/`, and `npm run receipts:verify` names every distinct key it finds, 26 Oct 2026. Pinning that key in config would close a receipt forged with a fresh key.
 - Probes run from one machine through two public resolvers; a name resolves through its A and AAAA records, a CNAME followed one level.
 - The journal window covers the sudo commands and ssh logins of the last 24 h on the hosts the agent reaches; a change made as root in a shell the journal does not record reads `unknown`. The host's journal is evidence for a person to weigh, as trustworthy as the host that keeps it, since root can edit a log.
 - The collector reads with the operator's own SSH key, so its read-only property lives in the fixed script it streams. [ops/](ops/) holds the second stage, for the operator to install: a dedicated user whose key is bound to a forced command running the same reads, and one sudoers line for the two root-only reads.
