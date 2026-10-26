@@ -29,6 +29,13 @@ import { Tracer } from "../src/trace.ts";
 
 try {
   const { values: args } = parseArgs({ options: { plan: { type: "boolean" }, tenant: { type: "string", multiple: true } } });
+  // Live only: with what it needs unset (no .env), one plain line naming it, exit 2. --plan reads the zones and builds the datasource, no more.
+  const needs = ([["ZETARIS_API_KEY", config.zetaris.apiKey], ["DATABASE_URL", process.env.DATABASE_URL ?? ""], ["CLOUDFLARE_API_TOKEN", config.cloudflare.token], ["REDACT_SALT", config.redactSalt]] as const)
+    .filter(([name, value]) => !value && !(args.plan && (name === "ZETARIS_API_KEY" || name === "REDACT_SALT"))).map(([name]) => name);
+  if (needs.length) {
+    console.error(`ZETARIS SETUP: live only; it needs ${needs.join(", ")} set (see .env.example)`);
+    process.exit(2);
+  }
   if (args.plan) {
     const env = envFromProcess();
     for (const line of formatPlan(plan({ ...env, zones: await liveZones(env.cloudflareToken) }), env.datasource)) console.log(line);
