@@ -371,7 +371,8 @@ sql.js store for the life of the process; Record exception writes `examples/memo
 Live, `--tenant` or `CONSOLE_TENANT` names the tenant, the console applies `sql/schema.sql` and the Store's migrations
 when it starts (`disposition.window_id`, the `change_window` constraints), its passes are dry passes that record
 nothing, and it prints one line naming `npm run zetaris:setup` when Zetaris does not list `change_window` or does not
-read `disposition.window_id`; the setup registers the table in `DRIFT` and refreshes the columns. On the lab, 26 Oct
+read `disposition.window_id`; the setup applies the schema and the migrations to the app Postgres, registers the
+table in `DRIFT` and refreshes the columns. On the lab, 26 Oct
 2026 02:22 to 02:29 UTC through Zetaris: a window opened on `lab.example`, a `sudo -n tee` break to port 8095 and its
 collection, and the console's pass gave `drift_vs_approved` and `changed_since_backup` HOLD under
 rule-6c41a25a00c404c8 with the window's reason, the same file the 02:20 UTC pass with no window open gave ROLLBACK;
