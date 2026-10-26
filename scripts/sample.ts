@@ -51,8 +51,9 @@
 //
 // Measured 26 Oct 2026 over sample/bundle.json with examples/memory: 30 lines on stdout off a TTY, none of them a
 // trace line, byte-identical over two runs outside the header's minute, the done line's time and the trace id, and
-// the same with every .env value blanked but the deny-list count (0 of 0 labels); the trace's 792 lines in logs/, the
-// SAMPLE line its last, and the --json line byte-identical to the summary line the command printed on 25 Oct.
+// the same with every .env value blanked but the deny-list count (0 of 0 labels); the trace's 806 lines in logs/ (792
+// before each later ask of a shared read had its line, 26 Oct), the SAMPLE line its last, and the --json line
+// byte-identical to the summary line the command printed on 25 Oct.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";

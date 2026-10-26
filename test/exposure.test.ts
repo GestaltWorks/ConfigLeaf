@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { DataLayer, assertSelectOnly } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import {
-  DriftWorld, EXPOSURE_BEFORE_SQL, EXPOSURE_RECORD_SQL, EXPOSURE_SINCE_SQL, exposureDays, exposureState, measureExposure,
+  DriftWorld, EXPOSURE_BEFORE_SQL, EXPOSURE_RECORD_SQL, EXPOSURE_SINCE_SQL, exposureDays, exposureState, measureExposure, recordExposure,
 } from "../src/engine/world.ts";
 import { runPass, type Finding } from "../src/pipeline.ts";
 import recorded from "./fixtures/recorded-bundle.json" with { type: "json" };
@@ -257,5 +257,40 @@ describe("the pass records the exposure line", () => {
     expect(fbd.exposure).toEqual({ since: "2026-10-22T18:42:10.000Z", days: 0, bound: "exact", source: "audit:evt-cf-0001", still_open_in: "run-dns-1023" });
     // the authored www CNAME has no audit event at all: no line, and the trace says why
     expect(result.findings.find((f) => f.finding.class === "proxy_split")!.exposure).toBeUndefined();
+  });
+});
+
+describe("recordExposure: the ok line stands only for an edge that was stored", () => {
+  /** A World Model whose exposure write throws, as a failing store would. */
+  class FailingWorld extends DriftWorld {
+    override async exposure(): Promise<never> {
+      throw new Error("planted World Model failure");
+    }
+  }
+  const lines = (t: MemTracer) => t.events.filter((e) => e.action === "triage" && e.input_summary === `exposure ${WWW_RECORD}`).map((e) => e.status);
+
+  it("deferred, the line waits for the store: ok after a store that succeeds; a store that throws traces failed, no ok line, and rethrows", async () => {
+    const www = onRecord((await pass(recorded)).result.findings, WWW_RECORD)[0].finding;
+    let store: (() => Promise<void>) | undefined;
+    const ok = new MemTracer("test_exposure_defer", { model: "none" });
+    expect(await recordExposure(await layerOf(recorded), new DriftWorld("test_exposure_defer"), www, { tracer: ok, defer: (s) => { store = s; } })).toMatchObject({ since: "2026-04-16T21:12:47.270Z" });
+    expect(lines(ok)).toEqual([]);
+    await store!();
+    expect(lines(ok)).toEqual(["ok"]);
+
+    const failed = new MemTracer("test_exposure_defer_fail", { model: "none" });
+    store = undefined;
+    expect(await recordExposure(await layerOf(recorded), new FailingWorld("test_exposure_defer_fail"), www, { tracer: failed, defer: (s) => { store = s; } })).toBeDefined();
+    expect(lines(failed)).toEqual([]);
+    await expect(store!()).rejects.toThrow("planted World Model failure");
+    expect(lines(failed)).toEqual(["failed"]);
+    expect(failed.events.at(-1)!.output_summary).toBe("exposure edge not stored: planted World Model failure");
+  });
+
+  it("not deferred, a store that throws traces failed, no ok line, and the call rejects", async () => {
+    const www = onRecord((await pass(recorded)).result.findings, WWW_RECORD)[0].finding;
+    const tracer = new MemTracer("test_exposure_fail", { model: "none" });
+    await expect(recordExposure(await layerOf(recorded), new FailingWorld("test_exposure_fail"), www, { tracer })).rejects.toThrow("planted World Model failure");
+    expect(lines(tracer)).toEqual(["failed"]);
   });
 });
