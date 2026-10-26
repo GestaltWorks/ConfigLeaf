@@ -119,10 +119,10 @@ describe("glob", () => {
 });
 
 describe("schema and loader", () => {
-  it("the committed policy/hackathon.json passes the file schema, and each of its 16 rows passes the row schema", () => {
+  it("the committed policy/hackathon.json passes the file schema, and each of its 17 rows passes the row schema", () => {
     expect(PolicyFile.safeParse(RAW).success).toBe(true);
     expect(loaded.file).toMatchObject({ version: 2, author: "operator", since: "2026-10-25T00:00:00.000Z", tenant: "*" });
-    expect(RULES).toHaveLength(16);
+    expect(RULES).toHaveLength(17);
     for (const r of RULES) expect(PolicyRuleRow.safeParse(r).success, r.rule_id).toBe(true);
     expect(RULES.every((r) => r.tenant_id === "*" && r.version === 2 && r.author === "operator" && r.since === "2026-10-25T00:00:00.000Z")).toBe(true);
     // the four rules version 2 adds: the copies under sites-available and conf.d, low and adopted
@@ -133,6 +133,7 @@ describe("schema and loader", () => {
       "a served vhost file is restored to its approved copy when it drifts", "dated copies beside a live file", "where a name points",
       "the data layer the agent reads through: a changed DQ rule, entity, grant, datasource or server version goes to a technician by ticket, and the agent changes nothing",
       "everything else is held with an expiry",
+      "mail DNS is never changed automatically: a record Microsoft 365 requires that the zone lacks or serves with another value goes to a technician by ticket",
     ]);
     // the rule the control plane carries: every object of zetaris.control, ESCALATE on drift, alert always
     expect(RULES.find((r) => r.surface === "zetaris.control")).toMatchObject({ object_glob: "**", setting_glob: "**", criticality: "critical", lock: 1, on_drift: "escalate", on_no_copy: "ticket", hold_max_hours: 0, alert: "always", psa_priority: "P1" });
@@ -160,6 +161,7 @@ describe("schema and loader", () => {
       "rule-e186e9d5790a7e6b", "rule-6c41a25a00c404c8", "rule-d0e0d34c8ae191b4", "rule-42827f90778592ff", "rule-44429a425c681bfd", "rule-90f1bcb36548ea39",
       "rule-be0bf7afde964803", "rule-504a8801607b9f1c", "rule-01eb3d1f7585323c", "rule-c6c3c71938210651",
       "rule-66810b66396a3b15", "rule-a3f26f34efab2ebb", "rule-8e75e1d767980665", "rule-a8722e4f568e681e", "rule-8bcb3a03ffcee62e", "rule-b8d9962485c3ced4",
+      "rule-6774a8522593a0fc",
     ]);
     for (const r of RULES) expect(r.rule_id).toBe(ruleId(r.tenant_id, r.surface, r.object_glob, r.setting_glob, r.version));
     expect(new Set(RULES.map((r) => r.rule_id)).size).toBe(RULES.length);

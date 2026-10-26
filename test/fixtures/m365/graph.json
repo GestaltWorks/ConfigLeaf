@@ -1,0 +1,40 @@
+{
+  "_note": "Hand-written in Microsoft Graph v1.0's response shapes for GET /domains and GET /domains/{id}/serviceConfigurationRecords, for the fictional tenant of Graph's own examples: contoso.com with its initial domain contoso.onmicrosoft.com, fabrikam.com, and northwind.com still unverified. The shapes follow a live read of 26 Oct 2026 (field names, types and enums only): every record id a GUID, isOptional false; per domain an MX, an SPF TXT and the autodiscover CNAME for Email, two Intune CNAMEs, two Skype for Business CNAMEs and SRV records, the msoid CNAME of OrgIdAuthentication, and a SharepointDefaultDomain record (a CNAME on a custom domain, an Unavailable record with a description on the initial one, whose labels came upper case). No DKIM selector CNAME is listed: Exchange Online keeps DKIM, not Graph's domain records. The domains come in two pages joined by an @odata.nextLink. Nothing here came from a real tenant.",
+  "domains": [
+    [
+      { "authenticationType": "Managed", "availabilityStatus": null, "id": "contoso.com", "isAdminManaged": true, "isDefault": true, "isInitial": false, "isRoot": true, "isVerified": true, "passwordNotificationWindowInDays": null, "passwordValidityPeriodInDays": null, "supportedServices": ["Email", "OfficeCommunicationsOnline"], "state": null },
+      { "authenticationType": "Managed", "availabilityStatus": null, "id": "contoso.onmicrosoft.com", "isAdminManaged": true, "isDefault": false, "isInitial": true, "isRoot": true, "isVerified": true, "passwordNotificationWindowInDays": null, "passwordValidityPeriodInDays": null, "supportedServices": ["Email"], "state": null }
+    ],
+    [
+      { "authenticationType": "Managed", "availabilityStatus": null, "id": "fabrikam.com", "isAdminManaged": true, "isDefault": false, "isInitial": false, "isRoot": true, "isVerified": true, "passwordNotificationWindowInDays": null, "passwordValidityPeriodInDays": null, "supportedServices": ["Email"], "state": null },
+      { "authenticationType": "Managed", "availabilityStatus": null, "id": "northwind.com", "isAdminManaged": true, "isDefault": false, "isInitial": false, "isRoot": true, "isVerified": false, "passwordNotificationWindowInDays": null, "passwordValidityPeriodInDays": null, "supportedServices": [], "state": null }
+    ]
+  ],
+  "records": {
+    "contoso.com": [
+      { "@odata.type": "#microsoft.graph.domainDnsMxRecord", "id": "1a6d7e0c-5b3f-4c2a-9e81-0d4f6b2c7a01", "isOptional": false, "label": "contoso.com", "recordType": "Mx", "supportedService": "Email", "ttl": 3600, "mailExchange": "contoso-com.mail.protection.outlook.com", "preference": 0 },
+      { "@odata.type": "#microsoft.graph.domainDnsTxtRecord", "id": "1a6d7e0c-5b3f-4c2a-9e81-0d4f6b2c7a02", "isOptional": false, "label": "contoso.com", "recordType": "Txt", "supportedService": "Email", "ttl": 3600, "text": "v=spf1 include:spf.protection.outlook.com -all" },
+      { "@odata.type": "#microsoft.graph.domainDnsCnameRecord", "id": "1a6d7e0c-5b3f-4c2a-9e81-0d4f6b2c7a03", "isOptional": false, "label": "autodiscover.contoso.com", "recordType": "CName", "supportedService": "Email", "ttl": 3600, "canonicalName": "autodiscover.outlook.com" },
+      { "@odata.type": "#microsoft.graph.domainDnsSrvRecord", "id": "1a6d7e0c-5b3f-4c2a-9e81-0d4f6b2c7a04", "isOptional": false, "label": "contoso.com", "recordType": "Srv", "supportedService": "OfficeCommunicationsOnline", "ttl": 3600, "nameTarget": "sipdir.online.lync.com", "port": 443, "priority": 100, "protocol": "_tls", "service": "_sip", "weight": 1 },
+      { "@odata.type": "#microsoft.graph.domainDnsSrvRecord", "id": "1a6d7e0c-5b3f-4c2a-9e81-0d4f6b2c7a05", "isOptional": false, "label": "contoso.com", "recordType": "Srv", "supportedService": "OfficeCommunicationsOnline", "ttl": 3600, "nameTarget": "sipfed.online.lync.com", "port": 5061, "priority": 100, "protocol": "_tcp", "service": "_sipfederationtls", "weight": 1 },
+      { "@odata.type": "#microsoft.graph.domainDnsCnameRecord", "id": "1a6d7e0c-5b3f-4c2a-9e81-0d4f6b2c7a06", "isOptional": false, "label": "sip.contoso.com", "recordType": "CName", "supportedService": "OfficeCommunicationsOnline", "ttl": 3600, "canonicalName": "sipdir.online.lync.com" },
+      { "@odata.type": "#microsoft.graph.domainDnsCnameRecord", "id": "1a6d7e0c-5b3f-4c2a-9e81-0d4f6b2c7a07", "isOptional": false, "label": "lyncdiscover.contoso.com", "recordType": "CName", "supportedService": "OfficeCommunicationsOnline", "ttl": 3600, "canonicalName": "webdir.online.lync.com" },
+      { "@odata.type": "#microsoft.graph.domainDnsCnameRecord", "id": "1a6d7e0c-5b3f-4c2a-9e81-0d4f6b2c7a08", "isOptional": false, "label": "msoid.contoso.com", "recordType": "CName", "supportedService": "OrgIdAuthentication", "ttl": 3600, "canonicalName": "clientconfig.microsoftonline-p.net" },
+      { "@odata.type": "#microsoft.graph.domainDnsCnameRecord", "id": "1a6d7e0c-5b3f-4c2a-9e81-0d4f6b2c7a09", "isOptional": false, "label": "enterpriseregistration.contoso.com", "recordType": "CName", "supportedService": "Intune", "ttl": 3600, "canonicalName": "enterpriseregistration.windows.net" },
+      { "@odata.type": "#microsoft.graph.domainDnsCnameRecord", "id": "1a6d7e0c-5b3f-4c2a-9e81-0d4f6b2c7a10", "isOptional": false, "label": "enterpriseenrollment.contoso.com", "recordType": "CName", "supportedService": "Intune", "ttl": 3600, "canonicalName": "enterpriseenrollment.manage.microsoft.com" },
+      { "@odata.type": "#microsoft.graph.domainDnsCnameRecord", "id": "1a6d7e0c-5b3f-4c2a-9e81-0d4f6b2c7a11", "isOptional": false, "label": "contoso.com", "recordType": "CName", "supportedService": "SharepointDefaultDomain", "ttl": 3600, "canonicalName": "contoso.sharepoint.com" }
+    ],
+    "contoso.onmicrosoft.com": [
+      { "@odata.type": "#microsoft.graph.domainDnsMxRecord", "id": "2b7e8f1d-6c40-4d3b-8f92-1e5a7c3d8b01", "isOptional": false, "label": "CONTOSO.onmicrosoft.com", "recordType": "Mx", "supportedService": "Email", "ttl": 3600, "mailExchange": "contoso.mail.protection.outlook.com", "preference": 0 },
+      { "@odata.type": "#microsoft.graph.domainDnsTxtRecord", "id": "2b7e8f1d-6c40-4d3b-8f92-1e5a7c3d8b02", "isOptional": false, "label": "CONTOSO.onmicrosoft.com", "recordType": "Txt", "supportedService": "Email", "ttl": 3600, "text": "v=spf1 include:spf.protection.outlook.com -all" },
+      { "@odata.type": "#microsoft.graph.domainDnsUnavailableRecord", "id": "2b7e8f1d-6c40-4d3b-8f92-1e5a7c3d8b03", "isOptional": false, "label": "CONTOSO.onmicrosoft.com", "recordType": "Unavailable", "supportedService": "SharepointDefaultDomain", "ttl": 3600, "description": "The SharePoint default domain is not configured through this record." }
+    ],
+    "fabrikam.com": [
+      { "@odata.type": "#microsoft.graph.domainDnsMxRecord", "id": "3c8f9a2e-7d51-4e4c-9a03-2f6b8d4e9c01", "isOptional": false, "label": "fabrikam.com", "recordType": "Mx", "supportedService": "Email", "ttl": 3600, "mailExchange": "fabrikam-com.mail.protection.outlook.com", "preference": 0 },
+      { "@odata.type": "#microsoft.graph.domainDnsTxtRecord", "id": "3c8f9a2e-7d51-4e4c-9a03-2f6b8d4e9c02", "isOptional": false, "label": "fabrikam.com", "recordType": "Txt", "supportedService": "Email", "ttl": 3600, "text": "v=spf1 include:spf.protection.outlook.com -all" },
+      { "@odata.type": "#microsoft.graph.domainDnsCnameRecord", "id": "3c8f9a2e-7d51-4e4c-9a03-2f6b8d4e9c03", "isOptional": false, "label": "autodiscover.fabrikam.com", "recordType": "CName", "supportedService": "Email", "ttl": 3600, "canonicalName": "autodiscover.outlook.com" },
+      { "@odata.type": "#microsoft.graph.domainDnsCnameRecord", "id": "3c8f9a2e-7d51-4e4c-9a03-2f6b8d4e9c04", "isOptional": false, "label": "msoid.fabrikam.com", "recordType": "CName", "supportedService": "OrgIdAuthentication", "ttl": 3600, "canonicalName": "clientconfig.microsoftonline-p.net" }
+    ],
+    "northwind.com": []
+  }
+}

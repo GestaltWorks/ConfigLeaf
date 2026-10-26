@@ -8,7 +8,7 @@
 // recorded estate, no credentials", then one row per stage. load: the bundle, its runs and rows, and the file tables
 // (the lesson and rule rows sql.js holds beside the bundle as Zetaris holds LESSONS.lesson and RULES.rule). gate: the
 // runs that pass the DQ gate. observe: the observations in the World Model. detect: the findings by class in plain
-// words. decide: the verbs and the decision instant; under it the technician's memory, the findings decided under
+// words, and one line saying Microsoft 365 is not in the recorded bundle (npm run collect:m365 reads it live). decide: the verbs and the decision instant; under it the technician's memory, the findings decided under
 // policy rules, the DQ rule exception_in_force over the pass's ADOPTs under an exception (the drift_usl.adoption SQL
 // over the ledger and the lesson table, with the rule table from the policy file), the dispositions the ledger wrote
 // and those read back from it under each finding's disposition_id, and one line per ROLLBACK, FIX and ESCALATE.
@@ -72,6 +72,8 @@ import { DriftWorld } from "../src/engine/world.ts";
 import { CAUSE_CLASSES } from "../src/explain/cause.ts";
 import { BUNDLE_REDACTOR, MemoryCauseSink, explainTenants } from "../src/explain/explain.ts";
 import { MemoryLedger } from "../src/ledger.ts";
+import { MAIL_NOT_RECORDED } from "../src/m365.ts";
+import { M365_SURFACE } from "../src/collectors/m365.ts";
 import { dispositionIdOf } from "../src/loop/pass.ts";
 import {
   SAMPLE_HEADER_MODE, Table, causesView, count, decideView, detectView, fileView, gateView, judgeSkippedView, loadView, observeView, presentOptions, whatHappened,
@@ -165,7 +167,8 @@ try {
   const pass = await runPass(layer, { tracer, world: new DriftWorld("sample"), memory, ledger: new MemoryLedger(engine), decidedAt });
   row("gate", gateView(pass));
   row("observe", observeView(pass.observed));
-  row("detect", detectView(pass.findings));
+  // The recorded bundle holds no Microsoft 365 run; the detect row says so in one line rather than leave it unsaid.
+  row("detect", detectView(pass.findings, bundle.collection_run.some((r) => r.surface === M365_SURFACE) ? [] : [MAIL_NOT_RECORDED]));
 
   // The ledger's rows, read back through the DataLayer, in the order of the findings they decide: each the row under
   // the disposition_id the pass gives the finding (src/loop/pass.ts dispositionIdOf, keyed on decidedAt), which a recorded

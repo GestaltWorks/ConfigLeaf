@@ -99,6 +99,7 @@ import { dispositionId, type ChangeWindow, type DecidedBy, type Disposition, typ
 import type { ExceptionLesson, TechnicianMemory } from "./engine/memory.ts";
 import { DriftWorld, recordExposure, type ExposureLine, type ExposureMeasure, type Observation } from "./engine/world.ts";
 import type { Ledger } from "./ledger.ts";
+import { mailRecords } from "./m365.ts";
 // The Decider and the rule that governs a setting (src/policy/).
 import {
   APPROVAL_CLASSES, NO_PROBE_RUN, WINDOW_CLASSES, decide, openWindow, production, productionText, validCopy, type ApprovedValue, type CopyCandidate, type ExceptionState, type PriorHold, type ProbeView,
@@ -457,7 +458,7 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     const windows = weigh && WINDOW_CLASSES.includes(cls) ? await windowsFor(finding.tenant_id) : null;
     const window = windows ? openWindow(windows.rows, finding, decidedAt) : null;
     const windowError = windows?.error ?? null;
-    const decision = decide({ finding: { class: cls }, rule, exception: exceptionState, checks: { verb: policyVerb, why: policyWhy }, approved, copies, probes, serves, decidedAt, priorHold, window, windowError });
+    const decision = decide({ finding, rule, exception: exceptionState, checks: { verb: policyVerb, why: policyWhy }, approved, copies, probes, serves, decidedAt, priorHold, window, windowError });
     const verb: Verb = decision.verb;
     const why = decision.reason;
     if (applied && recalled) recalled.applied += 1;
@@ -847,6 +848,9 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     }
     await detectMissing(dns, "cloudflare.dns", "", "cloudflare.dns", dns.run_id);
   }
+
+  // The mail records Microsoft 365 requires, the latest m365.dns run of each tenant, against what the DNS run of its pass serves (src/m365.ts).
+  for (const f of await mailRecords(layer, runs, (r) => ({ gated: gatedOut.has(r.run_id), dns: dnsFor(r) }), surveyOpts)) await assess(f, undefined);
 
   // The settings of the pass's latest passing runs that a locked rule governs and that have no approved value on
   // record: what a locked rule has nothing to roll back to. Counted, one line per pass, no finding.

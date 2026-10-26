@@ -63,12 +63,14 @@ describe("the guard over fake DESCRIBE answers", () => {
     expect(affectedSurfaces({ tables: 20, changes })).toBe("*");
   });
 
-  it("a backup table feeds linux.nginx alone; the DNS record, audit and inventory tables feed linux.nginx and cloudflare.dns", async () => {
+  it("a backup table feeds linux.nginx alone; the DNS record and audit tables feed linux.nginx, cloudflare.dns and m365.dns, the inventory linux.nginx and cloudflare.dns", async () => {
     const backup = await readSchemaGuard(fake({ drift: { backup_item: { value_hash: "integer" } } }), { datasource: "DRIFT" });
     expect(schemaText(backup)).toBe("DRIFT.backup_item changed: value_hash");
     expect(affectedSurfaces(backup)).toEqual(new Set(["linux.nginx"]));
     const dns = await readSchemaGuard(fake({ drift: { dns_record: { proxied: null } } }), { datasource: "DRIFT" });
-    expect(affectedSurfaces(dns)).toEqual(new Set(["linux.nginx", "cloudflare.dns"]));
+    expect(affectedSurfaces(dns)).toEqual(new Set(["linux.nginx", "cloudflare.dns", "m365.dns"]));
+    const inventory = await readSchemaGuard(fake({ drift: { inventory_asset: { address: null } } }), { datasource: "DRIFT" });
+    expect(affectedSurfaces(inventory)).toEqual(new Set(["linux.nginx", "cloudflare.dns"]));
   });
 
   it("a REST field dns_live reads that changed type or is gone is a change of its zone table; other fields are left alone", () => {
