@@ -105,11 +105,12 @@ import { defaultChecks, type FindingSummary, type RejectedCheck } from "./catalo
 import { CATALOGUE, runCheck, type CheckResult, type FindingClass } from "./catalogue/templates.ts";
 import { HeldTracer, OrderedTrace, SharedReads, checkLimit, closing, inOrder, type Commit, type Task } from "./concurrency.ts";
 import { config } from "./config.ts";
+import { batchResolutions, surfaceObservations } from "./data/batch.ts";
 import { fingerprintRows } from "./data/fingerprint.ts";
 import { DataLayerError, type DataLayer } from "./data/layer.ts";
 import {
   approvedCopies, approvedMissing, auditSpan, changeWindows, changedSinceBackup, driftVsApproved, hero, latestApprovals, listRuns, objects, observationsOf, orphanRecords, orphanVhosts,
-  policyRules, priorHolds, probesOfRun, proxiedWithoutRealIp, proxySplit, resolutions, runComplete, wildcardWithoutRealIp,
+  policyRules, priorHolds, probesOfRun, proxiedWithoutRealIp, proxySplit, runComplete, wildcardWithoutRealIp,
 } from "./data/queries.ts";
 import { dispositionId, type ChangeWindow, type DecidedBy, type Disposition, type DispositionVerb, type PolicyRule } from "./data/rows.ts";
 import type { ExceptionLesson, TechnicianMemory } from "./engine/memory.ts";
@@ -633,29 +634,48 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
   const dnsFor = (r: Row): Row | undefined => nearestDns(passing, r);
   const gatedDnsFor = (r: Row): Row | undefined => nearestDns(runs.filter((x) => gatedOut.has(x.run_id)), r);
 
-  // observe: each run's reads a task, its observations into the World Model and its fingerprints into the ledger in run order
+  // observe: the passing host runs' reads as sets (src/data/batch.ts), each task one, keyset-paged: every observation of a tenant's
+  // surface in one read, what the runs that share a DNS run resolved to in one read per DNS run. Then each run in run order: its
+  // observations into the World Model in bulk, its fingerprints into the ledger, its observe line.
   const resByRun = new Map<string, Row[]>();
   let observed = 0;
-  await inTurn(passing.filter((x) => x.host !== "").map((r): Task => async (t) => {
-    const obs = objects(await observationsOf(layer, r.run_id, { tracer: t, agent: "observer" }));
+  const hostRuns = passing.filter((x) => x.host !== "");
+  const sources = [...new Map(hostRuns.map((r) => [`${r.tenant_id}\u001f${r.surface}`, r])).values()];
+  const runsByDns = new Map<string, string[]>();
+  for (const r of hostRuns) {
     const dns = dnsFor(r);
-    const res = dns ? objects(await resolutions(layer, { run_id: r.run_id, dns_run_id: dns.run_id }, { tracer: t, agent: "observer" })) : [];
-    return async () => {
-      obsByRun.set(r.run_id, obs);
-      resByRun.set(r.run_id, res);
-      const fp = new Map<string, string[]>();
-      for (const x of res) fp.set(x.obs_id, [...(fp.get(x.obs_id) ?? []), x.content]);
-      for (const o of obs) await world.observe(toObservation(o, fp.get(o.obs_id)?.sort().join(",") ?? null));
-      // The same fingerprints as rows: what each dns_name setting of the run resolved to in its DNS run.
-      if (opts.ledger && dns) fingerprints += await opts.ledger.recordFingerprints(fingerprintRows(obs, res, dns));
-      observed += obs.length;
-      t?.emit({
-        agent: "observer", action: "observe", status: "ok", input_summary: r.run_id,
-        output_summary: `${obs.length} observations recorded, ${fp.size} with a resolved referent${dns ? ` (DNS run ${dns.run_id})` : " (no DNS run of this pass passed the gate)"}`,
-        detail: "model: none",
-      });
-    };
-  }));
+    if (dns) runsByDns.set(dns.run_id, [...(runsByDns.get(dns.run_id) ?? []), r.run_id]);
+  }
+  const obsRead = new Map<string, Row[]>();
+  const resRead = new Map<string, Row[]>();
+  await inTurn([
+    ...sources.map((s): Task => async (t) => {
+      const got = await surfaceObservations(layer, s.tenant_id, s.surface, { tracer: t, agent: "observer" });
+      return () => { for (const [run, rows] of got) obsRead.set(run, rows); };
+    }),
+    ...[...runsByDns].map(([dnsRunId, runIds]): Task => async (t) => {
+      const got = await batchResolutions(layer, runIds, dnsRunId, { tracer: t, agent: "observer" });
+      return () => { for (const [run, rows] of got) resRead.set(run, rows); };
+    }),
+  ]);
+  for (const r of hostRuns) {
+    const obs = obsRead.get(r.run_id) ?? [];
+    const dns = dnsFor(r);
+    const res = dns ? (resRead.get(r.run_id) ?? []) : [];
+    obsByRun.set(r.run_id, obs);
+    resByRun.set(r.run_id, res);
+    const fp = new Map<string, string[]>();
+    for (const x of res) fp.set(x.obs_id, [...(fp.get(x.obs_id) ?? []), x.content]);
+    await world.observeAll(obs.map((o) => toObservation(o, fp.get(o.obs_id)?.sort().join(",") ?? null)));
+    // The same fingerprints as rows: what each dns_name setting of the run resolved to in its DNS run.
+    if (opts.ledger && dns) fingerprints += await opts.ledger.recordFingerprints(fingerprintRows(obs, res, dns));
+    observed += obs.length;
+    tracer?.emit({
+      agent: "observer", action: "observe", status: "ok", input_summary: r.run_id,
+      output_summary: `${obs.length} observations recorded, ${fp.size} with a resolved referent${dns ? ` (DNS run ${dns.run_id})` : " (no DNS run of this pass passed the gate)"}`,
+      detail: "model: none",
+    });
+  }
 
   // detect: every detector a task, in the order a pass one task at a time runs them (the hero query per host group, the survey,
   // the drift and backup detectors). A detector reports each finding it makes: the finding's lines take their place among the
