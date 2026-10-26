@@ -9,7 +9,8 @@
 //   2. Policy, when a rule governs the setting (src/policy/resolve.ts); decided_by "policy", rule_id the rule.
 //      on_drift escalate, first and whatever the lock or the class: ESCALATE, the reason naming the drift from the
 //      approved value when there is one, and opening with the finding's own line for a NAMED_CLASSES finding (a
-//      Microsoft 365 mail record: the record, the domain's pseudonym, what the zone serves); the agent changes
+//      Microsoft 365 mail record: the record, the domain's pseudonym, what the zone serves) when that line is redacted
+//      text (redactedLine), else saying it is left out; the agent changes
 //      nothing (the rule zetaris.control carries, the layer the agent reads through, and the rule m365.dns carries:
 //      mail DNS is never changed automatically).
 //      drift_vs_approved (the live value differs from the latest approval) and approved_missing (the approved
@@ -66,7 +67,9 @@
 // ESCALATE, "no probe run in this pass".
 
 import type { FindingClass } from "../catalogue/templates.ts";
+import { config } from "../config.ts";
 import type { ChangeWindow, DecidedBy, DispositionVerb, PolicyRule } from "../data/rows.ts";
+import { Redactor } from "../redactor.ts";
 
 /** The verb the checks alone give, as the pass computed it before any policy. */
 export type ChecksVerb = "ADOPT" | "ESCALATE";
@@ -193,6 +196,14 @@ export const APPROVAL_CLASSES: readonly FindingClass[] = ["drift_vs_approved", "
  */
 export const NAMED_CLASSES: readonly FindingClass[] = ["m365_mail_record"];
 
+/** Any salt will do: redacted text is a fixed point of the redactor under every salt, and a raw name, address or tenant label is not. */
+const GUARD = new Redactor("decide-guard", config.redactWords);
+
+/** The finding's line when it is redacted text (the redactor leaves it as it is); null otherwise, so a reason never carries a raw line. */
+export function redactedLine(s: string | undefined): string | null {
+  return s && GUARD.text(s) === s ? s : null;
+}
+
 const VALID: readonly string[] = ["ok", "ok_with_gaps"];
 const hex = (h: string, n: number): string => h.replace(/^sha256:/, "").slice(0, n);
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
@@ -286,7 +297,8 @@ function byRule(input: DecideInput, rule: PolicyRule, until = holdUntil(input.de
   if (rule.on_drift === "escalate") {
     const what = APPROVAL_CLASSES.includes(cls) && input.approved
       ? (cls === "approved_missing" ? `approved ${hex(input.approved.value_hash, 12)} is absent from the run` : `live value drifted from approved ${hex(input.approved.value_hash, 12)}`)
-      : NAMED_CLASSES.includes(cls) && input.finding.summary ? input.finding.summary : `this ${cls} finding stands`;
+      : NAMED_CLASSES.includes(cls) && redactedLine(input.finding.summary) ? input.finding.summary!
+        : NAMED_CLASSES.includes(cls) && input.finding.summary ? `this ${cls} finding stands (its line is not redacted text and is left out)` : `this ${cls} finding stands`;
     return by("ESCALATE", `${what}; rule ${id} (${rule.criticality}) sends it to a technician and the agent changes nothing`);
   }
 

@@ -911,6 +911,11 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     await detectMissing(dns, "cloudflare.dns", "", "cloudflare.dns", dns.run_id, t, report);
   });
 
+  // The mail records Microsoft 365 requires, the latest m365.dns run of each tenant, against what the DNS run of its pass serves (src/m365.ts).
+  detectors.push(async (t, report) => {
+    for (const f of await mailRecords(layer, runs, (r) => ({ gated: gatedOut.has(r.run_id), dns: dnsFor(r) }), surveyOpts(t))) report(f);
+  });
+
   // The detectors' step. On a detector's failure the findings reported before it are still checked and decided, as a pass
   // one task at a time had done by then, and the detector's error is thrown after them.
   const reported: Reported[][] = detectors.map(() => []);
@@ -929,9 +934,6 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
   const queue = reported.slice(0, failedAt + 1).flat();
   await inTurn(queue.map((q): Task => (t) => assess(q.finding, q.view, q.approved, t)), (i) => queue[i].lines);
   if (detected) throw detected.error;
-
-  // The mail records Microsoft 365 requires, the latest m365.dns run of each tenant, against what the DNS run of its pass serves (src/m365.ts).
-  for (const f of await mailRecords(layer, runs, (r) => ({ gated: gatedOut.has(r.run_id), dns: dnsFor(r) }), surveyOpts)) await assess(f, undefined);
 
   // The settings of the pass's latest passing runs that a locked rule governs and that have no approved value on
   // record: what a locked rule has nothing to roll back to. Counted, one line per pass, no finding.

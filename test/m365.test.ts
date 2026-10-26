@@ -21,6 +21,9 @@ import { resolvePolicy } from "../src/policy/resolve.ts";
 import { Redactor } from "../src/redactor.ts";
 import { ACCESS_TOKEN, CLIENT_ID, CLIENT_SECRET, GRAPH_URL, LOGIN_URL, TENANT_ID, fakeGraph, type FakeGraphOptions } from "./fixtures/m365/fake-graph.ts";
 import { MemTracer } from "./fixtures/mem-tracer.ts";
+import { MAIL_DNS_RUN, mailRun, mailWorld } from "./fixtures/m365/world.ts";
+import { redactedLine } from "../src/policy/decide.ts";
+import { isMailRecord, MIN_CREDENTIAL } from "../src/collectors/m365.ts";
 
 const r = new Redactor("m365-test-salt");
 const H6 = "[0-9a-f]{6}";
@@ -239,39 +242,15 @@ describe("the redactor's Microsoft 365 rule (pass d)", () => {
 
 // ---- the detector, over sql.js -------------------------------------------------------------------------------------
 
-const DNS_RUN = "run-dns-m365-test";
-const AUDIT_RUN = "run-audit-m365-test";
+const DNS_RUN = MAIL_DNS_RUN;
 const at = NOW.toISOString();
-const run = (run_id: string, surface: string, n: number): CollectionRun => ({
-  run_id, tenant_id: TENANT, surface, host: null, started_at: at, finished_at: at, expected_count: n, observed_count: n, status: "complete",
-});
-/** What Cloudflare serves: contoso's MX and an SPF carrying the include among others; fabrikam's MX stale, its SPF without the include, its autodiscover proxied. */
-const SERVED: Record<string, CfRecord[]> = {
-  "contoso.com": [
-    { id: "c1", name: "contoso.com", type: "A", content: "203.0.113.10", proxied: false },
-    { id: "c2", name: "contoso.com", type: "MX", content: "contoso-com.mail.protection.outlook.com", proxied: false },
-    { id: "c3", name: "contoso.com", type: "TXT", content: '"v=spf1 include:spf.protection.outlook.com include:_spf.mailer.example ~all"' },
-    { id: "c4", name: "contoso.com", type: "TXT", content: '"MS=ms12345678"' },
-  ],
-  "fabrikam.com": [
-    { id: "f1", name: "fabrikam.com", type: "MX", content: "fabrikam-com.mail.eo.outlook.com", proxied: false },
-    { id: "f2", name: "fabrikam.com", type: "TXT", content: '"v=spf1 include:_spf.mailer.example ~all"' },
-    { id: "f3", name: "autodiscover.fabrikam.com", type: "CNAME", content: "autodiscover.outlook.com", proxied: true },
-  ],
-};
+const run = mailRun;
 
 async function world(opts: { zones?: string[]; policy?: boolean } = {}) {
-  const c = await collect(graph().g);
-  const zones = opts.zones ?? Object.keys(SERVED);
-  const ctx = { tenantId: TENANT, runId: DNS_RUN, observedAt: at };
-  const dns = zones.flatMap((z) => SERVED[z].map((rec) => dnsRecordRow(r, rec, z, ctx)!));
+  const w = await mailWorld(opts);
   const engine = await SqlJsEngine.create();
-  engine.loadBundle({
-    collection_run: [c.run, run(DNS_RUN, "cloudflare.dns", dns.length), run(AUDIT_RUN, "cloudflare.audit", 0)],
-    observation: c.observations, dns_record: dns,
-    ...(opts.policy ? { policy_rule: loadPolicyFile("policy/hackathon.json", { tenant: TENANT, redactor: r }).rows } : {}),
-  });
-  return { layer: new DataLayer(engine), c, dns };
+  engine.loadBundle(w.bundle);
+  return { layer: new DataLayer(engine), c: w.c, dns: w.dns };
 }
 
 describe("MAIL_RECORDS_SQL and mailRecordFindings", () => {
@@ -378,5 +357,80 @@ describe("the pass and the policy's 17th rule", () => {
     expect(MAIL_NOT_RECORDED).toBe("Microsoft 365 is not in the recorded bundle: npm run collect:m365 reads its mail records live");
     const sample = JSON.parse(readFileSync(new URL("../sample/bundle.json", import.meta.url), "utf8")) as { collection_run: { surface: string }[] };
     expect(sample.collection_run.some((x) => x.surface === M365_SURFACE)).toBe(false);
+  });
+});
+
+// ---- the review's fixes (PR #19): the CNAME value field, the guard on the reason, wildcards, edge cases ----------
+
+describe("the review's edge cases", () => {
+  const ctx = { tenantId: TENANT, runId: "run-edge", observedAt: NOW.toISOString() };
+
+  it("a CNAME's value is canonicalName, as Graph sends it; a CNAME carrying nameTarget alone (an SRV field) has no value and says so", () => {
+    const rec = { label: "autodiscover.contoso.com", recordType: "CName", supportedService: "Email", nameTarget: "autodiscover.outlook.com" };
+    expect(isMailRecord(rec)).toBe(true);
+    expect(expectedRecord("contoso.com", rec)).toBe("a CNAME record without its value");
+    expect(expectedRecord("contoso.com", { ...rec, canonicalName: "autodiscover.outlook.com" })).toMatchObject({ type: "CNAME", relative: "autodiscover", value: "autodiscover.outlook.com" });
+  });
+
+  it("malformed or empty fields: each refused with its reason, names normalised, an empty listing a complete run of 0", async () => {
+    const e = (rec: Record<string, unknown>) => expectedRecord("contoso.com", { supportedService: "Email", ...rec } as never);
+    expect(e({ recordType: "Mx", mailExchange: "x.example" })).toBe("a MX record without a label");
+    expect(e({ recordType: "Mx", label: "", mailExchange: "x.example" })).toBe("a MX record without a label");
+    expect(e({ recordType: "Mx", label: "contoso.com", mailExchange: "   " })).toBe("a MX record without its value");
+    expect(e({ recordType: "Txt", label: "contoso.com", text: 42 })).toBe("a TXT record without its value");
+    expect(e({ recordType: "Txt", label: "contoso.com", text: "v=spf1 -all" })).toBe("an SPF record that names no mechanism");
+    expect(e({ recordType: "Srv", label: "contoso.com" })).toBe("a record of a type this surface does not keep");
+    expect(e({ recordType: "CNAME", label: "AutoDiscover.Contoso.COM.", canonicalName: "AutoDiscover.Outlook.com." })).toMatchObject({ type: "CNAME", label: "autodiscover.contoso.com", relative: "autodiscover", value: "autodiscover.outlook.com" });
+    expect(isMailRecord({ recordType: "Mx", supportedService: "email" })).toBe(false);
+    const records = { "contoso.com": [], "fabrikam.com": [], "contoso.onmicrosoft.com": [], "northwind.com": [] };
+    const c = await collect(graph({ records, domains: [[{ id: "" }, { id: "contoso.com", isVerified: true }]] as never }).g);
+    expect(c.run).toMatchObject({ status: "complete", expected_count: 0, observed_count: 0 });
+    expect(c.counts).toMatchObject({ domains: 1, verified: 1, inScope: 1, listed: 0, mail: 0 });
+  });
+
+  it("decide() opens an escalation with the finding's line only when the line is redacted text; with none, or a raw one, it says the finding stands", () => {
+    const rule = resolvePolicy(loadPolicyFile("policy/hackathon.json", { tenant: TENANT, redactor: r }).rows, { tenant_id: TENANT, surface: M365_SURFACE, object_id: "host-abcdef.com/MX/@", setting_path: "content" })!;
+    const reason = (summary?: string) => decide({
+      finding: { class: "m365_mail_record", ...(summary === undefined ? {} : { summary }) }, rule, exception: { state: "none" }, checks: { verb: "ESCALATE", why: "x" },
+      approved: null, copies: [], probes: { run_id: null, rows: [] }, serves: [], decidedAt: NOW.toISOString(),
+    }).reason;
+    const tail = `; rule ${rule.rule_id} (high) sends it to a technician and the agent changes nothing`;
+    expect(reason()).toBe(`this m365_mail_record finding stands${tail}`);
+    expect(reason("the MX record of contoso.com is missing from Cloudflare")).toBe(`this m365_mail_record finding stands (its line is not redacted text and is left out)${tail}`);
+    expect(reason("mail for ops@contoso.com bounces at 198.18.0.7")).not.toMatch(/contoso|198\.18/);
+    const line = `the MX record of ${r.text("contoso.com")} is missing from Cloudflare: Microsoft 365 requires MX ${r.text("contoso-com.mail.protection.outlook.com")}`;
+    expect(redactedLine(line)).toBe(line);
+    expect(reason(line)).toBe(`${line}${tail}`);
+    expect([redactedLine(undefined), redactedLine(""), redactedLine("host contoso.com")]).toEqual([null, null, null]);
+  });
+
+  it("a wildcard under onmicrosoft.com: the star stays, the label takes the pseudonym the bare name takes, once, on either collector's path", () => {
+    const bare = r.text("contoso.onmicrosoft.com");
+    const star = r.text("*.contoso.onmicrosoft.com");
+    expect(star).toBe(`*.${bare}`);
+    expect(r.text(star)).toBe(star);
+    const sel = r.text("*.selector1-contoso-com._domainkey.contoso.onmicrosoft.com");
+    expect(sel.startsWith("*.selector1-tenant-")).toBe(true);
+    expect(sel.endsWith(`._domainkey.${bare}`)).toBe(true);
+    expect(sel).toMatch(new RegExp(String.raw`^\*\.selector1-tenant-[0-9a-f]{6}\._domainkey\.tenant-[0-9a-f]{6}\.onmicrosoft\.com$`));
+    const cf = dnsRecordRow(r, { id: "w", name: "*.contoso.onmicrosoft.com", type: "CNAME", content: "contoso.onmicrosoft.com" }, "contoso.onmicrosoft.com", ctx)!;
+    expect([cf.name, cf.content, cf.zone]).toEqual([star, bare, bare]);
+  });
+
+  it("an empty served value stays empty on the finding (resolves_to \"\"), never read as absent", async () => {
+    const { layer, c } = await world({ zones: ["contoso.com"] });
+    (layer.engine as SqlJsEngine).insertRows("dns_record", [{ ...dnsRecordRow(r, { id: "c9", name: "autodiscover.contoso.com", type: "CNAME", content: "x.example" }, "contoso.com", { tenantId: TENANT, runId: DNS_RUN, observedAt: NOW.toISOString() })!, content: "" }]);
+    const fs = await mailRecordFindings(layer, { run: c.run as unknown as Record<string, string>, gated: false, dns: { run_id: DNS_RUN, started_at: NOW.toISOString(), tenant_id: TENANT } });
+    expect(fs.map((f) => [f.summary.includes("different"), f.resolves_to, f.resource_id])).toEqual([[true, "", "c9"]]);
+  });
+
+  it("scrubIds takes the longest value first, so an id inside another leaves no fragment; a credential too short to scrub is refused before any request", async () => {
+    expect(scrubIds("tenant abcdefgh-1234 and client efgh", [["efgh", "<client>"], ["abcdefgh-1234", "<tenant>"]])).toBe("tenant <tenant> and client <client>");
+    const fake = fakeGraph();
+    for (const short of [{ clientSecret: "x".repeat(MIN_CREDENTIAL - 1) }, { clientId: "abc" }, { tenantId: "abc" }]) {
+      const g = new Graph({ tenantId: TENANT_ID, clientId: CLIENT_ID, clientSecret: CLIENT_SECRET, fetch: fake.fetch, loginUrl: LOGIN_URL, graphUrl: GRAPH_URL, ...short });
+      await expect(g.listDomains()).rejects.toThrow(/one is shorter, so it looks cut/);
+    }
+    expect(fake.log).toEqual([]);
   });
 });

@@ -145,7 +145,7 @@ export async function mailRecordFindings(layer: DataLayer, at: MailCheck, opts: 
     return {
       class: "m365_mail_record", tenant_id: run.tenant_id, run_id: run.run_id, surface: M365_SURFACE, host: null,
       object_id: first.object_id, setting_path: "content", value_hash: first.value_hash, value_redacted: first.expected || null,
-      refers_to_type: "dns_name", refers_to_id: first.name, dns_name: first.name, resolves_to: served?.served || null, resource_id: served?.record_id || null,
+      refers_to_type: "dns_name", refers_to_id: first.name, dns_name: first.name, resolves_to: served ? served.served : null, resource_id: served ? served.record_id : null,
       dns_run_id: dns.run_id, since: since < first.observed_at ? since : first.observed_at, until: later(later(run.started_at, dns.started_at), served?.dns_observed_at ?? ""), summary,
     };
   });

@@ -10,8 +10,9 @@
 //     reach the message, never the description, the secret or the token.
 //   GET /v1.0/domains                                        {value: domain[], @odata.nextLink?}
 //   GET /v1.0/domains/{id}/serviceConfigurationRecords       {value: domainDnsRecord[], @odata.nextLink?}
-//     a record carries label, recordType (Mx | Txt | CName | Srv), supportedService, isOptional, ttl and, by type,
-//     mailExchange and preference, text, canonicalName, or nameTarget, port, priority, protocol, service and weight.
+//     a record carries label, recordType (Mx | Txt | CName | Srv | Unavailable), supportedService, isOptional, ttl and,
+//     by type, mailExchange and preference (Mx), text (Txt), canonicalName (CName), or the SRV fields. Measured live 26
+//     Oct 2026: every CName carries canonicalName; nameTarget belongs to Srv alone, which this surface does not keep.
 //   A nextLink is followed only under the Graph base the client was given, so the token is sent nowhere else.
 //
 // Scope: the verified domains outside onmicrosoft.com (an initial domain's DNS is Microsoft's own, not the
@@ -53,6 +54,8 @@ export const M365_SURFACE = "m365.dns";
 /** The four rows of one kept record, in this order. */
 export const MAIL_FIELDS = ["domain", "type", "name", "content"] as const;
 const MAX_PAGES = 100;
+/** The shortest client id or secret the client sends (a GUID is 36 characters, a secret about 40): shorter is a cut paste, and too short to scrub. */
+export const MIN_CREDENTIAL = 8;
 /** A tenant as the token endpoint takes it: a GUID or a domain name. */
 const TENANT_REF = /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/;
 
@@ -61,7 +64,7 @@ export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 export interface GraphDomain { id: string; isVerified?: boolean; isInitial?: boolean; isDefault?: boolean; supportedServices?: string[] }
 export interface GraphDnsRecord {
   "@odata.type"?: string; id?: string; isOptional?: boolean; label?: string; recordType?: string; supportedService?: string; ttl?: number;
-  mailExchange?: string; preference?: number; text?: string; canonicalName?: string; nameTarget?: string;
+  mailExchange?: string; preference?: number; text?: string; canonicalName?: string;
 }
 interface Page<T> { value?: T[]; "@odata.nextLink"?: unknown }
 
@@ -116,6 +119,9 @@ export class Graph {
     if (this.#token && this.#token.until > this.#now() + 60_000) return this.#token.value;
     if (!this.#tenant || !this.#client || !this.#secret) throw new M365Error("M365_TENANT_ID, M365_CLIENT_ID and M365_CLIENT_SECRET must all be set", 0);
     if (!TENANT_REF.test(this.#tenant)) throw new M365Error("M365_TENANT_ID must be the tenant's id or one of its domain names", 0);
+    if (this.#tenant.length < 4 || [this.#client, this.#secret].some((v) => v.length < MIN_CREDENTIAL)) {
+      throw new M365Error(`M365_CLIENT_ID and M365_CLIENT_SECRET are each ${MIN_CREDENTIAL} characters or more and M365_TENANT_ID 4 or more; one is shorter, so it looks cut`, 0);
+    }
     this.requests.push("POST /{tenant}/oauth2/v2.0/token");
     const form = new URLSearchParams({ client_id: this.#client, client_secret: this.#secret, scope: SCOPE, grant_type: "client_credentials" });
     const r = await this.send(`${this.#login}/${encodeURIComponent(this.#tenant)}/oauth2/v2.0/token`, {
@@ -175,10 +181,14 @@ export class Graph {
   }
 }
 
-/** Each value of `pairs` that is 4 characters or longer replaced by its mark in `s`, case aside, raw and URL-encoded. */
+/**
+ * Each value of `pairs` that is 4 characters or longer replaced by its mark in `s`, case aside, raw and URL-encoded, the
+ * longest first, so a value inside another (a client id within a tenant string) leaves no fragment of the longer. A
+ * shorter value would mangle the text it is scrubbed from; the client refuses credentials that short (MIN_CREDENTIAL).
+ */
 export function scrubIds(s: string, pairs: readonly (readonly [string, string])[]): string {
   let out = s;
-  for (const [v, mark] of pairs) {
+  for (const [v, mark] of [...pairs].sort((a, b) => b[0].length - a[0].length)) {
     if (v.length < 4) continue;
     for (const form of new Set([v, encodeURIComponent(v)])) out = out.replace(new RegExp(form.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), mark);
   }

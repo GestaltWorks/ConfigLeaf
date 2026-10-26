@@ -369,7 +369,7 @@ describe.skipIf(!url)("Store, live drift-pg (throwaway schema)", () => {
     expect(first.stdout).toContain("policy:load: policy_rule 17 row(s) written, 0 already stored");
     const second = load();
     expect(second.status).toBe(0);
-    expect(second.stdout).toContain("policy:load: policy_rule 0 row(s) written, 16 already stored");
+    expect(second.stdout).toContain("policy:load: policy_rule 0 row(s) written, 17 already stored");
     const dry = spawnSync(process.execPath, ["--import", "tsx", "scripts/policy-load.ts", "--tenant", A, "--dry-run"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
     expect(dry.status).toBe(0);
     expect(dry.stdout).toContain("policy:load: dry run, nothing written (16 row(s) for policy_rule)");
