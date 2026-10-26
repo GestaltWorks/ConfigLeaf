@@ -173,16 +173,16 @@ describe("the executive report over sample/bundle.json", () => {
 
   it("the receipts: npm run receipts:verify's count over the newest eval results, and Ultra alone beside the checks with Ultra as the falsifier, per run", () => {
     const r = evalReceipts(ROOT)!;
-    expect(r).toMatchObject({ dir: "eval/results/2026-10-25T23-34-17Z", set: "dev", calls: 390, signed: 390, receipts: 384, verified: 384, withheld: 6, mismatches: 0 });
+    expect(r).toMatchObject({ dir: "eval/results/2026-10-26T08-21-54Z", set: "heldout", calls: 413, signed: 375, receipts: 375, verified: 375, withheld: 0, mismatches: 0 });
     expect(r.headline).toEqual({
-      alone: { config: "C4", runs: [{ run: 1, readYes: 6, labelledNo: 9 }, { run: 2, readYes: 5, labelledNo: 9 }, { run: 3, readYes: 6, labelledNo: 9 }] },
-      checks: { config: "C3", runs: [{ run: 1, readYes: 0, labelledNo: 9, struck: 9, claims: 10 }, { run: 2, readYes: 0, labelledNo: 9, struck: 8, claims: 10 }, { run: 3, readYes: 0, labelledNo: 9, struck: 8, claims: 10 }] },
+      alone: { config: "C4", runs: [{ run: 1, readYes: 7, labelledNo: 20 }, { run: 2, readYes: 7, labelledNo: 20 }, { run: 3, readYes: 9, labelledNo: 20 }] },
+      checks: { config: "C3", runs: [{ run: 1, readYes: 0, labelledNo: 20, struck: 8, claims: 10 }, { run: 2, readYes: 0, labelledNo: 20, struck: 9, claims: 10 }, { run: 3, readYes: 0, labelledNo: 20, struck: 9, claims: 10 }] },
     });
     const rec = sectionOf(c1.html, "receipts");
-    expect(rec).toContain('<span class="k">Receipts verified</span><span class="v">384 <small>of 384</small></span>');
-    expect(rec).toContain("<li><b>6, 5, 6 of 9</b>items labelled no that Ultra alone (C4) reads as yes, runs 1, 2 and 3</li>");
-    expect(rec).toContain("<li><b>0, 0, 0 of 9</b>items labelled no that the checks with Ultra as the falsifier (C3) read as yes, runs 1, 2 and 3</li>");
-    expect(rec).toContain("<li><b>9, 8, 8 of 10</b>planted false claims struck by C3, runs 1, 2 and 3</li>");
+    expect(rec).toContain('<span class="k">Receipts verified</span><span class="v">375 <small>of 375</small></span>');
+    expect(rec).toContain("<li><b>7, 7, 9 of 20</b>items labelled no that Ultra alone (C4) reads as yes, runs 1, 2 and 3</li>");
+    expect(rec).toContain("<li><b>0, 0, 0 of 20</b>items labelled no that the checks with Ultra as the falsifier (C3) read as yes, runs 1, 2 and 3</li>");
+    expect(rec).toContain("<li><b>8, 9, 9 of 10</b>planted false claims struck by C3, runs 1, 2 and 3</li>");
     expect(sectionOf(lab.html, "receipts")).toContain("The actions of lab-1 in the period name 3 receipt ids.");
   });
 
