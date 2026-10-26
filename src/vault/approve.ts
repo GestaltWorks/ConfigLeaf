@@ -28,7 +28,7 @@
 //     re-approval of an earlier value lands as a row of its own (approvalId carries approved_at).
 
 import { redactText } from "../collectors/linux.ts";
-import { approvalId, type ApprovedSetting, type DnsRecord, type Observation } from "../data/rows.ts";
+import { approvalId, type ApprovedSetting, type CollectionRun, type DnsRecord, type Observation } from "../data/rows.ts";
 import type { Redactor } from "../redactor.ts";
 
 export const NGINX_SURFACE = "linux.nginx";
@@ -131,4 +131,66 @@ export function approvalStatus(rows: readonly ApprovedSetting[], stored: readonl
 export function approvalsToWrite(rows: readonly ApprovedSetting[], states: readonly ApprovalState[]): ApprovedSetting[] {
   if (rows.length !== states.length) throw new Error(`approvalsToWrite: ${rows.length} row(s) and ${states.length} state(s)`);
   return rows.filter((_, i) => states[i] !== "current");
+}
+
+/** What a sign-off reads and writes: the Store on Postgres (scripts/approve.ts), the sql.js engine of the console in sample mode. */
+export interface ApprovalStore {
+  rowsOf(table: "approved_setting", where: { tenant_id: string }): Promise<ApprovedSetting[]>;
+  insertApproved(rows: readonly ApprovedSetting[]): Promise<number>;
+}
+
+/** The selection matches no setting of the run: scripts/approve.ts exits 1 with the message. */
+export class ApproveError extends Error {}
+
+/** A run's counts, observed/expected, "?" for the one it lacks; null when it has neither. */
+const countsOf = (r: Pick<CollectionRun, "observed_count" | "expected_count">): string | null =>
+  r.observed_count === null && r.expected_count === null ? null : `${r.observed_count ?? "?"}/${r.expected_count ?? "?"}`;
+
+/** One run as the sign-off names it: its counts, or "no counts" for a run that recorded neither. */
+export const runLine = (r: CollectionRun): string => `${r.surface} run ${r.run_id}${r.host ? ` on ${r.host}` : ""}, started ${r.started_at}, ${countsOf(r) ?? "no counts,"} ${r.status}`;
+
+export interface ApproveRun {
+  tenant: string;
+  run: CollectionRun;
+  observations: readonly Observation[];
+  selection: ApprovalSelection;
+  /** approved_by and note, already through the redactor. */
+  by: string;
+  note: string | null;
+  now: Date | string;
+  dryRun: boolean;
+}
+
+export interface ApproveResult {
+  /** The lines scripts/approve.ts prints, in its order. */
+  lines: string[];
+  rows: ApprovedSetting[];
+  states: ApprovalState[];
+  /** Rows written; null on a dry run. */
+  written: number | null;
+}
+
+/**
+ * The sign-off over one run, as scripts/approve.ts and the console's Approve run it: the selected rows (approvalsFor),
+ * their states against the tenant's stored approvals, the rows to write through the store unless dryRun, and the lines
+ * the CLI prints. Throws ApproveError when the selection matches no setting of the run.
+ */
+export async function approveRun(store: ApprovalStore, o: ApproveRun): Promise<ApproveResult> {
+  const rows = approvalsFor(o.observations, o.selection, o.by, o.note, o.now);
+  if (!rows.length) throw new ApproveError(`the selection matches no setting in ${runLine(o.run)}`);
+  const stored = await store.rowsOf("approved_setting", { tenant_id: o.tenant });
+  const states = approvalStatus(rows, stored);
+  const lines = [`approve: ${runLine(o.run)}: ${rows.length} setting(s) selected (${o.selection.kind}), approved_by ${o.by}${o.note ? `, note "${o.note}"` : ""}`];
+  rows.forEach((r, i) => lines.push(`  ${states[i].padEnd(10)} ${r.approval_id}  ${r.surface.padEnd(14)} ${(r.host ?? "-").padEnd(11)} ${r.object_id}  ${r.setting_path}  ${r.value_hash.slice(0, 19)}`));
+  lines.push(`approve: ${(["new", "replaces", "current", "superseded"] as const).map((s) => `${s} ${states.filter((x) => x === s).length}`).join(", ")}`);
+  if (states.includes("superseded")) lines.push("approve: a superseded row re-approves an earlier value; it is written as a new approval and becomes the latest");
+  const toWrite = approvalsToWrite(rows, states);
+  const current = rows.length - toWrite.length;
+  if (o.dryRun) {
+    lines.push(`approve: dry run, nothing written (${toWrite.length} row(s) for approved_setting, ${current} current)`);
+    return { lines, rows, states, written: null };
+  }
+  const written = toWrite.length ? await store.insertApproved(toWrite) : 0;
+  lines.push(`approve: approved_setting ${written} row(s) written, ${current} current and skipped`);
+  return { lines, rows, states, written };
 }

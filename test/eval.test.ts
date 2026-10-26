@@ -206,7 +206,8 @@ describe("eval queries and planted claims", () => {
     }
   });
 
-  it("each parity case runs on sql.js over sample/bundle.json, with rows", async () => {
+  // loads the whole sample bundle into sql.js and runs every case: about a second alone, past 5 s in the full parallel run
+  it("each parity case runs on sql.js over sample/bundle.json, with rows", { timeout: 20_000 }, async () => {
     const engine = await SqlJsEngine.create();
     engine.loadBundle(sampleBundle);
     const sample = new DataLayer(engine);

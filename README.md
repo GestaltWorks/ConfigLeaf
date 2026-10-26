@@ -124,6 +124,7 @@ npm install
 SAMPLE_MODE=true npm run sample                         # the whole pass over the recorded rows
 SAMPLE_MODE=true npm run preflight -- --proposal examples/proposals/a-unproxy-www.json   # GO, NO-GO, GO-IF or ESCALATE for one change
 SAMPLE_MODE=true npm run document -- --tenant client-1  # the owner's document and report -> examples/document.md, examples/report.html
+SAMPLE_MODE=true npm run console                        # the technician's console on http://127.0.0.1:8090/: every setting with its lock; Unlock, Approve, Lock
 npm run answer -- --finding <fnd-id> --accept --until <ISO 8601 UTC> --reason "..."   # teach one exception -> DRIFT_MEMORY_DIR; --list, --forget <id>
 npm run eval -- --set dev --configs C0                  # the pre-registered eval with no model -> eval/results/<UTC stamp>/
 npm run receipts:verify -- lab                          # the lab's signed receipts, offline; eval/results/2026-10-25T23-34-17Z for the development run's, against its call records
@@ -192,8 +193,8 @@ Measured on the operator's estate, tenant `client-1`, and the writes on the lab 
 
 | Command | Proves | Measured |
 |---|---|---|
-| `npm test` | Every module against fixtures, fakes and a throwaway Postgres schema; the live halves run behind their flags. | 1,161 tests in 44 files on the operator's machine: 1,043 run and pass, 0 fail, and 118 wait for their live flags (112 for `PARITY_LIVE`, 3 for `VALIDATE_LIVE`, 1 each for `EVAL_LIVE`, `PROBE_LIVE` and `TICKETS_LIVE`), 26 Oct 2026 00:34 UTC. |
-| `PARITY_LIVE=true npx vitest run test/parity.test.ts` | Every query the agent runs returns the same columns, rows and totals on sql.js and on Zetaris over the same rows. | The suite holds 111 cases. On 25 Oct 2026, at the export instant of the 13:53 UTC cycle, 107 of 107 cases equal, 17,364 observation rows read whole on both engines. The live half compares the recording's rows, and `DRIFT` holds rows written since that export, so the live half runs against a fresh export (`npm run export:bundle`). |
+| `npm test` | Every module against fixtures, fakes and a throwaway Postgres schema; the live halves run behind their flags. | 1,181 tests in 45 files on the operator's machine: 1,062 run and pass, 0 fail, and 119 wait for their live flags (113 for `PARITY_LIVE`, 3 for `VALIDATE_LIVE`, 1 each for `EVAL_LIVE`, `PROBE_LIVE` and `TICKETS_LIVE`), 26 Oct 2026 02:38 UTC. |
+| `PARITY_LIVE=true npx vitest run test/parity.test.ts` | Every query the agent runs returns the same columns, rows and totals on sql.js and on Zetaris over the same rows. | The suite holds 112 cases, the `change_window` table among them. On 25 Oct 2026, at the export instant of the 13:53 UTC cycle, 107 of 107 cases equal, 17,364 observation rows read whole on both engines. The live half compares the recording's rows, and `DRIFT` holds rows written since that export, so the live half runs against a fresh export (`npm run export:bundle`). |
 | `SAMPLE_MODE=true npm run sample` | The whole pass over `sample/bundle.json`, with no credentials, no model and no `.env`, deciding with the committed lessons in `examples/memory`. | 80 runs, 14,174 observations, 27 findings: ADOPT 23 under the operator's accepted exceptions, HOLD 3 and ESCALATE 1 by policy, decided at 2026-10-25T14:17:53.416Z; the explain step over the pass, 1 cause, the ESCALATE's, unknown with its 18 h window stated; 30 lines on stdout off a TTY, none of them a trace line (the header, a row per stage from load to judge, the "what happened" sentences and the done line), byte-identical over two runs outside the header's minute, the done line's time and the trace id; the decide row's DQ line reads `exception_in_force` holds for 23 of 23 ADOPT under an exception (over the ledger and the `lesson` table sql.js holds as Zetaris holds `LESSONS.lesson`), and with every `.env` value blanked the rows are the same, the deny-list probe counting 0 configured labels (49 with `.env`); the 792 trace lines go to `logs/` only, each with its own `ts`, `latency_ms` and `trace_id`, the last one the `SAMPLE:` summary line that `--json` prints alone, 26 Oct 2026. |
 | `npm run collect:cloudflare`, `npm run collect:linux` | The collectors read the live estate in full, each population asserted before the first row. | 58 of 58 records in 6 zones, 1,014 of 1,014 audit rows, 24 of 24 and 14 of 14 vhost files, at 13:53 UTC, 25 Oct 2026. |
 | `npm run vault:status` | Every complete run is one commit in a per-host or per-account git repository. | 3 repositories of 11, 12 and 12 commits, 58, 32 and 22 files at the heads, 25 Oct 2026. |
@@ -206,6 +207,7 @@ Measured on the operator's estate, tenant `client-1`, and the writes on the lab 
 | `npm run cycle` | One cycle of the loop, every step once, the first failing step stopping it; the screen counts the queries it sends through Zetaris. | 9 of 9 steps ok in 101.5 s, a dry run, the 13:53 UTC cycle of 25 Oct 2026. On the lab at 18:28 UTC, a dry run with collect, probe and validate skipped: the pass sent 398 Lightning SQL queries over `DRIFT` (26,155 rows, 0 failed) and the cycle 434 (27,043 rows, 0 failed), each count equal to the query lines of its trace, 25 Oct 2026. |
 | `npm run watch` | The cycle on a schedule, each cycle traced to its own file. | 7 cycles every 45 minutes from 09:23 to 13:53 UTC, a dry run: 9 of 9 steps ok in each, 75.0 to 101.5 s a cycle, 101.5 s the last, 0 failed, 25 Oct 2026. |
 | `npm run tickets` | One GitHub issue per ticket row, opened, commented on and closed by the ticket rules. | the smoke opened, commented on and closed issue #1 and a cycle opened issue #2 for the `proxy_split` HOLD, 24 Oct 2026; the first cycle after that HOLD expired commented on #2, 25 Oct 2026. On the lab, issue #3 opened as the FIX's incident with the investigation under Evidence and stays open, and issue #4 opened and closed as the rollback's change with its verification probe, 25 Oct 2026. `sample/bundle.json` carries the three ticket rows, #2 on the estate and #3 and #4 on the lab, each URL redacted. |
+| `SAMPLE_MODE=true npm run console` | The technician's console over the recorded rows with no services: every page rendered on the server with no external resource, every object with its lock from the policy, and a change window that holds a drift the locked rule would roll back. | Over `sample/bundle.json` for client-1: up in 3.1 s, 8 pages and the report answer 200 in under 40 ms; Settings lists 112 objects, 54 files on 2 hosts and 58 records in 6 zones, 79 locked by rule and 33 open. `test/console.test.ts`, 18 tests: over `test/fixtures/policy-bundle.json` app.conf's `drift_vs_approved` is ROLLBACK, HOLD with the window's reason after Unlock and a pass, and ROLLBACK again after Lock; Approve runs the approve module and closes the window; a POST without the page's token is refused, 26 Oct 2026. |
 | `npm run document` | The owner's document: one page per tenant from 15 named queries, 16 when it lists a cause, through the deny-list probe before it is written. | Under `SAMPLE_MODE=true`: 27 findings open, ADOPT 23, HOLD 3 and ESCALATE 1, decided at 2026-10-25T14:17:53.416Z, the Why one line, the ESCALATE's cause; `examples/document.md` byte-identical on a second render, 25 Oct 2026. |
 | `npm run eval -- --set dev --configs C0 --runs 2` | The pre-registered eval of [eval/PROTOCOL.md](eval/PROTOCOL.md). | C0 on the 15 development items under `policy/hackathon.json` version 2: 11 scored, 11 with a verdict, agreement 9 of 9 (Wilson 95% 0.701 to 1.000), 0 of 9 labelled no read yes, 0 differences between runs, 25 Oct 2026. |
 | `npm run receipts:verify -- eval/results/2026-10-25T23-34-17Z`, `npm run receipts:verify -- eval/results/2026-10-25T09-25-44Z`, `npm run receipts:verify -- lab` | The runtime's signed receipt for each receipted model call, published beside the call record that names it and checked offline with no `.env` and no network: the Ed25519 signature, the served model and tier, `app` `drift-agent-<tenant>`, `request_id`, `cache.status` and the preview the gate read. | The development run of 25 Oct 2026 23:34 UTC, under per-call scope: 390 of 390 call records carry a receipt; 384 are published with 384 of 384 signatures verified and 6 are withheld by the export's probe and listed in `receipts-withheld.json`; 0 served model, tier, app or cache mismatches; 372 counted calls whose preview opens with the request line, and the 12 custody refusals of C4 as recorded; `hmem` null on all 384, 26 Oct 2026. The run of 25 Oct 2026 09:25 UTC, under the shared scope: 383 of 389 call records carry a receipt, and the other 6, C2 judge calls, carry none, every route of the failover ladder failing (the last with a 502) and the gate refusing them; of the 383 receipts, 380 are published with 380 of 380 signatures verified and 3 are withheld by the export's probe and listed in `receipts-withheld.json`; 0 served model, tier, app or cache mismatches; 368 counted calls whose preview opens with the request line, and the 12 custody refusals of C4 as recorded, 25 Oct 2026. The lab: 3 of 3 verified under `drift-agent-lab-1`. One signing key throughout, the key of the 23 Oct probe receipts, 26 Oct 2026. CI runs it over every committed `receipts.json` on every push to main and every pull request ([ci.yml](.github/workflows/ci.yml)). |
@@ -334,6 +336,56 @@ actions against a fake host, probe and fetch, and a second run wrote 0. A ticket
 explained disposition carries a Why section right after its Evidence: the cause's sentence, one timeline line per
 evidence row (`2026-10-25 15:52:07 UTC · journal · user-3f2a1c · tee · /etc/nginx/conf.d/app.conf`, from
 `test/explain.test.ts`) and the diff in a fenced block.
+
+## The technician's console
+
+`npm run console` serves the technician's console on `http://127.0.0.1:8090/` (`--port` or `CONSOLE_PORT` names
+another port), every page rendered on the server from the DataLayer the agent reads, with no external script, style or
+font (`src/console/`). The pages link one stylesheet and one script from `/assets/`, each path naming its content's
+hash and cached for a year; every page is `no-store` and its Content-Security-Policy holds no `'unsafe-inline'`, the
+report's own style and scripts carrying the response's nonce. Overview is the owner's report, rendered on load.
+Settings lists every object of the latest passing runs, one line each: its name with its host or zone, its live
+value, its approval, its lock, the governing rule's family, its last change and its status, the objects with a
+technician, drifted, held or in an open window first; a drawer per object holds the full path, the vault diff, the
+restore proof, what a restore from the newest backup would regress, its references, its decisions, its actions with
+their receipts and its change windows. Findings, Actions and tickets, Traces and Sources show the current decisions
+with every time in their reasons formatted, the action and ticket rows, the tenant's trace files of `logs/` and
+`examples/traces/` (those whose cycle, pass or receipts name it, a ticket's URL shown as its number), and each
+source's row counts and DQ results.
+
+Three actions change a setting, each confirmed on the page and carrying the page's token:
+
+- Unlock opens a change window on the object: who (one line, up to 200 characters), until (1 to 72 hours from now) and why (one line, up to 500), one `change_window` row. The table holds `until` after `opened_at`, a `closed_at` at or after it and a known surface. Unlock is refused while a window is open on the object, while the windows cannot be read, and when the same object was unlocked at the same millisecond.
+- Approve runs the approve module (`src/vault/approve.ts`, as `npm run approve` does) on the object from the latest passing run of its host or zone, names that run's vault commit, or says the vault holds no copy of the run or that the read failed, and closes the open window.
+- Lock closes the open window and approves nothing.
+
+While a window is open, a drift on its object (`drift_vs_approved`, `changed_since_backup`, `approved_missing`) that
+the governing rule would roll back, fix or hold is HOLD until the window ends, its reason naming the window, who
+opened it, its end and why, and its disposition row carrying the `window_id`; ESCALATE and ADOPT stand, and outside a
+window the Decider decides as before (`src/policy/decide.ts`, step 3). The prior-HOLD read skips a row with a
+`window_id`, so a window neither starts nor ends a rule's expiry. A pass that cannot read the windows escalates every
+such drift a rule would roll back or fix, its reason "change windows not read: <error>; a technician decides", so a
+declared change is never undone on a failed read. Over Zetaris a pass reads `change_window` only when
+`SHOW DATASOURCE TABLES` lists it. Record exception records an accepted exception on a finding until a date
+(00:00 UTC) or an instant in the millisecond form, as `npm run answer -- --accept` does, and Run a pass runs the pass
+over the store; the console never runs act.
+
+`SAMPLE_MODE=true npm run console` needs no services: the bundle (`--bundle`, default `sample/bundle.json`) loads
+into sql.js, the sample's pass decides at the bundle's instant, and Unlock, Approve, Lock and Run a pass change the
+sql.js store for the life of the process; Record exception writes `examples/memory` only with `--write`.
+`--bundle test/fixtures/policy-bundle.json` loads the loop's fixture world, whose drifted `app.conf` a window holds.
+Live, `--tenant` or `CONSOLE_TENANT` names the tenant, the console applies `sql/schema.sql` and the Store's migrations
+when it starts (`disposition.window_id`, the `change_window` constraints), its passes are dry passes that record
+nothing, and it prints one line naming `npm run zetaris:setup` when Zetaris does not list `change_window` or does not
+read `disposition.window_id`; the setup applies the schema and the migrations to the app Postgres, registers the
+table in `DRIFT` and refreshes the columns. On the lab, 26 Oct
+2026 02:22 to 02:29 UTC through Zetaris: a window opened on `lab.example`, a `sudo -n tee` break to port 8095 and its
+collection, and the console's pass gave `drift_vs_approved` and `changed_since_backup` HOLD under
+rule-6c41a25a00c404c8 with the window's reason, the same file the 02:20 UTC pass with no window open gave ROLLBACK;
+Approve wrote the live file as the approved value and closed the window, and the next pass gave no drift and
+`changed_since_backup` HOLD 24 h, the export holding the old bytes. `test/console.test.ts` covers the window step, the
+failed read, the actions and the pages offline; the migration runs in `test/store.test.ts` against a throwaway
+Postgres schema.
 
 ## Why it changed
 
@@ -574,7 +626,7 @@ Nemotron runs through Nightshift, requested by explicit model id with OpenRouter
 
 | role | model | runs in |
 |---|---|---|
-| Triage: pick and parameterise catalogue checks for a finding | Nemotron 3.5 Lightning: `METERLESS_MODEL_FAST` `openrouter/nvidia/nemotron-3.5-lightning`, then `METERLESS_FALLBACK_FAST` `nvidia/nemotron-3.5-lightning-30b-a3b`; a local lane joins when its weights are installed | the eval's C1 to C3 |
+| Triage: pick and parameterise catalogue checks for a finding | Nemotron 3.5 Lightning: `METERLESS_MODEL_FAST` `nvidia/nemotron-3.5-lightning-30b-a3b` (NVIDIA's endpoint), then `METERLESS_FALLBACK_FAST` `openrouter/nvidia/nemotron-3.5-lightning`; a local lane joins when its weights are installed | the eval's C1 to C3 |
 | Investigation: pick the checks for a FIX, or an ESCALATE under an investigate rule | Nemotron 3.5 Lightning, the same ids | the Actor's `investigate` |
 | Refuting judge: one SELECT that returns rows when the claim is false | Nemotron 3 Ultra: `METERLESS_MODEL_JUDGE` `openrouter/nvidia/nemotron-3-ultra-550b-a55b:free`, then `METERLESS_FALLBACK_JUDGE` `nvidia/nemotron-3-ultra-550b-a55b`; Lightning in C2 | the Actor's `investigate`, the eval's C2 and C3 |
 | Eval C1 | C0 plus Nemotron 3.5 Lightning selecting and parameterising checks from the catalogue | `npm run eval` |

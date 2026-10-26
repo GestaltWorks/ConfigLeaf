@@ -448,6 +448,7 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
   let engine: SqlJsEngine;
   let layer: DataLayer;
   let dir: string;
+  // buildBase and buildWorld write the fixture vault's git repositories on disk: seconds in the full parallel run
   beforeAll(async () => {
     base = buildBase();
     world = await buildWorld(base);
@@ -455,7 +456,7 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
     engine.loadBundle(structuredClone(base.bundle));
     layer = new DataLayer(engine);
     dir = mkdtempSync(path.join(tmpdir(), "drift-loop-"));
-  });
+  }, 30_000);
   afterAll(() => {
     world.cleanup();
     engine.close();
@@ -606,7 +607,8 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
     expect(r.summary).toContain("ledger: none, nothing recorded");
   });
 
-  it("runs as one cycle with collect, probe and validate skipped: the pass records, act plans, tickets plan, the document is written", async () => {
+  // A whole cycle over the policy fixture with the sql.js engine: about 4.5 s alone, longer under the full suite.
+  it("runs as one cycle with collect, probe and validate skipped: the pass records, act plans, tickets plan, the document is written", { timeout: 30_000 }, async () => {
     const out = path.join(dir, "document.md");
     const tracer = new MemTracer("loop_test", { model: "none" });
     const printed: string[] = [];
