@@ -43,7 +43,8 @@ describe("MemoryLedger (sql.js)", () => {
     expect(await ledger.record([d])).toBe(1);
     const r = await dl.run(`SELECT ${COLUMNS.disposition.join(", ")} FROM {{t:disposition}} WHERE finding_id = {{p:f}} ORDER BY disposition_id`, { f: d.finding_id });
     expect(r.columns).toEqual([...COLUMNS.disposition]);
-    expect(r.rows).toEqual([[d.disposition_id, T, "linux.nginx", CONFD_HOST, OBJECT, SETTING, live.value_hash, "HOLD", d.reason, "2026-10-27T07:59:00.000Z", "policy", "rule-e611622049c91a41", "fnd-45d5f3f4a2eb0b2e", CONFD_RUN, "2026-10-24T07:59:00.000Z"]]);
+    // window_id last: NULL, read as '', on every HOLD a rule gives (a change window's HOLD carries the window's id)
+    expect(r.rows).toEqual([[d.disposition_id, T, "linux.nginx", CONFD_HOST, OBJECT, SETTING, live.value_hash, "HOLD", d.reason, "2026-10-27T07:59:00.000Z", "policy", "rule-e611622049c91a41", "fnd-45d5f3f4a2eb0b2e", CONFD_RUN, "2026-10-24T07:59:00.000Z", ""]]);
   });
 
   it("joins the observation it decides on: the live value_hash of the setting in the run", async () => {

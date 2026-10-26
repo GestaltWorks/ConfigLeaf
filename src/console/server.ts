@@ -8,17 +8,29 @@
 //   - GET /overview, /settings, /findings, /actions, /traces, /traces/view?f=<dir>/<file>, /sources, /policy,
 //     /document, and /overview/report (the owner's report, src/document/report.ts renderReport over the snapshot's
 //     rows, with its outbound links opening in the top window). / redirects to /overview. Anything else is 404.
+//     Every page is no-store and carries a CSP with no 'unsafe-inline': the console's pages link their stylesheet and
+//     script from /assets/ (src/console/html.ts ASSETS, the path naming the content's hash, served public for a year,
+//     immutable, with an ETag), and the report's one style block and two scripts carry the response's nonce.
+//   - Traces: the *.jsonl files of the trace directories whose lines name the console's tenant in a command's own
+//     place (traceTenants): a cycle's step lines, the live pass's file-table refresh, a receipt's app, the console's
+//     pass. The viewer opens those only, and shows a ticket URL in a line as the ticket's number.
 //   - POST /do/unlock, /do/approve, /do/lock, /do/exception, /do/pass, form-encoded, at most 64 KB. Each carries the
 //     process's CSRF token (refused 403 when it differs, when an Origin header names another origin, or when
 //     Sec-Fetch-Site says cross-site); every action but the pass carries confirm=yes, which the page sets after its
 //     own confirmation. With Accept: application/json the answer is { ok, title, lines }; without, the page named by
 //     `return` rendered with the toast.
-//       unlock     a change_window row on the object (src/policy/window.ts newWindow: who, 1 to 72 hours, why)
-//       approve    src/vault/approve.ts approveRun on the object from the latest passing run of its surface and host,
-//                  the vault commit of that run's copy named, then the open window closed; the lines the CLI prints
+//       unlock     a change_window row on the object (src/policy/window.ts newWindow: who, 1 to 72 hours, why);
+//                  refused while a window is open on it, while the windows cannot be read (a window the passes cannot
+//                  read holds nothing), and when the row's id is stored already (the same object at the same
+//                  millisecond: a window was just opened)
+//       approve    src/vault/approve.ts approveRun on the object from the latest passing run of its surface and host
+//                  (by and note one line each, 1 to 200 and 0 to 500 characters), the vault commit of that run's copy
+//                  named, or that the vault holds none, or that the read failed; then the open window closed; the
+//                  lines the CLI prints
 //       lock       the open window closed, nothing approved
 //       exception  an accepted exception on a finding of the console's pass (src/engine/memory.ts recordException,
-//                  scoped as npm run answer scopes it); in sample mode only when the console was started with --write
+//                  scoped as npm run answer scopes it), until a date (00:00 UTC that day) or an instant in the
+//                  millisecond form, nothing looser; in sample mode only when the console was started with --write
 //       pass       src/console/state.ts runConsolePass at the clock: recorded in sample mode, a dry pass live; never act
 //     A write invalidates the snapshot, so the next page reads the store again.
 //   - Sample mode starts with the sample's own pass at its decision instant, as npm run sample decides, recorded into
@@ -39,10 +51,10 @@ import { REPORT_MODE, renderReport, repoTip, utc } from "../document/report.ts";
 import { policyFileShown } from "../document/sample.ts";
 import { MemoryError, TechnicianMemory, scopeValuesOf, type ScopeType } from "../engine/memory.ts";
 import { PLAIN, Table, passView } from "../loop/present.ts";
-import { WindowError, newWindow } from "../policy/window.ts";
+import { WindowError, freeText, newWindow } from "../policy/window.ts";
 import { DNS_FIELDS, approveRun, ApproveError, type ApprovalSelection } from "../vault/approve.ts";
-import { barCounts, barHtml, actionsPage, decodeKey, documentPage, errorPage, findingsPage, overviewPage, passForm, policyPage, settingsPage, sourcesPage, traceViewPage, tracesPage, type SourceCount, type TraceEventRow, type TraceFile, type View } from "./pages.ts";
-import { escapeHtml, layout, type Shell } from "./html.ts";
+import { barCounts, barHtml, actionsPage, decodeKey, documentPage, errorPage, findingsPage, overviewPage, passForm, plainUrls, policyPage, settingsPage, sourcesPage, traceViewPage, tracesPage, type SourceCount, type TraceEventRow, type TraceFile, type View } from "./pages.ts";
+import { ASSETS, escapeHtml, layout, type Asset, type Shell } from "./html.ts";
 import {
   classesOf, decisionsOfLedger, decisionsOfPass, readSnapshot, runConsolePass, settingObjects, vaultCommitOf,
   type Backend, type PassRun, type SettingObject, type Snapshot,
@@ -52,6 +64,10 @@ export const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 export const DEFAULT_PORT = 8090;
 const BODY_MAX = 64 * 1024;
 const SAMPLE_NOTE = "sample mode: changes live for this process";
+const ISO_MS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+/** An instant in the canonical millisecond form that names a real time (2026-02-30 does not). */
+const isoMs = (s: string): boolean => ISO_MS.test(s) && !Number.isNaN(Date.parse(s)) && new Date(s).toISOString() === s;
+const STATIC = new Map<string, Asset>(Object.values(ASSETS).map((a) => [a.path, a]));
 
 export interface Toast { ok: boolean; title: string; lines: string[]; status?: number }
 
@@ -129,10 +145,10 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
   const view = async (): Promise<View> => {
     const s = await snap();
     const now = clock().toISOString();
-    const decisions = pass ? decisionsOfPass(pass) : decisionsOfLedger(s.doc.data.open);
+    const decisions = pass ? decisionsOfPass(pass) : decisionsOfLedger(s.doc.data.open, s.windowHolds);
     const causes = new Map<string, FindingCause>((s.doc.data.causes ?? []).map((c) => [c.disposition_id, c]));
     for (const c of pass?.explained.causes ?? []) causes.set(c.disposition_id, c.cause);
-    const traces = listTraces(traceDirs);
+    const traces = listTraces(traceDirs, b.tenant);
     return {
       tenant: b.tenant, mode: b.mode, now, csrf, t, snapshot: s, pass, passRunning: running?.startedAt ?? null, decisions, source: pass ? "pass" : "ledger", causes,
       objects: settingObjects(s, decisions, causes, b.tenant, now), memoryWritable: b.memoryWritable, dataSource: b.source, traces,
@@ -153,7 +169,7 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
     });
   };
 
-  const render = async (route: string, query: URLSearchParams, toast: Toast | null = null): Promise<{ status: number; type: string; body: string } | null> => {
+  const render = async (route: string, query: URLSearchParams, toast: Toast | null = null, nonce = ""): Promise<{ status: number; type: string; body: string } | null> => {
     const html = (body: string, status = 200) => ({ status, type: "text/html; charset=utf-8", body });
     switch (route) {
       case "/overview": return html(await page("overview", "Overview", (v) => ({ body: overviewPage(v) }), { toast, bar: false }));
@@ -167,7 +183,7 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
             policy: "/policy", traces: "/traces", eval: null, readme: null, lessons: null, receipts: null,
           },
         });
-        return html(report.replace("</body>", `<script>for(const a of document.querySelectorAll("a[href]"))if(!a.getAttribute("href").startsWith("#"))a.target="_top"</script>\n</body>`));
+        return html(nonceReport(report, nonce));
       }
       case "/settings": {
         const open = query.get("open");
@@ -183,10 +199,10 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
       case "/traces": return html(await page("traces", "Traces", (v) => ({ body: tracesPage(v) }), { toast }));
       case "/traces/view": {
         const ref = query.get("f") ?? "";
-        const f = listTraces(traceDirs).find((x) => x.ref === ref);
-        if (!f) return html(await page("traces", "Trace not found", () => ({ body: errorPage(`No trace ${ref} in ${traceDirs.map((d) => d.label).join(" or ")}.`) })), 404);
+        const f = listTraces(traceDirs, b.tenant).find((x) => x.ref === ref);
+        if (!f) return html(await page("traces", "Trace not found", () => ({ body: errorPage(`No trace ${ref} of ${b.tenant} in ${traceDirs.map((d) => d.label).join(" or ")}.`) })), 404);
         const dir = traceDirs.find((d) => d.label === f.dir)!;
-        const { events, skipped } = readTrace(path.join(dir.dir, f.name), (s) => b.redactor.text(redact(s)));
+        const { events, skipped } = readTrace(path.join(dir.dir, f.name), (s) => plainUrls(b.redactor.text(redact(s))));
         return html(await page("traces", `Trace ${f.id}`, (v) => ({ body: traceViewPage(v, f, events, skipped) })));
       }
       case "/sources": {
@@ -217,10 +233,13 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
     unlock: async (f) => {
       const obj = await objectOf(f.get("key") ?? "");
       if (obj.window) throw new ActionError(`a change window is open on ${objectName(obj)} until ${obj.window.until}; Lock or Approve closes it first`);
+      const unread = (await snap()).windowsError;
+      if (unread) throw new ActionError(`the change windows are not read (${unread.split("\n")[0].slice(0, 200)}), so the passes would not read this one either; npm run zetaris:setup registers change_window`);
       const hours = Number(f.get("hours") ?? "");
       const row = newWindow({ tenant: b.tenant, surface: obj.surface, host: obj.host, object_id: obj.object_id, who: f.get("who") ?? "", why: f.get("why") ?? "", hours, now: clock(), redact: (s) => b.redactor.text(redact(s)) });
       const n = await b.windows.open(row);
       invalidate();
+      if (n === 0) throw new ActionError(`a change window is already open on ${objectName(obj)}, or was just opened at ${row.opened_at}: change_window ${row.window_id} is stored already, nothing written`);
       return {
         ok: true, title: `Change window open on ${obj.kind === "file" ? obj.object_id : obj.name} until ${utc(row.until)}`,
         lines: [`change_window ${row.window_id}: ${n} row written`, `opened by ${row.opened_by} at ${row.opened_at} until ${row.until}: ${row.reason}`, "the next pass holds a drift on this object that a rule would roll back, fix or hold, until the window ends", ...sampleLine()],
@@ -238,8 +257,8 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
         if (!observations.some((x) => x.object_id === obj.object_id && (DNS_FIELDS as readonly string[]).includes(x.setting_path))) throw new ActionError(`record ${obj.object_id} has no field observation in run ${run.run_id}`);
         selection = { kind: "record", record_id: obj.object_id };
       }
-      const by = b.redactor.text(redact((f.get("by") ?? "").trim() || "operator"));
-      const noteRaw = (f.get("note") ?? "").trim();
+      const by = b.redactor.text(redact(freeText("by", (f.get("by") ?? "").trim() || "operator", 200, "the person or role signing it off")));
+      const noteRaw = freeText("note", f.get("note") ?? "", 500, "an optional note", true);
       let r;
       try {
         r = await approve(b.approvals, { tenant: b.tenant, run, observations, selection, by, note: noteRaw ? b.redactor.text(redact(noteRaw)) : null, now: clock(), dryRun: false });
@@ -247,8 +266,14 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
         if (e instanceof ApproveError) throw new ActionError(e.message);
         throw e;
       }
-      const commit = await vaultCommitOf(b.layer, b.tenant, run.run_id, obj.object_id).catch(() => null);
-      const lines = [...r.lines, commit ? `approve: the approved bytes are run ${run.run_id}'s, vault commit ${commit.slice(0, 8)}` : `approve: the vault holds no copy from run ${run.run_id}`];
+      let vault: string;
+      try {
+        const commit = await vaultCommitOf(b.layer, b.tenant, run.run_id, obj.object_id);
+        vault = commit ? `approve: the approved bytes are run ${run.run_id}'s, vault commit ${commit.slice(0, 8)}` : `approve: the vault holds no copy from run ${run.run_id}`;
+      } catch (e) {
+        vault = `approve: the vault copy of run ${run.run_id} was not read (${b.redactor.text(redact((e as Error)?.message ?? String(e))).split("\n")[0].slice(0, 200)}); the approval stands, its vault commit unnamed`;
+      }
+      const lines = [...r.lines, vault];
       if (obj.window) {
         const n = await b.windows.close(obj.window.window_id, clock().toISOString());
         lines.push(`change_window ${obj.window.window_id} closed (${n} row)`);
@@ -273,7 +298,7 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
       if (!reason) throw new ActionError("reason: why the finding is accepted");
       const untilRaw = (f.get("until") ?? "").trim();
       const until = /^\d{4}-\d{2}-\d{2}$/.test(untilRaw) ? `${untilRaw}T00:00:00.000Z` : untilRaw;
-      if (Number.isNaN(Date.parse(until))) throw new ActionError("until: a date, the day the exception ends (UTC)");
+      if (!isoMs(until)) throw new ActionError(`until: a date YYYY-MM-DD (the exception ends at 00:00 UTC that day) or an instant YYYY-MM-DDTHH:MM:SS.mmmZ, got ${untilRaw.slice(0, 40) || "nothing"}`);
       const scopes = scopeValuesOf(finding.finding);
       const type: ScopeType = scopes.name.length ? "name" : scopes.host.length ? "host" : "address";
       const scopeKey = scopes[type][0];
@@ -282,7 +307,7 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
       const memory = new TechnicianMemory({ storage: "local", directory: b.memoryDir });
       let lesson;
       try {
-        lesson = memory.recordException({ tenantId: finding.finding.tenant_id, findingClass: finding.finding.class, scopeKey, reason, expiresAt: new Date(until).toISOString(), provenance: { kind: "console", at: now, by: (f.get("by") ?? "").trim() || "technician", runId: finding.finding.run_id } });
+        lesson = memory.recordException({ tenantId: finding.finding.tenant_id, findingClass: finding.finding.class, scopeKey, reason, expiresAt: until, provenance: { kind: "console", at: now, by: (f.get("by") ?? "").trim() || "technician", runId: finding.finding.run_id } });
       } catch (e) {
         if (e instanceof MemoryError) throw new ActionError(e.message);
         throw e;
@@ -324,7 +349,7 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
       else res.end();
     });
   });
-  const layoutError = (msg: string): string => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Error · ConfigLeaf console</title></head><body style="font:15px/1.4 system-ui,sans-serif;margin:24px">${errorPage(msg)}</body></html>`;
+  const layoutError = (msg: string): string => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Error · ConfigLeaf console</title><link rel="stylesheet" href="${ASSETS.css.path}"></head><body><main class="wrap">${errorPage(msg)}</main></body></html>`;
 
   let origin = "";
   let hosts = new Set<string>();
@@ -334,9 +359,12 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
     const url = new URL(req.url ?? "/", origin);
     if (req.method === "GET" || req.method === "HEAD") {
       if (url.pathname === "/") { res.writeHead(303, { location: "/overview" }); res.end(); return; }
-      const r = await render(url.pathname, url.searchParams);
-      if (!r) return send(res, 404, "text/html; charset=utf-8", layoutError(`No page ${url.pathname}.`));
-      return send(res, r.status, r.type, req.method === "HEAD" ? "" : r.body);
+      const a = STATIC.get(url.pathname);
+      if (a) return sendAsset(req, res, a);
+      const nonce = randomBytes(16).toString("base64");
+      const r = await render(url.pathname, url.searchParams, null, nonce);
+      if (!r) return send(res, 404, "text/html; charset=utf-8", layoutError(`No page ${url.pathname}.`), nonce);
+      return send(res, r.status, r.type, req.method === "HEAD" ? "" : r.body, nonce);
     }
     if (req.method !== "POST") return send(res, 405, "text/plain; charset=utf-8", "GET and POST only\n");
     const m = url.pathname.match(/^\/do\/(unlock|approve|lock|exception|pass)$/);
@@ -400,12 +428,39 @@ export class ActionError extends Error {}
 
 const cap = (s: string): string => s.replace(/^./, (c) => c.toUpperCase());
 
-function send(res: http.ServerResponse, status: number, type: string, body: string): void {
-  res.writeHead(status, {
-    "content-type": type, "cache-control": "no-store", "x-content-type-options": "nosniff", "referrer-policy": "no-referrer",
-    "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:; frame-src 'self'; frame-ancestors 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'",
-  });
+/**
+ * The owner's report as the console serves it: its own style blocks (the ones in its head) and its own script (the
+ * last before </body>, src/document/report.ts) carry the response's nonce, and one more script with the nonce opens
+ * its outbound links in the top window. No other tag gets the nonce, so a script tag anywhere else in the page would
+ * not run; a report of another shape gets none and renders unstyled.
+ */
+export function nonceReport(report: string, nonce: string): string {
+  const head = report.indexOf("</head>");
+  const own = report.lastIndexOf("<script>");
+  const end = report.lastIndexOf("</body>");
+  if (head < 0 || own < head || end < own) return report;
+  const tag = (t: string): string => `<${t} nonce="${nonce}">`;
+  const linksOnTop = `${tag("script")}for(const a of document.querySelectorAll("a[href]"))if(!a.getAttribute("href").startsWith("#"))a.target="_top"</script>\n`;
+  return `${report.slice(0, head).replaceAll("<style>", tag("style"))}${report.slice(head, own)}${tag("script")}${report.slice(own + "<script>".length, end)}${linksOnTop}${report.slice(end)}`;
+}
+
+/** The CSP of every answer: the console's own stylesheet and script by path, an inline block only with the response's nonce. */
+export const csp = (nonce: string): string =>
+  `default-src 'none'; style-src 'self'${nonce ? ` 'nonce-${nonce}'` : ""}; script-src 'self'${nonce ? ` 'nonce-${nonce}'` : ""}; img-src 'self' data:; frame-src 'self'; frame-ancestors 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'`;
+
+const SECURITY = { "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" } as const;
+
+function send(res: http.ServerResponse, status: number, type: string, body: string, nonce = ""): void {
+  res.writeHead(status, { "content-type": type, "cache-control": "no-store", ...SECURITY, "content-security-policy": csp(nonce) });
   res.end(body);
+}
+
+/** A static part of the shell: its path names its hash, so it is cached for a year and never revalidated; an If-None-Match on its ETag is 304. */
+function sendAsset(req: http.IncomingMessage, res: http.ServerResponse, a: Asset): void {
+  const head = { "content-type": a.type, "cache-control": "public, max-age=31536000, immutable", etag: a.etag, ...SECURITY, "content-security-policy": csp("") };
+  if (req.headers["if-none-match"] === a.etag) { res.writeHead(304, head); res.end(); return; }
+  res.writeHead(200, { ...head, "content-length": Buffer.byteLength(a.body) });
+  res.end(req.method === "HEAD" ? "" : a.body);
 }
 
 function readBody(req: http.IncomingMessage): Promise<string | null> {
@@ -423,8 +478,30 @@ function readBody(req: http.IncomingMessage): Promise<string | null> {
 
 const TRACE_NAME = /^[A-Za-z0-9._-]+\.jsonl$/;
 
-/** The *.jsonl files of each directory, newest first event first. */
-export function listTraces(dirs: readonly { label: string; dir: string }[]): TraceFile[] {
+/**
+ * Where a trace names a tenant as the command's own: a cycle's step and summary lines ("cycle <tenant> [1/9] ...",
+ * src/loop/cycle.ts), a pass's summary line and the live pass's file-table refresh ("pass <tenant>", "file tables
+ * <tenant>", src/loop/pass.ts), a receipt's app ("... under app drift-agent-<tenant>") and the console's own pass
+ * ("console pass <tenant>", src/console/state.ts). A tenant id in a query or a check's parameters is no mark: a pass
+ * reads every tenant's runs.
+ */
+const TENANT_MARK = /"input_summary":"(?:cycle|pass|file tables|console pass) ([A-Za-z0-9._-]{1,64})(?: \[|")|under app drift-agent-([A-Za-z0-9._-]{1,64})"/g;
+const marks = new Map<string, { stamp: string; tenants: ReadonlySet<string> }>();
+
+/** The tenants a trace file names as its command's own (TENANT_MARK), read once per size and modification time. */
+export function traceTenants(file: string): ReadonlySet<string> {
+  let stamp = "";
+  try { const st = statSync(file); stamp = `${st.size}:${st.mtimeMs}`; } catch { return new Set(); }
+  const known = marks.get(file);
+  if (known?.stamp === stamp) return known.tenants;
+  const tenants = new Set<string>();
+  try { for (const m of readFileSync(file, "utf8").matchAll(TENANT_MARK)) tenants.add(m[1] ?? m[2]); } catch { /* unreadable: no tenant */ }
+  marks.set(file, { stamp, tenants });
+  return tenants;
+}
+
+/** The *.jsonl files of each directory, newest first event first; with a tenant, only the files that name it as their command's own (traceTenants). */
+export function listTraces(dirs: readonly { label: string; dir: string }[], tenant?: string): TraceFile[] {
   const out: TraceFile[] = [];
   for (const d of dirs) {
     if (!existsSync(d.dir)) continue;
@@ -433,6 +510,7 @@ export function listTraces(dirs: readonly { label: string; dir: string }[]): Tra
       const file = path.join(d.dir, name);
       const st = statSync(file);
       if (!st.isFile()) continue;
+      if (tenant !== undefined && !traceTenants(file).has(tenant)) continue;
       let first: string | null = null;
       try {
         const fd = openSync(file, "r");

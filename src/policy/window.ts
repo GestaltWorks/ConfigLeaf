@@ -5,10 +5,12 @@
 // sql.js engine of the console in sample mode and of the tests.
 //
 // Contract:
-//   - newWindow builds one row from what the form gives: who and why trimmed, 1 to 200 and 1 to 500 characters, both
-//     through the redactor the caller passes; hours a whole number from 1 to 72; opened_at the given instant and until
-//     that instant plus the hours, both the millisecond form; setting_path "*", every setting of the object; window_id
-//     rows.ts windowId. A value out of range throws WindowError naming the field.
+//   - newWindow builds one row from what the form gives: who and why trimmed, 1 to 200 and 1 to 500 characters with
+//     no control character (a newline, a tab or an escape is refused, not stored), both through the redactor the
+//     caller passes; hours a whole number from 1 to 72; the surface one of WINDOW_SURFACES (the CHECK sql/schema.sql
+//     holds); opened_at the given instant and until that instant plus the hours, both the millisecond form;
+//     setting_path "*", every setting of the object; window_id rows.ts windowId. A value out of range throws
+//     WindowError naming the field. freeText is the same rule for any other free-text field of a form.
 //   - open writes the row (idempotent on window_id), close sets closed_at on a row still open and returns the rows
 //     changed: 1, or 0 for a window that is unknown or closed already.
 
@@ -18,8 +20,21 @@ import type { Store } from "../data/store.ts";
 
 export const WINDOW_MIN_HOURS = 1;
 export const WINDOW_MAX_HOURS = 72;
+/** The surfaces a window can be declared on: the objects the console lists (sql/schema.sql change_window_surface). */
+export const WINDOW_SURFACES: readonly string[] = ["linux.nginx", "linux.etc", "cloudflare.dns"];
 
 export class WindowError extends Error {}
+
+/** C0 controls, DEL and the C1 range: none belongs in a name or a sentence a page shows on one line. */
+const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
+
+/** One free-text form field, trimmed: 1 to max characters (0 to max when optional), no control character; throws WindowError naming the field. */
+export function freeText(field: string, value: string, max: number, what: string, optional = false): string {
+  const v = value.trim();
+  if ((!v && !optional) || v.length > max) throw new WindowError(`${field}: ${optional ? 0 : 1} to ${max} characters, ${what}`);
+  if (CONTROL.test(v)) throw new WindowError(`${field}: one line of text with no control character, ${what}`);
+  return v;
+}
 
 export interface WindowStore {
   open(row: ChangeWindow): Promise<number>;
@@ -55,11 +70,10 @@ export interface WindowInput {
 
 /** One change_window row from the Unlock form (see the header). */
 export function newWindow(i: WindowInput): ChangeWindow {
-  const who = i.who.trim();
-  const why = i.why.trim();
-  if (!who || who.length > 200) throw new WindowError("who: 1 to 200 characters, the person or role opening the window");
-  if (!why || why.length > 500) throw new WindowError("why: 1 to 500 characters, the change the window is for");
+  const who = freeText("who", i.who, 200, "the person or role opening the window");
+  const why = freeText("why", i.why, 500, "the change the window is for");
   if (!Number.isInteger(i.hours) || i.hours < WINDOW_MIN_HOURS || i.hours > WINDOW_MAX_HOURS) throw new WindowError(`until: a whole number of hours from ${WINDOW_MIN_HOURS} to ${WINDOW_MAX_HOURS}`);
+  if (!WINDOW_SURFACES.includes(i.surface)) throw new WindowError(`surface: a window is declared on ${WINDOW_SURFACES.join(", ")}, got ${i.surface}`);
   const opened = i.now.toISOString();
   const until = new Date(i.now.getTime() + i.hours * 3_600_000).toISOString();
   return {

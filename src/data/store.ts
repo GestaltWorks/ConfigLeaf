@@ -1,7 +1,8 @@
 // Store: the app Postgres the collectors write through (drift-pg, registered in Zetaris as the DRIFT
 // datasource, so what lands here is what the live pass reads): 127.0.0.1:15432 from Windows (DATABASE_URL),
 // drift-pg:5432 from inside the Zetaris network. Measured 24 Oct 2026: a second apply of sql/schema.sql
-// changed nothing.
+// changed nothing. applySchema runs MIGRATIONS after it, so a store created before disposition.window_id and the
+// change_window constraints gains them.
 //
 // Contract:
 //   - Every collected-text column (rows.ts REDACT: names, paths, values, actors; not ids, hashes,
@@ -102,6 +103,27 @@ const CONFLICT: { [K in TableName]: string | null } = {
 
 type Row = Record<string, string | number | null>;
 
+/**
+ * Postgres only, after sql/schema.sql: what CREATE TABLE IF NOT EXISTS leaves out on a store created before it, each
+ * step idempotent. disposition.window_id (src/policy/decide.ts step 3), and change_window's three CHECK constraints
+ * on a table the console created before they existed, added NOT VALID: rows already stored are not rechecked, every
+ * later write is. sql.js always starts from the current DDL and needs none of it.
+ */
+export const MIGRATIONS = `ALTER TABLE disposition ADD COLUMN IF NOT EXISTS window_id TEXT;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'change_window'::regclass AND conname = 'change_window_span') THEN
+    ALTER TABLE change_window ADD CONSTRAINT change_window_span CHECK (until > opened_at) NOT VALID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'change_window'::regclass AND conname = 'change_window_closed') THEN
+    ALTER TABLE change_window ADD CONSTRAINT change_window_closed CHECK (closed_at IS NULL OR closed_at >= opened_at) NOT VALID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'change_window'::regclass AND conname = 'change_window_surface') THEN
+    ALTER TABLE change_window ADD CONSTRAINT change_window_surface CHECK (surface IN ('linux.nginx', 'linux.etc', 'cloudflare.dns')) NOT VALID;
+  END IF;
+END
+$$`;
+
 const keyOf = (table: TableName, r: Record<string, unknown>): string => KEYS[table].map((k) => String(r[k])).join("\u001f");
 
 /** Code-unit order on the natural key, so an export is byte-stable whatever the database collation. */
@@ -153,9 +175,12 @@ export class Store {
     return new Store(pool, new Redactor(config.redactSalt || randomBytes(16).toString("hex"), config.redactWords));
   }
 
-  /** sql/schema.sql, every CREATE TABLE IF NOT EXISTS, in one simple-protocol call. */
+  /** sql/schema.sql, every CREATE TABLE and CREATE INDEX IF NOT EXISTS, then MIGRATIONS, in one simple-protocol call each, one transaction. */
   async applySchema(): Promise<void> {
-    await this.tx((c) => c.query(SCHEMA_SQL));
+    await this.tx(async (c) => {
+      await c.query(SCHEMA_SQL);
+      await c.query(MIGRATIONS);
+    });
   }
 
   async beginRun(run: RunStart): Promise<void> {

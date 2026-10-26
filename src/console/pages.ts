@@ -4,13 +4,15 @@
 //
 //   Overview   the owner's report (src/document/report.ts renderReport, unchanged, served at /overview/report and
 //              shown in a frame), the last cycle's trace and when it ran, the decision instant.
-//   Settings   every object of the latest passing runs, files per host and records per zone: live, approved, lock,
-//              template, last change, status; filters by host or zone, lock and status, a search box; each row opens
-//              a drawer with the live value against the approved one, the restore proof, what a restore would
-//              regress, the references, the decisions, the action history with receipts, the change windows, and
-//              Unlock, Approve and Lock.
-//   Findings   the current decisions by verb with their labels, reasons, expiries, causes and tickets, and Record
-//              exception on each.
+//   Settings   every object of the latest passing runs, files per host and records per zone, one line each on a
+//              wide screen (the object's name and its host or zone; the full path in the drawer): live, approved,
+//              lock, template, last change, status; the ones that need attention first (with a technician, drifted,
+//              held, in an open window), then the rest; filters by host or zone, lock and status, a search box; each
+//              row opens a drawer with the live value against the approved one, the restore proof, what a restore
+//              would regress, the references, the decisions, the action history with receipts, the change windows,
+//              and Unlock, Approve and Lock.
+//   Findings   the current decisions by verb with their labels, reasons (every instant in them as the page formats
+//              one), expiries, causes and tickets, and Record exception on each.
 //   Actions and tickets, Traces, Sources, and two pages the links point at: the policy rules and the document.
 
 import type { Action, ChangeWindow, FindingCause, PolicyRule } from "../data/rows.ts";
@@ -19,7 +21,6 @@ import { withRestore } from "../explain/cause.ts";
 import { classLabel, findingWhere, hex8, nemotronOf, shortModel, tail, thousands } from "../loop/present.ts";
 import { labelsOf } from "../psa/index.ts";
 import type { Verb } from "../pipeline.ts";
-import { WINDOW_REASON } from "../policy/decide.ts";
 import { WINDOW_MAX_HOURS, WINDOW_MIN_HOURS } from "../policy/window.ts";
 import { escapeHtml } from "./html.ts";
 import { STATUSES, type ConsoleMode, type Decision, type PassRun, type SettingObject, type Snapshot, type Status } from "./state.ts";
@@ -67,6 +68,11 @@ const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const plural = (n: number, one: string, many = `${one}s`): string => `${thousands(n)} ${n === 1 ? one : many}`;
 const h12 = (h: string | null | undefined): string => (h ? h.replace(/^sha256:/, "").slice(0, 12) : "-");
 const PSEUDONYM = /\b(?:host|ip|word|mail|user|domain)-[0-9a-f]{6}\b/;
+/** A PSA ticket's URL (GitHub issue or pull request) as its number; any other absolute URL that carries a pseudonym points nowhere real, so it is named so, as the document page names it. */
+export const plainUrls = (s: string): string => s.replace(/https?:\/\/[^\s"'<>|)]+/g, (u) => {
+  const ticket = u.match(/\/(?:issues|pull)\/(\d+)(?:[/?#]|$)/);
+  return ticket ? `#${ticket[1]}` : PSEUDONYM.test(u) ? "(a pseudonymised URL)" : u;
+});
 export const encodeKey = (key: string): string => Buffer.from(key, "utf8").toString("base64url");
 export const decodeKey = (s: string): string => Buffer.from(s, "base64url").toString("utf8");
 const NEEDS: readonly Verb[] = ["ESCALATE", "FIX"];
@@ -94,8 +100,13 @@ function whereOf(v: View, d: Decision): string {
   return `${tail(d.object_id)}${d.setting_path && d.setting_path !== "file" ? ` ${d.setting_path}` : ""}${d.host ? ` on ${d.host}` : ""}`;
 }
 
-const isWindowHold = (d: Pick<Decision, "verb" | "reason">): boolean => d.verb === "HOLD" && d.reason.startsWith(WINDOW_REASON);
-const verbBadge = (v: View, d: Pick<Decision, "verb" | "reason">): string => `<span class="verb v-${v.t(d.verb)}${isWindowHold(d) ? " w" : ""}">${v.t(d.verb)}</span>`;
+/** A window's HOLD, known by the window_id its disposition carries. */
+const isWindowHold = (d: Pick<Decision, "verb" | "window_id">): boolean => d.verb === "HOLD" && d.window_id !== null;
+const verbBadge = (v: View, d: Pick<Decision, "verb" | "window_id">): string => `<span class="verb v-${v.t(d.verb)}${isWindowHold(d) ? " w" : ""}">${v.t(d.verb)}</span>`;
+
+const INSTANT = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?Z\b/g;
+/** A Decider sentence with every ISO 8601 UTC instant in it as the page shows a time (25 Oct 2026 17:00 UTC). */
+export const timesIn = (text: string): string => text.replace(INSTANT, (iso) => utc(iso));
 
 // ---- the shared pieces ----------------------------------------------------------------------------------------
 
@@ -119,7 +130,7 @@ export function barHtml(v: View): string {
     `<a href="/findings#held"><b>${thousands(c.held)}</b> held</a>`,
     `<a href="/findings#adopted" class="adopted"><b>${thousands(c.adopted)}</b> adopted</a>`,
     `<a href="/settings?lock=locked" class="locked"><b>${thousands(c.locked)}</b> locked</a>`,
-    `<a href="/settings?lock=window" class="window"><b>${thousands(c.windows)}</b> ${c.windows === 1 ? "window" : "windows"} open</a>`,
+    `<a href="/settings?lock=window" class="${c.windows ? "window" : "zero"}"><b>${thousands(c.windows)}</b> ${c.windows === 1 ? "window" : "windows"} open</a>`,
   ];
   const decided = v.source === "pass" && v.pass ? v.pass.decidedAt : v.snapshot.doc.data.decidedAt;
   return `<header class="bar"><div class="bar-in">
@@ -169,24 +180,31 @@ export function overviewPage(v: View): string {
 const STATUS_CLASS: Readonly<Record<Status, string>> = { "with a technician": "need", drifted: "drifted", held: "held", adopted: "adopted", "in order": "ok" };
 const statusBadge = (s: Status): string => `<span class="b ${STATUS_CLASS[s]}">${s}</span>`;
 
+/** A window's end in a row: day, month and time; a window lasts 72 hours at most, and the drawer names the year. */
+const shortUtc = (iso: string): string => utc(iso).replace(/ \d{4} /, " ");
+
 function lockBadge(v: View, o: SettingObject): string {
-  if (o.window) return `<span class="b window" title="${v.t(`change window ${o.window.window_id} opened by ${o.window.opened_by}`)}">open until ${v.t(utc(o.window.until))}</span>`;
+  if (o.window) return `<span class="b window" title="${v.t(`change window ${o.window.window_id} opened by ${o.window.opened_by}, open until ${utc(o.window.until)}`)}">open until ${v.t(shortUtc(o.window.until))}</span>`;
   if (o.lock === "locked") return `<span class="b locked">locked by rule</span>`;
   return `<span class="b open">${o.rule ? "open by rule" : "open, no rule"}</span>`;
 }
 
 const template = (r: PolicyRule | null): string => (!r ? "none" : r.object_glob === "**" && r.setting_glob === "**" ? "everything else (catch-all)" : `${r.object_glob} · ${r.setting_glob}`);
 
+/** One line: the file's name or the record's, then its host or zone; the full path or the record id in the drawer. */
 function objectName(v: View, o: SettingObject): string {
-  if (o.kind === "file") return `<span class="p">${v.t(tail(o.object_id))}</span><span class="q">${v.t(o.object_id)}</span>`;
-  return `<span class="p">${v.t(o.name)}</span><span class="q">record ${v.t(o.object_id)}</span>`;
+  const where = o.kind === "file" ? (o.host ?? "-") : o.group.replace(/^zone /, "");
+  return `<span class="on">${v.t(o.kind === "file" ? tail(o.object_id) : o.name)}</span> <span class="oh">${v.t(where)}</span>`;
 }
 
 function approvedCell(v: View, o: SettingObject): string {
   if (!o.approved) return `<span class="muted">no</span>`;
-  const head = o.differs ? `<b>differs from live</b>` : "yes";
-  return `${head}<span class="q">${v.t(utc(o.approved.approved_at))}${o.approved.approved_by ? ` · ${v.t(o.approved.approved_by)}` : ""}</span>`;
+  return o.differs ? `<b>differs from live</b>` : "yes";
 }
+
+/** Attention first: with a technician, drifted, held, in an open window; then the rest. */
+const ATTENTION: readonly Status[] = ["with a technician", "drifted", "held"];
+const tierOf = (o: SettingObject): number => Math.min(...[ATTENTION.indexOf(o.status)].filter((i) => i >= 0), o.lock === "window" ? ATTENTION.length : ATTENTION.length + 1);
 
 function causeText(v: View, c: FindingCause | null, actions: readonly Action[]): string {
   return c ? v.t(withRestore(c, actions)) : `<span class="muted">no record</span>`;
@@ -209,31 +227,35 @@ export function settingsPage(v: View, filter: { group?: string; lock?: string; s
 </div>`;
   const rowsHtml: string[] = [];
   const templates: string[] = [];
+  // the objects in their tiers, each tier in the estate's order (files before records, by host or zone, then name)
+  const tiers = [[0, 1, 2, 3], [4]].map((ts) => v.objects.filter((o) => ts.includes(tierOf(o))).sort((a, c) => tierOf(a) - tierOf(c)));
+  const heads = ["Needs attention: with a technician, drifted, held or in an open window", "Everything else"];
   let i = 0;
-  for (const g of groups) {
-    const mine = v.objects.filter((o) => o.group === g);
-    rowsHtml.push(`<tr class="grp" data-group="${v.t(g)}"><td colspan="7">${v.t(g)} · ${plural(mine.length, mine[0]?.kind === "record" ? "record" : "file")}</td></tr>`);
+  tiers.forEach((mine, t) => {
+    if (!mine.length) return;
+    rowsHtml.push(`<tr class="grp" data-tier="${t}"><td colspan="7">${heads[t]} · ${plural(mine.length, "object")}</td></tr>`);
     for (const o of mine) {
       const id = `o${i++}`;
       const text = [o.object_id, o.name, o.group, o.rule?.rule_id ?? "", template(o.rule), o.status, o.live.text].join(" ").toLowerCase();
-      rowsHtml.push(`<tr data-open="${id}" data-key="${escapeHtml(encodeKey(o.key))}" tabindex="0" data-group="${v.t(o.group)}" data-lock="${o.lock}" data-status="${o.status}" data-text="${v.t(text)}" aria-label="${v.t(`${o.name}: ${o.status}, ${o.lock === "window" ? "open window" : o.lock}`)}">
-<td data-label="Object">${objectName(v, o)}</td>
+      const full = o.kind === "file" ? `${o.object_id} on ${o.host ?? "-"}` : `${o.name}, record ${o.object_id} in ${o.group}`;
+      rowsHtml.push(`<tr data-open="${id}" data-key="${escapeHtml(encodeKey(o.key))}" tabindex="0" data-group="${v.t(o.group)}" data-lock="${o.lock}" data-status="${o.status}" data-tier="${t}" data-text="${v.t(text)}" aria-label="${v.t(`${o.name}: ${o.status}, ${o.lock === "window" ? "open window" : o.lock}`)}">
+<td data-label="Object" title="${v.t(full)}">${objectName(v, o)}</td>
 <td data-label="Live"><code>${v.t(o.live.text)}</code></td>
 <td data-label="Approved">${approvedCell(v, o)}</td>
 <td data-label="Lock">${lockBadge(v, o)}</td>
-<td data-label="Template">${o.rule ? `<a href="/policy#${escapeHtml(o.rule.rule_id)}">${v.t(template(o.rule))}</a><span class="q">${v.t(o.rule.criticality)}</span>` : `<span class="muted">none</span>`}</td>
-<td data-label="Last change">${causeText(v, o.cause, actions)}</td>
+<td data-label="Template">${o.rule ? `<a href="/policy#${escapeHtml(o.rule.rule_id)}" title="${v.t(`${o.rule.rule_id}, ${o.rule.criticality}`)}">${v.t(template(o.rule))}</a>` : `<span class="muted">none</span>`}</td>
+<td data-label="Last change"${o.cause ? ` title="${causeText(v, o.cause, actions)}"` : ""}>${causeText(v, o.cause, actions)}</td>
 <td data-label="Status">${statusBadge(o.status)}</td>
 </tr>`);
       templates.push(drawerTemplate(v, o, id, actions));
     }
-  }
-  const windowsNote = v.snapshot.windowsError ? `<p class="alert">The change windows were not read: ${v.t(v.snapshot.windowsError)}. The store's schema predates change_window; the console applies it live, and npm run zetaris:setup registers the table in Zetaris.</p>` : "";
+  });
+  const windowsNote = v.snapshot.windowsError ? `<p class="alert">The change windows were not read: ${v.t(v.snapshot.windowsError)}. Unlock is refused until they are. The console applies sql/schema.sql live; npm run zetaris:setup registers change_window in Zetaris and refreshes the disposition table.</p>` : "";
   const body = `<div class="head"><div><h1>Settings</h1>
-<p class="lede">Every object the estate holds for ${v.t(v.tenant)}: ${plural(files.length, "file")} on ${plural(hosts.length, "host")} and ${plural(records.length, "record")} in ${plural(zones.length, "zone")}, from the latest passing runs (<a href="/document#estate">document</a>). The lock is the governing rule's (<a href="/policy">policy</a>); a change window opens it until the time it names. Select a row for its detail and the three actions.</p></div></div>
+<p class="lede">Every object the estate holds for ${v.t(v.tenant)}: ${plural(files.length, "file")} on ${plural(hosts.length, "host")} and ${plural(records.length, "record")} in ${plural(zones.length, "zone")}, from the latest passing runs (<a href="/document#estate">document</a>), the ones that need attention first. The lock is the governing rule's (<a href="/policy">policy</a>); a change window opens it until the time it names. Select a row for its full path, its detail and the three actions.</p></div></div>
 ${windowsNote}${filters}
-<div class="tbl"><table class="set rt">
-<colgroup><col style="width:25%"><col style="width:12%"><col style="width:13%"><col style="width:14%"><col style="width:13%"><col style="width:14%"><col style="width:9%"></colgroup>
+<div class="tbl wide"><table class="set rt">
+<colgroup><col class="w-obj"><col class="w-live"><col class="w-appr"><col class="w-lock"><col class="w-tpl"><col class="w-last"><col class="w-st"></colgroup>
 <thead><tr><th scope="col">Object</th><th scope="col">Live</th><th scope="col">Approved</th><th scope="col">Lock</th><th scope="col">Template</th><th scope="col">Last change</th><th scope="col">Status</th></tr></thead>
 <tbody>
 ${rowsHtml.join("\n")}
@@ -305,7 +327,7 @@ function referencesHtml(v: View, o: SettingObject): string {
 
 function decisionsHtml(v: View, o: SettingObject): string {
   if (!o.decisions.length) return `<p class="muted">No finding on this object: the latest pass found it in order.</p>`;
-  return `<ul class="hist">${o.decisions.map((d) => `<li>${verbBadge(v, d)}${v.t(classLabel(d.class))} · <code>${v.t(d.setting_path)}</code><span class="rc">${v.t(d.reason)}</span><span class="rc">${d.expires_at ? `until ${v.t(utc(d.expires_at))} · ` : ""}decided ${v.t(utc(d.decided_at))} by ${v.t(d.decided_by)}${d.rule_id ? ` under ${ruleLink(v, d.rule_id)}` : ""} · <a href="/findings#f-${v.t(d.finding_id)}">${v.t(d.finding_id)}</a></span></li>`).join("")}</ul>`;
+  return `<ul class="hist">${o.decisions.map((d) => `<li>${verbBadge(v, d)}${v.t(classLabel(d.class))} · <code>${v.t(d.setting_path)}</code><span class="rc">${v.t(timesIn(d.reason))}</span><span class="rc">${d.expires_at ? `until ${v.t(utc(d.expires_at))} · ` : ""}decided ${v.t(utc(d.decided_at))} by ${v.t(d.decided_by)}${d.rule_id ? ` under ${ruleLink(v, d.rule_id)}` : ""} · <a href="/findings#f-${v.t(d.finding_id)}">${v.t(d.finding_id)}</a></span></li>`).join("")}</ul>`;
 }
 
 /** The served models and receipt ids an action names. */
@@ -414,7 +436,7 @@ function findingItem(v: View, d: Decision): string {
   return `<article class="item" id="f-${v.t(d.finding_id)}">
 <div><p class="what">${verbBadge(v, d)}${v.t(classLabel(d.class))}</p>
 <p class="where">${v.t(whereOf(v, d))}</p>
-<p class="why">${v.t(d.reason)}</p>
+<p class="why">${v.t(timesIn(d.reason))}</p>
 ${cause ? `<p class="cause"><b>Why it changed:</b> ${v.t(withRestore(cause, (v.snapshot.doc.data.actions ?? []) as unknown as Action[]))}</p>` : ""}
 <p class="meta">${meta.join(" · ")}</p></div>
 <div>${d.verb === "ADOPT" && d.decided_by === "operator" ? "" : exceptionForm(v, d)}</div>
@@ -467,8 +489,8 @@ ${tickets.length ? `<div class="tbl"><table class="rt"><thead><tr><th scope="col
 
 export function tracesPage(v: View): string {
   const rows = v.traces.map((f) => `<tr><td data-label="Trace"><a href="/traces/view?f=${encodeURIComponent(f.ref)}" class="mono">${v.t(f.id)}</a></td><td data-label="Where">${v.t(f.dir)}</td><td data-label="First event" class="nw">${v.t(utc(f.first))}</td><td data-label="Size" class="num">${thousands(Math.round(f.size / 1024))} KB</td></tr>`);
-  return `<div class="head"><div><h1>Traces</h1><p class="lede">One JSON line per agent action, read from disk: the run traces in logs/ (gitignored) and the committed traces in examples/traces/, newest first. Each opens as a table with a filter by agent.</p></div></div>
-${rows.length ? `<div class="tbl"><table class="rt"><thead><tr><th scope="col">Trace</th><th scope="col">Where</th><th scope="col">First event</th><th scope="col" class="num">Size</th></tr></thead><tbody>${rows.join("\n")}</tbody></table></div>` : `<p class="muted">No trace in logs/ or examples/traces/.</p>`}`;
+  return `<div class="head"><div><h1>Traces</h1><p class="lede">One JSON line per agent action, read from disk: the run traces in logs/ (gitignored) and the committed traces in examples/traces/ of ${v.t(v.tenant)}, the ones whose cycle, pass or receipts name it, newest first. Each opens as a table with a filter by agent.</p></div></div>
+${rows.length ? `<div class="tbl"><table class="rt"><thead><tr><th scope="col">Trace</th><th scope="col">Where</th><th scope="col">First event</th><th scope="col" class="num">Size</th></tr></thead><tbody>${rows.join("\n")}</tbody></table></div>` : `<p class="muted">No trace of ${v.t(v.tenant)} in logs/ or examples/traces/.</p>`}`;
 }
 
 export interface TraceEventRow { ts: string; agent: string; action: string; status: string; summary: string; input: string; detail: string }
@@ -476,7 +498,7 @@ export interface TraceEventRow { ts: string; agent: string; action: string; stat
 export function traceViewPage(v: View, f: TraceFile, events: readonly TraceEventRow[], skipped: number): string {
   const agents = [...new Set(events.map((e) => e.agent))].sort(cmp);
   const rows = events.map((e) => `<tr data-agent="${v.t(e.agent)}"><td data-label="Time" class="nw mono">${v.t(e.ts.slice(11, 23))}</td><td data-label="Agent">${v.t(e.agent)}</td><td data-label="Action">${v.t(e.action)}</td><td data-label="Status">${v.t(e.status)}</td><td data-label="Summary">${v.t(e.summary)}${e.input && e.input !== e.summary ? `<span class="q">${v.t(e.input)}</span>` : ""}${e.detail ? `<span class="q">${v.t(e.detail.slice(0, 400))}</span>` : ""}</td></tr>`);
-  return `<div class="head"><div><h1>Trace ${v.t(f.id)}</h1><p class="lede">${v.t(f.dir)}/${v.t(f.name)}, ${plural(events.length, "event")} from ${v.t(utc(events[0]?.ts))} to ${v.t(utc(events.at(-1)?.ts))}${skipped ? `, ${plural(skipped, "line")} that did not parse left out` : ""}. Every free-text field passes the redactor as the trace did when it was written. <a href="/traces">All traces</a></p></div></div>
+  return `<div class="head"><div><h1>Trace ${v.t(f.id)}</h1><p class="lede">${v.t(f.dir)}/${v.t(f.name)}, ${plural(events.length, "event")} from ${v.t(utc(events[0]?.ts))} to ${v.t(utc(events.at(-1)?.ts))}${skipped ? `, ${plural(skipped, "line")} that did not parse left out` : ""}. Every free-text field passes the redactor as the trace did when it was written, and a ticket's URL reads as its number. <a href="/traces">All traces</a></p></div></div>
 <div class="filters"><label>Agent<select id="agent"><option value="">every agent</option>${agents.map((a) => `<option value="${v.t(a)}">${v.t(a)} (${events.filter((e) => e.agent === a).length})</option>`).join("")}</select></label><span class="count" id="tcount">${plural(events.length, "event")}</span></div>
 <div class="tbl"><table class="rt"><thead><tr><th scope="col">Time (UTC)</th><th scope="col">Agent</th><th scope="col">Action</th><th scope="col">Status</th><th scope="col">Summary</th></tr></thead><tbody>
 ${rows.join("\n")}

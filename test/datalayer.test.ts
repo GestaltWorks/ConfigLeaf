@@ -40,11 +40,13 @@ describe("schema", () => {
     ]);
     expect(SCHEMA_TABLES.find((t) => t.name === "backup_item")?.columns).toEqual(["snapshot_id", "object_id", "setting_path", "value_hash"]);
     expect(SCHEMA_TABLES.find((t) => t.name === "observation")?.columns).toHaveLength(14);
+    expect(SCHEMA_TABLES.find((t) => t.name === "disposition")?.columns.at(-1)).toBe("window_id");
+    expect(SCHEMA_TABLES.find((t) => t.name === "change_window")?.columns).toEqual(["window_id", "tenant_id", "surface", "host", "object_id", "setting_path", "opened_by", "opened_at", "until", "reason", "closed_at"]);
     expect(SCHEMA_TABLES.find((t) => t.name === "referent_fingerprint")?.columns).toEqual(["obs_id", "dns_run_id", "fingerprint", "resolved_at"]);
     expect(SCHEMA_TABLES.find((t) => t.name === "policy_rule")?.columns).toEqual([
       "rule_id", "tenant_id", "surface", "object_glob", "setting_glob", "criticality", "lock", "on_drift", "on_no_copy", "hold_max_hours", "alert", "psa_priority", "version", "author", "since", "note",
     ]);
-    expect(SCHEMA_TABLES.map((t) => t.columns.length)).toEqual([9, 14, 10, 6, 4, 10, 10, 7, 16, 10, 8, 10, 15, 15, 12, 4, 15, 11]);
+    expect(SCHEMA_TABLES.map((t) => t.columns.length)).toEqual([9, 14, 10, 6, 4, 10, 10, 7, 16, 10, 8, 10, 16, 15, 12, 4, 15, 11]);
     expect(SCHEMA_TABLES.flatMap((t) => t.columns).filter((c) => /^[A-Z]/.test(c))).toEqual([]);
   });
 });
@@ -333,7 +335,7 @@ describe("the eight tables of the design on sql.js: insertRows, then every colum
   const probe: Probe = { probe_id: probeId("run-probe-1", "dns", WWW_NAME), run_id: "run-probe-1", tenant_id: T, kind: "dns", target: WWW_NAME, expected: "neither resolver returns the origin", observed: "1.1.1.1: ip-aaaaaa; 8.8.8.8: ip-aaaaaa", status: "ok", latency_ms: null, observed_at: "2026-10-24T08:11:00.000Z" };
   const disp: Disposition = {
     disposition_id: dispositionId(T, "linux.nginx", CONFD_HOST, "/etc/nginx/nginx.conf", "file", H("c"), "fnd-1", CONFD_RUN, "2026-10-24T08:12:00.000Z"), tenant_id: T, surface: "linux.nginx", host: CONFD_HOST, object_id: "/etc/nginx/nginx.conf",
-    setting_path: "file", value_hash: H("c"), verb: "ADOPT", reason: "No approved value is on record.", expires_at: null, decided_by: "default", rule_id: null, finding_id: "fnd-1", run_id: CONFD_RUN, decided_at: "2026-10-24T08:12:00.000Z",
+    setting_path: "file", value_hash: H("c"), verb: "ADOPT", reason: "No approved value is on record.", expires_at: null, decided_by: "default", rule_id: null, finding_id: "fnd-1", run_id: CONFD_RUN, decided_at: "2026-10-24T08:12:00.000Z", window_id: null,
   };
   const action: Action = { action_id: "act-1", tenant_id: T, kind: "rollback_file", target: "/etc/nginx/nginx.conf", before_hash: H("d"), after_hash: H("c"), vault_commit: "0123abcd", verification: `${probe.probe_id}`, receipts: "", status: "done", reason: "restored to the approved copy at vault commit 0123abcd", record: `probe ${probe.probe_id}: dns ${WWW_NAME} ok`, started_at: "2026-10-24T08:13:00.000Z", finished_at: "2026-10-24T08:13:05.000Z", disposition_id: disp.disposition_id };
   const ticket: Ticket = { ticket_id: "tkt-1", tenant_id: T, psa: "github", external_id: "12", url: null, type: "change", priority: "P1", status: "closed", action_id: action.action_id, finding_id: "fnd-1", created_at: "2026-10-24T08:14:00.000Z", updated_at: "2026-10-24T08:15:00.000Z" };

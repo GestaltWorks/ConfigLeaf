@@ -172,10 +172,10 @@ FROM {{t:dns_record}} WHERE run_id = '${DNS_RUN}' AND type = 'A'`,
 };
 /** One disposition per file of the sites host's run. */
 const DISPOSITIONS: Overlays = {
-  disposition: `SELECT disposition_id, tenant_id, surface, host, object_id, setting_path, value_hash, verb, reason, expires_at, decided_by, rule_id, finding_id, run_id, decided_at FROM {{t:disposition}}
+  disposition: `SELECT disposition_id, tenant_id, surface, host, object_id, setting_path, value_hash, verb, reason, expires_at, decided_by, rule_id, finding_id, run_id, decided_at, window_id FROM {{t:disposition}}
 UNION ALL
 SELECT obs_id AS disposition_id, tenant_id, surface, host, object_id, setting_path, value_hash, 'HOLD' AS verb, 'held under the catch-all rule' AS reason, '2026-10-27T08:00:00.000Z' AS expires_at,
-       'policy' AS decided_by, 'rule-00000000000000c3' AS rule_id, obs_id AS finding_id, run_id, '2026-10-24T08:00:00.000Z' AS decided_at
+       'policy' AS decided_by, 'rule-00000000000000c3' AS rule_id, obs_id AS finding_id, run_id, '2026-10-24T08:00:00.000Z' AS decided_at, NULL AS window_id
 FROM {{t:observation}} WHERE run_id = '${SITES_RUN}' AND setting_path = 'file'`,
 };
 /**
@@ -187,7 +187,7 @@ const FILES = fileRows();
 const LESSON = FILES.lesson.find((l) => l.kind === "exception") ?? { lesson_id: "mem-0", tenant_id: T, expires_at: "2026-11-30T00:00:00.000Z" };
 const ADOPTED_AT = "2026-10-26T00:00:00.000Z";
 const adoptionRow = (id: string, tenant: string, verb: string, by: string, reason: string, at: string): string =>
-  `SELECT '${id}' AS disposition_id, '${tenant}' AS tenant_id, 'cloudflare.dns' AS surface, NULL AS host, 'host-000000.com' AS object_id, 'proxied' AS setting_path, 'sha256:0' AS value_hash, '${verb}' AS verb, '${reason}' AS reason, NULL AS expires_at, '${by}' AS decided_by, NULL AS rule_id, 'fnd-${id}' AS finding_id, 'run-00000000000000a1' AS run_id, '${at}' AS decided_at`;
+  `SELECT '${id}' AS disposition_id, '${tenant}' AS tenant_id, 'cloudflare.dns' AS surface, NULL AS host, 'host-000000.com' AS object_id, 'proxied' AS setting_path, 'sha256:0' AS value_hash, '${verb}' AS verb, '${reason}' AS reason, NULL AS expires_at, '${by}' AS decided_by, NULL AS rule_id, 'fnd-${id}' AS finding_id, 'run-00000000000000a1' AS run_id, '${at}' AS decided_at, NULL AS window_id`;
 const holds = (lesson: string): string => `accepted exception ${lesson} holds until 2026-11-30T00:00:00.000Z (parity); the checks alone would say HOLD`;
 /**
  * Five ledger rows in place of the stored ones, so the case reads the same dispositions on both engines whatever the
@@ -196,7 +196,7 @@ const holds = (lesson: string): string => `accepted exception ${lesson} holds un
  */
 const adoptionsOf = (lesson: { lesson_id: string; tenant_id: string }): Overlays => ({
   disposition: [
-    `SELECT disposition_id, tenant_id, surface, host, object_id, setting_path, value_hash, verb, reason, expires_at, decided_by, rule_id, finding_id, run_id, decided_at FROM {{t:disposition}} WHERE disposition_id = ''`,
+    `SELECT disposition_id, tenant_id, surface, host, object_id, setting_path, value_hash, verb, reason, expires_at, decided_by, rule_id, finding_id, run_id, decided_at, window_id FROM {{t:disposition}} WHERE disposition_id = ''`,
     adoptionRow("disp-adopt-in-force", lesson.tenant_id, "ADOPT", "operator", holds(lesson.lesson_id), ADOPTED_AT),
     adoptionRow("disp-adopt-no-lesson", lesson.tenant_id, "ADOPT", "operator", holds("mem-999999"), ADOPTED_AT),
     adoptionRow("disp-adopt-expired", lesson.tenant_id, "ADOPT", "operator", holds(lesson.lesson_id), "2026-12-31T00:00:00.000Z"),
@@ -273,7 +273,15 @@ const HELD_TWICE: Overlays = {
   disposition: `${DISPOSITIONS.disposition}
 UNION ALL
 SELECT object_id AS disposition_id, tenant_id, surface, host, object_id, setting_path, value_hash, 'HOLD' AS verb, 'held again under the catch-all rule' AS reason, '2026-10-27T08:00:00.000Z' AS expires_at,
-       'policy' AS decided_by, 'rule-00000000000000c3' AS rule_id, obs_id AS finding_id, run_id, '2026-10-24T09:00:00.000Z' AS decided_at
+       'policy' AS decided_by, 'rule-00000000000000c3' AS rule_id, obs_id AS finding_id, run_id, '2026-10-24T09:00:00.000Z' AS decided_at, NULL AS window_id
+FROM {{t:observation}} WHERE run_id = '${SITES_RUN}' AND setting_path = 'file'`,
+};
+/** Every file of the sites host's run held by the catch-all rule at 08:00 UTC and by a change window at 09:00: the window's HOLD (window_id set) is no rule's, so the 08:00 HOLD stands. */
+const HELD_BY_WINDOW: Overlays = {
+  disposition: `${DISPOSITIONS.disposition}
+UNION ALL
+SELECT object_id AS disposition_id, tenant_id, surface, host, object_id, setting_path, value_hash, 'HOLD' AS verb, 'change window win-parity opened by tech-a until 2026-10-24T12:00:00.000Z: parity' AS reason, '2026-10-24T12:00:00.000Z' AS expires_at,
+       'policy' AS decided_by, 'rule-00000000000000c3' AS rule_id, obs_id AS finding_id, run_id, '2026-10-24T09:00:00.000Z' AS decided_at, 'win-parity' AS window_id
 FROM {{t:observation}} WHERE run_id = '${SITES_RUN}' AND setting_path = 'file'`,
 };
 /** One action per file of the sites host's run (done) and one more (failed), and one ticket per file. */
@@ -319,6 +327,7 @@ const BUILD_B_CASES: Case[] = [
   { name: "prior holds (each sites file held twice, the later stands)", sql: PRIOR_HOLDS_SQL, params: { tenant_id: T, decided_at: "2026-10-25T00:00:00.000Z" }, overlays: HELD_TWICE, rows: noDispositions ? SITES_FILES : undefined },
   { name: "prior holds (each sites file held twice, an instant between the two: the earlier stands)", sql: PRIOR_HOLDS_SQL, params: { tenant_id: T, decided_at: "2026-10-24T08:30:00.000Z" }, overlays: HELD_TWICE, rows: noDispositions ? SITES_FILES : undefined },
   { name: "prior holds (an instant before every HOLD)", sql: PRIOR_HOLDS_SQL, params: { tenant_id: T, decided_at: "2026-10-24T07:00:00.000Z" }, overlays: HELD_TWICE, rows: noDispositions ? 0 : undefined },
+  { name: "prior holds (each sites file held by the rule, then by a change window: the rule's HOLD stands)", sql: PRIOR_HOLDS_SQL, params: { tenant_id: T, decided_at: "2026-10-25T00:00:00.000Z" }, overlays: HELD_BY_WINDOW, rows: noDispositions ? SITES_FILES : undefined },
   { name: "approved_missing (dns, the absent record's absence approved after it)", sql: APPROVED_MISSING_SQL, params: { tenant_id: T, surface: "cloudflare.dns", host: "", run_id: DNS_RUN }, overlays: APPROVED_ABSENT_RETIRED, rows: missingOf("cloudflare.dns", "", DNS_RUN) },
   { name: "document: run shape", sql: DOC_RUN_SHAPE_SQL, params: { run_id: SITES_RUN }, rows: 1 },
   { name: "document: inventory of the confd host against its latest run", sql: DOC_INVENTORY_SQL, params: { tenant_id: T, host: CONFD_HOST, started_at: latestStart(CONFD_HOST) }, rows: 1 },
@@ -347,10 +356,10 @@ UNION ALL
 SELECT obs_id AS ticket_id, tenant_id, 'github' AS psa, '7' AS external_id, 'https://host-000000.com/owner/tickets/issues/7' AS url, 'incident' AS type, 'P3' AS priority,
        'open' AS status, obs_id AS action_id, obs_id AS finding_id, observed_at AS created_at, observed_at AS updated_at
 FROM {{t:observation}} WHERE run_id = '${SITES_RUN}' AND setting_path = 'file'`,
-  disposition: `SELECT disposition_id, tenant_id, surface, host, object_id, setting_path, value_hash, verb, reason, expires_at, decided_by, rule_id, finding_id, run_id, decided_at FROM {{t:disposition}}
+  disposition: `SELECT disposition_id, tenant_id, surface, host, object_id, setting_path, value_hash, verb, reason, expires_at, decided_by, rule_id, finding_id, run_id, decided_at, window_id FROM {{t:disposition}}
 UNION ALL
 SELECT obs_id AS disposition_id, tenant_id, surface, host, object_id, setting_path, value_hash, 'ROLLBACK' AS verb, 'rolled back under the file rule' AS reason, '' AS expires_at,
-       'policy' AS decided_by, 'rule-00000000000000a1' AS rule_id, obs_id AS finding_id, run_id, '2026-10-24T08:00:00.000Z' AS decided_at
+       'policy' AS decided_by, 'rule-00000000000000a1' AS rule_id, obs_id AS finding_id, run_id, '2026-10-24T08:00:00.000Z' AS decided_at, NULL AS window_id
 FROM {{t:observation}} WHERE run_id = '${SITES_RUN}' AND setting_path = 'file'`,
   action: `SELECT ${ACTION_COLUMNS} FROM {{t:action}}
 UNION ALL
@@ -505,6 +514,21 @@ describe("the document's inventory read over sample/bundle.json, on sql.js: the 
     const sitesOlder = assets(SITES_HOST).filter((a) => String(a.observed_at) < latestStart(SITES_HOST)).length;
     expect(await read(SITES_HOST, OLDER_INVENTORY)).toEqual({ latest: String(assets(SITES_HOST).length - sitesOlder), older: String(sitesOlder + assets(SITES_HOST).length) });
     expect(await read("host-000000")).toEqual({ latest: "", older: "" });
+    engine.close();
+  });
+});
+
+describe("the prior HOLD read over sample/bundle.json, on sql.js: a change window's HOLD is no rule's", () => {
+  it("PRIOR_HOLDS_SQL over the rule's HOLDs and a later window HOLD of each sites file returns what it returns over the rule's alone", async () => {
+    const engine = await SqlJsEngine.create();
+    engine.loadBundle(bundle);
+    const sqljs = new DataLayer(engine);
+    const read = async (overlays: Overlays) => objects(await sqljs.withOverlays(overlays).run(PRIOR_HOLDS_SQL, { tenant_id: T, decided_at: "2026-10-25T00:00:00.000Z" }, { limit: EVERY_ROW }));
+    const ruleOnly = await read(DISPOSITIONS);
+    expect(ruleOnly.filter((h) => h.decided_at === "2026-10-24T08:00:00.000Z")).toHaveLength(SITES_FILES);
+    expect(await read(HELD_BY_WINDOW)).toEqual(ruleOnly);
+    // the same rows HELD_TWICE holds again by the rule, at 09:00: those are a rule's, so they stand in place of the 08:00 ones
+    expect((await read(HELD_TWICE)).filter((h) => h.decided_at === "2026-10-24T09:00:00.000Z")).toHaveLength(SITES_FILES);
     engine.close();
   });
 });

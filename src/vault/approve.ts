@@ -142,8 +142,12 @@ export interface ApprovalStore {
 /** The selection matches no setting of the run: scripts/approve.ts exits 1 with the message. */
 export class ApproveError extends Error {}
 
-/** One run as the sign-off names it. */
-export const runLine = (r: CollectionRun): string => `${r.surface} run ${r.run_id}${r.host ? ` on ${r.host}` : ""}, started ${r.started_at}, ${r.observed_count}/${r.expected_count} ${r.status}`;
+/** A run's counts, observed/expected, "?" for the one it lacks; null when it has neither. */
+const countsOf = (r: Pick<CollectionRun, "observed_count" | "expected_count">): string | null =>
+  r.observed_count === null && r.expected_count === null ? null : `${r.observed_count ?? "?"}/${r.expected_count ?? "?"}`;
+
+/** One run as the sign-off names it: its counts, or "no counts" for a run that recorded neither. */
+export const runLine = (r: CollectionRun): string => `${r.surface} run ${r.run_id}${r.host ? ` on ${r.host}` : ""}, started ${r.started_at}, ${countsOf(r) ?? "no counts,"} ${r.status}`;
 
 export interface ApproveRun {
   tenant: string;

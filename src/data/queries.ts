@@ -517,15 +517,15 @@ export function approvedMissing(dl: DataLayer, params: ApprovedMissingParams, op
  * instant, the one with no HOLD of the same key at a later decided_at before it (at an equal decided_at the greater
  * disposition_id). A HOLD the Decider keeps carries this row's expires_at forward, so every HOLD of a key shares the
  * expiry of the first. In surface, object_id, setting_path, value_hash, then disposition_id order. A HOLD a change
- * window gave (its reason starts "change window ", src/policy/decide.ts WINDOW_REASON) is no rule's HOLD and is left
- * out, so a window neither starts nor ends a rule's expiry.
+ * window gave (window_id set, src/policy/decide.ts step 3) is no rule's HOLD and is left out, so a window neither
+ * starts nor ends a rule's expiry.
  */
 export const PRIOR_HOLDS_SQL = `SELECT d.disposition_id, d.surface, d.host, d.object_id, d.setting_path, d.value_hash, d.rule_id, d.expires_at, d.decided_at, d.finding_id
 FROM {{t:disposition}} d
-WHERE d.tenant_id = {{p:tenant_id}} AND d.verb = 'HOLD' AND d.decided_at < {{p:decided_at}} AND d.reason NOT LIKE 'change window %'
+WHERE d.tenant_id = {{p:tenant_id}} AND d.verb = 'HOLD' AND d.decided_at < {{p:decided_at}} AND d.window_id IS NULL
   AND NOT EXISTS (SELECT 1 FROM {{t:disposition}} n WHERE n.tenant_id = d.tenant_id AND n.surface = d.surface AND n.object_id = d.object_id
     AND n.setting_path = d.setting_path AND n.value_hash = d.value_hash AND COALESCE(n.host, '') = COALESCE(d.host, '') AND n.verb = 'HOLD'
-    AND n.decided_at < {{p:decided_at}} AND n.reason NOT LIKE 'change window %'
+    AND n.decided_at < {{p:decided_at}} AND n.window_id IS NULL
     AND (n.decided_at > d.decided_at OR (n.decided_at = d.decided_at AND n.disposition_id > d.disposition_id)))
 ORDER BY d.surface, d.object_id, d.setting_path, d.value_hash, d.disposition_id`;
 

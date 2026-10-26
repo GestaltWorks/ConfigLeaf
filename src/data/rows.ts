@@ -194,6 +194,8 @@ export interface Disposition {
   finding_id: string;
   run_id: string;
   decided_at: string;
+  /** The change window whose HOLD this is (src/policy/decide.ts step 3); null or absent on every other row, and on a row written before the column existed. */
+  window_id?: string | null;
 }
 
 export type ActionKind = "rollback_file" | "revert_record" | "fix" | "investigate";
@@ -326,7 +328,7 @@ export const COLUMNS = {
   vault_copy: ["copy_id", "tenant_id", "surface", "host", "object_id", "run_id", "git_commit", "blob_sha256", "taken_at", "source"],
   copy_validation: ["validation_id", "copy_id", "tenant_id", "validator", "result", "missing_dependencies", "output_redacted", "validated_at"],
   probe: ["probe_id", "run_id", "tenant_id", "kind", "target", "expected", "observed", "status", "latency_ms", "observed_at"],
-  disposition: ["disposition_id", "tenant_id", "surface", "host", "object_id", "setting_path", "value_hash", "verb", "reason", "expires_at", "decided_by", "rule_id", "finding_id", "run_id", "decided_at"],
+  disposition: ["disposition_id", "tenant_id", "surface", "host", "object_id", "setting_path", "value_hash", "verb", "reason", "expires_at", "decided_by", "rule_id", "finding_id", "run_id", "decided_at", "window_id"],
   action: ["action_id", "tenant_id", "kind", "target", "before_hash", "after_hash", "vault_commit", "verification", "receipts", "status", "reason", "record", "started_at", "finished_at", "disposition_id"],
   ticket: ["ticket_id", "tenant_id", "psa", "external_id", "url", "type", "priority", "status", "action_id", "finding_id", "created_at", "updated_at"],
   referent_fingerprint: ["obs_id", "dns_run_id", "fingerprint", "resolved_at"],

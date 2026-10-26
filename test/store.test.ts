@@ -22,6 +22,7 @@ import {
 } from "../src/data/rows.ts";
 import { Store, TABLES, formatBundle, scrub, toBundle, writeBundle, type Tables } from "../src/data/store.ts";
 import { loadPolicyFile } from "../src/policy/load.ts";
+import { newWindow } from "../src/policy/window.ts";
 import { Redactor } from "../src/redactor.ts";
 import bundle from "./fixtures/authored-bundle.json" with { type: "json" };
 
@@ -168,6 +169,42 @@ describe.skipIf(!url)("Store, live drift-pg (throwaway schema)", () => {
     const r = await admin.query("SELECT table_name FROM information_schema.tables WHERE table_schema = $1 ORDER BY table_name", [schema]);
     expect(r.rows.map((x) => x.table_name).sort()).toEqual([...TABLE_NAMES].sort());
     expect(r.rows).toHaveLength(18);
+  });
+
+  it("applySchema migrates a store created before disposition.window_id and the change_window constraints: the column and the constraints are added once, a stored row stays, every new row is checked", async () => {
+    const old = `test_${randomBytes(4).toString("hex")}`;
+    await admin.query(`CREATE SCHEMA ${old}`);
+    const legacy = Store.fromEnv({ schema: old });
+    try {
+      // the two tables as sql/schema.sql created them before window_id and the constraints
+      await admin.query(`CREATE TABLE ${old}.disposition (disposition_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, surface TEXT NOT NULL, host TEXT, object_id TEXT NOT NULL, setting_path TEXT NOT NULL,
+        value_hash TEXT NOT NULL, verb TEXT NOT NULL, reason TEXT NOT NULL, expires_at TEXT, decided_by TEXT NOT NULL, rule_id TEXT, finding_id TEXT NOT NULL, run_id TEXT NOT NULL, decided_at TEXT NOT NULL)`);
+      await admin.query(`CREATE TABLE ${old}.change_window (window_id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, surface TEXT NOT NULL, host TEXT, object_id TEXT NOT NULL, setting_path TEXT NOT NULL,
+        opened_by TEXT NOT NULL, opened_at TEXT NOT NULL, until TEXT NOT NULL, reason TEXT NOT NULL, closed_at TEXT)`);
+      // a row stored before the constraints, which they would refuse: NOT VALID leaves it as it is
+      await admin.query(`INSERT INTO ${old}.change_window VALUES ('win-legacy', 'client-a', 'linux.sshd', NULL, 'o', '*', 'a', '2026-10-24T11:00:00.000Z', '2026-10-24T11:00:00.000Z', 'r', NULL)`);
+      await legacy.applySchema();
+      await legacy.applySchema();
+      const cols = await admin.query("SELECT column_name FROM information_schema.columns WHERE table_schema = $1 AND table_name = 'disposition' ORDER BY ordinal_position", [old]);
+      expect(cols.rows.map((r) => r.column_name)).toEqual([...COLUMNS.disposition]);
+      const checks = await admin.query("SELECT conname FROM pg_constraint WHERE conrelid = $1::regclass AND contype = 'c' ORDER BY conname", [`${old}.change_window`]);
+      expect(checks.rows.map((r) => r.conname)).toEqual(["change_window_closed", "change_window_span", "change_window_surface"]);
+      expect((await admin.query("SELECT indexname FROM pg_indexes WHERE schemaname = $1 AND indexname = 'change_window_object'", [old])).rows).toHaveLength(1);
+      expect(Number((await admin.query(`SELECT COUNT(*) AS n FROM ${old}.change_window WHERE window_id = 'win-legacy'`)).rows[0].n)).toBe(1);
+      const w = newWindow({ tenant: "client-a", surface: "linux.nginx", host: "host-7f1c", object_id: "/etc/nginx/conf.d/app.conf", who: "tech-a", why: "a change", hours: 2, now: new Date("2026-10-24T11:00:00.000Z"), redact: (x) => x });
+      expect(await legacy.insertChangeWindows([w])).toBe(1);
+      await expect(legacy.insertChangeWindows([{ ...w, window_id: "win-span", until: w.opened_at }])).rejects.toThrow(/change_window_span/);
+      await expect(legacy.insertChangeWindows([{ ...w, window_id: "win-surface", surface: "linux.sshd" }])).rejects.toThrow(/change_window_surface/);
+      await expect(legacy.closeChangeWindow(w.window_id, "2026-10-24T10:59:59.999Z")).rejects.toThrow(/change_window_closed/);
+      expect(await legacy.closeChangeWindow(w.window_id, "2026-10-24T11:30:00.000Z")).toBe(1);
+      // a window's HOLD is written with its window_id; every other disposition with none
+      const hold = { disposition_id: "disp-w", tenant_id: "client-a", surface: "linux.nginx", host: "host-7f1c", object_id: "/etc/nginx/conf.d/app.conf", setting_path: "file", value_hash: "sha256:0", verb: "HOLD" as const, reason: "held", expires_at: w.until, decided_by: "policy" as const, rule_id: "rule-1", finding_id: "fnd-1", run_id: "run-1", decided_at: "2026-10-24T11:10:00.000Z" };
+      expect(await legacy.insertDispositions([{ ...hold, window_id: w.window_id }, { ...hold, disposition_id: "disp-r" }])).toBe(2);
+      expect((await admin.query(`SELECT disposition_id, window_id FROM ${old}.disposition ORDER BY disposition_id`)).rows).toEqual([{ disposition_id: "disp-r", window_id: null }, { disposition_id: "disp-w", window_id: w.window_id }]);
+    } finally {
+      await legacy.close();
+      await admin.query(`DROP SCHEMA IF EXISTS ${old} CASCADE`);
+    }
   });
 
   it("loadBundle writes every sample row once; a second load writes nothing, raises nothing and duplicates nothing", async () => {

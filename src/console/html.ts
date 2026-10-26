@@ -1,8 +1,10 @@
 // The console's page shell: the report's colour tokens (src/document/report.ts LIGHT and DARK) with the console's own
-// four on top (locked, an open window, the hover and the focus ring), one stylesheet and one script, both inline, and
-// the layout every page shares: a 240 px navigation, a sticky summary bar and content up to 1200 px. No external script,
-// style or font; light and dark by prefers-color-scheme; at phone width the navigation folds above the bar, tables
-// become one block per row, type goes to 16 px and the gutter is 16 px.
+// four on top (locked, an open window, the hover and the focus ring), one stylesheet and one script, each served from
+// its own same-origin path that names its content's hash (ASSETS: /assets/console.<hash>.css and .js, cached for a
+// year, src/console/server.ts), so a page carries no inline style or script and the CSP needs no 'unsafe-inline';
+// and the layout every page shares: a 240 px navigation, a sticky summary bar and content up to 1200 px. No external
+// script, style or font; light and dark by prefers-color-scheme; at phone width the navigation folds above the bar,
+// tables become one block per row, type goes to 16 px and the gutter is 16 px.
 //
 // The script does four things and nothing else: the drawer (open from a row by click, Enter or Space; close on
 // Escape, the scrim or Close; focus kept inside while it is open and returned to the row after), the Settings filters
@@ -10,6 +12,7 @@
 // sessionStorage and the page reloads, on refusal the toast shows and the form stays), and the trace viewer's agent
 // filter. Every page reads in full without it; an action needs it.
 
+import { createHash } from "node:crypto";
 import { DARK, LIGHT, escapeHtml } from "../document/report.ts";
 
 export { escapeHtml };
@@ -64,6 +67,7 @@ ul{margin:4px 0;padding-left:20px}
 .sum .adopted{color:var(--adopted)}
 .sum .locked{color:var(--locked)}
 .sum .window{color:var(--window)}
+.sum .zero{color:var(--muted)}
 .sum .dot{color:var(--muted);font-weight:400}
 .who{display:flex;flex-wrap:wrap;gap:0 12px;font-size:12.5px;color:var(--muted)}
 .who b{color:var(--fg);font-weight:600}
@@ -96,6 +100,19 @@ th{font-size:12.5px;font-weight:600;color:var(--muted);background:var(--soft);wh
 tbody tr:last-child td{border-bottom:0}
 td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 table.set{table-layout:fixed}
+table.set{min-width:1150px}
+.tbl.wide{overflow-x:auto}
+table.set td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:21px;vertical-align:middle;padding-top:6px;padding-bottom:6px}
+table.set td .b{vertical-align:middle}
+table.set .w-obj{width:18%}
+table.set .w-live{width:9%}
+table.set .w-appr{width:8%}
+table.set .w-lock{width:20%}
+table.set .w-tpl{width:12%}
+table.set .w-last{width:19%}
+table.set .w-st{width:14%}
+td .on{font-family:var(--mono);font-size:13.5px}
+td .oh{color:var(--muted);font-size:12.5px;margin-left:4px}
 tr[data-open]{cursor:pointer}
 tr[data-open]:hover{background:var(--hover)}
 tr[data-open]:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
@@ -174,10 +191,10 @@ pre .hunk{color:var(--muted)}
 .pill{display:inline-block;font-size:11px;padding:0 6px;border-radius:4px;background:var(--soft);color:var(--muted)}
 @media (prefers-reduced-motion:no-preference){.drawer.in{animation:slide .18s ease-out}@keyframes slide{from{transform:translateX(32px)}to{transform:none}}}
 @media (max-width:1080px){
-table.set,table.set thead,table.set tbody,table.set tr,table.set td{display:block;width:100%}
+table.set,table.set thead,table.set tbody,table.set tr,table.set td{display:block;width:100%;min-width:0}
 table.set colgroup,table.set thead{display:none}
 table.set tr[data-open]{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:2px 14px;border-bottom:1px solid var(--line);padding:8px 12px}
-table.set td{border:0;padding:2px 0}
+table.set td{border:0;padding:2px 0;white-space:normal;line-height:1.4}
 table.set td::before{content:attr(data-label);display:block;font-size:12.5px;color:var(--muted)}
 table.set td[data-label="Object"],table.set td[data-label="Last change"]{grid-column:1 / -1}
 table.set tr.grp td::before{display:none}
@@ -228,7 +245,7 @@ document.addEventListener("click",function(e){if(e.target.closest("[data-close]"
 if(scrim)scrim.addEventListener("click",closeDrawer);
 document.addEventListener("keydown",function(e){if(e.key==="Escape"){closeDrawer();return}var t=e.target;if((e.key==="Enter"||e.key===" ")&&t.matches&&t.matches("tr[data-open]")){e.preventDefault();openDrawer(t);return}if(e.key==="Tab"&&drawer&&!drawer.hidden){var f=$$("a[href],button:not([disabled]),input,select,textarea,[tabindex]:not([tabindex='-1'])",drawer).filter(function(x){return x.offsetParent!==null});if(!f.length)return;var a=f[0],z=f[f.length-1];if(e.shiftKey&&document.activeElement===a){e.preventDefault();z.focus()}else if(!e.shiftKey&&document.activeElement===z){e.preventDefault();a.focus()}}});
 var rows=$$("tr[data-open]"),fs=$$("[data-filter]"),q=$("#q"),count=$("#count");
-function apply(){var v={};fs.forEach(function(f){v[f.dataset.filter]=f.value});var term=q?q.value.trim().toLowerCase():"";var n=0;rows.forEach(function(r){var ok=true;for(var k in v){if(v[k]&&r.dataset[k]!==v[k])ok=false}if(term&&(r.dataset.text||"").indexOf(term)<0)ok=false;r.hidden=!ok;if(ok)n++});$$("tr.grp").forEach(function(g){g.hidden=!rows.some(function(r){return r.dataset.group===g.dataset.group&&!r.hidden})});if(count)count.textContent=n+" of "+rows.length+" objects"}
+function apply(){var v={};fs.forEach(function(f){v[f.dataset.filter]=f.value});var term=q?q.value.trim().toLowerCase():"";var n=0;rows.forEach(function(r){var ok=true;for(var k in v){if(v[k]&&r.dataset[k]!==v[k])ok=false}if(term&&(r.dataset.text||"").indexOf(term)<0)ok=false;r.hidden=!ok;if(ok)n++});$$("tr.grp").forEach(function(g){g.hidden=!rows.some(function(r){return r.dataset.tier===g.dataset.tier&&!r.hidden})});if(count)count.textContent=n+" of "+rows.length+" objects"}
 fs.concat(q?[q]:[]).forEach(function(f){f.addEventListener("input",apply);f.addEventListener("change",apply)});if(rows.length)apply();
 var want=document.body.dataset.open||keep.get("console.open");if(want){var row=rows.filter(function(r){return r.dataset.key===want})[0];if(row)openDrawer(row);else keep.del("console.open")}
 function send(form){var btns=$$("button",form);btns.forEach(function(b){b.disabled=true});var busy=$("[data-busy]",form);var t0=Date.now(),tick=null;if(busy){busy.hidden=false;tick=setInterval(function(){busy.textContent=busy.dataset.busy+" "+Math.round((Date.now()-t0)/1000)+" s"},1000)}var body=new URLSearchParams(new FormData(form));body.set("confirm","yes");function done(){btns.forEach(function(b){b.disabled=false});if(tick)clearInterval(tick);if(busy)busy.hidden=true}fetch(form.action,{method:"POST",body:body,headers:{"Accept":"application/json"},credentials:"same-origin"}).then(function(r){return r.json().catch(function(){return{ok:false,title:"The console answered "+r.status,lines:[]}})}).then(function(t){if(t.ok){keep.set("console.toast",JSON.stringify(t));location.reload()}else{done();toast(t)}}).catch(function(err){done();toast({ok:false,title:"The console did not answer",lines:[String(err)]})})}
@@ -237,6 +254,20 @@ function summary(form){var h=form.elements.hours;var text=form.dataset.summary;i
 document.addEventListener("click",function(e){var no=e.target.closest("[data-no]");if(no){var c=no.closest(".confirm");if(c)c.hidden=true}});
 var af=$("#agent");if(af){var trs=$$("tbody tr[data-agent]"),tc=$("#tcount");af.addEventListener("change",function(){var n=0;trs.forEach(function(r){r.hidden=af.value!==""&&r.dataset.agent!==af.value;if(!r.hidden)n++});if(tc)tc.textContent=n+" of "+trs.length+" events"})}
 })();`;
+
+/** One static part of the shell: its path, which names the hash of its bytes, its type and its bytes. */
+export interface Asset { path: string; type: string; body: string; etag: string }
+
+const asset = (name: string, ext: string, type: string, body: string): Asset => {
+  const hash = createHash("sha256").update(body).digest("hex").slice(0, 16);
+  return { path: `/assets/${name}.${hash}.${ext}`, type, body, etag: `"${hash}"` };
+};
+
+/** The stylesheet and the script every page links; a new build names new paths, so a cached copy is never stale. */
+export const ASSETS = {
+  css: asset("console", "css", "text/css; charset=utf-8", CSS),
+  js: asset("console", "js", "text/javascript; charset=utf-8", SCRIPT),
+} as const;
 
 export interface NavCounts { settings: number; findings: number; needs: number; actions: number; traces: number }
 export interface Shell {
@@ -284,9 +315,7 @@ export function layout(s: Shell): string {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>${escapeHtml(s.title)} · ConfigLeaf console</title>
-<style>
-${CSS}
-</style>
+<link rel="stylesheet" href="${ASSETS.css.path}">
 </head>
 <body${s.open ? ` data-open="${escapeHtml(s.open)}"` : ""}>
 <a class="skip" href="#main">Skip to content</a>
@@ -311,7 +340,7 @@ ${s.body}
 <aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="dr-title" hidden><div class="dr" id="dr"></div></aside>
 ${s.extra ?? ""}
 <div class="toasts" id="toasts" aria-live="polite">${s.toast ? toastHtml(s.toast) : ""}</div>
-<script>${SCRIPT}</script>
+<script src="${ASSETS.js.path}"></script>
 </body>
 </html>
 `;

@@ -46,12 +46,12 @@ import { FileTracer } from "../loop/trace.ts";
 import type { Finding, Verb } from "../pipeline.ts";
 import { openWindow } from "../policy/decide.ts";
 import { resolvePolicy } from "../policy/resolve.ts";
-import { MemoryWindows, PgWindows, type WindowStore } from "../policy/window.ts";
+import { MemoryWindows, PgWindows, WINDOW_SURFACES, type WindowStore } from "../policy/window.ts";
 import { Redactor } from "../redactor.ts";
 import type { Tracer } from "../trace.ts";
 import type { ApprovalStore } from "../vault/approve.ts";
 import { Vault } from "../vault/vault.ts";
-import { refreshFileTables } from "../zetaris/setup.ts";
+import { datasourceLists, refreshFileTables } from "../zetaris/setup.ts";
 import type { Refresh } from "../zetaris/filestore.ts";
 
 type Row = Readonly<Record<string, string>>;
@@ -169,6 +169,23 @@ export function liveRefusal(env: NodeJS.ProcessEnv = process.env): string | null
   return null;
 }
 
+/**
+ * Live mode, at start: what the console and the passes need that Zetaris does not read yet, each as a phrase. The
+ * change_window table SHOW DATASOURCE TABLES lists (a listing that fails names nothing: the pages say why the windows
+ * were not read), and disposition.window_id, one zero-row read. Empty when both are there; npm run zetaris:setup
+ * registers the one and refreshes the other.
+ */
+export async function zetarisGaps(b: Pick<Backend, "counting" | "layer">, datasource: string = config.zetaris.datasource): Promise<string[]> {
+  const gaps: string[] = [];
+  if ((await datasourceLists(b.counting, "change_window", { agent: "console", datasource })) === false) gaps.push(`the change_window table in ${datasource}`);
+  try {
+    await b.layer.run("SELECT window_id FROM {{t:disposition}} WHERE disposition_id = ''", {}, { agent: "console", limit: 1 });
+  } catch {
+    gaps.push(`the window_id column of ${datasource}.disposition`);
+  }
+  return gaps;
+}
+
 /** Live mode: the Store on DATABASE_URL (the schema applied, so change_window exists), the layer over Zetaris, the tenant's redactor, the vault at DRIFT_VAULT_DIR. */
 export async function liveBackend(o: { tenant: string }): Promise<Backend> {
   const refused = liveRefusal();
@@ -198,7 +215,9 @@ export interface Snapshot {
   records: Row[];
   approvals: Row[];
   windows: ChangeWindow[];
-  /** Why the windows were not read (a store whose schema predates change_window); null when they were. */
+  /** The tenant's window HOLDs, disposition_id to window_id (the disposition column src/policy/decide.ts step 3 sets). */
+  windowHolds: Map<string, string>;
+  /** Why the windows or the window HOLDs were not read (a store whose schema predates change_window, a datasource that does not list it); null when they were. */
   windowsError: string | null;
   /** The tenant's dispositions, every pass. */
   dispositions: Row[];
@@ -225,13 +244,18 @@ export async function vaultCommitOf(layer: DataLayer, tenant: string, runId: str
   return objects(await layer.run(VAULT_COPY_OF_SQL, { tenant_id: tenant, run_id: runId, object_id: objectId }, { agent: "console", limit: 10 }))[0]?.git_commit ?? null;
 }
 
+const WINDOW_HOLDS_SQL = `SELECT disposition_id, window_id
+FROM {{t:disposition}}
+WHERE tenant_id = {{p:tenant_id}} AND window_id IS NOT NULL
+ORDER BY disposition_id`;
+
 const windowOf = (w: Row): ChangeWindow => ({
   window_id: w.window_id, tenant_id: w.tenant_id, surface: w.surface, host: nul(w.host), object_id: w.object_id, setting_path: w.setting_path,
   opened_by: w.opened_by, opened_at: w.opened_at, until: w.until, reason: w.reason, closed_at: nul(w.closed_at),
 });
 
-/** The surfaces whose objects the Settings page lists. */
-const OBJECT_SURFACES = (s: string): boolean => s === "linux.nginx" || s === "cloudflare.dns" || s.startsWith("linux.");
+/** The surfaces whose objects the Settings page lists: the ones a window can be declared on. */
+const OBJECT_SURFACES = (s: string): boolean => WINDOW_SURFACES.includes(s);
 
 export async function readSnapshot(b: Backend, classes: ReadonlyMap<string, string>): Promise<Snapshot> {
   const t0 = Date.now();
@@ -246,11 +270,14 @@ export async function readSnapshot(b: Backend, classes: ReadonlyMap<string, stri
   const dns = latest.find((r) => r.surface === "cloudflare.dns");
   const hosts = [...new Set(latest.filter((r) => r.host).map((r) => r.host))];
   let windowsError: string | null = null;
-  const [observations, records, approvals, windows, dispositions, regress] = await Promise.all([
+  let holdsError: string | null = null;
+  const [observations, records, approvals, windows, windowHolds, dispositions, regress] = await Promise.all([
     Promise.all(latest.map(async (r) => objects(await b.layer.run(OBSERVATIONS_SQL, { run_id: r.run_id }, q)))).then((xs) => xs.flat()),
     dns ? b.layer.run(RECORDS_OF_RUN_SQL, { run_id: dns.run_id }, q).then(objects) : Promise.resolve([] as Row[]),
     b.layer.run(LATEST_APPROVALS_SQL, { tenant_id: b.tenant }, q).then(objects),
     b.layer.run(CHANGE_WINDOWS_SQL, { tenant_id: b.tenant }, q).then((r) => objects(r).map(windowOf)).catch((e: Error) => { windowsError = e.message; return [] as ChangeWindow[]; }),
+    b.layer.run(WINDOW_HOLDS_SQL, { tenant_id: b.tenant }, q).then((r) => new Map(objects(r).map((d) => [d.disposition_id, d.window_id] as const)))
+      .catch((e: Error) => { holdsError = e.message; return new Map<string, string>(); }),
     b.layer.run(DISPOSITIONS_SQL, {}, q).then((r) => objects(r).filter((d) => d.tenant_id === b.tenant)),
     Promise.all(hosts.map(async (host) => {
       const r = await runCheck(b.layer, "restore_would_regress", { tenant_id: b.tenant, host }, q);
@@ -267,7 +294,7 @@ export async function readSnapshot(b: Backend, classes: ReadonlyMap<string, stri
   ] as const)));
   const after = b.counting.tally();
   return {
-    readAt: new Date().toISOString(), doc, latest, observations, records, approvals, windows, windowsError, dispositions, regress, approvedCopies,
+    readAt: new Date().toISOString(), doc, latest, observations, records, approvals, windows, windowHolds, windowsError: windowsError ?? holdsError, dispositions, regress, approvedCopies,
     queries: { queries: after.queries - before.queries, rows: after.rows - before.rows, failed: after.failed - before.failed, ms: after.ms - before.ms }, ms: Date.now() - t0,
   };
 }
@@ -293,6 +320,8 @@ export async function runConsolePass(b: Backend, o: { decidedAt: string; trace?:
   const tracer = o.trace === false ? undefined : new FileTracer(`${b.mode === "sample" ? "console_sample" : "console_pass"}_${Date.now().toString(36)}`, { model: "none" });
   const before = b.counting.tally();
   const memory = o.memory ?? new TechnicianMemory({ storage: "read", directory: b.memoryDir });
+  // the tenant the trace is of, as a cycle's step lines name theirs: the Traces page lists a tenant's traces by it
+  tracer?.emit({ agent: "loop", action: "triage", status: "ok", input_summary: `console pass ${b.tenant}`, output_summary: `${b.mode === "sample" ? "pass" : "dry pass"} decided at ${o.decidedAt}` });
   const step = await passStep(b.layer, { tenant: b.tenant, ledger: b.ledger, memory, decidedAt: o.decidedAt, tracer: tracer as Tracer | undefined, world: new DriftWorld("console"), refreshFiles: b.refreshFiles });
   const explained = await explainPass({ tenant: b.tenant, decidedAt: step.decidedAt, findings: step.findings }, {
     layer: b.layer, vault: b.vault, redactor: b.redactor, sink: b.engine ? new MemoryCauseSink(b.engine) : null, tracer,
@@ -317,6 +346,8 @@ export interface Decision {
   expires_at: string | null;
   decided_by: string;
   rule_id: string | null;
+  /** The change window whose HOLD this is; null on every other decision. */
+  window_id: string | null;
   decided_at: string;
   surface: string;
   host: string | null;
@@ -330,15 +361,16 @@ export interface Decision {
 export function decisionsOfPass(p: PassRun): Decision[] {
   return p.step.findings.map((f) => ({
     finding_id: f.id, disposition_id: dispositionIdOf(f, p.decidedAt), class: f.finding.class, verb: f.verb, reason: f.disposition.reason,
-    expires_at: f.disposition.expires_at, decided_by: f.disposition.decided_by, rule_id: f.disposition.rule_id, decided_at: p.decidedAt,
+    expires_at: f.disposition.expires_at, decided_by: f.disposition.decided_by, rule_id: f.disposition.rule_id, window_id: f.disposition.window_id ?? null, decided_at: p.decidedAt,
     surface: f.finding.surface, host: f.finding.host, object_id: f.finding.object_id, setting_path: f.finding.setting_path, value_hash: f.finding.value_hash, finding: f,
   }));
 }
 
-export function decisionsOfLedger(open: readonly OpenDisposition[]): Decision[] {
+/** The ledger's open dispositions as decisions, each window HOLD known by the snapshot's windowHolds. */
+export function decisionsOfLedger(open: readonly OpenDisposition[], windowHolds: ReadonlyMap<string, string> = new Map()): Decision[] {
   return open.map((d) => ({
     finding_id: d.finding_id, disposition_id: d.disposition_id, class: d.class, verb: d.verb as Verb, reason: d.reason, expires_at: nul(d.expires_at),
-    decided_by: d.decided_by, rule_id: nul(d.rule_id), decided_at: d.decided_at, surface: d.surface, host: nul(d.host), object_id: d.object_id,
+    decided_by: d.decided_by, rule_id: nul(d.rule_id), window_id: windowHolds.get(d.disposition_id) ?? null, decided_at: d.decided_at, surface: d.surface, host: nul(d.host), object_id: d.object_id,
     setting_path: d.setting_path, value_hash: d.value_hash,
   }));
 }

@@ -32,9 +32,14 @@
 //      (sql/schema.sql change_window, opened from the console's Unlock), open at decided_at (opened_at <= decided_at
 //      < until, closed_at null), on a drift class (drift_vs_approved, changed_since_backup, approved_missing). A
 //      verb the rule gave of ROLLBACK, FIX or HOLD becomes HOLD until the window's until, "change window <id> opened
-//      by <who> until <until>: <why>", decided_by "policy", rule_id the rule's: the agent leaves a change the
-//      technician declared alone until the window ends. ESCALATE and ADOPT stand, and the probes still run.
-//      Outside a window, on another object or on any other class, nothing changes. A window never loosens an
+//      by <who> until <until>: <why>", decided_by "policy", rule_id the rule's, window_id the window's (the
+//      disposition column PRIOR_HOLDS_SQL reads, so a window's HOLD neither starts nor ends a rule's expiry): the
+//      agent leaves a change the technician declared alone until the window ends. The window's until replaces the
+//      expiry a prior HOLD in force carried, earlier or later; an expired prior HOLD is ESCALATE and stands. ESCALATE
+//      and ADOPT stand, and the probes still run. Outside a window, on another object or on any other class, nothing
+//      changes. When the windows could not be read (windowError), the step fails closed: on a drift class a ROLLBACK
+//      or FIX becomes ESCALATE, "change windows not read: <error>; a technician decides", so a declared change is
+//      never undone on a read the pass could not make; HOLD, ADOPT and ESCALATE stand. A window never loosens an
 //      exception's or a lapse's verdict (step 1 decides first), and a cause (src/explain/) never reaches here.
 //   4. Default, when no rule governs the setting: the verb the checks alone give (ADOPT when every check
 //      holds and none was rejected, else ESCALATE) and the checks' own sentence. decided_by "default".
@@ -109,6 +114,8 @@ export interface DecideInput {
   priorHold?: PriorHold | null;
   /** The change window on the finding's object (openWindow); null or absent when none is declared. */
   window?: WindowView | null;
+  /** Why the tenant's change windows were not read this pass; null or absent when they were, or when the datasource lists no change_window table. */
+  windowError?: string | null;
 }
 
 /** A change window as the Decider reads it (sql/schema.sql change_window). */
@@ -116,9 +123,11 @@ export type WindowView = Pick<ChangeWindow, "window_id" | "opened_by" | "opened_
 
 /** The classes a change window holds: a setting's own value moved from its approval, its backup or its object. */
 export const WINDOW_CLASSES: readonly FindingClass[] = ["drift_vs_approved", "changed_since_backup", "approved_missing"];
-/** The verbs a window turns into its HOLD: the ones that would write to the host or the zone, and a rule's own HOLD. */
-const WINDOW_HELD: readonly DispositionVerb[] = ["ROLLBACK", "FIX", "HOLD"];
-/** How every window HOLD's reason starts: PRIOR_HOLDS_SQL leaves these out, so a window never carries a rule's expiry. */
+/** The verbs that would write to the host or the zone: with the windows unread they go to a technician. */
+const WINDOW_WRITES: readonly DispositionVerb[] = ["ROLLBACK", "FIX"];
+/** The verbs a window turns into its HOLD: the writing ones, and a rule's own HOLD. */
+const WINDOW_HELD: readonly DispositionVerb[] = [...WINDOW_WRITES, "HOLD"];
+/** How every window HOLD's sentence starts. The HOLD itself is known by its window_id, never by this text. */
 export const WINDOW_REASON = "change window ";
 
 /** Open at `at`: opened_at <= at < until, and not closed. */
@@ -137,11 +146,18 @@ export function openWindow<W extends ChangeWindow>(windows: readonly W[], s: { t
 /** The sentence of a window's HOLD. */
 export const windowReason = (w: WindowView): string => `${WINDOW_REASON}${w.window_id} opened by ${w.opened_by} until ${w.until}: ${w.reason}`;
 
-/** Step 3: the rule's verb inside an open window on a drift class. */
+/** The sentence of a writing verb the pass could not weigh against the windows. */
+export const windowsUnreadReason = (error: string): string => `change windows not read: ${error}; a technician decides`;
+
+/** Step 3: the rule's verb inside an open window on a drift class, and with the windows unread (see the header). */
 function inWindow(input: DecideInput, d: Decision): Decision {
+  if (!WINDOW_CLASSES.includes(input.finding.class)) return d;
+  if (input.windowError) {
+    return WINDOW_WRITES.includes(d.verb) ? { verb: "ESCALATE", reason: windowsUnreadReason(input.windowError), expires_at: null, decided_by: d.decided_by, rule_id: d.rule_id } : d;
+  }
   const w = input.window;
-  if (!w || !WINDOW_CLASSES.includes(input.finding.class) || !windowOpen(w, input.decidedAt) || !WINDOW_HELD.includes(d.verb)) return d;
-  return { verb: "HOLD", reason: windowReason(w), expires_at: new Date(w.until).toISOString(), decided_by: "policy", rule_id: d.rule_id };
+  if (!w || !windowOpen(w, input.decidedAt) || !WINDOW_HELD.includes(d.verb)) return d;
+  return { verb: "HOLD", reason: windowReason(w), expires_at: new Date(w.until).toISOString(), decided_by: "policy", rule_id: d.rule_id, window_id: w.window_id };
 }
 
 export interface Decision {
@@ -150,6 +166,8 @@ export interface Decision {
   expires_at: string | null;
   decided_by: DecidedBy;
   rule_id: string | null;
+  /** The change window whose HOLD this is (step 3); absent on every other decision. */
+  window_id?: string;
 }
 
 export type Production =

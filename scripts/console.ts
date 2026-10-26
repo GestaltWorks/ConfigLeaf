@@ -7,18 +7,22 @@
 //                      tenant of the bundle's runs. The sample's own pass runs first, at the bundle's decision instant,
 //                      as npm run sample decides. Unlock, Approve, Lock and Run a pass write into the sql.js engine and
 //                      live for this process; Record exception writes the lesson store only with --write.
-//   live               the app Postgres on DATABASE_URL (sql/schema.sql applied first, CREATE TABLE IF NOT EXISTS, so
-//                      change_window exists), every read through Zetaris, the tenant --tenant or CONSOLE_TENANT. A dry
-//                      pass starts in the background; Run a pass runs another. The console never runs act.
+//   live               the app Postgres on DATABASE_URL (sql/schema.sql applied first, CREATE TABLE IF NOT EXISTS, then
+//                      the Store's migrations, so change_window and disposition.window_id exist), every read through
+//                      Zetaris, the tenant --tenant or CONSOLE_TENANT. At start it checks that Zetaris lists
+//                      change_window and reads disposition.window_id, and prints one line naming npm run zetaris:setup
+//                      when either is missing. A dry pass starts in the background; Run a pass runs another. The
+//                      console never runs act.
 //
-// Prints one line when it listens and one per action; stops on SIGINT or SIGTERM.
+// Prints one line when it listens (and, live, one more when Zetaris lacks what the windows need) and one per action;
+// stops on SIGINT or SIGTERM.
 // Exit 2 on a usage error or when live mode lacks REDACT_SALT, DATABASE_URL or ZETARIS_API_KEY; 1 when it cannot start.
 
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import { config, redact } from "../src/config.ts";
 import { DEFAULT_PORT, startConsole } from "../src/console/server.ts";
-import { liveBackend, liveRefusal, sampleBackend, type Backend } from "../src/console/state.ts";
+import { liveBackend, liveRefusal, sampleBackend, zetarisGaps, type Backend } from "../src/console/state.ts";
 import { TENANT } from "../src/policy/schema.ts";
 
 const USAGE = "usage: npm run console -- [--tenant <id>] [--port <n>] [--bundle <file>] [--write] [--help]";
@@ -80,6 +84,10 @@ try {
 }
 console.log(`console: ${backend.mode === "sample" ? "sample mode" : "live"}, tenant ${backend.tenant}, ${backend.source}${backend.mode === "sample" ? `, the sample's pass decided at ${backend.sampleInstant}` : ", the first dry pass running"}; ${((Date.now() - t0) / 1000).toFixed(1)} s`);
 console.log(`console: ${server.url}/  (Ctrl+C stops it)`);
+if (backend.mode === "live") {
+  const gaps = await zetarisGaps(backend).catch(() => [] as string[]);
+  if (gaps.length) console.log(`console: Zetaris does not read ${gaps.join(" or ")}; npm run zetaris:setup registers the table and refreshes the columns, and until it runs Unlock is refused`);
+}
 
 const stop = async (): Promise<void> => {
   console.log("console: stopping");
