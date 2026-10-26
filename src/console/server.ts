@@ -10,8 +10,12 @@
 //     /traces, /traces/view?f=<dir>/<file>, /sources, /policy, /document, /overview/report (the owner's report,
 //     src/document/report.ts renderReport over the snapshot's rows, with its outbound links opening in the top window)
 //     and /executive/download?period= (the executive report as one standalone file, an attachment named
-//     executive-<tenant>-<period>.html, its CSP the file's one style block by hash). / redirects to /overview.
-//     Anything else is 404.
+//     executive-<tenant>-<period>.html by downloadName, a tenant id only, with filename and an RFC 5987 filename*; its
+//     CSP the file's one style block by hash, fileCsp refusing a file with none or two). / redirects to /overview.
+//     Anything else is 404. Every answer's headers come from answerHeaders: no-store, the CSP the server chose and the
+//     two security headers are fixed; a route sets its content type and a download's content-disposition, nothing else.
+//   - A policy whose highest version holds two rules of one family (pages.ts latestRules) is named on Templates, printed
+//     once and traced once (ConsoleOptions.tracer, logs/console_*.jsonl), never tie-broken in silence.
 //   - One tenant at a time: the header's switcher (POST /do/tenant) names one of the tenants the store holds runs of
 //     (src/console/state.ts Backend.tenants) and every page reads that tenant's rows from then on; each tenant keeps
 //     its own pass, snapshot and source counts, and its first pass runs when the switcher first names it (at the
@@ -62,15 +66,17 @@ import { REPORT_MODE, renderReport, repoTip, utc } from "../document/report.ts";
 import { policyFileShown } from "../document/sample.ts";
 import { MemoryError, TechnicianMemory, scopeValuesOf, type ScopeType } from "../engine/memory.ts";
 import { PLAIN, Table, passView } from "../loop/present.ts";
+import { FileTracer, traceIdOf } from "../loop/trace.ts";
+import type { Tracer } from "../trace.ts";
 import { WindowError, freeText, newWindow } from "../policy/window.ts";
 import { DNS_FIELDS, approveRun, ApproveError, type ApprovalSelection } from "../vault/approve.ts";
 import {
-  barCounts, barHtml, actionsPage, decodeKey, documentPage, errorPage, executivePage, findingsPage, overviewPage, passForm, plainUrls, policyPage, settingsPage, sourcesPage, templatesOf,
+  barCounts, barHtml, actionsPage, decodeKey, documentPage, duplicateText, errorPage, executivePage, findingsPage, latestRules, overviewPage, passForm, plainUrls, policyPage, settingsPage, sourcesPage, templatesOf,
   templatesPage, traceViewPage, tracesPage, type SourceCount, type TraceEventRow, type TraceFile, type View,
 } from "./pages.ts";
 import { ASSETS, escapeHtml, layout, type Asset, type Shell } from "./html.ts";
 import {
-  classesOf, decisionsOfLedger, decisionsOfPass, readSnapshot, runConsolePass, settingObjects, vaultCommitOf, withTenant,
+  classesOf, decisionsOfLedger, decisionsOfPass, isTenantId, readSnapshot, runConsolePass, settingObjects, vaultCommitOf, withTenant,
   type Backend, type PassRun, type SettingObject, type Snapshot,
 } from "./state.ts";
 
@@ -102,6 +108,8 @@ export interface ConsoleOptions {
   /** The policy file the report's footer names. */
   policyFile?: string;
   print?: (line: string) => void;
+  /** Where the console's own findings go (a duplicate rule family); default a FileTracer in logs/ when tracePasses is on, else none. */
+  tracer?: Tracer;
 }
 
 export interface ConsoleServer {
@@ -140,12 +148,26 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
   };
   const be = (tenant: string): Backend => withTenant(b, tenant);
 
+  // the console's own trace: a duplicate rule family, once per family and process, beside the line it prints
+  let ownTracer: Tracer | null = o.tracer ?? null;
+  const tracer = (): Tracer | null => (ownTracer ??= o.tracePasses === false ? null : new FileTracer(traceIdOf("console"), { model: "none" }));
+  const reported = new Set<string>();
+  const reportDuplicates = (tenant: string, s: Snapshot): void => {
+    for (const d of latestRules(s.doc.data.rules).duplicates) {
+      const key = `${d.family}\u001f${d.version}\u001f${d.rule_ids.join(",")}`;
+      if (reported.has(key)) continue;
+      reported.add(key);
+      tracer()?.emit({ agent: "console", action: "check", status: "failed", input_summary: `console policy ${tenant}`, output_summary: duplicateText(d) });
+      print(`console: policy: ${b.redactor.text(duplicateText(d))}`);
+    }
+  };
+
   const snap = (tenant: string): Promise<Snapshot> => {
     const s = st(tenant);
     if (!s.snapshot) {
       const p = readSnapshot(be(tenant), classesOf(s.pass));
       s.snapshot = p;
-      p.catch(() => { if (s.snapshot === p) s.snapshot = null; });
+      p.then((x) => reportDuplicates(tenant, x), () => { if (s.snapshot === p) s.snapshot = null; }).catch(() => undefined);
     }
     return s.snapshot;
   };
@@ -196,7 +218,7 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
     const r = render(v);
     const c = barCounts(v);
     return layout({
-      title, page: name, tenant, tenants: b.tenants, returnTo: extra.returnTo ?? PAGE_PATH[name], modeLine, bar: extra.bar === false ? null : barHtml(v), csrf,
+      title, page: name, tenant, tenants: b.tenants, tenantsError: b.tenantsError ?? null, returnTo: extra.returnTo ?? PAGE_PATH[name], modeLine, bar: extra.bar === false ? null : barHtml(v), csrf,
       nav: { settings: v.objects.length, findings: v.decisions.length, needs: c.needs, actions: (v.snapshot.doc.data.actions ?? []).length, traces: v.traces.length, templates: templatesOf(v).length },
       passForm: passForm(v, "side"), body: r.body, extra: r.extra, toast: extra.toast ? { ok: extra.toast.ok, title: extra.toast.title, lines: extra.toast.lines } : null, open: extra.open ?? null,
     });
@@ -211,7 +233,8 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
     return { v, x, ctx };
   };
 
-  const render = async (tenant: string, route: string, query: URLSearchParams, toast: Toast | null = null, nonce = ""): Promise<{ status: number; type: string; body: string; headers?: Record<string, string> } | null> => {
+  /** A route's answer: its status, its type and its body, and for a download the file name; the server sets every other header (answerHeaders). */
+  const render = async (tenant: string, route: string, query: URLSearchParams, toast: Toast | null = null, nonce = ""): Promise<{ status: number; type: string; body: string; attachment?: string } | null> => {
     const html = (body: string, status = 200) => ({ status, type: "text/html; charset=utf-8", body });
     switch (route) {
       case "/overview": return html(await page(tenant, "overview", "Overview", (v) => ({ body: overviewPage(v) }), { toast, bar: false }));
@@ -234,11 +257,13 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
       }
       case "/executive/download": {
         const period = periodOf(query);
+        // the file is named for the tenant: an id src/policy/schema.ts TENANT reads, or no file (state.ts tenantIds lists no other)
+        let attachment: string;
+        try { attachment = downloadName(tenant, period); } catch (e) {
+          return html(await page(tenant, "executive", "Executive report", () => ({ body: errorPage((e as Error).message) })), 400);
+        }
         const { x, ctx } = await executive(tenant, period);
-        const file = renderExecutive(x, ctx);
-        // the tenant is an id src/policy/schema.ts TENANT reads (state.ts tenantIds); the name keeps its characters only, whatever reaches here
-        const name = `executive-${tenant.replace(/[^A-Za-z0-9._-]/g, "_")}-${period}.html`;
-        return { status: 200, type: "text/html; charset=utf-8", body: file, headers: { "content-disposition": `attachment; filename="${name}"`, "content-security-policy": fileCsp(file) } };
+        return { status: 200, type: "text/html; charset=utf-8", body: renderExecutive(x, ctx), attachment };
       }
       case "/templates": return html(await page(tenant, "templates", "Templates", (v) => ({ body: templatesPage(v) }), { toast }));
       case "/settings": {
@@ -427,13 +452,15 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
     const url = new URL(req.url ?? "/", origin);
     const tenant = current;
     if (req.method === "GET" || req.method === "HEAD") {
-      if (url.pathname === "/") { res.writeHead(303, { location: "/overview" }); res.end(); return; }
+      if (url.pathname === "/") { res.writeHead(303, { ...answerHeaders("text/plain; charset=utf-8", csp("")), location: "/overview" }); res.end(); return; }
       const a = STATIC.get(url.pathname);
       if (a) return sendAsset(req, res, a);
       const nonce = randomBytes(16).toString("base64");
       const r = await render(tenant, url.pathname, url.searchParams, null, nonce);
-      if (!r) return send(res, 404, "text/html; charset=utf-8", layoutError(`No page ${url.pathname}.`), nonce);
-      return send(res, r.status, r.type, req.method === "HEAD" ? "" : r.body, nonce, r.headers);
+      if (!r) return send(res, 404, "text/html; charset=utf-8", layoutError(`No page ${url.pathname}.`), { policy: csp(nonce) });
+      // a download is the executive report as one file: its style block by hash, no nonce; every other page the nonce
+      const policy = r.attachment ? fileCsp(r.body) : csp(nonce);
+      return send(res, r.status, r.type, req.method === "HEAD" ? "" : r.body, { policy, route: r.attachment ? { "content-disposition": contentDisposition(r.attachment) } : {} });
     }
     if (req.method !== "POST") return send(res, 405, "text/plain; charset=utf-8", "GET and POST only\n");
     const m = url.pathname.match(/^\/do\/(unlock|approve|lock|exception|pass|tenant)$/);
@@ -446,7 +473,7 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
       if (wantsJson) return send(res, status, "application/json; charset=utf-8", JSON.stringify({ ok: toast.ok, title: toast.title, lines: toast.lines }));
       const back = form.get("return") ?? "/overview";
       // a switch answers with the page it came from, read again for the new tenant: a reload then asks for nothing twice
-      if (m[1] === "tenant" && toast.ok) { res.writeHead(303, { location: RETURN_PATHS.has(back) ? back : "/overview", ...SECURITY }); res.end(); return; }
+      if (m[1] === "tenant" && toast.ok) { res.writeHead(303, { ...answerHeaders("text/plain; charset=utf-8", csp("")), location: returnPathOf(back) }); res.end(); return; }
       const r = await render(current, ["/settings", "/findings", "/overview"].includes(back) ? back : "/overview", new URLSearchParams(), toast);
       return send(res, status, "text/html; charset=utf-8", r!.body);
     };
@@ -522,29 +549,63 @@ export const csp = (nonce: string): string =>
 
 const SECURITY = { "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" } as const;
 
+/** The headers a route may set on its answer besides its type: the attachment of a download, and nothing else. */
+export type RouteHeaders = { "content-disposition"?: string };
+const ROUTE_HEADERS: ReadonlySet<string> = new Set(["content-disposition"]);
+
 /**
- * One answer. `headers` may set the attachment and replace the CSP (the executive report's download does both); the
- * two security headers come last, so no route can drop them.
+ * The headers of one answer. The server sets the fixed ones: no-store, the CSP it chose for the answer, and the two
+ * security headers. A route sets its content type (an argument of its own) and, for a download, content-disposition;
+ * any other name it gives is refused with an error, so no route can set, replace or drop a fixed header.
  */
-function send(res: http.ServerResponse, status: number, type: string, body: string, nonce = "", headers: Record<string, string> = {}): void {
-  res.writeHead(status, { "content-type": type, "cache-control": "no-store", "content-security-policy": csp(nonce), ...headers, ...SECURITY });
+export function answerHeaders(type: string, policy: string, route: Readonly<Record<string, string>> = {}): Record<string, string> {
+  const other = Object.keys(route).filter((k) => !ROUTE_HEADERS.has(k.toLowerCase()));
+  if (other.length) throw new Error(`a route sets its content type and content-disposition only, not ${other.join(", ")}`);
+  return { ...route, "content-type": type, "cache-control": "no-store", "content-security-policy": policy, ...SECURITY };
+}
+
+/** One answer, its headers from answerHeaders: the CSP the server chose (csp("") unless given) and a route's own content-disposition. */
+function send(res: http.ServerResponse, status: number, type: string, body: string, o: { policy?: string; route?: RouteHeaders } = {}): void {
+  res.writeHead(status, answerHeaders(type, o.policy ?? csp(""), o.route ?? {}));
   res.end(body);
 }
 
 /** Where each page's switch returns. */
-const PAGE_PATH: Readonly<Record<Shell["page"], string>> = {
+export const PAGE_PATH: Readonly<Record<Shell["page"], string>> = {
   overview: "/overview", executive: "/executive", settings: "/settings", templates: "/templates", findings: "/findings", actions: "/actions",
   traces: "/traces", sources: "/sources", policy: "/policy", document: "/document",
 };
 /** The paths a switch may return to, read off PAGE_PATH and the periods: a page of the nav, the executive report with its period; nothing else. */
-const RETURN_PATHS: ReadonlySet<string> = new Set([...Object.values(PAGE_PATH), ...PERIODS.map((p) => `/executive?period=${p}`)]);
+export const RETURN_PATHS: ReadonlySet<string> = new Set([...Object.values(PAGE_PATH), ...PERIODS.map((p) => `/executive?period=${p}`)]);
+/** Where a switch answers: the page it came from when RETURN_PATHS holds it, else the Overview. */
+export const returnPathOf = (back: string | null): string => (back !== null && RETURN_PATHS.has(back) ? back : "/overview");
 /** The period a request names; the last 7 days for none or another. */
 const periodOf = (q: URLSearchParams): Period => { const p = q.get("period"); return isPeriod(p) ? p : "7d"; };
 
-/** The CSP of the downloaded executive report: each of its style blocks by hash (the file has one), nothing else; no script runs in it. */
+/** The downloaded executive report's file name, executive-<tenant>-<period>.html; an error when the tenant is not an id TENANT reads. */
+export function downloadName(tenant: string, period: Period): string {
+  if (!isTenantId(tenant)) throw new Error(`No download: the tenant ${JSON.stringify(tenant.slice(0, 64))} is not a tenant id ([A-Za-z0-9._-], up to 64), so no file is named for it.`);
+  return `executive-${tenant}-${period}.html`;
+}
+
+/** RFC 5987 ext-value characters: what encodeURIComponent leaves, less ' ( ) *. */
+const rfc5987 = (s: string): string => encodeURIComponent(s).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+
+/** An attachment's header: filename for every client, and filename* (RFC 6266 and 5987, UTF-8) beside it; the name is a downloadName. */
+export function contentDisposition(name: string): string {
+  if (!/^[A-Za-z0-9._-]+$/.test(name)) throw new Error("an attachment is named by downloadName: [A-Za-z0-9._-] only");
+  return `attachment; filename="${name}"; filename*=UTF-8''${rfc5987(name)}`;
+}
+
+/**
+ * The CSP of the downloaded executive report: its one style block by hash, nothing else; no script runs in it. A file
+ * with no style block or more than one is not the report renderExecutive writes: an error, never a guessed policy.
+ */
 export function fileCsp(file: string): string {
-  const hashes = [...file.matchAll(/<style>([\s\S]*?)<\/style>/g)].map((m) => `'sha256-${createHash("sha256").update(m[1]).digest("base64")}'`);
-  return `default-src 'none'; style-src ${hashes.join(" ") || "'none'"}; img-src data:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'`;
+  const opened = (file.match(/<style\b/gi) ?? []).length;
+  const blocks = [...file.matchAll(/<style>([\s\S]*?)<\/style>/g)];
+  if (opened !== 1 || blocks.length !== 1) throw new Error(`fileCsp: the executive report holds one style block, this file opens ${opened} and closes ${blocks.length}`);
+  return `default-src 'none'; style-src 'sha256-${createHash("sha256").update(blocks[0][1]).digest("base64")}'; img-src data:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'`;
 }
 
 /** A static part of the shell: its path names its hash, so it is cached for a year and never revalidated; an If-None-Match on its ETag is 304. */

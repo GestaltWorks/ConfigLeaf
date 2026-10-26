@@ -28,9 +28,11 @@ import { withRestore } from "../explain/cause.ts";
 import { classLabel, findingWhere, hex8, nemotronOf, shortModel, tail, thousands } from "../loop/present.ts";
 import { labelsOf } from "../psa/index.ts";
 import type { Verb } from "../pipeline.ts";
-import { resolvePolicy } from "../policy/resolve.ts";
+import { globMatch } from "../policy/glob.ts";
+import { resolvePolicy, type SettingRef } from "../policy/resolve.ts";
 import { WINDOW_MAX_HOURS, WINDOW_MIN_HOURS } from "../policy/window.ts";
 import { escapeHtml } from "./html.ts";
+import type { PassStep } from "../loop/pass.ts";
 import { STATUSES, objectKey, type ConsoleMode, type Decision, type PassRun, type SettingObject, type Snapshot, type Status } from "./state.ts";
 
 type Row = Readonly<Record<string, string>>;
@@ -197,7 +199,11 @@ function lockBadge(v: View, o: SettingObject): string {
   return `<span class="b open">${o.rule ? "open by rule" : "open, no rule"}</span>`;
 }
 
-const template = (r: PolicyRule | null): string => (!r ? "none" : r.object_glob === "**" && r.setting_glob === "**" ? "everything else (catch-all)" : `${r.object_glob} · ${r.setting_glob}`);
+/**
+ * A rule as a template's name: its object and setting globs. A ** · ** rule on every surface is the catch-all; one on
+ * a single surface (zetaris.control) is every setting of that surface, not a second catch-all.
+ */
+const template = (r: PolicyRule | null): string => (!r ? "none" : r.object_glob === "**" && r.setting_glob === "**" ? (r.surface === "*" ? "everything else (catch-all)" : `every ${r.surface} setting`) : `${r.object_glob} · ${r.setting_glob}`);
 
 /** One line: the file's name or the record's, then its host or zone; the full path or the record id in the drawer. */
 function objectName(v: View, o: SettingObject): string {
@@ -436,20 +442,57 @@ export interface Template {
   deviations: number;
 }
 
-/** The rules in force: of each family (tenant, surface, object and setting globs) the highest version, as src/policy/resolve.ts weighs them. */
-function latestRules(v: View): PolicyRule[] {
-  const latest = new Map<string, PolicyRule>();
-  for (const r of v.snapshot.doc.data.rules) {
-    const f = [r.tenant_id, r.surface, r.object_glob, r.setting_glob].join("\u001f");
-    const seen = latest.get(f);
-    if (!seen || Number(r.version) > Number(seen.version) || (Number(r.version) === Number(seen.version) && r.rule_id < seen.rule_id)) latest.set(f, r);
+/** Two or more rules of one family (tenant, surface, object and setting globs) at its highest version: a policy-authoring fault. */
+export interface DuplicateRule { family: string; version: number; rule_ids: string[] }
+
+/**
+ * The rules in force: of each family (tenant, surface, object and setting globs) the highest version, as
+ * src/policy/resolve.ts weighs them. A family whose highest version holds more than one rule is not tie-broken here:
+ * it is a duplicate, reported on the Templates page and in the console's trace (src/console/server.ts). The rule the
+ * resolver picks of it still governs its settings; no empty template is added for it.
+ */
+export function latestRules(rules: readonly PolicyRule[]): { rules: PolicyRule[]; duplicates: DuplicateRule[] } {
+  const byFamily = new Map<string, PolicyRule[]>();
+  for (const r of rules) {
+    const f = [r.tenant_id, r.surface, r.object_glob, r.setting_glob].join(" · ");
+    const top = byFamily.get(f);
+    if (!top || Number(r.version) > Number(top[0].version)) byFamily.set(f, [r]);
+    else if (Number(r.version) === Number(top[0].version) && !top.some((x) => x.rule_id === r.rule_id)) top.push(r);
   }
-  return [...latest.values()];
+  const latest: PolicyRule[] = [];
+  const duplicates: DuplicateRule[] = [];
+  for (const [family, top] of byFamily) {
+    if (top.length === 1) latest.push(top[0]);
+    else duplicates.push({ family, version: Number(top[0].version), rule_ids: top.map((r) => r.rule_id).sort(cmp) });
+  }
+  return { rules: latest, duplicates: duplicates.sort((a, b) => cmp(a.family, b.family)) };
 }
 
-/** The templates of the tenant: every setting of the latest passing runs under the rule that governs it, every open finding under the rule it was decided by. */
-export function templatesOf(v: View): Template[] {
-  const rules = latestRules(v);
+/** A duplicate in one sentence, for the page and the trace. */
+export const duplicateText = (d: DuplicateRule): string => `rule family ${d.family} has ${d.rule_ids.length} rules at version ${d.version} (${d.rule_ids.join(", ")}): the policy names no one rule in force, and the resolver picks by rule id`;
+
+/** The resolver templatesOf calls: src/policy/resolve.ts resolvePolicy, or a test's counting one. */
+type Resolve = (rules: readonly PolicyRule[], setting: SettingRef) => PolicyRule | null;
+
+/**
+ * The templates of the tenant: every setting of the latest passing runs under the rule that governs it, every open
+ * finding under the rule it was decided by. The rules are resolved once per scope, not once per row: the candidate
+ * rules once per object (its tenant, surface and object glob), then each distinct setting of it once, so a setting
+ * the latest runs of two hosts both hold is resolved once.
+ */
+export function templatesOf(v: View, resolve: Resolve = resolvePolicy): Template[] {
+  const { rules, duplicates } = latestRules(v.snapshot.doc.data.rules);
+  const all = v.snapshot.doc.data.rules;
+  const forObject = new Map<string, PolicyRule[]>();
+  const resolved = new Map<string, PolicyRule | null>();
+  const governing = (surface: string, objectId: string, settingPath: string): PolicyRule | null => {
+    const scope = `${surface}\u001f${objectId}`;
+    let candidates = forObject.get(scope);
+    if (!candidates) forObject.set(scope, (candidates = all.filter((r) => (r.tenant_id === v.tenant || r.tenant_id === "*") && (r.surface === surface || r.surface === "*") && globMatch(r.object_glob, objectId))));
+    const key = `${scope}\u001f${settingPath}`;
+    if (!resolved.has(key)) resolved.set(key, resolve(candidates, { tenant_id: v.tenant, surface, object_id: objectId, setting_path: settingPath }));
+    return resolved.get(key)!;
+  };
   const objectsBy = new Map(v.objects.map((o) => [o.key, o]));
   const groups = new Map<string, Map<string, Template["objects"][number]>>();
   const row = (ruleId: string, key: string, fallback: { surface: string; host: string | null; object_id: string }): Template["objects"][number] => {
@@ -465,11 +508,12 @@ export function templatesOf(v: View): Template[] {
   };
   for (const x of v.snapshot.observations) {
     const host = x.host || null;
-    const rule = resolvePolicy(v.snapshot.doc.data.rules, { tenant_id: v.tenant, surface: x.surface, object_id: x.object_id, setting_path: x.setting_path });
+    const rule = governing(x.surface, x.object_id, x.setting_path);
     row(rule?.rule_id ?? "", objectKey(x.surface, host, x.object_id), { surface: x.surface, host, object_id: x.object_id }).settings++;
   }
   for (const d of v.decisions) if (d.rule_id) row(d.rule_id, objectKey(d.surface, d.host, d.object_id), d).open.push(d);
-  const byId = new Map(rules.map((r) => [r.rule_id, r]));
+  // the rules in force by id, a duplicate's among them: the one the resolver picks governs its settings
+  const byId = new Map([...rules, ...all.filter((r) => duplicates.some((d) => d.rule_ids.includes(r.rule_id)))].map((r) => [r.rule_id, r]));
   const out: Template[] = [...groups].map(([id, g]) => {
     const objects = [...g.values()].sort((a, b) => (b.open.length ? 1 : 0) - (a.open.length ? 1 : 0) || cmp(a.where, b.where) || cmp(a.name, b.name));
     return { rule: byId.get(id) ?? null, objects, settings: objects.reduce((n, o) => n + o.settings, 0), deviations: objects.filter((o) => o.open.length).length };
@@ -507,9 +551,13 @@ ${rows.length ? `<div class="tbl"><table class="rt tpl-t"><thead><tr><th scope="
 </details>`;
   });
   const settings = ts.reduce((n, x) => n + x.settings, 0);
+  const { duplicates } = latestRules(v.snapshot.doc.data.rules);
+  const dup = duplicates.length
+    ? `<div class="alert" role="alert"><b>${plural(duplicates.length, "rule family", "rule families")} of the policy ${duplicates.length === 1 ? "has" : "have"} more than one rule at the highest version</b><ul>${duplicates.map((d) => `<li>${v.t(duplicateText(d))}</li>`).join("")}</ul></div>\n`
+    : "";
   return `<div class="head"><div><h1>Templates</h1>
 <p class="lede">The ${plural(settings, "setting")} of ${v.t(v.tenant)}'s latest passing runs, grouped by the policy rule that governs each (the policy_rule rows the store holds, loaded from the policy file; the most specific match governs, as on the <a href="/policy">policy</a> page). Per template: its rule, the objects whose settings follow it, each one's lock under it and its status, and the deviations, the objects whose findings are open under the rule. Select an object for its Settings drawer.</p></div></div>
-<div class="tpls">
+${dup}<div class="tpls">
 ${cards.join("\n")}
 </div>`;
 }
@@ -616,6 +664,29 @@ ${rows.join("\n")}
 
 // ---- Sources ------------------------------------------------------------------------------------------------------
 
+/**
+ * The two DQ rules a pass reads on Zetaris (src/loop/pass.ts), side by side: exception_in_force over
+ * drift_usl.adoption and dns_inventory_current over drift_usl.dns_live, each as the console's last pass read it, or
+ * why it did not. On sql.js the pass reads neither: sample mode has no USL and no live source.
+ */
+export function passDq(step: Pick<PassStep, "adoptions" | "dns"> | null, mode: ConsoleMode, tenant: string): { rule: string; entity: string; text: string; holds: boolean | null }[] {
+  const why = (live: string): string => (!step ? "no pass from this console yet" : mode === "sample" ? "not read: the pass reads it on Zetaris, and sample mode reads sql.js" : `not read: ${live}`);
+  const a = step?.adoptions;
+  const d = step?.dns;
+  return [
+    {
+      rule: "exception_in_force", entity: "drift_usl.adoption",
+      ...(!a ? { text: why("the pass did not read it"), holds: null } : "error" in a ? { text: `not read: ${a.error}`, holds: null } : { text: `${a.inForce} of ${a.adoptions} adoptions in force`, holds: a.inForce === a.adoptions }),
+    },
+    {
+      rule: "dns_inventory_current", entity: "drift_usl.dns_live",
+      ...(!d ? { text: why(`${tenant} has no cloudflare.dns run to hold the provider to`), holds: null }
+        : "error" in d ? { text: `not read: ${d.error}`, holds: null }
+        : { text: `${d.current} of ${d.live} live record${d.live === 1 ? "" : "s"} at the provider match the last complete DNS run${d.current < d.live ? ": the provider changed since that run" : ""}`, holds: d.current === d.live }),
+    },
+  ];
+}
+
 export function sourcesPage(v: View, counts: readonly SourceCount[]): string {
   const d = v.snapshot.doc.data;
   const bySurface = new Map<string, { runs: number; pass: number }>();
@@ -628,11 +699,10 @@ export function sourcesPage(v: View, counts: readonly SourceCount[]): string {
   const rows = groups.flatMap((g) => counts.filter((c) => c.datasource === g).map((c, i) => `<tr><td data-label="Datasource">${i === 0 ? `<b>${v.t(g)}</b>` : ""}</td><td data-label="Table"><code>${v.t(c.table)}</code></td><td data-label="Rows" class="num">${c.rows === null ? `<span class="muted" title="${v.t(c.error ?? "")}">not read</span>` : thousands(c.rows)}</td><td data-label="Counted">${c.scope === "tenant" ? `${v.t(v.tenant)}'s rows` : "every row"}</td></tr>`));
   const n = (r: string): number => d.copies.filter((c) => c.result === r).length;
   const p = v.pass;
-  const adoption = p?.step.adoptions ? ("error" in p.step.adoptions ? `not read: ${p.step.adoptions.error}` : `${p.step.adoptions.inForce} of ${p.step.adoptions.adoptions} adoptions in force`) : null;
   const dq = [
     `<li><b>run_complete</b> (the DQ gate, <code>RUN_COMPLETE_SQL</code>): ${thousands(d.runs.filter((r) => r.passes).length)} of ${plural(d.runs.length, "run")} of ${v.t(v.tenant)} pass.<ul>${[...bySurface].map(([k, c]) => `<li>${v.t(k)}: ${c.pass} of ${c.runs}</li>`).join("")}</ul></li>`,
     `<li><b>copy validation</b>: ${thousands(d.copies.length)} copies at the vault's heads, ${n("ok")} ok, ${n("ok_with_gaps")} ok with gaps, ${n("fail")} fail, ${n("")} not validated (<a href="/document#copies">document</a>).</li>`,
-    ...(adoption ? [`<li><b>exception_in_force</b> on <code>drift_usl.adoption</code>, read by the console's last pass: ${v.t(adoption)}.</li>`] : []),
+    ...passDq(p?.step ?? null, v.mode, v.tenant).map((x) => `<li><b>${x.rule}</b> on <code>${x.entity}</code>, read by the console's last pass: <span class="${x.holds === null ? "muted" : x.holds ? "ok" : "need"}">${v.t(x.text)}</span>.</li>`),
   ];
   const last = p
     ? `The console's last ${p.recorded ? "pass" : "dry pass"}, decided at ${v.t(utc(p.decidedAt))}: <b>${plural(p.queries.queries, "query", "queries")}</b> through ${v.t(v.datasource)}, ${thousands(p.queries.rows)} rows, ${thousands(p.queries.failed)} failed, ${(p.ms / 1000).toFixed(1)} s${p.trace ? ` (<a href="/traces/view?f=${encodeURIComponent(`logs/${p.trace.id}.jsonl`)}">trace</a>)` : ""}.`

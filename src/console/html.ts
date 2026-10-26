@@ -52,6 +52,7 @@ h3{margin:0 0 4px}
 .tsw select{flex:1;min-width:0;padding:5px 8px;border:1px solid var(--line);border-radius:7px;background:var(--card);font-size:14px;font-weight:600;color:var(--fg)}
 .tsw .btn{padding:4px 10px;font-size:13px}
 .js .tsw .btn{display:none}
+.tsw-err{display:block;margin-top:6px;font-size:12px;line-height:1.35;color:var(--need)}
 .nav{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
 .nav a{display:flex;justify-content:space-between;align-items:baseline;gap:8px;padding:7px 10px;border-radius:7px;text-decoration:none}
 .nav a:hover{background:var(--hover)}
@@ -307,6 +308,8 @@ export interface Shell {
   tenant: string;
   /** The tenants the switcher lists; with one, the tenant reads as plain text. */
   tenants: readonly string[];
+  /** Why the store's tenants were not read (src/console/state.ts readTenants): the switcher says so under the tenant. */
+  tenantsError?: string | null;
   /** The page a switch returns to. */
   returnTo: string;
   modeLine: string;
@@ -342,11 +345,16 @@ export function toastHtml(t: { ok: boolean; title: string; lines: string[] }): s
   return `<div class="toast${t.ok ? "" : " err"}" role="${t.ok ? "status" : "alert"}"><b>${escapeHtml(t.title)}</b>${t.lines.length ? `<pre>${escapeHtml(t.lines.join("\n"))}</pre>` : ""}<button type="button" class="tx" aria-label="Dismiss">×</button></div>`;
 }
 
-/** The tenant switcher: a form that names the tenant and the page to return to; a change submits it (the script), else its Switch button. */
-export function tenantSwitcher(s: Pick<Shell, "tenant" | "tenants" | "csrf" | "returnTo">): string {
-  if (s.tenants.length < 2) return `<b>${escapeHtml(s.tenant)}</b>`;
+/**
+ * The tenant switcher: a form that names the tenant and the page to return to; a change submits it (the script), else
+ * its Switch button. When the store's tenants were not read it is degraded and says so: the tenant the console started
+ * for, and why the list is that one alone.
+ */
+export function tenantSwitcher(s: Pick<Shell, "tenant" | "tenants" | "csrf" | "returnTo" | "tenantsError">): string {
+  const degraded = s.tenantsError ? `<span class="tsw-err" role="status">The store's tenants were not read: ${escapeHtml(s.tenantsError)}. The switcher lists ${escapeHtml(s.tenant)} alone.</span>` : "";
+  if (s.tenants.length < 2) return `<b>${escapeHtml(s.tenant)}</b>${degraded}`;
   const options = s.tenants.map((t) => `<option value="${escapeHtml(t)}"${t === s.tenant ? " selected" : ""}>${escapeHtml(t)}</option>`).join("");
-  return `<form method="post" action="/do/tenant" class="tsw"><input type="hidden" name="csrf" value="${escapeHtml(s.csrf)}"><input type="hidden" name="return" value="${escapeHtml(s.returnTo)}"><label for="tenant-pick">Tenant</label><div class="tsw-row"><select id="tenant-pick" name="tenant" data-autosubmit>${options}</select><button type="submit" class="btn">Switch</button></div></form>`;
+  return `<form method="post" action="/do/tenant" class="tsw"><input type="hidden" name="csrf" value="${escapeHtml(s.csrf)}"><input type="hidden" name="return" value="${escapeHtml(s.returnTo)}"><label for="tenant-pick">Tenant</label><div class="tsw-row"><select id="tenant-pick" name="tenant" data-autosubmit>${options}</select><button type="submit" class="btn">Switch</button></div></form>${degraded}`;
 }
 
 export function layout(s: Shell): string {

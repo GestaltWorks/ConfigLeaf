@@ -62,6 +62,7 @@ import {
 import type { Finding, Verb } from "../pipeline.ts";
 import type { DocumentData, OpenDisposition } from "./render.ts";
 import { BASE_CSS, DARK, LIGHT, MARK, PRINT_TOKENS, ROOT_CSS } from "../design/theme.ts";
+import { KIND_WORD, STATUS_WORD, SURFACES, gateWhy, policyOf, surfaceName } from "./words.ts";
 
 /** The report's budget with the sample data. */
 export const REPORT_MAX_BYTES = 300_000;
@@ -197,22 +198,9 @@ const VERB_ORDER: readonly Verb[] = ["ESCALATE", "FIX", "ROLLBACK", "HOLD", "ADO
 /** The section each verb's findings are in. */
 const VERB_SECTION: Readonly<Record<Verb, string>> = { ESCALATE: "#needs", FIX: "#needs", ROLLBACK: "#actions", HOLD: "#held", ADOPT: "#adopted" };
 const NEEDS: readonly string[] = ["FIX", "ESCALATE"];
-export const KIND_WORD: Readonly<Record<string, string>> = { rollback_file: "rollback of a file", revert_record: "revert of a DNS record", investigate: "investigation", fix: "fix" };
-export const STATUS_WORD: Readonly<Record<string, string>> = { done: "done", unverified: "written, not verified", failed: "failed", refused: "refused, nothing written", not_judged: "not judged" };
 const ADOPTED_UNDER: Readonly<Record<string, string>> = { operator: "the technician's exceptions", policy: "policy rules", default: "the default checks" };
 /** A pseudonym the redactor writes: a URL that carries one points nowhere real. */
 const PSEUDONYM = /\b(?:host|ip|word|mail|user|domain)-[0-9a-f]{6}\b/;
-
-/** Each collection surface in plain words: its name (with the host for a host surface) and what it holds. */
-export const SURFACES: Readonly<Record<string, { name: (host: string) => string; holds: string; rank: number }>> = {
-  "cloudflare.dns": { name: () => "DNS records", holds: "every zone's records, each field as the provider returns it", rank: 0 },
-  "cloudflare.audit": { name: () => "Provider audit log", holds: "who changed which record and when", rank: 1 },
-  "linux.nginx": { name: (h) => `nginx on ${h}`, holds: "each vhost file and setting, read over SSH", rank: 2 },
-  "linux.etc": { name: (h) => `/etc on ${h}`, holds: "the host's other configuration files, read over SSH", rank: 3 },
-  inventory: { name: () => "Asset inventory", holds: "the hosts' addresses", rank: 4 },
-  probe: { name: () => "Probes from outside", holds: "the http, dns and tls answers of every served name", rank: 5 },
-  "probe.verify": { name: () => "Verification probes", holds: "the agent's probes after each write", rank: 6 },
-};
 
 // ---- the facts the sections share ----------------------------------------------------------------------------
 
@@ -336,25 +324,10 @@ function latestRuns(data: DocumentData): DocumentData["runs"] {
   return [...m.values()].sort((a, b) => rank(a.surface) - rank(b.surface) || cmp(a.surface, b.surface) || cmp(a.host, b.host));
 }
 
-export const surfaceName = (r: { surface: string; host: string }): string => SURFACES[r.surface]?.name(r.host) ?? `${r.surface}${r.host ? ` on ${r.host}` : ""}`;
 /** The id of a source's row in Coverage. */
 const sourceId = (f: Facts, surface: string, host: string): string => `src-${slug(surface)}${host ? `-${slug(f.ctx.redactor.text(host))}` : ""}`;
 /** The Coverage row a disposition's rows come from: the DNS records for a record, the host's nginx for a file. */
 const sourceOf = (d: OpenDisposition): { surface: string; host: string } => (d.surface.startsWith("cloudflare.") ? { surface: d.surface, host: "" } : { surface: d.surface, host: d.host });
-
-/** Why a run fails the gate, in a few words. */
-export function gateWhy(r: DocumentData["runs"][number]): string {
-  if (r.status !== "complete") return `the run is ${r.status}, ${r.observed_count || "0"} of ${r.expected_count || "?"} read`;
-  if (!r.expected_count || !r.observed_count) return "the run asserted no population";
-  return `${r.observed_count} of ${r.expected_count} read`;
-}
-
-/** The policy version in force (the greatest) and its rules. */
-export function policyOf(rules: readonly PolicyRule[]): { version: number; rules: number } | null {
-  if (!rules.length) return null;
-  const version = Math.max(...rules.map((r) => Number(r.version) || 0));
-  return { version, rules: rules.filter((r) => Number(r.version) === version).length };
-}
 
 /** Why a finding needs a person, in its few words: the Decider's reason without the owner. */
 const shortWhy = (reason: string): string => reasonClauses(reason).join(", ").replace(/, a technician owns it$/, "");

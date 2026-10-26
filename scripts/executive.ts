@@ -32,8 +32,9 @@ import { TechnicianMemory } from "../src/engine/memory.ts";
 import { DriftWorld } from "../src/engine/world.ts";
 import { runPass } from "../src/pipeline.ts";
 import { TENANT } from "../src/policy/schema.ts";
-import { Redactor, countLabels } from "../src/redactor.ts";
-import { FileTracer } from "../src/loop/trace.ts";
+import { Redactor } from "../src/redactor.ts";
+import { probeExport } from "../src/document/export.ts";
+import { FileTracer, traceIdOf } from "../src/loop/trace.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const USAGE = "usage: npm run report:executive -- [--tenant <id>] [--period 7d|30d|all] [--out <file>] [--bundle <file>] [--help]";
@@ -59,8 +60,9 @@ if (!isPeriod(period)) usage(`--period is ${PERIODS.join(", ")}, got ${period}`)
 if (args.tenant !== undefined && (!TENANT.test(args.tenant) || args.tenant === "*")) usage(`a tenant id is [A-Za-z0-9._-], up to 64, got ${args.tenant}`);
 const sample = config.sampleMode || args.bundle !== undefined;
 const rel = (p: string): string => path.relative(ROOT, p).replace(/\\/g, "/");
-// the trace goes to logs/ only, one line per query, as the sample pass writes it
-const tracer = new FileTracer(`executive_${Date.now().toString(36)}`, { model: "none" });
+// the trace goes to logs/ only, one line per query, as the sample pass writes it; its id carries the process id, so two
+// runs in the same millisecond write two files
+const tracer = new FileTracer(traceIdOf("executive"), { model: "none" });
 
 try {
   let html: string;
@@ -90,12 +92,7 @@ try {
     x = await readExecutive(layer, doc.data, { tenant, period, at: new Date().toISOString(), classes, receipts: evalReceipts(ROOT), tracer });
     html = renderExecutive(x, { redactor: new Redactor(config.redactSalt, config.redactWords), policyFile: config.policyFile, tip: repoTip(ROOT) });
   }
-  const labels = [...config.redactWords, ...config.exportDenyWords];
-  const hits = Object.keys(countLabels(html, labels)).length;
-  if (hits) {
-    console.error(`executive: deny-list probe: ${hits} of ${labels.length} configured label(s) appear in the report; nothing written`);
-    process.exit(1);
-  }
+  const labels = probeExport([["report", html]]);
   const bytes = Buffer.byteLength(html);
   if (bytes > EXECUTIVE_MAX_BYTES) {
     console.error(`executive: the report is ${bytes} bytes, over the ${EXECUTIVE_MAX_BYTES}-byte budget; nothing written`);
@@ -103,7 +100,7 @@ try {
   }
   writeFileSync(out, html);
   const k = x.kpis;
-  console.log(`executive: ${rel(out)} written for ${tenant}, ${PERIOD_WORD[period]} to ${x.at} (${x.days.length} days), ${bytes} bytes; ${k.driftEvents} drift event(s), ${x.incidentCount} incident(s), ${k.actions.total} action(s), coverage ${k.covered} of ${k.objects} objects; deny-list probe 0 of ${labels.length} label(s)`);
+  console.log(`executive: ${rel(out)} written for ${tenant}, ${PERIOD_WORD[period]} to ${x.at} (${x.days.length} days), ${bytes} bytes; ${k.driftEvents} drift event(s), ${x.incidentCount} incident(s), ${k.actions.total} action(s), coverage ${k.covered} of ${k.objects} objects; deny-list probe 0 of ${labels} label(s)`);
 } catch (e) {
   console.error(`executive: ${redact((e as Error).message ?? String(e))}`);
   process.exitCode = 1;

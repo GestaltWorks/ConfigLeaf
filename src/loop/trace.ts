@@ -12,6 +12,12 @@ import { config } from "../config.ts";
 import type { Redactor } from "../redactor.ts";
 import { Tracer, type TraceEvent } from "../trace.ts";
 
+/**
+ * A trace id for one run of a command: the prefix, the time in base 36 and the process id in base 36
+ * ("executive_mvp1x2a3_7k4"), so two processes started in the same millisecond write two files.
+ */
+export const traceIdOf = (prefix: string, now: number = Date.now(), pid: number = process.pid): string => `${prefix}_${now.toString(36)}_${pid.toString(36)}`;
+
 export class LabelTracer extends Tracer {
   constructor(private readonly inner: Tracer, private readonly labels: Redactor) {
     super(inner.traceId);

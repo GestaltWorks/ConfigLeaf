@@ -19,6 +19,7 @@ import {
 } from "../src/data/queries.ts";
 import { TABLE_NAMES } from "../src/data/schema.ts";
 import { LIVE_MEASURED, fileSourceRows, renderDocument, sourceOf, sourceRows, sourcesMarkdown, tablesOf } from "../src/document/render.ts";
+import { loadSamplePolicy } from "../src/document/sample.ts";
 import { TechnicianMemory } from "../src/engine/memory.ts";
 import { DriftWorld } from "../src/engine/world.ts";
 import { span } from "../src/explain/cause.ts";
@@ -36,9 +37,11 @@ type B = Readonly<Record<string, unknown>>;
 const T = "client-1";
 const A = "client-a";
 
+/** The bundle into sql.js; the recorded sample with the shipped policy loaded before its passes, as every sample setup path loads it (src/document/sample.ts loadSamplePolicy). */
 async function engineOf(b: B): Promise<{ engine: SqlJsEngine; layer: DataLayer }> {
   const engine = await SqlJsEngine.create();
   engine.loadBundle(b);
+  if (b === sample) loadSamplePolicy(engine, b as Record<string, unknown>);
   return { engine, layer: new DataLayer(engine) };
 }
 

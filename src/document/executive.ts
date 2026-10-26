@@ -12,9 +12,10 @@
 //                  data table under each).
 //   incidents      every finding the period decided ESCALATE, FIX or ROLLBACK, or that an action or a ticket names, as a
 //                  card: what, where, the cause's sentence, what the agent did, the ticket; the newest INCIDENTS_SHOWN.
-//   sources        each source's runs in the period and how many pass the DQ gate, its last read; then five of the six
-//                  DQ rules of the semantic layer (src/zetaris/setup.ts DQ_RULES) counted over the tenant's rows of the
-//                  period. The sixth, dns_inventory_current on dns_live, reads the provider live and is not counted here.
+//   sources        each source's runs in the period and how many pass the DQ gate, its last read; then one row per DQ
+//                  rule of the semantic layer (src/zetaris/setup.ts DQ_RULES, in its order and on its table), each read
+//                  over the tenant's rows of the period (DQ_READS); dns_inventory_current holds the Cloudflare DNS API
+//                  now to the last complete DNS run, read through Zetaris live and "not read" on sql.js.
 //   receipts       from the newest eval results: the receipts whose Ed25519 signature verifies (src/receipts/bundle.ts
 //                  verify, what npm run receipts:verify prints), and Ultra alone beside the checks with Ultra as the
 //                  falsifier, per run; the receipt ids the tenant's actions of the period name.
@@ -38,12 +39,18 @@ import type { Action, FindingCause } from "../data/rows.ts";
 import { BASE_CSS, MARK, PRINT_TOKENS, ROOT_CSS } from "../design/theme.ts";
 import { withRestore } from "../explain/cause.ts";
 import { CAUSES_SQL, causeOf } from "../explain/explain.ts";
+import { DriftWorld } from "../engine/world.ts";
+import { readDnsInventory, type DnsInventoryCheck } from "../loop/pass.ts";
 import { CLASS_LABEL, classLabel, tail, thousands } from "../loop/present.ts";
+import type { FindingSummary } from "../catalogue/select.ts";
+import { shortFindingId } from "../pipeline.ts";
+import { DQ_RULES } from "../zetaris/setup.ts";
 import { verify } from "../receipts/bundle.ts";
 import type { Tracer } from "../trace.ts";
 import { CHART_CSS, barChart, dayLong, lineChart, type Fill, type Series } from "./charts.ts";
 import type { DocumentData } from "./render.ts";
-import { KIND_WORD, STACK_LINE, STATUS_WORD, SURFACES, escapeHtml, gateWhy, policyOf, surfaceName, tileFacts, utc } from "./report.ts";
+import { STACK_LINE, escapeHtml, tileFacts, utc } from "./report.ts";
+import { KIND_WORD, STATUS_WORD, SURFACES, gateWhy, policyOf, surfaceName } from "./words.ts";
 
 type Row = Readonly<Record<string, string>>;
 
@@ -143,16 +150,37 @@ interface RunFile {
 }
 interface PlantedFile { claims: { config: string; run: number; struck?: boolean; status?: string }[] }
 
-const receiptsCache = new Map<string, { stamp: string; value: EvalReceipts | null }>();
+/** A directory's modification time; -1 when it is not there. Adding, removing or renaming an entry moves it. */
+const mtimeOf = (p: string): number => { try { return statSync(p).mtimeMs; } catch { return -1; } };
 
-/** The newest eval results under `root`/eval/results as the receipts section reads them; null when there are none. Read once per directory and modification time. */
+/** The last read of each results base: the directories whose modification times it rests on, and what was read. */
+const receiptsCache = new Map<string, { watch: readonly (readonly [string, number])[]; value: EvalReceipts | null }>();
+/** How many times evalReceipts listed a results base and read its newest directory; a request the cache answers adds none. */
+export const evalScans = { count: 0 };
+
+/**
+ * The newest eval results under `root`/eval/results as the receipts section reads them; null when there are none.
+ * The base is listed and the newest directory read once, then again only when a modification time it rests on moves:
+ * the base's (a results directory added, removed or renamed), the newest directory's (a file in it added, removed or
+ * renamed) and each later directory's, one the runner is still filling. A request the cache answers costs those stats
+ * and no listing. The eval runner writes a results directory once and never edits a file in place.
+ */
 export function evalReceipts(root: string): EvalReceipts | null {
-  const dir = newestEvalDir(path.join(root, "eval", "results"));
-  if (!dir) return null;
+  const base = path.join(root, "eval", "results");
+  const known = receiptsCache.get(base);
+  if (known && known.watch.every(([p, m]) => mtimeOf(p) === m)) return known.value;
+  evalScans.count++;
+  const baseTime = mtimeOf(base);
+  const dir = newestEvalDir(base);
+  const later = baseTime < 0 ? [] : readdirSync(base).filter((d) => (!dir || d > path.basename(dir)) && statSync(path.join(base, d)).isDirectory()).map((d) => path.join(base, d));
+  const value = dir ? readEvalDir(dir) : null;
+  receiptsCache.set(base, { watch: [[base, baseTime], ...[...(dir ? [dir] : []), ...later].map((p) => [p, mtimeOf(p)] as const)], value });
+  return value;
+}
+
+/** One results directory as the receipts section reads it; null when its files do not parse. */
+function readEvalDir(dir: string): EvalReceipts | null {
   const stamp = path.basename(dir);
-  const mtime = readdirSync(dir).map((f) => statSync(path.join(dir, f)).mtimeMs).reduce((a, b) => Math.max(a, b), 0);
-  const known = receiptsCache.get(dir);
-  if (known?.stamp === `${stamp}:${mtime}`) return known.value;
   let value: EvalReceipts | null = null;
   try {
     const runs = readdirSync(dir).filter((f) => RUN_FILE.test(f)).sort().map((f) => JSON.parse(readFileSync(path.join(dir, f), "utf8")) as RunFile);
@@ -179,7 +207,6 @@ export function evalReceipts(root: string): EvalReceipts | null {
   } catch {
     value = null;
   }
-  receiptsCache.set(dir, { stamp: `${stamp}:${mtime}`, value });
   return value;
 }
 
@@ -226,6 +253,9 @@ export interface ExecutiveRows {
   /** The ADOPTs under an exception in the period with in_force 1 or 0; null with the reason when they were not read (no lesson table). */
   adoptions: Row[] | null;
   adoptionsError: string | null;
+  /** The DQ rule dns_inventory_current over the provider now (src/loop/pass.ts readDnsInventory), read on Zetaris for a tenant with a DNS run; null with the reason otherwise. */
+  dns: DnsInventoryCheck | null;
+  dnsWhy: string | null;
   queries: number;
 }
 
@@ -273,14 +303,23 @@ export async function readExecutiveRows(layer: DataLayer, doc: DocumentData, o: 
   } catch (e) {
     adoptionsError = (e as Error).message.split("\n")[0].slice(0, 200);
   }
-  const ids = incidentIds(doc, dispositions, o.from, o.at);
-  const recordIds = [...new Set(dispositions.filter((d) => ids.has(d.finding_id) && d.surface === "cloudflare.dns").map((d) => d.object_id))].sort(cmp);
+  const incidents = incidentIds(doc, dispositions, o.from, o.at);
+  const recordIds = [...new Set(dispositions.filter((d) => incidents.has(d.finding_id) && d.surface === "cloudflare.dns").map((d) => d.object_id))].sort(cmp);
   const records = new Map<string, Row>();
   for (const id of recordIds) {
     const r = (await q(RECORD_SQL, { ...t, record_id: id })).at(-1);
     if (r) records.set(id, r);
   }
-  return { dispositions, probes, approvals, objects: objectRows, causes, records, adoptions, adoptionsError, queries };
+  // dns_inventory_current reads the Cloudflare DNS API now, through Zetaris's REST tables: nothing to read on sql.js
+  let dns: DnsInventoryCheck | null = null;
+  let dnsWhy: string | null = null;
+  if (layer.engine.name !== "zetaris") dnsWhy = "the rule reads the Cloudflare DNS API live through Zetaris, and the recorded bundle holds no live read";
+  else if (!doc.runs.some((r) => r.surface === "cloudflare.dns")) dnsWhy = `${o.tenant} has no cloudflare.dns run to hold the provider to`;
+  else {
+    queries++;
+    dns = await readDnsInventory(layer, o.tracer);
+  }
+  return { dispositions, probes, approvals, objects: objectRows, causes, records, adoptions, adoptionsError, dns, dnsWhy, queries };
 }
 
 // ---- the numbers -------------------------------------------------------------------------------------------------
@@ -335,12 +374,64 @@ export interface Executive {
   policy: { version: number; rules: number } | null;
 }
 
-/** A disposition's class off its reason, when the Decider's sentence names it ("this changed_since_backup finding", or a drift from the approved value). */
-export function classOfReason(reason: string): string | null {
-  const named = /\bthis ([a-z_]+) finding\b/.exec(reason)?.[1];
-  if (named && named in CLASS_LABEL) return named;
-  if (/^live value drifted from approved\b/.test(reason)) return "drift_vs_approved";
+/** Builds a finding's World Model id (DriftWorld.findingId reads only its argument); one instance for the process. */
+let idWorld: DriftWorld | null = null;
+
+/**
+ * A disposition's finding class from its own columns, for a finding no pass of this run raises. The finding id is
+ * shortFindingId over the World Model's id (tenant, class, host, object, setting, record: src/engine/world.ts
+ * findingId), and the disposition carries every part but the class and the record: the class is the one of
+ * CLASS_LABEL whose id, with no record or with the object as the record, is the disposition's finding_id. Null when
+ * none is; the reason's text is never read.
+ */
+export function classOfFinding(d: { tenant_id: string; finding_id: string; host: string | null; object_id: string; setting_path: string }): string | null {
+  idWorld ??= new DriftWorld("executive-ids");
+  for (const cls of Object.keys(CLASS_LABEL)) {
+    for (const resource of [null, d.object_id]) {
+      const id = idWorld.findingId({ tenant_id: d.tenant_id, class: cls as FindingSummary["class"], host: d.host || null, object_id: d.object_id, setting_path: d.setting_path, resource_id: resource });
+      if (shortFindingId(id) === d.finding_id) return cls;
+    }
+  }
   return null;
+}
+
+/** What each DQ rule is read over in the report: the period's runs, copies, actions and causes, and the reads beside them. */
+interface DqInput {
+  runs: DocumentData["runs"];
+  copies: Executive["kpis"]["copies"];
+  actions: readonly Action[];
+  causes: readonly FindingCause[];
+  rows: Pick<ExecutiveRows, "adoptions" | "adoptionsError" | "dns" | "dnsWhy">;
+}
+
+/** Each DQ rule's reading, by its name in DQ_RULES (src/zetaris/setup.ts); a rule with none reads "not read". */
+const DQ_READS: Readonly<Record<string, (x: DqInput) => Pick<DqRow, "text" | "holds">>> = {
+  run_complete: ({ runs }) => ({ text: `${thousands(runs.filter((r) => r.passes).length)} of ${plural(runs.length, "collection run")} started in the period pass: the run read every object it set out to read`, holds: runs.every((r) => r.passes) }),
+  copy_validated: ({ copies: c }) => ({ text: c.total ? `${thousands(c.total - c.none)} of ${plural(c.total, "vault copy", "vault copies")} at the heads validated: ${thousands(c.ok)} ok, ${thousands(c.gaps)} ok with gaps, ${thousands(c.fail)} fail` : "the vault holds no copy for the tenant", holds: c.total > 0 && c.none === 0 }),
+  action_verified: ({ actions }) => {
+    const verified = actions.filter((a) => !WRITES.includes(a.kind) || ["failed", "refused", "not_judged"].includes(a.status) || a.verification !== "");
+    return { text: `${thousands(verified.length)} of ${plural(actions.length, "action")} of the period hold it: every completed write carries a verification probe`, holds: verified.length === actions.length };
+  },
+  cause_evidenced: ({ causes }) => {
+    const evidenced = causes.filter((x) => x.class === "unknown" || x.evidence_ids !== "[]");
+    return { text: `${thousands(evidenced.length)} of ${plural(causes.length, "cause")} of the period name their evidence or read unknown`, holds: evidenced.length === causes.length };
+  },
+  exception_in_force: ({ rows }) => {
+    if (!rows.adoptions) return { text: rows.adoptionsError ?? "the lesson table is not there", holds: null };
+    const inForce = rows.adoptions.filter((a) => a.in_force === "1").length;
+    return { text: `${thousands(inForce)} of ${plural(rows.adoptions.length, "ADOPT")} under an accepted exception in the period join a lesson in force`, holds: inForce === rows.adoptions.length };
+  },
+  dns_inventory_current: ({ rows }) => {
+    const d = rows.dns;
+    if (!d) return { text: rows.dnsWhy ?? "no live read", holds: null };
+    if ("error" in d) return { text: d.error.split("\n")[0].slice(0, 200), holds: null };
+    return { text: `${thousands(d.current)} of ${plural(d.live, "record")} at the provider now match the last complete DNS run by type and proxied flag`, holds: d.current === d.live };
+  },
+};
+
+/** One row per DQ rule of the semantic layer, in DQ_RULES's order, its table the rule's own. */
+export function dqRows(x: DqInput, rules: readonly { name: string; table: string }[] = DQ_RULES): DqRow[] {
+  return rules.map((r) => ({ rule: r.name, table: r.table, ...(DQ_READS[r.name]?.(x) ?? { text: "the executive report has no reading of this rule", holds: null }) }));
 }
 
 const objectKeyOf = (r: Row): string => [r.surface, r.surface === "cloudflare.dns" ? "" : (r.host ?? ""), r.object_id].join("\u001f");
@@ -432,7 +523,7 @@ export function executiveOf(doc: DocumentData, rows: ExecutiveRows, o: Executive
     const last = (mine.length ? mine : all).at(-1)!;
     const dispIds = new Set(all.map((d) => d.disposition_id));
     const own = allActions.filter((a) => dispIds.has(a.disposition_id) && inPeriod(a.started_at)).sort((a, b) => cmp(a.started_at, b.started_at) || cmp(a.action_id, b.action_id));
-    const cls = o.classes?.get(id) ?? all.map((d) => classOfReason(d.reason)).find(Boolean) ?? null;
+    const cls = o.classes?.get(id) ?? classOfFinding({ tenant_id: o.tenant, finding_id: id, host: last.host || null, object_id: last.object_id, setting_path: last.setting_path });
     const record = last.surface === "cloudflare.dns" ? rows.records.get(last.object_id) : undefined;
     const setting = last.setting_path && last.setting_path !== "file" ? ` (${last.setting_path})` : "";
     const where = last.surface === "cloudflare.dns"
@@ -468,21 +559,8 @@ export function executiveOf(doc: DocumentData, rows: ExecutiveRows, o: Executive
     };
   }).sort((a, b) => srank(a.surface) - srank(b.surface) || cmp(a.surface, b.surface) || cmp(a.host, b.host)).map(({ surface: _s, host: _h, ...rest }) => rest);
 
-  // five of the six DQ rules over the tenant's rows of the period; dns_inventory_current is a live read, not counted
-  const runs = doc.runs.filter((r) => inPeriod(r.started_at));
-  const c = tiles.copies;
-  const verified = actions.filter((a) => !WRITES.includes(a.kind) || ["failed", "refused", "not_judged"].includes(a.status) || a.verification !== "");
-  const evidenced = causes.filter((x) => x.class === "unknown" || x.evidence_ids !== "[]");
-  const inForce = rows.adoptions?.filter((a) => a.in_force === "1").length ?? 0;
-  const dq: DqRow[] = [
-    { rule: "run_complete", table: "collection", text: `${thousands(runs.filter((r) => r.passes).length)} of ${plural(runs.length, "collection run")} started in the period pass: the run read every object it set out to read`, holds: runs.every((r) => r.passes) },
-    { rule: "copy_validated", table: "copy", text: c.total ? `${thousands(c.total - c.none)} of ${plural(c.total, "vault copy", "vault copies")} at the heads validated: ${thousands(c.ok)} ok, ${thousands(c.gaps)} ok with gaps, ${thousands(c.fail)} fail` : "the vault holds no copy for the tenant", holds: c.total > 0 && c.none === 0 },
-    { rule: "action_verified", table: "action", text: `${thousands(verified.length)} of ${plural(actions.length, "action")} of the period hold it: every completed write carries a verification probe`, holds: verified.length === actions.length },
-    { rule: "cause_evidenced", table: "cause", text: `${thousands(evidenced.length)} of ${plural(causes.length, "cause")} of the period name their evidence or read unknown`, holds: evidenced.length === causes.length },
-    rows.adoptions
-      ? { rule: "exception_in_force", table: "adoption", text: `${thousands(inForce)} of ${plural(rows.adoptions.length, "ADOPT")} under an accepted exception in the period join a lesson in force`, holds: inForce === rows.adoptions.length }
-      : { rule: "exception_in_force", table: "adoption", text: `not read: ${rows.adoptionsError ?? "the lesson table is not there"}`, holds: null },
-  ];
+  // every DQ rule of the semantic layer, in its order, each read over the tenant's rows of the period (DQ_READS)
+  const dq = dqRows({ runs: doc.runs.filter((r) => inPeriod(r.started_at)), copies: tiles.copies, actions, causes, rows });
 
   const byStatus = STATUS_ORDER.map((s) => ({ status: s, n: actions.filter((a) => a.status === s).length }));
   return {

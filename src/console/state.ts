@@ -38,12 +38,13 @@ import { APPROVED_COPIES_SQL, CHANGE_WINDOWS_SQL, DISPOSITIONS_SQL, LATEST_APPRO
 import type { Action, ApprovedSetting, ChangeWindow, CollectionRun, FindingCause, Observation, PolicyRule } from "../data/rows.ts";
 import { Store } from "../data/store.ts";
 import { renderDocument, type DocumentResult, type OpenDisposition } from "../document/render.ts";
+import { loadSamplePolicy } from "../document/sample.ts";
 import { TechnicianMemory } from "../engine/memory.ts";
 import { DriftWorld } from "../engine/world.ts";
 import { BUNDLE_REDACTOR, MemoryCauseSink, explainPass, type ExplainResult } from "../explain/explain.ts";
 import { MemoryLedger, type Ledger } from "../ledger.ts";
 import { dispositionIdOf, passStep, type PassStep } from "../loop/pass.ts";
-import { FileTracer } from "../loop/trace.ts";
+import { FileTracer, traceIdOf } from "../loop/trace.ts";
 import type { Finding, Verb } from "../pipeline.ts";
 import { openWindow } from "../policy/decide.ts";
 import { resolvePolicy } from "../policy/resolve.ts";
@@ -153,6 +154,8 @@ const textSha256 = (text: string): string => `sha256:${createHash("sha256").upda
 export async function sampleBackend(o: { tenant: string; bundle: Record<string, unknown>; bundlePath: string; memoryDir: string; write: boolean; policyFile?: string }): Promise<Backend> {
   const engine = await SqlJsEngine.create();
   engine.loadBundle(o.bundle);
+  // the shipped policy for the recording's tenants before any pass, as the eval runner and npm run sample load it
+  loadSamplePolicy(engine, o.bundle, o.policyFile);
   engine.loadFileTables(fileRows({ memoryDir: o.memoryDir, policyFile: o.policyFile ?? config.policyFile, redactor: BUNDLE_REDACTOR }));
   const counting = new CountingEngine(engine);
   const layer = new DataLayer(counting);
@@ -173,8 +176,11 @@ const TENANTS_SQL = `SELECT DISTINCT tenant_id
 FROM {{t:collection_run}}
 ORDER BY tenant_id`;
 
+/** A tenant id as src/policy/schema.ts TENANT reads one (anchored: [A-Za-z0-9][A-Za-z0-9._-]{0,63}), never "*". */
+export const isTenantId = (x: unknown): boolean => typeof x === "string" && x !== "*" && TENANT.test(x);
+
 /** The tenant ids among `ids`, once each and in code-unit order: an id TENANT reads, never "*", so a page, a header and a file name can carry it as it is. */
-export const tenantIds = (ids: readonly string[]): string[] => [...new Set(ids.filter((x) => typeof x === "string" && x !== "*" && TENANT.test(x)))].sort(cmp);
+export const tenantIds = (ids: readonly string[]): string[] => [...new Set(ids.filter(isTenantId))].sort(cmp);
 
 /** The same backend for another of its tenants: one store, one engine, one redactor; the pages, the passes and the actions read and write that tenant's rows. */
 export const withTenant = (b: Backend, tenant: string): Backend => (b.tenant === tenant ? b : { ...b, tenant });
@@ -204,8 +210,24 @@ export async function zetarisGaps(b: Pick<Backend, "counting" | "layer">, dataso
   return gaps;
 }
 
+/**
+ * The tenants the store holds runs of, as tenant ids (tenantIds), with the one the console started for. A read that
+ * fails is not swallowed: the switcher lists the started tenant alone, `error` says why (redacted, one line) for the
+ * page and the start line, and the tracer gets one failed line naming it (live, logs/console_start_*.jsonl).
+ */
+export async function readTenants(layer: DataLayer, started: string, redactor: { text(s: string): string }, tracer?: Tracer): Promise<{ tenants: string[]; error: string | null }> {
+  try {
+    const r = await layer.run(TENANTS_SQL, {}, { agent: "console", limit: 1000 });
+    return { tenants: tenantIds([...objects(r).map((x) => x.tenant_id), started]), error: null };
+  } catch (e) {
+    const error = redactor.text((e as Error)?.message ?? String(e)).split("\n")[0].slice(0, 200);
+    tracer?.emit({ agent: "console", action: "detect", status: "failed", input_summary: `console tenants ${started}`, output_summary: `the store's tenants were not read; the switcher lists ${started} alone`, detail: error });
+    return { tenants: tenantIds([started]), error };
+  }
+}
+
 /** Live mode: the Store on DATABASE_URL (the schema applied, so change_window exists), the layer over Zetaris, the tenant's redactor, the vault at DRIFT_VAULT_DIR. */
-export async function liveBackend(o: { tenant: string }): Promise<Backend> {
+export async function liveBackend(o: { tenant: string; tracer?: Tracer }): Promise<Backend> {
   const refused = liveRefusal();
   if (refused) throw new Error(refused);
   const store = Store.fromEnv();
@@ -213,14 +235,9 @@ export async function liveBackend(o: { tenant: string }): Promise<Backend> {
   const redactor = new Redactor(config.redactSalt, config.redactWords);
   const counting = new CountingEngine(new ZetarisEngine());
   const layer = new DataLayer(counting);
-  // the tenants the store holds runs of; a read that fails leaves the one the console was started for, and says why
-  let tenantsError: string | null = null;
-  const tenants = await layer.run(TENANTS_SQL, {}, { agent: "console", limit: 1000 }).then((r) => objects(r).map((x) => x.tenant_id), (e: Error) => {
-    tenantsError = redactor.text(e.message).split("\n")[0].slice(0, 200);
-    return [] as string[];
-  });
+  const { tenants, error: tenantsError } = await readTenants(layer, o.tenant, redactor, o.tracer ?? new FileTracer(traceIdOf("console_start"), { model: "none" }));
   return {
-    mode: "live", tenant: o.tenant, tenants: tenantIds([...tenants, o.tenant]), tenantsError, layer, counting, engine: null, redactor, windows: new PgWindows(store), approvals: store,
+    mode: "live", tenant: o.tenant, tenants, tenantsError, layer, counting, engine: null, redactor, windows: new PgWindows(store), approvals: store,
     ledger: null, vault: Vault.fromEnv({ redactor }), memoryDir: config.memoryDir, memoryWritable: true,
     source: `Zetaris over the ${config.zetaris.datasource} datasource`, bundle: null, sampleInstant: null,
     refreshFiles: () => refreshFileTables(), close: () => store.close(),

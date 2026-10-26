@@ -3,25 +3,29 @@
 // run examples take), the committed examples/executive.html is the render byte for byte, and a second render the same;
 // the CLI writes the same file. Client-1 over the last 7 days: the header (tenant, period, time UTC), the six KPIs, the
 // four charts (titles, both axes named, a legend name and a pattern beside every fill, the data table beneath each),
-// the one incident (the proxy_split ESCALATE, ticket #2), the sources and the five DQ rules, the receipts of the newest
+// the one incident (the proxy_split ESCALATE, ticket #2), the sources and the six DQ rules, the receipts of the newest
 // eval results; one style block, no script, no absolute URL, light and dark, A4 print with a page break between
 // sections, under the budget. Lab-1: the two incidents with their actions and tickets, the actions by status. The
 // redactor over every data string. The period's days, the median and the durations. Offline; nothing is written but a
 // temporary file.
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import { DARK, LIGHT, PRINT_TOKENS } from "../src/design/theme.ts";
 import { barChart, niceScale } from "../src/document/charts.ts";
+import type { FindingSummary } from "../src/catalogue/select.ts";
 import {
-  EXECUTIVE_MAX_BYTES, classOfReason, duration, evalReceipts, executiveSections, median, periodDays, renderExecutive, type Executive,
+  EXECUTIVE_MAX_BYTES, classOfFinding, dqRows, duration, evalReceipts, evalScans, executiveSections, median, periodDays, renderExecutive, type Executive,
 } from "../src/document/executive.ts";
 import { sampleExecutive, textSha256 } from "../src/document/sample.ts";
 import { TechnicianMemory } from "../src/engine/memory.ts";
+import { DriftWorld } from "../src/engine/world.ts";
+import { shortFindingId } from "../src/pipeline.ts";
 import { Redactor } from "../src/redactor.ts";
+import { DQ_RULES } from "../src/zetaris/setup.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const STORE = path.join(ROOT, "examples", "memory");
@@ -145,14 +149,17 @@ describe("the executive report over sample/bundle.json", () => {
     expect(lab.executive.incidentCount).toBe(2);
   });
 
-  it("the sources with their runs of the period and the gate, then the five DQ rules counted over the period", () => {
+  it("the sources with their runs of the period and the gate, then the six DQ rules of the semantic layer over the period", () => {
     const src = sectionOf(c1.html, "sources");
     expect([...src.matchAll(/<th scope="row" data-label="Source"><b>([^<]+)<\/b>/g)].map((m) => m[1])).toEqual(["DNS records", "Provider audit log", "nginx on host-4b4dc1", "nginx on host-aa516a", "Probes from outside"]);
-    expect(c1.executive.dq.map((d) => [d.rule, d.holds])).toEqual([["run_complete", true], ["copy_validated", true], ["action_verified", true], ["cause_evidenced", true], ["exception_in_force", true]]);
+    expect(c1.executive.dq.map((d) => d.rule)).toEqual(DQ_RULES.map((r) => r.name));
+    expect(c1.executive.dq.map((d) => [d.rule, d.holds])).toEqual([["run_complete", true], ["copy_validated", true], ["action_verified", true], ["cause_evidenced", true], ["exception_in_force", true], ["dns_inventory_current", null]]);
     expect(src).toContain("61 of 61 collection runs started in the period pass");
     expect(src).toContain("23 of 23 ADOPTs under an accepted exception in the period join a lesson in force");
+    // the live rule on sql.js: nothing to read, and the row says why
+    expect(src).toContain('<li><span class="dq unread">not read</span> <code>dns_inventory_current</code> <span class="muted">on dns_live</span>: the rule reads the Cloudflare DNS API live through Zetaris, and the recorded bundle holds no live read</li>');
     // lab-1: one write completed with no verification probe, and no copy validated
-    expect(lab.executive.dq.map((d) => [d.rule, d.holds])).toEqual([["run_complete", true], ["copy_validated", false], ["action_verified", false], ["cause_evidenced", true], ["exception_in_force", true]]);
+    expect(lab.executive.dq.map((d) => [d.rule, d.holds])).toEqual([["run_complete", true], ["copy_validated", false], ["action_verified", false], ["cause_evidenced", true], ["exception_in_force", true], ["dns_inventory_current", null]]);
     expect(sectionOf(lab.html, "sources")).toContain("9 of 10 actions of the period hold it");
   });
 
@@ -209,10 +216,56 @@ describe("the period, the median and the charts' scale", () => {
     expect([niceScale(0), niceScale(4), niceScale(27), niceScale(333), niceScale(10)]).toEqual([{ top: 1, step: 1 }, { top: 4, step: 1 }, { top: 30, step: 10 }, { top: 400, step: 100 }, { top: 10, step: 2 }]);
   });
 
-  it("a disposition's class off the Decider's reason when no pass names it", () => {
-    expect(classOfReason("rule rule-6c41a25a00c404c8 restores a setting to its approved value; this changed_since_backup finding concerns ...")).toBe("changed_since_backup");
-    expect(classOfReason("live value drifted from approved 0df3950bca45 with no valid copy")).toBe("drift_vs_approved");
-    expect(classOfReason("this no_such_class finding")).toBeNull();
+  it("a disposition's class from its own columns when no pass names it: the class whose finding id is the disposition's, never the reason's words", () => {
+    const world = new DriftWorld("executive-test");
+    const file = { tenant_id: "lab-1", host: "host-951abf", object_id: "/etc/nginx/sites-available/lab.example", setting_path: "file" };
+    const idOf = (cls: string, resource: string | null): string => shortFindingId(world.findingId({ ...file, class: cls as FindingSummary["class"], resource_id: resource }));
+    expect(classOfFinding({ ...file, finding_id: idOf("drift_vs_approved", null) })).toBe("drift_vs_approved");
+    expect(classOfFinding({ ...file, finding_id: idOf("changed_since_backup", null) })).toBe("changed_since_backup");
+    // a record finding names the record as its resource
+    const record = { tenant_id: "client-1", host: null, object_id: "b0a17a719bd2118a535a763379ab7ba9", setting_path: "name" };
+    expect(classOfFinding({ ...record, finding_id: shortFindingId(world.findingId({ ...record, class: "orphan_record", resource_id: record.object_id })) })).toBe("orphan_record");
+    // another tenant's id, or an id of no class, names none: the function takes no reason to fall back on
+    expect(classOfFinding({ ...file, tenant_id: "client-1", finding_id: idOf("drift_vs_approved", null) })).toBeNull();
+    expect(classOfFinding({ ...file, finding_id: "fnd-0000000000000000" })).toBeNull();
+    expect(classOfFinding.length).toBe(1);
+  });
+
+  it("the receipts are read once: a second request lists no directory, a new results directory is read at the next", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "receipts-"));
+    try {
+      const newest = evalReceipts(ROOT)!;
+      cpSync(path.join(ROOT, newest.dir), path.join(root, newest.dir), { recursive: true });
+      const before = evalScans.count;
+      const first = evalReceipts(root);
+      expect(first).toMatchObject({ dir: newest.dir, verified: newest.verified });
+      expect(evalScans.count).toBe(before + 1);
+      for (let i = 0; i < 5; i++) expect(evalReceipts(root)).toBe(first);
+      expect(evalScans.count).toBe(before + 1);
+      // an empty directory the runner is still filling sorts later: it is watched, and read once it holds its files
+      const later = path.join(root, "eval", "results", "2099-01-01T00-00-00Z");
+      mkdirSync(later);
+      expect(evalReceipts(root)).toEqual(first);
+      expect(evalScans.count).toBe(before + 2);
+      expect(evalReceipts(root)).toEqual(first);
+      expect(evalScans.count).toBe(before + 2);
+      cpSync(path.join(ROOT, newest.dir), later, { recursive: true });
+      expect(evalReceipts(root)).toMatchObject({ dir: "eval/results/2099-01-01T00-00-00Z", verified: newest.verified });
+      expect(evalScans.count).toBe(before + 3);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("one DQ row per rule of the semantic layer, in its order and on its table; a rule the report cannot read says so", () => {
+    expect(DQ_RULES.map((r) => r.name)).toEqual(["run_complete", "copy_validated", "action_verified", "cause_evidenced", "exception_in_force", "dns_inventory_current"]);
+    const none = { runs: [], copies: { valid: 0, total: 0, ok: 0, gaps: 0, fail: 0, none: 0 }, actions: [], causes: [] };
+    const live = dqRows({ ...none, rows: { adoptions: [], adoptionsError: null, dns: { rule: "dns_inventory_current", live: 58, current: 57, runId: "run-1" }, dnsWhy: null } });
+    expect(live.map((d) => [d.rule, d.table])).toEqual(DQ_RULES.map((r) => [r.name, r.table]));
+    expect(live.at(-1)).toEqual({ rule: "dns_inventory_current", table: "dns_live", text: "57 of 58 records at the provider now match the last complete DNS run by type and proxied flag", holds: false });
+    const failed = dqRows({ ...none, rows: { adoptions: null, adoptionsError: "no lesson table", dns: { rule: "dns_inventory_current", error: "REST table zone_x is not there\nmore" }, dnsWhy: null } });
+    expect(failed.slice(-2).map((d) => [d.text, d.holds])).toEqual([["no lesson table", null], ["REST table zone_x is not there", null]]);
+    expect(dqRows({ ...none, rows: { adoptions: [], adoptionsError: null, dns: null, dnsWhy: null } }, [{ name: "next_rule", table: "t" }])).toEqual([{ rule: "next_rule", table: "t", text: "the executive report has no reading of this rule", holds: null }]);
   });
 
   it("a bar chart with no day holds no table and says so", () => {

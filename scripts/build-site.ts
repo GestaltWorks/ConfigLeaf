@@ -114,6 +114,7 @@ import {
   HERO_SQL, ORPHAN_RECORD_SQL, ORPHAN_VHOST_SQL, PROXIED_WITHOUT_REAL_IP_SQL, PROXY_SPLIT_SQL, RUNS_SQL, WILDCARD_WITHOUT_REAL_IP_SQL, objects,
 } from "../src/data/queries.ts";
 import { sourceRows, sourcesMarkdown } from "../src/document/render.ts";
+import { loadSamplePolicy } from "../src/document/sample.ts";
 import { utc } from "../src/document/report.ts";
 import { BASE_CSS, MARK, ROOT_CSS } from "../src/design/theme.ts";
 import { TechnicianMemory } from "../src/engine/memory.ts";
@@ -140,7 +141,7 @@ export const word = (n: number): string => NUMBER_WORDS[n] ?? String(n);
  * The page and every data file together. 300,000 from 24 Oct 2026; 350,000 from 25 Oct 2026, when the Nemotron tab over
  * eval/results/2026-10-25T23-34-17Z, whose Ultra judge SELECTs run longer, took the build to 314,907 bytes; 400,000 from
  * 26 Oct 2026, when the landing page (docs/site.html, the ConfigLeaf mark inline in it) took the build to 356,981 bytes;
- * the replay page in the one design (src/design/theme.ts) takes the build with the CLOUDFLARE lane to 364,343 bytes.
+ * the replay page in the one design (src/design/theme.ts) takes the build with the CLOUDFLARE lane to 364,313 bytes.
  */
 export const MAX_BYTES = 400_000;
 /** The header's Report link: the owner's report (npm run examples writes it), relative to docs/ in a clone of the repository. */
@@ -474,6 +475,8 @@ async function passOver(bundle: unknown, world: string, memory: TechnicianMemory
   const engine = await SqlJsEngine.create();
   try {
     const counts = engine.loadBundle(bundle as Record<string, unknown>);
+    // the shipped policy before the pass, as every sample setup loads it (src/document/sample.ts loadSamplePolicy)
+    loadSamplePolicy(engine, bundle as Record<string, unknown>);
     // decidedAt: the bundle's own instant, or the latest lesson's when that is later (src/data/instant.ts), so a HOLD's expiry is the same on every build
     const decidedAt = decisionInstantWith(bundle, memory.lessons().map((l) => l.recordedAt));
     return { pass: await runPass(new DataLayer(engine), { world: new DriftWorld(world), memory, decidedAt }), counts };
@@ -1739,7 +1742,6 @@ footer p{max-width:86ch}
 .report{margin:0;max-width:none;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:12px 16px}
 .report a{font-weight:600}
 .tabs{display:flex;flex-wrap:wrap;gap:2px;margin:18px 0 -13px;position:relative}
-.tabs a{text-decoration:none}
 .tabs a{padding:7px 14px;border:1px solid transparent;border-bottom:0;border-radius:6px 6px 0 0;color:var(--muted);text-decoration:none;font-size:.92rem;font-weight:500}
 .tabs a:hover{color:var(--fg)}
 .tabs a[aria-current]{background:var(--bg);border-color:var(--line);color:var(--fg);font-weight:600}

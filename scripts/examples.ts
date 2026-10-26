@@ -39,9 +39,9 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { config, memoryDir } from "../src/config.ts";
-import { renderSample, sampleExecutive, sampleReport, textSha256 } from "../src/document/sample.ts";
-import { countLabels } from "../src/redactor.ts";
+import { memoryDir, redact } from "../src/config.ts";
+import { loadSamplePolicy, renderSample, sampleExecutive, sampleReport, textSha256 } from "../src/document/sample.ts";
+import { probeExport } from "../src/document/export.ts";
 import { DataLayer } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { decisionInstant, decisionInstantWith } from "../src/data/instant.ts";
@@ -170,6 +170,7 @@ async function orphans(): Promise<Example> {
 async function passOver(file: Record<string, unknown>) {
   const engine = await SqlJsEngine.create();
   engine.loadBundle(file);
+  loadSamplePolicy(engine, file);
   try {
     return await runPass(new DataLayer(engine), { world: new DriftWorld("example_probe"), decidedAt: decisionInstant(file) });
   } finally {
@@ -189,7 +190,8 @@ function toBundleFile(ex: Example): BundleFile {
 }
 
 const invoked = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href.toLowerCase() : "";
-if (invoked === import.meta.url.toLowerCase()) {
+/** The slices, the owner's report and the executive report, written under --out (default examples/). */
+async function main(): Promise<void> {
   const { values: args } = parseArgs({ options: { out: { type: "string", default: "examples" } } });
   // A sample build over the recorded bundle: DRIFT_MEMORY_DIR blank reads the committed store (examples/memory), as SAMPLE_MODE does.
   const memory = new TechnicianMemory({ storage: "read", directory: memoryDir(undefined, true) });
@@ -198,6 +200,8 @@ if (invoked === import.meta.url.toLowerCase()) {
     const file = toBundleFile(ex);
     const engine = await SqlJsEngine.create();
     const counts = engine.loadBundle(file);
+    // the shipped policy before the pass, as every sample setup loads it (src/document/sample.ts loadSamplePolicy)
+    loadSamplePolicy(engine, file as unknown as Record<string, unknown>);
     const pass = await runPass(new DataLayer(engine), { world: new DriftWorld(`example_${ex.dir}`), memory, decidedAt: decisionInstantWith(file, taught) });
     engine.close();
     const unexpected = pass.findings.filter((f) => !ex.classes.includes(f.finding.class));
@@ -216,15 +220,17 @@ if (invoked === import.meta.url.toLowerCase()) {
   const text = readFileSync(fileURLToPath(new URL("../sample/bundle.json", import.meta.url)), "utf8");
   const r = await renderSample(JSON.parse(text) as Record<string, unknown>, { tenant: TENANT, memory, source: "sql.js over sample/bundle.json" });
   const html = sampleReport(r.doc, r.pass.findings, { path: "sample/bundle.json", sha256: textSha256(text) });
-  const labels = [...config.redactWords, ...config.exportDenyWords];
-  const hits = Object.keys(countLabels(html, labels)).length;
-  if (hits) throw new Error(`report: deny-list probe: ${hits} of ${labels.length} configured label(s) appear in the report; nothing written`);
-  writeFileSync(path.join(args.out!, "report.html"), html);
-  console.log(`report: ${path.join(args.out!, "report.html").replace(/\\/g, "/")} for ${TENANT}, ${Buffer.byteLength(html)} bytes, ${r.doc.open} finding(s) open, decided at ${r.doc.decidedAt ?? "none"}; deny-list probe 0 of ${labels.length} label(s)`);
   // the executive report over the same bundle and tenant, the last 7 days to the decision instant (npm run report:executive in sample mode)
   const ex = await sampleExecutive(JSON.parse(text) as Record<string, unknown>, { tenant: TENANT, memory, source: "sql.js over sample/bundle.json", period: "7d", file: { path: "sample/bundle.json", sha256: textSha256(text) } });
-  const exHits = Object.keys(countLabels(ex.html, labels)).length;
-  if (exHits) throw new Error(`executive: deny-list probe: ${exHits} of ${labels.length} configured label(s) appear in the executive report; nothing written`);
+  // both through the one deny-list probe before either is written (src/document/export.ts)
+  const labels = probeExport([["report", html], ["executive report", ex.html]]);
+  writeFileSync(path.join(args.out!, "report.html"), html);
+  console.log(`report: ${path.join(args.out!, "report.html").replace(/\\/g, "/")} for ${TENANT}, ${Buffer.byteLength(html)} bytes, ${r.doc.open} finding(s) open, decided at ${r.doc.decidedAt ?? "none"}; deny-list probe 0 of ${labels} label(s)`);
   writeFileSync(path.join(args.out!, "executive.html"), ex.html);
-  console.log(`executive: ${path.join(args.out!, "executive.html").replace(/\\/g, "/")} for ${TENANT}, ${Buffer.byteLength(ex.html)} bytes, the last 7 days to ${ex.executive.at}, ${ex.executive.incidentCount} incident(s); deny-list probe 0 of ${labels.length} label(s)`);
+  console.log(`executive: ${path.join(args.out!, "executive.html").replace(/\\/g, "/")} for ${TENANT}, ${Buffer.byteLength(ex.html)} bytes, the last 7 days to ${ex.executive.at}, ${ex.executive.incidentCount} incident(s); deny-list probe 0 of ${labels} label(s)`);
+}
+
+if (invoked === import.meta.url.toLowerCase()) {
+  // one failure behaviour with the other exports: the refusal or the error on one line, exit 1, nothing more written
+  await main().catch((e: Error) => { console.error(`examples: ${redact(e?.message ?? String(e))}`); process.exitCode = 1; });
 }

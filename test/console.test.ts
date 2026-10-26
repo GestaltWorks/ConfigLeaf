@@ -21,10 +21,14 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { QueryResult } from "../src/adapters/zetaris.ts";
 import { SAMPLE_MEMORY_DIR } from "../src/config.ts";
-import { ASSETS, CSS, SCRIPT } from "../src/console/html.ts";
-import { encodeKey, plainUrls, timesIn } from "../src/console/pages.ts";
-import { fileCsp, nonceReport, startConsole, type ConsoleServer } from "../src/console/server.ts";
-import { objectKey, sampleBackend, tenantIds, zetarisGaps, type Backend } from "../src/console/state.ts";
+import { ASSETS, CSS, SCRIPT, tenantSwitcher } from "../src/console/html.ts";
+import { duplicateText, encodeKey, latestRules, passDq, plainUrls, templatesOf, timesIn, type View } from "../src/console/pages.ts";
+import {
+  PAGE_PATH, RETURN_PATHS, answerHeaders, contentDisposition, csp, downloadName, fileCsp, nonceReport, returnPathOf, startConsole, type ConsoleServer,
+} from "../src/console/server.ts";
+import { isTenantId, objectKey, readTenants, sampleBackend, tenantIds, zetarisGaps, type Backend } from "../src/console/state.ts";
+import { PERIODS } from "../src/document/executive.ts";
+import { TENANT } from "../src/policy/schema.ts";
 import { DataLayer, type Engine } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { objects, priorHolds } from "../src/data/queries.ts";
@@ -109,6 +113,8 @@ describe("the console over sample/bundle.json, client-1", SERVER, () => {
     expect(server.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
     const r = await fetch(`${server.url}/`, { redirect: "manual" });
     expect([r.status, r.headers.get("location")]).toEqual([303, "/overview"]);
+    // the redirect carries the fixed headers every answer does
+    expect([r.headers.get("content-security-policy"), r.headers.get("x-content-type-options"), r.headers.get("referrer-policy"), r.headers.get("cache-control")]).toEqual([csp(""), "nosniff", "no-referrer", "no-store"]);
   });
 
   it("every page answers 200 with its heading, the nav and the summary bar; the report renders inside the Overview", async () => {
@@ -352,29 +358,39 @@ describe("the console over sample/bundle.json, client-1", SERVER, () => {
   it("Download HTML is the executive report as one file: an attachment named for the tenant and the period, its one style block by hash in the CSP, no script, nothing from outside", async () => {
     const r = await get(server, "/executive/download?period=all");
     expect(r.status).toBe(200);
-    expect(r.headers.get("content-disposition")).toBe('attachment; filename="executive-client-1-all.html"');
+    // filename for every client and the RFC 5987 filename* beside it
+    expect(r.headers.get("content-disposition")).toBe(`attachment; filename="executive-client-1-all.html"; filename*=UTF-8''executive-client-1-all.html`);
     const style = /<style>([\s\S]*?)<\/style>/.exec(r.body)![1];
     expect(r.headers.get("content-security-policy")).toBe(`default-src 'none'; style-src 'sha256-${createHash("sha256").update(style).digest("base64")}'; img-src data:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'`);
     expect(fileCsp(r.body)).toBe(r.headers.get("content-security-policy"));
-    // the two security headers stand on the download too: no route's own headers replace them
-    expect([r.headers.get("x-content-type-options"), r.headers.get("referrer-policy")]).toEqual(["nosniff", "no-referrer"]);
-    // a file with two style blocks has both hashes, one with none allows no style
-    const hash = (x: string): string => `'sha256-${createHash("sha256").update(x).digest("base64")}'`;
-    expect(fileCsp("<style>a{}</style><p></p><style>b{}</style>")).toBe(`default-src 'none'; style-src ${hash("a{}")} ${hash("b{}")}; img-src data:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'`);
-    expect(fileCsp("<p>no style</p>")).toContain("style-src 'none';");
+    // the fixed headers stand on the download too: no route's own headers set or replace them
+    expect([r.headers.get("x-content-type-options"), r.headers.get("referrer-policy"), r.headers.get("cache-control"), r.headers.get("content-type")]).toEqual(["nosniff", "no-referrer", "no-store", "text/html; charset=utf-8"]);
+    // a HEAD carries the same CSP, read off the file it would send
+    const head = await fetch(`${server.url}/executive/download?period=all`, { method: "HEAD" });
+    expect(head.headers.get("content-security-policy")).toBe(r.headers.get("content-security-policy"));
     expect(r.body.match(/<script|<link\b|<img\b|<iframe\b|@import|url\(\s*["']?https?:/gi)).toBeNull();
     expect(r.body.split("<style>").length - 1).toBe(1);
     expect(r.body).toContain("<h1>client-1 · executive report</h1>");
     expect(r.body).toContain("<span>every day on record</span>");
   });
 
+  it("Sources names dns_inventory_current beside exception_in_force under the DQ results, each as the console's last pass read it", async () => {
+    const html = (await get(server, "/sources")).body;
+    const dq = /<h2>DQ results<\/h2>\n<ul>([\s\S]*?)<\/ul>\n<p class="muted">/.exec(html)![1];
+    expect([...dq.matchAll(/<li><b>([a-z_ ]+)<\/b>/g)].map((m) => m[1])).toEqual(["run_complete", "copy validation", "exception_in_force", "dns_inventory_current"]);
+    expect(dq).toContain(`<li><b>dns_inventory_current</b> on <code>drift_usl.dns_live</code>, read by the console's last pass: <span class="muted">not read: the pass reads it on Zetaris, and sample mode reads sql.js</span>.</li>`);
+  });
+
   it("Templates: every setting of the latest passing runs under the rule that governs it, the deviations the objects with findings open under the rule, each object a link to its Settings drawer", async () => {
     const html = (await get(server, "/templates")).body;
     const cards = [...html.matchAll(/<details class="card tpl" id="tpl-([^"]+)"[^>]*>\n<summary><span class="tpl-name">([^<]+)<\/span> <span class="b (?:locked|open)">[^<]+<\/span> <span class="tpl-n">([\d,]+) settings? in (\d+) objects? · <span[^>]*>(\d+) deviations?<\/span><\/span><\/summary>([\s\S]*?)<\/details>/g)]
       .map((m) => ({ id: m[1], name: m[2], settings: Number(m[3].replace(/,/g, "")), objects: Number(m[4]), deviations: Number(m[5]), body: m[6] }));
-    // the rules in force, version 2 of policy/hackathon.json, each once: the settings no rule governs would be a card of their own
-    expect(cards).toHaveLength(15);
+    // the rules in force, the 16 of version 2 of policy/hackathon.json (the sample loads the shipped file before its passes), each once: the settings no rule governs would be a card of their own
+    expect(cards).toHaveLength(16);
     expect(cards.reduce((n, c) => n + c.settings, 0)).toBe(1352);
+    // zetaris.control, the 16th rule, governs no setting of the sample's runs: its card says so
+    expect(cards.find((c) => c.id === "rule-8bcb3a03ffcee62e")).toMatchObject({ name: "every zetaris.control setting", settings: 0, objects: 0, deviations: 0 });
+    expect(html).not.toContain('class="alert" role="alert"');
     expect(cards[0]).toMatchObject({ name: "everything else (catch-all)", deviations: 3 });
     const proxied = cards.find((c) => c.name === "* · proxied")!;
     expect(proxied).toMatchObject({ id: "rule-8e75e1d767980665", settings: 58, objects: 58, deviations: 1 });
@@ -460,6 +476,144 @@ describe("the tenant switcher over sample/bundle.json: client-1 and lab-1", SERV
     const findings = (await get(server, "/findings")).body;
     expect(findings).toMatch(/<a href="\/findings#needs" class="need"><b>1<\/b> needs you<\/a>/);
     expect(findings).toContain('<option value="client-1" selected>client-1</option>');
+  });
+});
+
+describe("the download's name, an answer's headers, the switch's return paths and the tenant ids", () => {
+  it("names the file for a tenant id only, with filename and an RFC 5987 filename*: a tenant with a quote and CRLF names no file and no header", () => {
+    expect(downloadName("client-1", "7d")).toBe("executive-client-1-7d.html");
+    expect(contentDisposition(downloadName("lab-1", "all"))).toBe(`attachment; filename="executive-lab-1-all.html"; filename*=UTF-8''executive-lab-1-all.html`);
+    const evil = 'client-1"\r\nSet-Cookie: x=1';
+    expect(() => downloadName(evil, "7d")).toThrow('No download: the tenant "client-1\\"\\r\\nSet-Cookie: x=1" is not a tenant id');
+    for (const t of ["*", "", "a b", "x\ny", "-lead", "a".repeat(65)]) expect(() => downloadName(t, "all"), JSON.stringify(t)).toThrow(/is not a tenant id/);
+    // the header builder takes only a name downloadName gives
+    for (const n of ['a"b.html', "a\r\nb.html", "a b.html", "ü.html"]) expect(() => contentDisposition(n), JSON.stringify(n)).toThrow(/downloadName/);
+  });
+
+  it("the tenant pattern is anchored at both ends, with no multiline flag: a newline, a quote or a space before or after an id refuses it", () => {
+    expect(TENANT.source.startsWith("^")).toBe(true);
+    expect(TENANT.source.endsWith("$")).toBe(true);
+    expect(TENANT.flags).not.toMatch(/[mgy]/);
+    for (const ok of ["client-1", "lab-1", "a", "A.b_c-9", "a".repeat(64)]) expect(isTenantId(ok), ok).toBe(true);
+    for (const bad of ["client-1\n", "\nclient-1", "x client-1", "client-1 x", 'client-1"', "client-1\r\nX: 1", "*", "a".repeat(65), "-x", ".x", 7, null]) expect(isTenantId(bad), JSON.stringify(bad)).toBe(false);
+  });
+
+  it("a route sets its content type and content-disposition only: any other header is refused, and the fixed ones are always the server's", () => {
+    expect(answerHeaders("text/html; charset=utf-8", "default-src 'none'", { "content-disposition": "attachment" })).toEqual({
+      "content-disposition": "attachment", "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": "default-src 'none'",
+      "x-content-type-options": "nosniff", "referrer-policy": "no-referrer",
+    });
+    for (const k of ["content-security-policy", "x-content-type-options", "referrer-policy", "cache-control", "Content-Type", "set-cookie", "location"]) {
+      expect(() => answerHeaders("text/plain", "p", { [k]: "x" }), k).toThrow(`a route sets its content type and content-disposition only, not ${k}`);
+    }
+  });
+
+  it("fileCsp hashes the file's one style block, and throws on a file with none, two, or one left open", () => {
+    const one = "<style>a{}</style><p></p>";
+    expect(fileCsp(one)).toBe(`default-src 'none'; style-src 'sha256-${createHash("sha256").update("a{}").digest("base64")}'; img-src data:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'`);
+    expect(() => fileCsp("<p>no style</p>")).toThrow("fileCsp: the executive report holds one style block, this file opens 0 and closes 0");
+    expect(() => fileCsp("<style>a{}</style><p></p><style>b{}</style>")).toThrow("this file opens 2 and closes 2");
+    expect(() => fileCsp('<style>a{}</style><style media="print">b{}</style>')).toThrow("this file opens 2 and closes 1");
+    expect(() => fileCsp("<style>a{}")).toThrow("this file opens 1 and closes 0");
+  });
+
+  it("the switch's return paths are read off PAGE_PATH and the periods: every page of the nav and the executive report's three, nothing else", () => {
+    expect([...RETURN_PATHS]).toEqual([...Object.values(PAGE_PATH), ...PERIODS.map((p) => `/executive?period=${p}`)]);
+    expect(Object.keys(PAGE_PATH).sort()).toEqual(["actions", "document", "executive", "findings", "overview", "policy", "settings", "sources", "templates", "traces"]);
+    for (const p of RETURN_PATHS) expect(returnPathOf(p)).toBe(p);
+    for (const p of [null, "", "/executive?period=1y", "//elsewhere.example", "/overview/", "/traces/view?f=x", "https://elsewhere.example/", "/Overview"]) expect(returnPathOf(p), String(p)).toBe("/overview");
+  });
+
+  it("a live tenants read that fails is not swallowed: the started tenant alone, the reason redacted to one line, one failed trace line", async () => {
+    const failing = { run: async () => { throw new Error("connection refused to host-0f1e2d\nat Socket.connect"); } } as unknown as DataLayer;
+    const tracer = new MemTracer("tenants_test", { model: "none" });
+    const r = await readTenants(failing, "client-1", { text: (s) => s.replace("host-0f1e2d", "a host") }, tracer);
+    expect(r).toEqual({ tenants: ["client-1"], error: "connection refused to a host" });
+    expect(tracer.events.map((e) => [e.agent, e.action, e.status, e.input_summary, e.output_summary])).toEqual([["console", "detect", "failed", "console tenants client-1", "the store's tenants were not read; the switcher lists client-1 alone"]]);
+    // a read that answers: tenant ids only, the started one among them, once each
+    const answering = { run: async () => result(["tenant_id"], [["lab-1"], ["*"], ['x"y'], ["client-1"], ["lab-1"]]) } as unknown as DataLayer;
+    expect(await readTenants(answering, "client-2", { text: (s) => s }, tracer)).toEqual({ tenants: ["client-1", "client-2", "lab-1"], error: null });
+    expect(tracer.events).toHaveLength(1);
+  });
+
+  it("the degraded switcher says the list was not read, why, and that it lists the started tenant alone", () => {
+    const shell = { tenant: "client-1", csrf: "c", returnTo: "/overview" };
+    expect(tenantSwitcher({ ...shell, tenants: ["client-1"], tenantsError: "connection <refused>" })).toBe(`<b>client-1</b><span class="tsw-err" role="status">The store's tenants were not read: connection &lt;refused&gt;. The switcher lists client-1 alone.</span>`);
+    expect(tenantSwitcher({ ...shell, tenants: ["client-1"], tenantsError: null })).toBe("<b>client-1</b>");
+    expect(CSS).toContain(".tsw-err{");
+  });
+
+  it("the rules in force: a family with two rules at its highest version is a duplicate, named, never tie-broken in silence", () => {
+    const rules = (SAMPLE.policy_rule as PolicyRule[]).map((r) => ({ ...r }));
+    expect(latestRules(rules).duplicates).toEqual([]);
+    const v2 = rules.find((r) => Number(r.version) === 2 && r.surface === "cloudflare.dns" && r.setting_glob === "proxied")!;
+    const twin = { ...v2, rule_id: "rule-00000000000000d0" };
+    const { rules: inForce, duplicates } = latestRules([...rules, twin]);
+    expect(duplicates).toEqual([{ family: "* · cloudflare.dns · * · proxied", version: 2, rule_ids: ["rule-00000000000000d0", v2.rule_id] }]);
+    expect(inForce.map((r) => r.rule_id)).not.toContain(v2.rule_id);
+    expect(duplicateText(duplicates[0])).toBe(`rule family * · cloudflare.dns · * · proxied has 2 rules at version 2 (rule-00000000000000d0, ${v2.rule_id}): the policy names no one rule in force, and the resolver picks by rule id`);
+    // a later version of the family settles it
+    expect(latestRules([...rules, twin, { ...v2, rule_id: "rule-000000000000000v3", version: 3 }]).duplicates).toEqual([]);
+  });
+
+  it("templatesOf resolves the policy once per scope: each distinct surface, object and setting once, the candidates once per object, whatever the rows", () => {
+    const rules = (SAMPLE.policy_rule as PolicyRule[]).map((r) => ({ ...r }));
+    const obs = (host: string, object_id: string, setting_path: string) => ({ surface: "linux.nginx", host, object_id, setting_path });
+    // two hosts hold the same file and settings: six rows, three scopes
+    const observations = ["host-a", "host-b"].flatMap((h) => [obs(h, "/etc/nginx/nginx.conf", "file"), obs(h, "/etc/nginx/nginx.conf", "http.real_ip"), obs(h, "/etc/nginx/conf.d/app.conf", "file")]);
+    const v = { tenant: "client-1", objects: [], decisions: [], snapshot: { observations, doc: { data: { rules } } } } as unknown as View;
+    const calls: string[] = [];
+    const counting = (rs: readonly PolicyRule[], s: Parameters<typeof resolvePolicy>[1]): PolicyRule | null => { calls.push(`${s.object_id} ${s.setting_path}`); return resolvePolicy(rs, s); };
+    const counted = templatesOf(v, counting);
+    expect(calls).toEqual(["/etc/nginx/nginx.conf file", "/etc/nginx/nginx.conf http.real_ip", "/etc/nginx/conf.d/app.conf file"]);
+    // the same templates as resolving every row over every rule
+    const each = (rs: readonly PolicyRule[], s: Parameters<typeof resolvePolicy>[1]): PolicyRule | null => resolvePolicy(rules, s);
+    expect(counted).toEqual(templatesOf(v, each));
+    expect(counted.filter((t) => t.settings).map((t) => [t.rule?.object_glob, t.settings])).toEqual([["/etc/nginx/nginx.conf", 2], ["/etc/nginx/conf.d/*.conf", 2], ["**", 2]]);
+  });
+
+  it("the two DQ rules a pass reads on Zetaris, side by side: exception_in_force and dns_inventory_current, each read, failed or not read and why", () => {
+    expect(passDq(null, "sample", "client-1").map((x) => [x.rule, x.entity, x.text, x.holds])).toEqual([
+      ["exception_in_force", "drift_usl.adoption", "no pass from this console yet", null], ["dns_inventory_current", "drift_usl.dns_live", "no pass from this console yet", null],
+    ]);
+    expect(passDq({}, "sample", "client-1").map((x) => x.text)).toEqual(["not read: the pass reads it on Zetaris, and sample mode reads sql.js", "not read: the pass reads it on Zetaris, and sample mode reads sql.js"]);
+    expect(passDq({}, "live", "lab-1").map((x) => x.text)).toEqual(["not read: the pass did not read it", "not read: lab-1 has no cloudflare.dns run to hold the provider to"]);
+    const live = passDq({ adoptions: { rule: "exception_in_force", of: "pass", decidedAt: "2026-10-26T00:00:00.000Z", adoptions: 23, inForce: 23 }, dns: { rule: "dns_inventory_current", live: 58, current: 57, runId: "run-1" } }, "live", "client-1");
+    expect(live.map((x) => [x.text, x.holds])).toEqual([["23 of 23 adoptions in force", true], ["57 of 58 live records at the provider match the last complete DNS run: the provider changed since that run", false]]);
+    expect(passDq({ dns: { rule: "dns_inventory_current", error: "zone_x is not there" } }, "live", "client-1")[1]).toMatchObject({ text: "not read: zone_x is not there", holds: null });
+  });
+});
+
+describe("the console over a policy with a duplicate rule family and a tenants read that failed", SERVER, () => {
+  let server: ConsoleServer;
+  const lines: string[] = [];
+  const tracer = new MemTracer("console_dup_test", { model: "none" });
+  // a second zetaris.control rule at version 2 beside the shipped file's: no setting of the sample falls under it, so no finding moves
+  const twin = { ...(SAMPLE.policy_rule as Row[])[0], rule_id: "rule-00000000000000d0", surface: "zetaris.control", object_glob: "**", setting_glob: "**", version: 2 };
+  beforeAll(async () => {
+    const bundle = { ...SAMPLE, policy_rule: [...(SAMPLE.policy_rule as Row[]), twin] };
+    const backend = await sampleBackend({ tenant: "client-1", bundle, bundlePath: "sample/bundle.json", memoryDir: SAMPLE_MEMORY_DIR, write: false });
+    server = await startConsole({
+      backend: { ...backend, tenantsError: "the tenants read timed out" }, port: 0, clock: ticking("2026-10-25T15:00:00.000Z"), firstPass: "sync", tracePasses: false, tracer,
+      print: (l) => lines.push(l), traceDirs: [{ label: "examples/traces", dir: path.join(ROOT, "examples", "traces") }],
+    });
+  }, BOOT_MS);
+  afterAll(async () => { await server?.close(); });
+
+  it("Templates names the duplicate as an alert, the console prints it and traces it once, however many pages are read", async () => {
+    const html = (await get(server, "/templates")).body;
+    expect(html).toContain('<div class="alert" role="alert"><b>1 rule family of the policy has more than one rule at the highest version</b><ul><li>rule family * · zetaris.control · ** · ** has 2 rules at version 2 (rule-00000000000000d0, rule-8bcb3a03ffcee62e): the policy names no one rule in force, and the resolver picks by rule id</li></ul></div>');
+    await get(server, "/settings");
+    await post(server, "pass", {});
+    await get(server, "/templates");
+    const traced = tracer.events.filter((e) => e.input_summary === "console policy client-1");
+    expect(traced.map((e) => [e.agent, e.action, e.status])).toEqual([["console", "check", "failed"]]);
+    expect(traced[0].output_summary).toContain("rule family * · zetaris.control · ** · ** has 2 rules at version 2");
+    expect(lines.filter((l) => l.startsWith("console: policy: "))).toHaveLength(1);
+  });
+
+  it("every page shows the degraded switcher: the tenant read failed, the reason, the started tenant alone", async () => {
+    for (const [p] of PAGES) expect((await get(server, p)).body, p).toContain(`<span class="tsw-err" role="status">The store's tenants were not read: the tenants read timed out. The switcher lists client-1 alone.</span>`);
   });
 });
 
