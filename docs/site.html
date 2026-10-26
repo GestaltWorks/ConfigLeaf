@@ -1,221 +1,257 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ConfigLeaf (drift-agent)</title>
-  <style>
-    :root {
-      --bg-dark: #0f172a;
-      --card-bg: #1e293b;
-      --border-color: #334155;
-      --text-main: #f8fafc;
-      --text-muted: #94a3b8;
-      --accent-green: #10b981;
-      --accent-teal: #06b6d4;
-      --code-bg: #0b0f19;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      background-color: var(--bg-dark);
-      color: var(--text-main);
-      line-height: 1.5;
-      padding: 1.5rem;
-    }
-    header {
-      max-width: 1100px;
-      margin: 0 auto 3rem auto;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      border-bottom: 1px solid var(--border-color);
-      padding-bottom: 1.25rem;
-    }
-    .brand { display: flex; align-items: center; gap: 0.75rem; }
-    .brand-title { font-size: 1.4rem; font-weight: 700; }
-    .brand-title span { color: var(--accent-green); }
-    .brand-subtitle { font-size: 0.8rem; color: var(--accent-teal); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
-    .nav-links { display: flex; gap: 1.25rem; font-size: 0.9rem; }
-    .nav-links a { color: var(--text-muted); text-decoration: none; border-bottom: 1px dashed transparent; }
-    .nav-links a:hover { color: var(--text-main); border-bottom-color: var(--text-main); }
-    main { max-width: 1100px; margin: 0 auto; }
-    .hero { margin-bottom: 3rem; }
-    h1 { font-size: 2rem; font-weight: 800; line-height: 1.25; margin-bottom: 0.75rem; }
-    .hero p { font-size: 1.05rem; color: var(--text-muted); margin-bottom: 1.75rem; max-width: 850px; }
-    .hero-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
-    .metric-card { background-color: var(--card-bg); border: 1px solid var(--border-color); padding: 1rem; border-radius: 6px; }
-    .metric-val { font-size: 1.5rem; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-weight: 700; color: var(--accent-teal); }
-    .metric-label { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem; }
-    .section-title { font-size: 1.15rem; font-weight: 700; margin-bottom: 1rem; border-left: 3px solid var(--accent-green); padding-left: 0.75rem; }
-    .grid-two { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 3rem; }
-    .source-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.6rem; }
-    .source-item {
-      background-color: var(--card-bg);
-      border: 1px solid var(--border-color);
-      padding: 0.65rem 0.75rem;
-      border-radius: 4px;
-      font-size: 0.85rem;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    }
-    .usl-box {
-      background-color: var(--code-bg);
-      border: 1px solid var(--border-color);
-      border-radius: 6px;
-      padding: 1.15rem;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 0.8rem;
-    }
-    .usl-header { color: var(--accent-green); border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem; margin-bottom: 0.5rem; display: flex; justify-content: space-between; }
-    .usl-rules { margin-top: 0.65rem; border-top: 1px dashed var(--border-color); padding-top: 0.65rem; color: var(--text-muted); }
-    .timeline { margin-bottom: 3rem; }
-    .act-card { background-color: var(--card-bg); border: 1px solid var(--border-color); border-radius: 6px; padding: 1.25rem; margin-bottom: 1.25rem; }
-    .act-header { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; justify-content: space-between; align-items: baseline; border-bottom: 1px solid var(--border-color); padding-bottom: 0.6rem; margin-bottom: 0.75rem; }
-    .act-header h3 { font-size: 1rem; font-weight: 700; }
-    .act-badge { background-color: var(--bg-dark); padding: 0.2rem 0.5rem; border-radius: 3px; font-size: 0.75rem; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; border: 1px solid var(--border-color); color: var(--text-muted); max-width: 100%; overflow-wrap: anywhere; }
-    .act-card p { font-size: 0.92rem; color: var(--text-main); }
-    .trace-block {
-      background-color: var(--code-bg);
-      padding: 0.85rem;
-      border-radius: 4px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 0.75rem;
-      overflow-x: auto;
-      margin-top: 0.85rem;
-      border-left: 2px solid var(--accent-teal);
-      color: #cbd5e1;
-      white-space: pre-wrap;
-    }
-    .cli-section { margin-bottom: 3rem; }
-    .cli-box {
-      background-color: var(--code-bg);
-      border: 1px solid var(--border-color);
-      border-radius: 6px;
-      padding: 0.9rem 1rem;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 0.8rem;
-      margin-top: 0.6rem;
-      color: #34d399;
-      white-space: pre-wrap;
-    }
-    .cli-prompt { color: var(--text-muted); }
-    .cli-output { color: var(--text-muted); display: block; margin-top: 0.35rem; }
-    code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.9em; }
-    @media (max-width: 768px) { .grid-two { grid-template-columns: 1fr; } }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ConfigLeaf (drift-agent)</title>
+<meta name="description" content="ConfigLeaf, package drift-agent, is a configuration assurance agent for an MSP. An MSP&#39;s knowledge of one setting lives in eight places, and whether that setting is right, backed up, restorable and still means what it meant takes several of them at once.">
+<meta name="theme-color" content="#05080f">
+<style>
+:root{--bg:#05080f;--pn:rgba(13,20,36,.74);--pn2:rgba(22,32,54,.55);--ln:rgba(148,163,184,.13);--ln2:rgba(148,163,184,.26);--tx:#e8eef6;--mu:#9aa8bc;--dim:#6b7a90;--leaf:#34d399;--teal:#22d3ee;--amber:#fbbf24;--rose:#fb7185;--violet:#a78bfa;--blue:#60a5fa;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;color-scheme:dark}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{font:16px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;color:var(--tx);background:var(--bg);overflow-x:hidden}
+body::before{content:"";position:fixed;inset:0;z-index:-2;background:radial-gradient(56rem 38rem at 8% -10%,rgba(16,185,129,.2),transparent 62%),radial-gradient(48rem 36rem at 96% 2%,rgba(34,211,238,.15),transparent 60%),radial-gradient(44rem 30rem at 50% 120%,rgba(167,139,250,.12),transparent 60%)}
+a{color:inherit}
+code{font-family:var(--mono);font-size:.88em;color:#bdeee0}
+.wrap{max-width:1160px;margin:0 auto;padding:0 20px}
+.tile,.side,.card,.lane,.vcard,.act-card,.ring,.prov li,.src li,.out li,.ents li,.trace,.console{border:1px solid var(--ln);background:var(--pn)}
+.nav{position:sticky;top:0;z-index:20;background:rgba(5,8,15,.7);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);border-bottom:1px solid var(--ln)}
+.nav .wrap{display:flex;align-items:center;gap:20px;height:60px}
+.brand{display:flex;align-items:center;gap:10px;margin-right:auto;font-weight:700;text-decoration:none}
+.brand svg{width:28px;height:28px;color:var(--leaf)}
+.brand em{font-style:normal;color:var(--leaf)}
+.brand small{font:500 .72rem var(--mono);color:var(--teal)}
+.nav nav{display:flex;gap:18px;font-size:.88rem}
+.nav nav a{color:var(--mu);text-decoration:none}
+.nav nav a:hover,.nav .pages a{color:var(--tx)}
+.hero{position:relative;overflow:hidden;padding:84px 0 24px}
+.hero-leaf{position:absolute;right:-60px;top:28px;width:min(44vw,500px);color:var(--leaf);opacity:.12;animation:breathe 10s ease-in-out infinite;pointer-events:none}
+.eyebrow{display:inline-flex;align-items:center;gap:10px;padding:6px 14px;border:1px solid var(--ln2);border-radius:999px;background:rgba(16,185,129,.07);color:var(--mu);font-size:.82rem}
+.eyebrow i{flex:none;width:8px;height:8px;border-radius:50%;background:var(--leaf);box-shadow:0 0 12px var(--leaf);animation:blink 2.4s ease-in-out infinite}
+h1{margin:22px 0 18px;max-width:19ch;font-size:clamp(2.2rem,5.4vw,4.1rem);line-height:1.04;letter-spacing:-.035em}
+h1 code{font-size:.8em;color:inherit;white-space:nowrap}
+.grad{background:linear-gradient(100deg,var(--leaf),var(--teal) 55%,#a5f3fc);-webkit-background-clip:text;background-clip:text;color:transparent}
+.eyebrow,h1,.lede,.ctas,.tiles{animation:rise .8s ease both}
+h1{animation-delay:.08s}.lede{animation-delay:.16s}.ctas{animation-delay:.24s}.tiles{animation-delay:.32s}
+.lede{max-width:60ch;font-size:clamp(1.05rem,1.6vw,1.22rem);color:var(--mu)}
+.ctas{display:flex;flex-wrap:wrap;gap:12px;margin-top:30px}
+.btn{padding:12px 18px;border-radius:12px;border:1px solid var(--ln2);background:var(--pn2);font-weight:600;font-size:.95rem;text-decoration:none;transition:transform .15s,border-color .15s}
+.btn:hover{transform:translateY(-1px);border-color:var(--teal)}
+.btn-p{border:0;color:#03140f;background:linear-gradient(100deg,var(--leaf),var(--teal));box-shadow:0 8px 30px -8px rgba(34,211,238,.55)}
+.tiles,.rings{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-top:56px}
+.tile{padding:18px;border-radius:16px}
+.tile b,.ring b{display:block;font:700 clamp(1.7rem,3.2vw,2.5rem)/1.05 var(--mono);letter-spacing:-.03em;background:linear-gradient(100deg,#fff,#b6f5dd);-webkit-background-clip:text;background-clip:text;color:transparent}
+.tile span{display:block;margin-top:8px;color:var(--mu);font-size:.85rem;line-height:1.45}
+.cap{margin-top:14px;color:var(--dim);font-size:.8rem}
+.band{padding-top:104px}
+.kicker{font:600 .74rem var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--teal)}
+h2{margin:10px 0 14px;max-width:28ch;font-size:clamp(1.65rem,3.3vw,2.5rem);line-height:1.12;letter-spacing:-.025em}
+h2 code{font-size:.82em;color:var(--leaf)}
+.sub{max-width:72ch;color:var(--mu)}
+.duel,.vgrid,.consoles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-top:34px}
+.duel{align-items:start}
+.side{padding:26px;border-radius:20px;border-top:3px solid var(--c)}
+.side h3{font-size:1.08rem}
+.side small{display:block;font:500 .78rem var(--mono);color:var(--dim)}
+.side .big{margin:20px 0 2px;font:800 clamp(2.2rem,4.6vw,3.3rem)/1 var(--mono);letter-spacing:-.04em;color:var(--c)}
+.side p{color:var(--mu);font-size:.9rem}
+.dots{display:grid;gap:8px;margin-top:16px;font:.72rem var(--mono);color:var(--dim)}
+.dots p{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:.72rem}
+.dots p>span{width:46px}
+.dots i,.dots b{width:14px;height:14px;border-radius:50%;border:1.5px solid var(--ln2)}
+.dots b{border-color:var(--c);background:var(--c);box-shadow:0 0 10px var(--c)}
+.v-ROLLBACK{--c:var(--teal)}.v-FIX{--c:var(--violet)}.v-ESCALATE,.c-bad{--c:var(--rose)}.v-HOLD{--c:var(--blue)}.v-ADOPT,.c-good{--c:var(--leaf)}
+.flow{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,.9fr) minmax(0,.62fr);column-gap:64px;align-items:center;margin-top:40px}
+.flow ol{list-style:none;display:grid;gap:10px;position:relative}
+.src{counter-reset:n}
+.src li{position:relative;padding:10px 14px 10px 50px;border-radius:12px;font-size:.92rem;line-height:1.35}
+.src li::before{counter-increment:n;content:counter(n,decimal-leading-zero);position:absolute;left:15px;top:12px;font:600 .72rem var(--mono);color:var(--dim)}
+.src b{display:block;font-weight:600}
+.src b::first-letter{text-transform:uppercase}
+.src span{display:block;margin-top:2px;color:var(--mu);font-size:.8rem}
+.src li::after,.out li::before,.hub::before,.hub::after{content:"";position:absolute;top:50%;width:32px;height:2px;background:linear-gradient(90deg,transparent,var(--teal),transparent) 0 0/300% 100%;animation:pulse 2.6s linear infinite}
+.src li:nth-child(odd)::after,.out li:nth-child(even)::before{animation-delay:-1.3s}
+.src li::after,.hub::after{left:100%}
+.out li::before,.hub::before{right:100%}
+.src::after,.out::before{content:"";position:absolute;top:24px;bottom:24px;width:2px;background:linear-gradient(var(--leaf),var(--teal));opacity:.55}
+.src::after{right:-33px}.out::before{left:-33px}
+.hub{position:relative}
+.hub-card{padding:26px 22px;border-radius:22px;text-align:center;background:radial-gradient(120% 90% at 50% 0,rgba(52,211,153,.18),transparent 70%),var(--pn);border:1px solid rgba(52,211,153,.45);animation:glow 4s ease-in-out infinite}
+.hub-card small,.kicker{display:block}
+.hub-card small{font:600 .72rem var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--teal)}
+.hub-card b{display:block;margin:6px 0 10px;font:800 1.7rem var(--mono)}
+.hub-card span{display:block;color:var(--mu);font-size:.84rem}
+.out li{position:relative;padding:10px 14px;border-left:3px solid var(--c);border-radius:10px;font-size:.82rem;color:var(--mu)}
+.out b{display:block;font:700 .9rem var(--mono);color:var(--c)}
+.grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-top:34px}
+.card{padding:24px;border-radius:18px;border-top:2px solid var(--teal)}
+.card h3{margin-bottom:8px;font-size:1.05rem}
+.card p,.vcard p,.act-card p{color:var(--mu);font-size:.93rem}
+.lanes{display:grid;gap:14px;margin-top:34px}
+.lane{padding:18px;border-radius:18px}
+.lane-h{margin-bottom:14px}
+.lane-h b{margin-right:10px;font:700 1rem var(--mono);color:var(--teal)}
+.lane-h span{color:var(--dim);font-size:.82rem}
+.ents{list-style:none;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.ents li{padding:9px 11px;border-radius:10px;background:var(--pn2);font-size:.78rem;color:var(--dim)}
+.ents code{display:block;font-size:.9rem;color:var(--tx)}
+.ents em{display:inline-block;margin-top:5px;padding:1px 7px;border-radius:999px;font:600 .68rem var(--mono);font-style:normal;color:#03140f;background:var(--leaf)}
+.vcard{padding:22px;border-left:3px solid var(--c);border-radius:16px}
+.vcard h3{margin-bottom:10px;font-size:.85rem;line-height:2;color:var(--dim);font-weight:500}
+.vtag{padding:3px 9px;border-radius:7px;font:700 .78rem var(--mono);color:var(--c);border:1px solid var(--c)}
+.bar{display:flex;height:16px;margin-top:30px;border-radius:999px;overflow:hidden}
+.bar span{background:var(--c);box-shadow:inset -2px 0 0 var(--bg)}
+.legend{display:flex;flex-wrap:wrap;gap:8px 20px;margin-top:12px;list-style:none;font:.82rem var(--mono);color:var(--mu)}
+.legend li::before{content:"";display:inline-block;width:10px;height:10px;margin-right:8px;border-radius:3px;background:var(--c)}
+.acts{list-style:none;position:relative;margin-top:40px}
+.acts::before{content:"";position:absolute;left:131px;top:10px;bottom:10px;width:2px;background:linear-gradient(var(--leaf),var(--teal),var(--violet))}
+.act{position:relative;display:grid;grid-template-columns:110px minmax(0,1fr);gap:44px;margin-bottom:26px;--c:var(--leaf)}
+.act-lab{--c:var(--violet)}
+.act::before{content:"";position:absolute;left:125px;top:24px;width:14px;height:14px;border-radius:50%;background:var(--bg);border:2px solid var(--c);box-shadow:0 0 18px var(--c)}
+.act-time{padding-top:18px;text-align:right;font:700 .92rem/1.35 var(--mono)}
+.act-time span{display:block;margin-top:4px;font:500 .68rem var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+.act-card{padding:22px 24px;border-radius:18px}
+.act-card h3{margin-bottom:8px;font-size:1.12rem}
+.kind{display:inline-block;margin-top:12px;padding:2px 10px;border-radius:999px;font:600 .74rem var(--mono);color:var(--teal);border:1px solid var(--ln2)}
+.trace,.console{margin-top:16px;border-radius:12px;background:#03060c;overflow:hidden}
+.trace figcaption,.console figcaption{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 14px;padding:8px 12px;border-bottom:1px solid var(--ln);font:.72rem var(--mono);color:var(--dim)}
+.trace pre,.console pre{padding:12px;font:.75rem/1.7 var(--mono);color:#c7d2e0;white-space:pre-wrap;overflow-wrap:anywhere}
+.trace b{color:var(--teal);font-weight:600}
+.trace i{font-style:normal;color:var(--leaf)}
+.trace i.w{color:var(--amber)}
+.ring{position:relative;padding:22px 18px;border-radius:18px;text-align:center}
+.ring svg{display:block;width:132px;height:132px;margin:0 auto;transform:rotate(-90deg)}
+.ring circle{fill:none;stroke:rgba(148,163,184,.14);stroke-width:7}
+.ring .fg{stroke:url(#rg);stroke-linecap:round;animation:draw 1.4s .2s ease-out both}
+.ring b{position:absolute;left:0;right:0;top:72px;font-size:1.12rem}
+.ring figcaption{margin-top:14px;color:var(--mu);font-size:.84rem;line-height:1.45}
+.evalline{margin-top:22px;max-width:86ch;color:var(--mu);font-size:.93rem}
+.console figcaption{font:.78rem/1.5 ui-sans-serif,system-ui,sans-serif}
+.console pre{color:var(--leaf)}
+.console .out{color:#b8c4d4}
+.prov{list-style:none;display:grid;gap:8px;margin-top:30px}
+.prov li{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1.3fr) minmax(0,1fr);gap:6px 18px;padding:12px 16px;border-radius:12px;font-size:.84rem}
+.prov span{color:var(--mu)}
+.prov small{font:.74rem var(--mono);color:var(--dim);overflow-wrap:anywhere}
+footer{margin-top:110px;padding:34px 0 56px;border-top:1px solid var(--ln);color:var(--dim);font-size:.85rem}
+footer .wrap{display:flex;flex-wrap:wrap;gap:12px 28px;align-items:center}
+footer p{flex:1 1 32rem}
+@keyframes rise{from{opacity:.15;transform:translateY(16px)}}
+@keyframes breathe{50%{transform:rotate(-4deg) scale(1.03);opacity:.18}}
+@keyframes blink{50%{opacity:.35}}
+@keyframes pulse{from{background-position:100% 0}to{background-position:-200% 0}}
+@keyframes glow{50%{box-shadow:0 0 44px -6px rgba(52,211,153,.45)}}
+@keyframes draw{from{stroke-dasharray:0 100}}
+@media (max-width:900px){.nav .sections{display:none}.tiles,.rings{grid-template-columns:repeat(2,minmax(0,1fr))}.grid3,.duel,.vgrid,.consoles,.prov li{grid-template-columns:1fr}.flow{grid-template-columns:1fr;row-gap:46px}.src li::after,.out li::before,.src::after,.out::before{display:none}.hub::before,.hub::after{left:50%;top:auto;width:2px;height:46px;background:linear-gradient(var(--teal),var(--leaf))}.hub::before{bottom:100%}.hub::after{top:100%}.out{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}.lanes{grid-template-columns:1fr!important}}
+@media (max-width:620px){.hero{padding-top:56px}.act{grid-template-columns:1fr;gap:10px;padding-left:30px}.acts::before{left:6px}.act::before{left:0;top:4px}.act-time{padding-top:0;text-align:left}.nav .pages a+a{display:none}.dots p{gap:4px}.dots i,.dots b{width:11px;height:11px}.dots p>span{width:38px}}
+@media (prefers-reduced-motion:reduce){*,::before,::after{animation:none!important;transition:none!important}html{scroll-behavior:auto}}
+</style>
 </head>
 <body>
-  <header>
-    <div class="brand">
-      <svg width="32" height="32" viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" style="color: var(--accent-green);">
-        <path d="M 50 15 C 57 15, 62 25, 62 30 C 65 22, 75 22, 80 27 C 82 31, 80 43, 85 45 C 92 48, 92 62, 85 65 C 77 68, 77 75, 75 80 C 68 85, 55 83, 50 78 C 45 83, 32 85, 25 80 C 23 75, 23 68, 15 65 C 8 62, 8 48, 15 45 C 20 43, 18 31, 20 27 C 25 22, 35 22, 38 30 C 38 25, 43 15, 50 15 Z" />
-        <path d="M 50 78 L 50 88" />
-        <path d="M 50 78 L 50 35 M 50 62 L 70 70 M 50 52 L 30 62" stroke="var(--accent-teal)" stroke-width="4" />
-      </svg>
-      <div>
-        <div class="brand-title">Config<span>Leaf</span></div>
-        <div class="brand-subtitle">drift-agent</div>
-      </div>
-    </div>
-    <nav class="nav-links">
-      <a href="index.html">Replay</a>
-      <a href="../examples/report.html">Owner's report</a>
-    </nav>
-  </header>
-
-  <main>
-    <section class="hero">
-      <h1>ConfigLeaf, package <code>drift-agent</code>, is a configuration assurance agent for an MSP.</h1>
-      <p>An MSP&#39;s knowledge of one setting lives in eight places, and whether that setting is right, backed up, restorable and still means what it meant takes several of them at once.</p>
-      <div class="hero-metrics">
-        <div class="metric-card"><div class="metric-val">27</div><div class="metric-label">findings open in the owner&#39;s document, decided at 2026-10-25T14:17:53.416Z: ADOPT 23, HOLD 3, ESCALATE 1</div></div>
-        <div class="metric-card"><div class="metric-val">112</div><div class="metric-label">vault copies at the latest commit of each repository, in the owner&#39;s document</div></div>
-        <div class="metric-card"><div class="metric-val">33 / 33</div><div class="metric-label">checks re-run at build over the 8 findings of the 3 examples, counts equal</div></div>
-        <div class="metric-card"><div class="metric-val">390 / 390</div><div class="metric-label">Nemotron calls with a verified receipt in the eval run of 25 Oct 2026 23:34 UTC, 0 substitutions</div></div>
-      </div>
-    </section>
-
-    <section class="grid-two">
-      <div>
-        <h2 class="section-title">The eight places</h2>
-        <div class="source-list">
-          <div class="source-item">the live host (over SSH)</div>
-          <div class="source-item">the nightly export (the backup tarball)</div>
-          <div class="source-item">the documentation of record (<code>approved_setting</code>, the rows an IT Glue or Hudu adapter would write)</div>
-          <div class="source-item">the DNS provider (Cloudflare)</div>
-          <div class="source-item">the provider&#39;s audit log and each host&#39;s journal</div>
-          <div class="source-item">the asset inventory</div>
-          <div class="source-item">what the site answers from outside (the probes)</div>
-          <div class="source-item">the PSA (the tickets)</div>
-        </div>
-      </div>
-      <div>
-        <h2 class="section-title">Zetaris USL (drift_usl)</h2>
-        <div class="usl-box">
-          <div class="usl-header">
-            <span>DRIFT, LESSONS, RULES</span>
-            <span style="color: var(--accent-teal)">fourteen entities, five DQ rules</span>
-          </div>
-          <div>Entities: collection, setting, referent, backup_copy, policy, copy, probe, disposition, action, ticket, cause, lesson, rule, adoption</div>
-          <div class="usl-rules">DQ rules: run_complete on collection, copy_validated on copy, action_verified on action, cause_evidenced on cause, exception_in_force on adoption</div>
-        </div>
-      </div>
-    </section>
-
-    <section class="timeline">
-      <h2 class="section-title">The production estate and the lab chain, 25 Oct 2026</h2>
-
-      <div class="act-card">
-        <div class="act-header">
-          <h3>Act 1: A locked vhost, broken and rolled back</h3>
-          <span class="act-badge">15:55 UTC, rollback_file</span>
-        </div>
-        <p>A config lock on a setting class means automatic rollback at the next cycle. A <code>rollback_file</code> on a vhost at 15:55 UTC, <code>unverified</code> by its own probe because the name rides a wildcard record (the next pass found the approved value live and closed its ticket, #5).</p>
-      </div>
-
-      <div class="act-card">
-        <div class="act-header">
-          <h3>Act 2: A record pointed outside the inventory and reverted</h3>
-          <span class="act-badge">examples/traces/cycle_mvo2bil0.jsonl</span>
-        </div>
-        <p>FOUND-BUT-DIFFERENT on real rows: at 16:49 UTC on 25 Oct 2026 a staged record change raised it on production, 2 <code>found_but_different</code> findings on the :443 and :80 <code>server_name</code> of one vhost, byte-identical since the 16:32 UTC run while their name resolved to another address, each held 72 h under rule 15. A <code>revert_record</code> through the provider at 16:50 UTC, <code>done</code> with the provider confirming the value.</p>
-        <div class="trace-block">detector/detect · ok · server[host-492568.ai:443].server_name[host-492568.ai] in /etc/nginx/conf.d/host-492568.ai.conf on host-aa516a · found_but_different: server[host-492568.ai:443].server_name[host-492568.ai] in /etc/nginx/conf.d/host-492568.ai.conf on host-aa516a is byte-identical since 2026-10-25T16:32:53.265Z; host-492568.ai resolved to ip-6b6bba then and to 192.0.2.10 now, an address not in the inventory
-detector/detect · ok · server[host-492568.ai:80].server_name[host-492568.ai] in /etc/nginx/conf.d/host-492568.ai.conf on host-aa516a · found_but_different: server[host-492568.ai:80].server_name[host-492568.ai] in /etc/nginx/conf.d/host-492568.ai.conf on host-aa516a is byte-identical since 2026-10-25T16:32:53.265Z; host-492568.ai resolved to ip-6b6bba then and to 192.0.2.10 now, an address not in the inventory
-actor/revise · ok · revert_record cloudflare.dns 9ee8076d949534eb9ceef147017db541 content · done: reverted to the approved copy at vault commit 5ef406fc; the record read back equals the copy field by field</div>
-      </div>
-
-      <div class="act-card">
-        <div class="act-header">
-          <h3>Act 3: A no-copy case, investigated and ticketed</h3>
-          <span class="act-badge">examples/traces/cycle_mvo5600q.jsonl</span>
-        </div>
-        <p>An <code>investigate</code> with Nemotron Lightning and Ultra followed by a refused <code>fix</code> at 18:10 to 18:16 UTC on a setting with no valid copy, which opened incident #7.</p>
-        <div class="trace-block">actor/check · ok · investigate linux.nginx host-4b4dc1 /etc/nginx/sites-available/host-525a57.com file · done: investigated: 4 checks ran (0 hold, 4 fail); the judge&#39;s verdict counted: stands
-actor/escalate · skipped · fix linux.nginx host-4b4dc1 /etc/nginx/sites-available/host-525a57.com file · refused: no fix is allowed without a valid copy; investigated and ticketed</div>
-      </div>
-
-      <div class="act-card">
-        <div class="act-header">
-          <h3>Lab chain: Why it changed</h3>
-          <span class="act-badge">examples/traces/cycle_mvoa0l1i.jsonl</span>
-        </div>
-        <p>On 25 Oct 2026 on the lab estate a <code>sudo tee</code> break, collected and run through <code>npm run cycle -- --tenant lab-1 --apply</code>, read back as operator_edit at 20:22 UTC by user-212a17 over ssh from ip-391349, with 20 evidence rows and an 11-line diff from the approval&#39;s own vault commit, the step in 1.3 s, and after the cycle&#39;s rollback its sentence ends &quot;, 4 minutes before the agent restored it.&quot; (lab/README.md, &quot;Why it changed, on the lab&quot;; the trace in examples/traces/).</p>
-        <div class="trace-block">explainer/explain · ok · explain fnd-8feb12765bd81257 ROLLBACK drift_vs_approved linux.nginx host-951abf /etc/nginx/sites-available/lab.example file · operator_edit: The file was changed at 20:22 UTC by user-212a17 over ssh from ip-391349 (sudo tee).
-explainer/explain · ok · explain lab-1 · explain: 1 cause(s) (operator_edit 1); finding_cause 1 written</div>
-      </div>
-    </section>
-
-    <section class="cli-section">
-      <h2 class="section-title">Verify the receipts offline</h2>
-      <p>The <code>dev</code> set, run from 25 Oct 2026 23:34 UTC (<code>eval/results/2026-10-25T23-34-17Z</code>): 15 configuration runs of C0, C1, C2, C3, C4, 390 Nemotron calls, 390 with a verified receipt, 0 substitutions, 0 cache hits; of the 134 judge SELECTs recorded with a row count, 130 re-run at build to the recorded count and the recorded text of 4 does not run.</p>
-      <div class="cli-box"><span class="cli-prompt">$ </span>npm run receipts:verify -- eval/results/2026-10-25T23-34-17Z<span class="cli-output">…
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><linearGradient id="rg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#34d399"/><stop offset="1" stop-color="#22d3ee"/></linearGradient><symbol id="leaf" viewBox="0 0 100 100"><g fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"><path d="M 50 15 C 57 15, 62 25, 62 30 C 65 22, 75 22, 80 27 C 82 31, 80 43, 85 45 C 92 48, 92 62, 85 65 C 77 68, 77 75, 75 80 C 68 85, 55 83, 50 78 C 45 83, 32 85, 25 80 C 23 75, 23 68, 15 65 C 8 62, 8 48, 15 45 C 20 43, 18 31, 20 27 C 25 22, 35 22, 38 30 C 38 25, 43 15, 50 15 Z"/><path d="M 50 78 L 50 88"/><path d="M 50 78 L 50 35 M 50 62 L 70 70 M 50 52 L 30 62" stroke="#22d3ee" stroke-width="4"/></g></symbol></defs></svg>
+<header class="nav"><div class="wrap">
+<a class="brand" href="#top"><svg aria-hidden="true"><use href="#leaf"/></svg><span>Config<em>Leaf</em></span><small>drift-agent</small></a>
+<nav class="sections" aria-label="Sections"><a href="#nemotron">Nemotron</a><a href="#sources">Sources</a><a href="#layer">Layer</a><a href="#decide">Decide</a><a href="#acts">Acts</a><a href="#proof">Proof</a></nav>
+<nav class="pages" aria-label="Pages">
+<a href="index.html">Replay</a>
+<a href="../examples/report.html">Owner's report</a>
+</nav>
+</div></header>
+<main id="top">
+<section class="hero"><div class="wrap">
+<svg class="hero-leaf" viewBox="0 0 100 100" aria-hidden="true"><use href="#leaf"/></svg>
+<p class="eyebrow"><i></i>GenAI Works Open Agent Hackathon 2026, Track 1 (Solving Fragmented Intelligence)</p>
+<h1><span class="grad">ConfigLeaf</span>, package <code>drift-agent</code>, is a configuration assurance agent for an MSP.</h1>
+<p class="lede">An MSP&#39;s knowledge of one setting lives in eight places, and whether that setting is right, backed up, restorable and still means what it meant takes several of them at once.</p>
+<div class="ctas"><a class="btn btn-p" href="index.html">Open the replay</a><a class="btn" href="../examples/report.html">Read the owner's report</a><a class="btn" href="#proof">Check the receipts</a></div>
+<div class="tiles"><div class="tile"><b>61 / 61</b><span>collection runs pass the DQ gate</span></div><div class="tile"><b>333</b><span>settings with an approval of record</span></div><div class="tile"><b>112</b><span>vault copies, each with its latest validation</span></div><div class="tile"><b>27</b><span>findings open: ADOPT 23, HOLD 3, ESCALATE 1</span></div></div>
+<p class="cap">From the owner's document, <code>examples/document.md</code>, tenant <code>client-1</code>: 2 hosts and 6 zones in the latest passing runs, decided at 2026-10-25T14:17:53.416Z.</p>
+</div></section>
+<section class="band" id="nemotron"><div class="wrap">
+<p class="kicker">NVIDIA Nemotron</p>
+<h2>Ultra alone, and the checks with Ultra as the falsifier</h2>
+<p class="sub">Items the operator labelled no, before any model ran, that each configuration reads as yes, runs 1, 2 and 3; and the planted false claims the falsifier strikes. From <code>eval/results/2026-10-25T23-34-17Z</code>, the <code>dev</code> set, 25 Oct 2026 23:34 UTC to 26 Oct 2026 00:18 UTC.</p>
+<div class="duel">
+<article class="side c-bad"><h3>Nemotron 3 Ultra alone</h3><small>C4 · the verdict from the rows, no SQL checks</small><p class="big">6, 5, 6 of 9</p><p>items labelled no that it reads as yes</p><div class="dots"><p><span>run 1</span><b></b><b></b><b></b><b></b><b></b><b></b><i></i><i></i><i></i> 6 of 9</p><p><span>run 2</span><b></b><b></b><b></b><b></b><b></b><i></i><i></i><i></i><i></i> 5 of 9</p><p><span>run 3</span><b></b><b></b><b></b><b></b><b></b><b></b><i></i><i></i><i></i> 6 of 9</p></div></article>
+<article class="side c-good"><h3>The SQL checks, Ultra as the falsifier</h3><small>C3 · Lightning selects the checks, Ultra writes the refuting SELECT</small><p class="big">0, 0, 0 of 9</p><p>items labelled no that it reads as yes</p><div class="dots"><p><span>run 1</span><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i> 0 of 9</p><p><span>run 2</span><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i> 0 of 9</p><p><span>run 3</span><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i> 0 of 9</p></div><p class="big">9, 8, 8 of 10</p><p>planted false claims struck</p><div class="dots"><p><span>run 1</span><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><i></i> 9 of 10</p><p><span>run 2</span><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><i></i><i></i> 8 of 10</p><p><span>run 3</span><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><i></i><i></i> 8 of 10</p></div></article>
+</div>
+</div></section>
+<section class="band" id="sources"><div class="wrap">
+<p class="kicker">Fragmented</p>
+<h2>The eight places, read as one</h2>
+<p class="sub">ConfigLeaf reads the eight as one through one Zetaris layer and decides each finding under the MSP&#39;s policy: ROLLBACK, FIX, ESCALATE, HOLD with an expiry, or ADOPT.</p>
+<div class="flow">
+<ol class="src"><li><b>the live host</b><span>over SSH</span></li><li><b>the nightly export</b><span>the backup tarball</span></li><li><b>the documentation of record</b><span><code>approved_setting</code>, the rows an IT Glue or Hudu adapter would write</span></li><li><b>the DNS provider</b><span>Cloudflare</span></li><li><b>the provider&#39;s audit log and each host&#39;s journal</b></li><li><b>the asset inventory</b></li><li><b>what the site answers from outside</b><span>the probes</span></li><li><b>the PSA</b><span>the tickets</span></li></ol>
+<div class="hub"><div class="hub-card"><small>Zetaris</small><b>drift_usl</b><span>DRIFT · LESSONS · RULES</span><span>fourteen entities · five DQ rules</span></div></div>
+<ol class="out"><li class="v-ROLLBACK"><b>ROLLBACK</b></li><li class="v-FIX"><b>FIX</b></li><li class="v-ESCALATE"><b>ESCALATE</b></li><li class="v-HOLD"><b>HOLD</b>with an expiry</li><li class="v-ADOPT"><b>ADOPT</b></li></ol>
+</div>
+</div></section>
+<section class="band" id="stack"><div class="wrap">
+<p class="kicker">The stack</p>
+<h2>Zetaris, Meterless and NVIDIA Nemotron</h2>
+<div class="grid3"><article class="card"><h3>Zetaris</h3><p>Every query of a live pass runs through Lightning SQL over the <code>DRIFT</code> datasource, with the <code>drift_usl</code> semantic layer and its DQ rules over it.</p></article><article class="card"><h3>Meterless</h3><p>The World Model holds the observations and the fingerprints FOUND-BUT-DIFFERENT compares, H-MEM holds the technician&#39;s lessons, and Nightshift serves Nemotron and signs a receipt for every call.</p></article><article class="card"><h3>NVIDIA Nemotron</h3><p>3.5 Lightning selects the checks and 3 Ultra writes the SELECT that refutes a false claim, each verdict counted through the receipt gate.</p></article></div>
+</div></section>
+<section class="band" id="layer"><div class="wrap">
+<p class="kicker">One layer</p>
+<h2>The Zetaris semantic layer, <code>drift_usl</code></h2>
+<p class="sub"><code>drift_usl</code> in <code>lightning.metastore.drift</code> holds fourteen entities over three datasources, each built from the tables its activation SELECT reads, and five DQ rules.</p>
+<div class="lanes" style="grid-template-columns:minmax(0,3fr) minmax(0,1fr) minmax(0,1fr)">
+<div class="lane"><div class="lane-h"><b>DRIFT</b><span>the app Postgres</span></div><ul class="ents"><li><code>collection</code>collection_run<br><em>run_complete</em></li><li><code>setting</code>observation</li><li><code>referent</code>observation, dns_record</li><li><code>backup_copy</code>backup_item, backup_snapshot</li><li><code>policy</code>policy_rule</li><li><code>copy</code>vault_copy, copy_validation<br><em>copy_validated</em></li><li><code>probe</code>probe</li><li><code>disposition</code>disposition</li><li><code>action</code>action<br><em>action_verified</em></li><li><code>ticket</code>ticket</li><li><code>cause</code>finding_cause<br><em>cause_evidenced</em></li><li><code>adoption</code>disposition, LESSONS.lesson<br><em>exception_in_force</em></li></ul></div>
+<div class="lane"><div class="lane-h"><b>LESSONS</b><span>the technician&#39;s memory store</span></div><ul class="ents"><li><code>lesson</code>LESSONS.lesson</li></ul></div>
+<div class="lane"><div class="lane-h"><b>RULES</b><span>the policy file</span></div><ul class="ents"><li><code>rule</code>RULES.rule</li></ul></div>
+</div>
+<p class="cap">Each DQ rule is an expression RUN DQ tests on every row of its entity; the replay page's <a href="index.html#sources">Sources tab</a> holds the five expressions.</p>
+</div></section>
+<section class="band" id="decide"><div class="wrap">
+<p class="kicker">Decide</p>
+<h2>Each finding under the MSP's policy</h2>
+<div class="vgrid"><article class="vcard v-ROLLBACK"><h3><span class="vtag v-ROLLBACK">ROLLBACK</span></h3><p>A drift from the approved value under a locked or rollback rule, with a valid vault copy of that value.</p></article><article class="vcard v-FIX"><h3><span class="vtag v-FIX">FIX</span>, <span class="vtag v-ESCALATE">ESCALATE</span> or <span class="vtag v-ADOPT">ADOPT</span></h3><p>The same drift with no valid copy and production affected, as <code>on_no_copy</code> says; ESCALATE when production is unknown.</p></article><article class="vcard v-HOLD"><h3><span class="vtag v-HOLD">HOLD</span></h3><p>The same drift with production answering, <code>on_drift</code> hold, or a finding about a setting&#39;s relation to another setting; the expiry runs <code>hold_max_hours</code> from the first HOLD on that live value, and past it the finding is ESCALATE.</p></article><article class="vcard v-ADOPT"><h3><span class="vtag v-ADOPT">ADOPT</span></h3><p><code>on_drift</code> adopt, or the technician&#39;s exception in force; with no rule, ADOPT when every check holds and ESCALATE otherwise.</p></article></div>
+<div class="bar" role="img" aria-label="27 findings open: ADOPT 23, HOLD 3, ESCALATE 1"><span class="v-ADOPT" style="flex:23"></span><span class="v-HOLD" style="flex:3"></span><span class="v-ESCALATE" style="flex:1"></span></div>
+<ul class="legend"><li class="v-ADOPT">ADOPT 23</li><li class="v-HOLD">HOLD 3</li><li class="v-ESCALATE">ESCALATE 1</li></ul>
+<p class="cap">The 27 findings open in the owner's document, <code>examples/document.md</code>, decided at 2026-10-25T14:17:53.416Z, by verb.</p>
+</div></section>
+<section class="band" id="acts"><div class="wrap">
+<p class="kicker">Act</p>
+<h2>The production estate and the lab chain, 25 Oct 2026</h2>
+<ol class="acts">
+<li class="act"><div class="act-time">15:55 UTC<span>production</span></div><article class="act-card"><h3>A locked vhost, broken and rolled back</h3><p>A config lock on a setting class means automatic rollback at the next cycle. A <code>rollback_file</code> on a vhost at 15:55 UTC, <code>unverified</code> by its own probe because the name rides a wildcard record (the next pass found the approved value live and closed its ticket, #5).</p><span class="kind">rollback_file</span></article></li>
+<li class="act"><div class="act-time">16:49 UTC<span>production</span></div><article class="act-card"><h3>A record pointed outside the inventory and reverted</h3><p>FOUND-BUT-DIFFERENT on real rows: at 16:49 UTC on 25 Oct 2026 a staged record change raised it on production, 2 <code>found_but_different</code> findings on the :443 and :80 <code>server_name</code> of one vhost, byte-identical since the 16:32 UTC run while their name resolved to another address, each held 72 h under rule 15. A <code>revert_record</code> through the provider at 16:50 UTC, <code>done</code> with the provider confirming the value.</p><figure class="trace"><figcaption><span>examples/traces/cycle_mvo2bil0.jsonl</span><span>3 of 993 lines · 16:49:12 to 16:51:03 UTC</span></figcaption><pre><b>detector/detect</b> · <i>ok</i> · server[host-492568.ai:443].server_name[host-492568.ai] in /etc/nginx/conf.d/host-492568.ai.conf on host-aa516a · found_but_different: server[host-492568.ai:443].server_name[host-492568.ai] in /etc/nginx/conf.d/host-492568.ai.conf on host-aa516a is byte-identical since 2026-10-25T16:32:53.265Z; host-492568.ai resolved to ip-6b6bba then and to 192.0.2.10 now, an address not in the inventory
+<b>detector/detect</b> · <i>ok</i> · server[host-492568.ai:80].server_name[host-492568.ai] in /etc/nginx/conf.d/host-492568.ai.conf on host-aa516a · found_but_different: server[host-492568.ai:80].server_name[host-492568.ai] in /etc/nginx/conf.d/host-492568.ai.conf on host-aa516a is byte-identical since 2026-10-25T16:32:53.265Z; host-492568.ai resolved to ip-6b6bba then and to 192.0.2.10 now, an address not in the inventory
+<b>actor/revise</b> · <i>ok</i> · revert_record cloudflare.dns 9ee8076d949534eb9ceef147017db541 content · done: reverted to the approved copy at vault commit 5ef406fc; the record read back equals the copy field by field</pre></figure></article></li>
+<li class="act"><div class="act-time">18:10 to 18:16 UTC<span>production</span></div><article class="act-card"><h3>A no-copy case, investigated and ticketed</h3><p>An <code>investigate</code> with Nemotron Lightning and Ultra followed by a refused <code>fix</code> at 18:10 to 18:16 UTC on a setting with no valid copy, which opened incident #7.</p><figure class="trace"><figcaption><span>examples/traces/cycle_mvo5600q.jsonl</span><span>2 of 1,056 lines · 18:08:54 to 18:16:51 UTC</span></figcaption><pre><b>actor/check</b> · <i>ok</i> · investigate linux.nginx host-4b4dc1 /etc/nginx/sites-available/host-525a57.com file · done: investigated: 4 checks ran (0 hold, 4 fail); the judge&#39;s verdict counted: stands
+<b>actor/escalate</b> · <i class="w">skipped</i> · fix linux.nginx host-4b4dc1 /etc/nginx/sites-available/host-525a57.com file · refused: no fix is allowed without a valid copy; investigated and ticketed</pre></figure></article></li>
+<li class="act act-lab"><div class="act-time">20:22 UTC<span>lab</span></div><article class="act-card"><h3>Why it changed</h3><p>On 25 Oct 2026 on the lab estate a <code>sudo tee</code> break, collected and run through <code>npm run cycle -- --tenant lab-1 --apply</code>, read back as operator_edit at 20:22 UTC by user-212a17 over ssh from ip-391349, with 20 evidence rows and an 11-line diff from the approval&#39;s own vault commit, the step in 1.3 s, and after the cycle&#39;s rollback its sentence ends &quot;, 4 minutes before the agent restored it.&quot; (lab/README.md, &quot;Why it changed, on the lab&quot;; the trace in examples/traces/).</p><figure class="trace"><figcaption><span>examples/traces/cycle_mvoa0l1i.jsonl</span><span>2 of 987 lines · 20:24:34 to 20:26:12 UTC</span></figcaption><pre><b>explainer/explain</b> · <i>ok</i> · explain fnd-8feb12765bd81257 ROLLBACK drift_vs_approved linux.nginx host-951abf /etc/nginx/sites-available/lab.example file · operator_edit: The file was changed at 20:22 UTC by user-212a17 over ssh from ip-391349 (sudo tee).
+<b>explainer/explain</b> · <i>ok</i> · explain lab-1 · explain: 1 cause(s) (operator_edit 1); finding_cause 1 written</pre></figure></article></li>
+</ol>
+</div></section>
+<section class="band" id="proof"><div class="wrap">
+<p class="kicker">Proof</p>
+<h2>A verdict counts only on a verified receipt</h2>
+<div class="rings">
+<figure class="ring"><svg viewBox="0 0 88 88" aria-hidden="true"><circle cx="44" cy="44" r="38" pathLength="100"/><circle class="fg" cx="44" cy="44" r="38" pathLength="100" stroke-dasharray="100 100"/></svg><b>33 / 33</b><figcaption>checks re-run at build over the 3 slices of the replay page, counts equal</figcaption></figure>
+<figure class="ring"><svg viewBox="0 0 88 88" aria-hidden="true"><circle cx="44" cy="44" r="38" pathLength="100"/><circle class="fg" cx="44" cy="44" r="38" pathLength="100" stroke-dasharray="97 100"/></svg><b>130 / 134</b><figcaption>Nemotron judge SELECTs re-run at build to the recorded count; the recorded text of 4 does not run</figcaption></figure>
+<figure class="ring"><svg viewBox="0 0 88 88" aria-hidden="true"><circle cx="44" cy="44" r="38" pathLength="100"/><circle class="fg" cx="44" cy="44" r="38" pathLength="100" stroke-dasharray="100 100"/></svg><b>390 / 390</b><figcaption>Nemotron calls with a verified receipt, 0 substitutions</figcaption></figure>
+<figure class="ring"><svg viewBox="0 0 88 88" aria-hidden="true"><circle cx="44" cy="44" r="38" pathLength="100"/><circle class="fg" cx="44" cy="44" r="38" pathLength="100" stroke-dasharray="100 100"/></svg><b>384 / 384</b><figcaption>published receipts whose Ed25519 signature verifies offline, 6 withheld</figcaption></figure>
+</div>
+<p class="evalline">The <code>dev</code> set, run from 25 Oct 2026 23:34 UTC (<code>eval/results/2026-10-25T23-34-17Z</code>): 15 configuration runs of C0, C1, C2, C3, C4, 390 Nemotron calls, 390 with a verified receipt, 0 substitutions, 0 cache hits; of the 134 judge SELECTs recorded with a row count, 130 re-run at build to the recorded count and the recorded text of 4 does not run.</p>
+<div class="consoles"><figure class="console"><figcaption>The receipts, checked offline: the lines this page quotes, each … a run of lines between.</figcaption><pre>$ npm run receipts:verify -- eval/results/2026-10-25T23-34-17Z
+<span class="out">…
 receipts: 390 receipt ids, 384 in receipts.json, 6 withheld; 384 of 384 signatures verified
 …
-receipts: OK, 384 signatures verified, 0 mismatches</span></div>
-      <div class="cli-box"><span class="cli-prompt">$ </span>SAMPLE_MODE=true npm run sample<span class="cli-output">…
-SAMPLE: 80 collection runs, 0 failed the DQ gate (none), 14174 observations in the World Model, 27 finding(s): …; verbs: ADOPT 23, HOLD 3, ESCALATE 1; …
-…</span></div>
-    </section>
-  </main>
+receipts: OK, 384 signatures verified, 0 mismatches</span></pre></figure><figure class="console"><figcaption>The whole pass, no credentials, no model: its summary line, from this build's own pass.</figcaption><pre>$ SAMPLE_MODE=true npm run sample -- --json
+<span class="out">SAMPLE: 80 collection runs, 0 failed the DQ gate (none), 14174 observations in the World Model, 27 finding(s): …; verbs: ADOPT 23, HOLD 3, ESCALATE 1; …</span></pre></figure></div>
+</div></section>
+<section class="band" id="provenance"><div class="wrap">
+<p class="kicker">Provenance</p>
+<h2>Where each figure on this page comes from</h2>
+<p class="sub">Every figure above is read from these files when <code>npm run site</code> builds the page, and the build refuses to publish when a file does not say what the page reads from it.</p>
+<ul class="prov"><li><code>README.md</code><span>the opening, the places, the stack, the policy and the acts, quoted as written</span><small>the build refuses when a quoted phrase is missing</small></li><li><code>examples/document.md</code><span>the estate tiles and the decision bar</span><small>sha256:5575d5aa2115… · 22,198 bytes</small></li><li><code>src/zetaris/setup.ts</code><span>the semantic layer: uslRows() and DQ_RULES</span><small>the rows npm run sources -- --usl prints</small></li><li><code>examples/traces/cycle_mvo2bil0.jsonl</code><span>the lines act two quotes</span><small>sha256:00ba6dae7a0e… · 993 lines</small></li><li><code>examples/traces/cycle_mvo5600q.jsonl</code><span>the lines act three quotes</span><small>sha256:1b6d32323e47… · 1,056 lines</small></li><li><code>examples/traces/cycle_mvoa0l1i.jsonl</code><span>the lines the lab chain quotes</span><small>sha256:c2266d9d399e… · 987 lines</small></li><li><code>eval/results/2026-10-25T23-34-17Z</code><span>the headline, the eval line, the rings and the receipts lines</span><small>15 run files, planted.json, receipts.json</small></li><li><code>sample/bundle.json</code><span>the sample line, from this build&#39;s own pass</span><small>sha256:2d8fa233ec88…</small></li><li><code>docs/data/index.json</code><span>the checks ring</span><small>written by the same build</small></li></ul>
+</div></section>
+</main>
+<footer><div class="wrap">
+<a class="brand" href="#top"><svg aria-hidden="true"><use href="#leaf"/></svg><span>Config<em>Leaf</em></span><small>drift-agent</small></a>
+<p>Built by <code>npm run site</code>. <code>test/site.test.ts</code> holds this page to the build, and CI rebuilds it on every push to main and every pull request.</p>
+</div></footer>
 </body>
 </html>
