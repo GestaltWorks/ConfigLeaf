@@ -17,8 +17,8 @@
 //                 where a pass one task at a time reads it, every later ask finding it cached. The read must depend on its key
 //                 alone, so that whichever task starts it reads the same rows.
 //
-// Tested by test/concurrency.test.ts: the helpers on their own, sql.js under overlapping runs, the pass at concurrency 1
-// and 4 over the bundles, and the wall time over an engine that waits 50 ms a query.
+// Tested by test/concurrency.test.ts: the helpers on their own, sql.js under overlapping runs and interleaved writes and
+// reads, the pass at concurrency 1 and 4 over the bundles, and the queries in flight over an engine that waits 50 ms a query.
 
 import { Tracer, type TraceEvent } from "./trace.ts";
 
@@ -40,6 +40,7 @@ export function checkLimit(limit: number): number {
 /**
  * Run `tasks`, at most `limit` at a time, started in task order, and their commits in task order (see the header). `tracerOf(i)`
  * is task i's tracer, taken when the task starts; it is closed after the commit, or marked failed when the task or its commit throws.
+ * A `tracerOf` that throws fails its task the same way.
  */
 export async function inOrder(tasks: readonly Task[], limit: number, tracerOf: (i: number) => HeldTracer | undefined): Promise<void> {
   checkLimit(limit);
@@ -51,13 +52,13 @@ export async function inOrder(tasks: readonly Task[], limit: number, tracerOf: (
   const worker = async (): Promise<void> => {
     while (!stopped && next < tasks.length) {
       const i = next++;
-      const tracer = (tracers[i] = tracerOf(i));
+      // Taking the tracer is part of the task: one that throws fails task i, so settled[i] always resolves.
       try {
-        settle[i]({ ok: true, commit: await tasks[i](tracer) });
+        settle[i]({ ok: true, commit: await tasks[i]((tracers[i] = tracerOf(i))) });
       } catch (error) {
         stopped = true;
-        tracer?.fail();
         settle[i]({ ok: false, error });
+        tracers[i]?.fail();
       }
     }
   };

@@ -1,9 +1,11 @@
 // The concurrent pass (src/concurrency.ts, src/pipeline.ts, PASS_CONCURRENCY): the helpers on their own (tasks four at a time
-// with their commits in task order, held lines written in task order, a shared read run once with its lines where the first
-// task in order asked); sql.js under overlapping runs; the pass at concurrency 1 and 4 over the sample bundle with the
-// committed lessons and over the test fixtures, with equal findings, dispositions, ledger rows, recalls and trace events
-// (timestamps, latencies and query ids aside), a failing pass included; and the wall time over an engine that waits 50 ms
-// before each query, which falls by at least a factor of 3 at concurrency 4.
+// with their commits in task order, a tracer that cannot be taken failing its task rather than hanging, held lines written in
+// task order, a shared read run once with its lines where the first task in order asked); sql.js under overlapping runs,
+// writes and reads interleaved four at a time, a re-entered run refused; the pass at concurrency 1 and 4 over the sample
+// bundle with the committed lessons and over the test fixtures, with equal findings, dispositions, ledger rows, recalls and
+// trace events (timestamps, latencies and query ids aside), a failing pass included; and over an engine that waits 50 ms
+// before each query, the queries in flight (1, then 4) and the same queries, trace and findings at both. No assertion
+// rests on wall time: a loaded runner stretches it.
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { HeldTracer, OrderedTrace, SharedReads, checkLimit, inOrder, type Task } from "../src/concurrency.ts";
@@ -108,20 +110,65 @@ describe("inOrder: tasks at most `limit` at a time, commits in task order", () =
   it("on a failure starts no more tasks, runs every commit before the earliest failure, waits for the tasks in flight, and throws that failure", async () => {
     const committed: number[] = [];
     const settled: number[] = [];
-    const tasks: Task[] = [10, 0, 30, 5, 0, 0, 0].map((ms, i) => async () => {
-      await tick(ms);
+    // Each task waits on a gate of its own, opened below in a fixed order, so no timer on a loaded runner decides which
+    // settles first; `open[i]` is set when task i starts.
+    const open: ((fail: boolean) => void)[] = [];
+    const tasks: Task[] = Array.from({ length: 7 }, (_, i): Task => async () => {
+      const fail = await new Promise<boolean>((resolve) => { open[i] = resolve; });
       settled.push(i);
-      // task 3 fails before tasks 0 and 2 settle; the failure thrown is 3's, after the commits of 0, 1 and 2
-      if (i === 3 || i === 4) throw new Error(`task ${i}`);
+      if (fail) throw new Error(`task ${i}`);
       return () => { committed.push(i); };
     });
-    await expect(inOrder(tasks, 3, () => undefined)).rejects.toThrow("task 3");
+    let done = false;
+    const run = inOrder(tasks, 3, () => undefined).finally(() => { done = true; });
+    const thrown = expect(run).rejects.toThrow("task 3");
+    expect(open.length).toBe(3);
+    // task 1 settles, so task 3 starts; task 3 fails before tasks 0 and 2 settle
+    open[1](false);
+    await tick();
+    open[3](true);
+    await tick();
+    open[0](false);
+    await tick();
+    // task 4, queued behind the failure, never starts; inOrder waits for task 2, still in flight
+    expect(open[4]).toBeUndefined();
+    expect(done).toBe(false);
+    open[2](false);
+    // the failure thrown is 3's, after the commits of 0, 1 and 2
+    await thrown;
     expect(committed).toEqual([0, 1, 2]);
-    // task 4, queued behind the failure, never starts; the three in flight when it came settled before the throw
-    expect(settled.sort()).toEqual([0, 1, 2, 3]);
+    expect(settled).toEqual([1, 3, 0, 2]);
+    expect(open.length).toBe(4);
     // a commit that throws is a failure at its task
     await expect(inOrder([async () => () => { throw new Error("commit 0"); }, async () => () => { committed.push(9); }], 2, () => undefined)).rejects.toThrow("commit 0");
     expect(committed).toEqual([0, 1, 2]);
+  });
+
+  it("a tracerOf that throws fails its task: the commits before it run, no later task starts, and inOrder rejects instead of hanging", { timeout: 10_000 }, async () => {
+    const started: number[] = [];
+    const committed: number[] = [];
+    const into = new MemTracer("test_tracer_of", {});
+    const order = new OrderedTrace(into);
+    const tasks: Task[] = [20, 0, 0, 0, 0].map((ms, i) => async (t) => {
+      started.push(i);
+      t?.emit({ agent: "t", action: "check", status: "ok", input_summary: `task ${i}` });
+      await tick(ms);
+      return () => { committed.push(i); };
+    });
+    const tracerOf = (i: number): HeldTracer => {
+      if (i === 2) throw new Error("tracer 2");
+      return order.next();
+    };
+    let timer: NodeJS.Timeout | undefined;
+    const hung = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("inOrder hung")), 3_000); });
+    try {
+      await expect(Promise.race([inOrder(tasks, 3, tracerOf), hung])).rejects.toThrow("tracer 2");
+    } finally {
+      clearTimeout(timer);
+    }
+    expect(started).toEqual([0, 1]);
+    expect(committed).toEqual([0, 1]);
+    expect(into.events.map((e) => e.input_summary)).toEqual(["task 0", "task 1"]);
   });
 
   it("takes a whole number of at least 1, as PASS_CONCURRENCY does", async () => {
@@ -193,6 +240,61 @@ describe("sql.js under overlapping runs", () => {
     for (const s of sqls) each.push((await engine.run(s, { limit: 100_000 })).rows);
     const overlapping = await Promise.all(Array.from({ length: 30 }, (_, i) => engine.run(sqls[i % 3], { limit: 100_000 })));
     overlapping.forEach((r, i) => expect(r.rows).toEqual(each[i % 3]));
+    engine.close();
+  });
+
+  it("interleaves writes and reads on one engine four at a time, as the pass does: each task reads its own writes, the commits' writes land in task order", async () => {
+    const engine = await SqlJsEngine.create();
+    engine.loadBundle(recorded);
+    await engine.run("CREATE TABLE scratch (i INTEGER PRIMARY KEY, tag TEXT)");
+    await engine.run("CREATE TABLE commits (seq INTEGER PRIMARY KEY AUTOINCREMENT, i INTEGER)");
+    const runs = (await engine.run("SELECT COUNT(*) AS n FROM collection_run")).rows;
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const tasks: Task[] = Array.from({ length: 40 }, (_, i): Task => async () => {
+      maxInFlight = Math.max(maxInFlight, ++inFlight);
+      await engine.run(`INSERT INTO scratch (i, tag) VALUES (${i}, 'w${i}')`);
+      await tick(i % 4);
+      const own = (await engine.run(`SELECT i, tag FROM scratch WHERE i = ${i}`)).rows;
+      // every task started before this one wrote first, so at least i + 1 rows stand
+      const seen = Number((await engine.run("SELECT COUNT(*) AS n FROM scratch")).rows[0][0]);
+      await engine.run(`UPDATE scratch SET tag = 'u${i}' WHERE i = ${i}`);
+      await tick((7 * i) % 3);
+      const updated = (await engine.run(`SELECT tag FROM scratch WHERE i = ${i}`)).rows;
+      // a read of the bundle's own rows between the writes returns what it returns alone
+      const bundle = (await engine.run("SELECT COUNT(*) AS n FROM collection_run")).rows;
+      inFlight--;
+      expect(own).toEqual([[String(i), `w${i}`]]);
+      expect(seen).toBeGreaterThanOrEqual(i + 1);
+      expect(updated).toEqual([[`u${i}`]]);
+      expect(bundle).toEqual(runs);
+      return async () => { await engine.run(`INSERT INTO commits (i) VALUES (${i})`); };
+    });
+    await inOrder(tasks, 4, () => undefined);
+    expect(maxInFlight).toBe(4);
+    expect((await engine.run("SELECT i, tag FROM scratch ORDER BY i", { limit: 100 })).rows).toEqual(Array.from({ length: 40 }, (_, i) => [String(i), `u${i}`]));
+    expect((await engine.run("SELECT i FROM commits ORDER BY seq", { limit: 100 })).rows).toEqual(Array.from({ length: 40 }, (_, i) => [String(i)]));
+    engine.close();
+  });
+
+  it("refuses a run that arrives while a statement is open, and runs the next one once it is freed", async () => {
+    const engine = await SqlJsEngine.create();
+    engine.loadBundle(recorded);
+    // a tracer that queries the same engine from inside emit, which run calls with its statement still open
+    class Reentrant extends MemTracer {
+      inner: Promise<unknown> | undefined;
+      override emit(e: Omit<TraceEvent, "ts" | "trace_id">): TraceEvent {
+        this.inner ??= engine.run("SELECT 1 AS n");
+        return super.emit(e);
+      }
+    }
+    const tracer = new Reentrant("test_reentry", {});
+    expect((await engine.run("SELECT COUNT(*) AS n FROM collection_run", { tracer })).rowCount).toBe(1);
+    await expect(tracer.inner).rejects.toThrow(/^sqljs: run re-entered while a statement is open/);
+    expect((await engine.run("SELECT 1 AS n")).rows).toEqual([["1"]]);
+    // a statement that fails frees the engine too
+    await expect(engine.run("SELECT nope FROM nowhere")).rejects.toThrow(DataLayerError);
+    expect((await engine.run("SELECT 2 AS n")).rows).toEqual([["2"]]);
     engine.close();
   });
 });
@@ -272,29 +374,54 @@ describe("the pass at concurrency 1 and 4: every finding, disposition, ledger ro
       expect(four.trace).toEqual(one.trace);
     });
   }
+
+  it("a pass whose World Model exposure write throws, a commit: no ok exposure line, the failed one last, the same at 1 and 4", async () => {
+    class FailingWorld extends DriftWorld {
+      override async exposure(): Promise<never> {
+        throw new Error("planted World Model failure");
+      }
+    }
+    const at = async (c: number) => passAt(recorded, c, { engine: (e) => slowEngine(e, 0).engine, opts: { decidedAt: AT, world: new FailingWorld("test_concurrency_edge") } });
+    const [one, four] = [await at(1), await at(4)];
+    if (one.ok || four.ok) throw new Error("the planted World Model failure did not fail the pass");
+    expect(one.error).toBe("planted World Model failure");
+    expect(four.error).toBe(one.error);
+    const exposure = one.trace.filter((e) => e.action === "triage" && e.input_summary?.startsWith("exposure "));
+    expect(exposure.filter((e) => e.status === "ok")).toEqual([]);
+    expect(exposure.filter((e) => e.status === "failed")).toHaveLength(1);
+    expect(one.trace.at(-1)).toMatchObject({ agent: "decider", status: "failed", output_summary: "exposure edge not stored: planted World Model failure" });
+    expect(four.trace).toEqual(one.trace);
+  });
 });
 
 describe("the pass over an engine that waits 50 ms before each query", () => {
-  // Two passes over the recorded fixture at 50 ms a query: about 11 s at concurrency 1 and 3 s at 4.
-  it("falls in wall time by at least a factor of 3 at concurrency 4, never more than 4 queries in flight, the same queries and findings", { timeout: 60_000 }, async () => {
+  // Two passes over the recorded fixture at 50 ms a query: about 11 s at concurrency 1 and 3 s at 4 on an idle machine. The
+  // durations are printed, never asserted: the queries in flight and the order of what the pass writes are.
+  it("runs one query at a time at 1 and four at a time at 4, the same queries, the same trace in the same order, the same findings", { timeout: 120_000 }, async () => {
     const at = async (concurrency: number) => {
       const sql = await SqlJsEngine.create();
       sql.loadBundle(recorded);
       const { engine, seen } = slowEngine(sql, 50);
+      const sqls: string[] = [];
+      const counted: Engine = { ...engine, run: (s, o) => { sqls.push(s); return engine.run(s, o); } };
+      const tracer = new MemTracer("test_concurrency_slow", { model: "none" });
       const t0 = performance.now();
-      const result = await runPass(new DataLayer(engine), { world: new DriftWorld("test_concurrency_slow"), ledger: new MemoryLedger(sql), decidedAt: "2026-10-26T00:00:00.000Z", concurrency });
+      const result = await runPass(new DataLayer(counted), { tracer, world: new DriftWorld("test_concurrency_slow"), ledger: new MemoryLedger(sql), decidedAt: "2026-10-26T00:00:00.000Z", concurrency });
       const ms = performance.now() - t0;
       sql.close();
-      return { ms, seen, result };
+      return { ms, seen, sqls, trace: events(tracer), result };
     };
     const one = await at(1);
     const four = await at(4);
     expect(one.seen.maxInFlight).toBe(1);
     expect(four.seen.maxInFlight).toBe(4);
     expect(four.seen.queries).toBe(one.seen.queries);
-    expect(one.ms).toBeGreaterThanOrEqual(one.seen.queries * 50);
+    // the same statements, each as often; at 4 they start in another order, and the trace still comes out in the order of 1
+    expect([...four.sqls].sort()).toEqual([...one.sqls].sort());
+    expect(four.sqls).not.toEqual(one.sqls);
+    expect(four.trace).toEqual(one.trace);
+    expect(four.result.findings.map((f) => f.id)).toEqual(one.result.findings.map((f) => f.id));
     expect(four.result).toEqual(one.result);
     console.log(`50 ms a query: ${one.seen.queries} queries, ${Math.round(one.ms)} ms at 1, ${Math.round(four.ms)} ms at 4, ${(one.ms / four.ms).toFixed(2)}x`);
-    expect(one.ms / four.ms, `${one.seen.queries} queries: ${Math.round(one.ms)} ms at 1, ${Math.round(four.ms)} ms at 4`).toBeGreaterThanOrEqual(3);
   });
 });

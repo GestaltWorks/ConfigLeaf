@@ -53,6 +53,9 @@ function rowValues(def: TableDef, rows: readonly Record<string, unknown>[], wher
 export class SqlJsEngine implements Engine {
   readonly name = "sqljs" as const;
 
+  /** A statement of run() is between prepare and free (see run). */
+  private open = false;
+
   private constructor(private readonly db: Database) {}
 
   /** A fresh in-memory database with the shared schema and the file tables applied. */
@@ -169,15 +172,18 @@ export class SqlJsEngine implements Engine {
   /**
    * Run exactly one statement. Same refusal as the Zetaris adapter: a trailing semicolon is stripped, a second statement is refused; a ';' inside a literal is data.
    * Nothing in it awaits, so a statement runs whole from prepare to free: the concurrent pass's overlapping calls (PASS_CONCURRENCY) run one statement
-   * at a time on one engine, each as it would alone (test/concurrency.test.ts).
+   * at a time on one engine, each as it would alone (test/concurrency.test.ts). `open` holds that to account: a call that arrives while a statement is
+   * open (an await added between prepare and free, or a tracer that queries from inside emit) is refused, never interleaved.
    */
   async run(sql: string, opts: RunOptions = {}): Promise<QueryResult> {
+    if (this.open) throw new DataLayerError("sqljs: run re-entered while a statement is open; a statement runs whole, with no await between prepare and free");
     const clean = sql.trim().replace(/;+\s*$/, "");
     if (/;\s*\S/.test(stripLiterals(clean))) throw new DataLayerError("one statement per call");
     const queryId = randomUUID();
     const limit = opts.limit ?? 1000;
     const t0 = Date.now();
     let stmt: Statement | undefined;
+    this.open = true;
     try {
       stmt = this.db.prepare(clean);
       const columns = stmt.getColumnNames();
@@ -196,6 +202,7 @@ export class SqlJsEngine implements Engine {
       throw err instanceof DataLayerError ? err : new DataLayerError(`sqljs: ${msg}`);
     } finally {
       stmt?.free();
+      this.open = false;
     }
   }
 

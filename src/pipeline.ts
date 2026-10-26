@@ -517,11 +517,19 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
         + (lesson && rule ? `; policy: ${rule.rule_id} governs the setting, the exception decides` : ""),
     });
     // The decide step records the exposure line: SQL dates it, once per record and field, the World Model keeps it as an
-    // open edge, stored at the commit.
-    let storeEdge: (() => Promise<unknown>) | undefined;
-    const exposure = await recordExposure(layer, world, finding, {
-      tracer: t, cache: (key, measure) => shared.read(`exposure ${key}`, t, measure), defer: (store) => { storeEdge = store; },
-    });
+    // open edge, stored at the commit. Its lines are held at this place: the ok line is traced only once the commit has
+    // stored the edge, and a store that throws traces a failed line there and nothing after it.
+    const edgeLines = t?.hold();
+    let storeEdge: (() => Promise<void>) | undefined;
+    let exposure: ExposureLine | undefined;
+    try {
+      exposure = await recordExposure(layer, world, finding, {
+        tracer: edgeLines, cache: (key, measure) => shared.read(`exposure ${key}`, edgeLines, measure), defer: (store) => { storeEdge = store; },
+      });
+    } finally {
+      // nothing to store (not dated, or the read failed): the lines held here are all there will be
+      if (!storeEdge) edgeLines?.close();
+    }
     // Withdraw before the judge: no judge call is spent on a verdict that cannot move or a claim its own checks contradict;
     // nor on a verdict the technician's exception settled, in force or lapsed.
     const withdraw = applied
@@ -555,7 +563,15 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
       ...(exception ? { exception } : {}),
     };
     return async () => {
-      await storeEdge?.();
+      if (storeEdge) {
+        try {
+          await storeEdge();
+        } catch (e) {
+          edgeLines?.fail();
+          throw e;
+        }
+        edgeLines?.close();
+      }
       dispositions.push(row);
       findings.push(assessed);
     };
