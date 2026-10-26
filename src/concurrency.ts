@@ -40,6 +40,7 @@ export function checkLimit(limit: number): number {
 /**
  * Run `tasks`, at most `limit` at a time, started in task order, and their commits in task order (see the header). `tracerOf(i)`
  * is task i's tracer, taken when the task starts; it is closed after the commit, or marked failed when the task or its commit throws.
+ * A `tracerOf` that throws fails its task like the task throwing.
  */
 export async function inOrder(tasks: readonly Task[], limit: number, tracerOf: (i: number) => HeldTracer | undefined): Promise<void> {
   checkLimit(limit);
@@ -51,8 +52,9 @@ export async function inOrder(tasks: readonly Task[], limit: number, tracerOf: (
   const worker = async (): Promise<void> => {
     while (!stopped && next < tasks.length) {
       const i = next++;
-      const tracer = (tracers[i] = tracerOf(i));
+      let tracer: HeldTracer | undefined;
       try {
+        tracer = tracers[i] = tracerOf(i);
         settle[i]({ ok: true, commit: await tasks[i](tracer) });
       } catch (error) {
         stopped = true;

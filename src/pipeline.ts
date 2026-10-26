@@ -517,11 +517,20 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
         + (lesson && rule ? `; policy: ${rule.rule_id} governs the setting, the exception decides` : ""),
     });
     // The decide step records the exposure line: SQL dates it, once per record and field, the World Model keeps it as an
-    // open edge, stored at the commit.
-    let storeEdge: (() => Promise<unknown>) | undefined;
-    const exposure = await recordExposure(layer, world, finding, {
-      tracer: t, cache: (key, measure) => shared.read(`exposure ${key}`, t, measure), defer: (store) => { storeEdge = store; },
-    });
+    // open edge. The edge is stored at the commit; its lines are held here, in their place, and its ok line is written only
+    // once the edge is stored.
+    const edgeLines = t?.hold();
+    let storeEdge: (() => Promise<void>) | undefined;
+    let exposure: ExposureLine | undefined;
+    try {
+      exposure = await recordExposure(layer, world, finding, {
+        tracer: edgeLines, cache: (key, measure) => shared.read(`exposure ${key}`, edgeLines, measure), defer: (store) => { storeEdge = store; },
+      });
+    } catch (err) {
+      edgeLines?.fail();
+      throw err;
+    }
+    if (!storeEdge) edgeLines?.close();
     // Withdraw before the judge: no judge call is spent on a verdict that cannot move or a claim its own checks contradict;
     // nor on a verdict the technician's exception settled, in force or lapsed.
     const withdraw = applied
@@ -555,7 +564,15 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
       ...(exception ? { exception } : {}),
     };
     return async () => {
-      await storeEdge?.();
+      if (storeEdge) {
+        try {
+          await storeEdge();
+        } catch (err) {
+          edgeLines?.fail();
+          throw err;
+        }
+        edgeLines?.close();
+      }
       dispositions.push(row);
       findings.push(assessed);
     };

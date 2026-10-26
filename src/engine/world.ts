@@ -312,11 +312,12 @@ export function exposureLine(m: Extract<ExposureMeasure, { dated: true }>): Expo
 /**
  * The decide step's exposure: measure, store the edge, trace one line (agent decider, action triage: ok
  * when dated, not_checked when the log cannot date it), return the line for the finding or undefined.
- * `defer` takes the edge's store instead of running it, for a caller that writes the World Model in an order of its own:
- * the concurrent pass stores each finding's edge in finding order (src/pipeline.ts).
+ * `defer` takes the store of the edge, with the ok line it writes once the edge is stored, instead of running it: for a
+ * caller that writes the World Model in an order of its own, as the concurrent pass stores each finding's edge in finding
+ * order (src/pipeline.ts). A store that throws writes no ok line.
  */
 export async function recordExposure(
-  layer: DataLayer, world: DriftWorld, finding: FindingSummary, opts: RunOptions & { cache?: ExposureCache; defer?: (store: () => Promise<unknown>) => void } = {},
+  layer: DataLayer, world: DriftWorld, finding: FindingSummary, opts: RunOptions & { cache?: ExposureCache; defer?: (store: () => Promise<void>) => void } = {},
 ): Promise<ExposureLine | undefined> {
   const { defer, ...measured } = opts;
   const m = await measureExposure(layer, finding, { ...measured, agent: opts.agent ?? "decider" });
@@ -325,13 +326,15 @@ export async function recordExposure(
     opts.tracer?.emit({ agent: "decider", action: "triage", status: "not_checked", input_summary: `exposure ${m.record_id}`, output_summary: `exposure not dated: ${m.reason}`, detail: "model: none" });
     return undefined;
   }
-  const store = () => world.exposure(world.findingId(finding), world.recordId(finding.tenant_id, m.record_id), m.since, m.until, { eventId: m.event_id, dnsRunId: m.dns_run_id, bound: m.bound });
+  const store = async (): Promise<void> => {
+    await world.exposure(world.findingId(finding), world.recordId(finding.tenant_id, m.record_id), m.since, m.until, { eventId: m.event_id, dnsRunId: m.dns_run_id, bound: m.bound });
+    opts.tracer?.emit({
+      agent: "decider", action: "triage", status: "ok", input_summary: `exposure ${m.record_id}`,
+      output_summary: `${m.state} since ${m.since}: ${m.bound === "exact" ? "" : "at least "}${m.days} day(s) to ${m.until}, still so in DNS run ${m.dns_run_id}`,
+      detail: `first event of the current state: ${m.event_id} (${m.action}); ${m.bound === "exact" ? "a change into this state is on record" : `no earlier body on record sets another ${m.field} state, so the state may predate the log`}; model: none`,
+    });
+  };
   if (defer) defer(store);
   else await store();
-  opts.tracer?.emit({
-    agent: "decider", action: "triage", status: "ok", input_summary: `exposure ${m.record_id}`,
-    output_summary: `${m.state} since ${m.since}: ${m.bound === "exact" ? "" : "at least "}${m.days} day(s) to ${m.until}, still so in DNS run ${m.dns_run_id}`,
-    detail: `first event of the current state: ${m.event_id} (${m.action}); ${m.bound === "exact" ? "a change into this state is on record" : `no earlier body on record sets another ${m.field} state, so the state may predate the log`}; model: none`,
-  });
   return exposureLine(m);
 }

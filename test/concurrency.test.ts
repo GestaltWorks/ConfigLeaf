@@ -55,14 +55,14 @@ function slowEngine(inner: SqlJsEngine, delay: number, fails: (sql: string) => b
 }
 
 /** One pass over `bundle` at `concurrency`: its result, its trace, the ledger's rows in the order written, and the memory's recalls. */
-async function passAt(bundle: Bundle, concurrency: number, o: { opts?: PassOptions; memory?: () => TechnicianMemory; engine?: (e: SqlJsEngine) => Engine; ledger?: (e: SqlJsEngine) => Ledger } = {}) {
+async function passAt(bundle: Bundle, concurrency: number, o: { opts?: PassOptions; memory?: () => TechnicianMemory; engine?: (e: SqlJsEngine) => Engine; ledger?: (e: SqlJsEngine) => Ledger; world?: () => DriftWorld } = {}) {
   const sql = await SqlJsEngine.create();
   sql.loadBundle(bundle);
   const tracer = new MemTracer("test_concurrency", { model: "none" });
   const memory = o.memory?.();
   const layer = new DataLayer(o.engine ? o.engine(sql) : sql);
   try {
-    const result = await runPass(layer, { tracer, world: new DriftWorld("test_concurrency"), memory, ledger: o.ledger ? o.ledger(sql) : new MemoryLedger(sql), concurrency, ...o.opts });
+    const result = await runPass(layer, { tracer, world: o.world?.() ?? new DriftWorld("test_concurrency"), memory, ledger: o.ledger ? o.ledger(sql) : new MemoryLedger(sql), concurrency, ...o.opts });
     const read = new DataLayer(sql);
     const dispositions = objects(await read.run("SELECT * FROM {{t:disposition}}", {}, { limit: 100_000 })) as unknown as Disposition[];
     const fingerprints = objects(await read.run("SELECT * FROM {{t:referent_fingerprint}}", {}, { limit: 100_000 })) as unknown as ReferentFingerprint[];
@@ -122,6 +122,13 @@ describe("inOrder: tasks at most `limit` at a time, commits in task order", () =
     // a commit that throws is a failure at its task
     await expect(inOrder([async () => () => { throw new Error("commit 0"); }, async () => () => { committed.push(9); }], 2, () => undefined)).rejects.toThrow("commit 0");
     expect(committed).toEqual([0, 1, 2]);
+  });
+
+  it("fails a task whose tracer cannot be taken as if the task threw, and does not hang", async () => {
+    const committed: number[] = [];
+    const tasks: Task[] = [0, 1, 2, 3].map((i) => async () => () => { committed.push(i); });
+    await expect(inOrder(tasks, 2, (i) => { if (i === 2) throw new Error("no tracer for 2"); return undefined; })).rejects.toThrow("no tracer for 2");
+    expect(committed).toEqual([0, 1]);
   });
 
   it("takes a whole number of at least 1, as PASS_CONCURRENCY does", async () => {
@@ -195,6 +202,27 @@ describe("sql.js under overlapping runs", () => {
     overlapping.forEach((r, i) => expect(r.rows).toEqual(each[i % 3]));
     engine.close();
   });
+
+  it("refuses a statement or a write that starts while a statement runs, which only an await inside run() would allow", async () => {
+    const engine = await SqlJsEngine.create();
+    // The one way in while run() holds a statement: its own trace line, emitted between prepare and free.
+    let read: Promise<unknown> | undefined;
+    let write: unknown;
+    const reentering = new (class extends MemTracer {
+      override emit(e: Parameters<MemTracer["emit"]>[0]) {
+        read ??= engine.run("SELECT 1 AS n");
+        try { engine.insertRows("referent_fingerprint", []); } catch (err) { write ??= err; }
+        return super.emit(e);
+      }
+    })("test_sqljs_guard", {});
+    expect((await engine.run("SELECT 2 AS n", { tracer: reentering })).rows).toEqual([["2"]]);
+    await expect(read).rejects.toThrow("sqljs: a statement started while another statement was running on this engine");
+    expect(String(write)).toContain("sqljs: a write to referent_fingerprint started while another statement was running on this engine");
+    // once the statement is freed the engine runs and writes again
+    expect((await engine.run("SELECT 3 AS n")).rows).toEqual([["3"]]);
+    expect(engine.insertRows("referent_fingerprint", [])).toBe(0);
+    engine.close();
+  });
 });
 
 describe("the pass at concurrency 1 and 4: every finding, disposition, ledger row, recall and trace line the same", () => {
@@ -254,6 +282,8 @@ describe("the pass at concurrency 1 and 4: every finding, disposition, ledger ro
     // actor_attributed on one record, which several findings check: the first of them in order fails
     ["a check's query", (sql) => sql.startsWith("SELECT event_id, source, actor, action") && sql.includes("resource_id = '82de28f7baf86a005babc"), undefined],
     ["a detector's query", (sql) => sql.startsWith("SELECT n.obs_id, n.host, n.object_id, n.setting_path, n.refers_to_id"), undefined],
+    // the second query of an exposure measurement, a read several findings share: the record's row came back, the first event fails
+    ["an exposure query", (sql) => sql.startsWith("SELECT e.event_id, e.action, e.actor, e.occurred_at,"), undefined],
     // run_complete of the second host run: the gate asks first, before any finding's check does
     ["the gate's query of one run", (sql) => sql.startsWith("SELECT c.run_id") && sql.includes("WHERE c.run_id = 'run-67f4d6923cb4838d'"), undefined],
     ["the ledger's second referent fingerprint write, a commit", () => false, (e) => {
@@ -262,6 +292,24 @@ describe("the pass at concurrency 1 and 4: every finding, disposition, ledger ro
       return { record: (rows) => inner.record(rows), recordFingerprints: async (rows) => { if (++writes === 2) throw new Error("planted ledger failure"); return inner.recordFingerprints(rows); } };
     }],
   ];
+  it("a pass whose third exposure edge fails to store throws at 1 and 4 with the same trace, and writes no ok line for that edge", async () => {
+    class FailingWorld extends DriftWorld {
+      private stores = 0;
+      override async exposure(...args: Parameters<DriftWorld["exposure"]>) {
+        if (++this.stores === 3) throw new Error("planted World Model failure");
+        return super.exposure(...args);
+      }
+    }
+    const at = async (c: number) => passAt(recorded, c, { world: () => new FailingWorld("test_concurrency_world"), opts: { decidedAt: AT } });
+    const [one, four] = [await at(1), await at(4)];
+    if (one.ok || four.ok) throw new Error("the planted World Model failure did not fail the pass");
+    expect(four.error).toBe("planted World Model failure");
+    expect(one.error).toBe(four.error);
+    const stored = (t: typeof one.trace) => t.filter((e) => e.agent === "decider" && e.action === "triage" && e.status === "ok" && e.input_summary?.startsWith("exposure "));
+    expect(stored(one.trace)).toHaveLength(2);
+    expect(four.trace).toEqual(one.trace);
+  });
+
   for (const [name, fails, ledger] of failures) {
     it(`a pass that fails at ${name} throws the same error at 1 and 4, its trace the same up to the failure and nothing after`, async () => {
       const at = async (c: number) => passAt(recorded, c, { engine: (e) => slowEngine(e, 0, fails).engine, ledger, opts: { decidedAt: AT } });
