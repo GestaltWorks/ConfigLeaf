@@ -25,9 +25,9 @@ const copyOfStore = (): string => {
 };
 const digest = (dir: string): string => createHash("sha256").update(readFileSync(path.join(dir, "state.json"))).update(readFileSync(path.join(dir, "ledger.jsonl"))).digest("hex");
 
-function why(finding: string, dir: string): { status: number | null; out: string; err: string } {
+function why(finding: string, dir: string, at = "2026-10-26T12:00:00Z"): { status: number | null; out: string; err: string } {
   // --at pins the recall instant, so the lessons' expiry (30 Nov 2026) does not depend on the day the test runs.
-  const r = spawnSync(process.execPath, ["--import", "tsx", "scripts/why.ts", "--finding", finding, "--at", "2026-10-26T12:00:00Z"], {
+  const r = spawnSync(process.execPath, ["--import", "tsx", "scripts/why.ts", "--finding", finding, "--at", at], {
     cwd: ROOT, encoding: "utf8", timeout: 120_000, env: { ...process.env, SAMPLE_MODE: "true", DRIFT_MEMORY_DIR: dir, NO_COLOR: "1" },
   });
   return { status: r.status, out: r.stdout.replace(/\r\n/g, "\n"), err: r.stderr };
@@ -106,5 +106,33 @@ describe("npm run why", () => {
     expect(covered.out).toContain("source technician:cli; superseded by " + rule.id);
     expect(covered.out).toContain(`dream_approved proposal ${proposal.id}, derived from 18 lesson(s)  by lead technician`);
     expect(covered.out).not.toContain("no approved rule covers");
+  }, 240_000);
+
+  it("shows a keep_both conflict from either lesson: the held one while it is recalled, the new one once the held ones have lapsed", () => {
+    const dir = copyOfStore();
+    const m = new TechnicianMemory({ storage: "local", directory: dir, clock: () => Date.parse("2026-10-26T09:00:00.000Z"), gate: true });
+    // host-f324df.com was taught twice (mem-1 and mem-21, until 30 Nov 2026); the new lesson runs to 31 Jan 2027 and both stay in force
+    const kept = m.recordException({
+      tenantId: "client-1", findingClass: "proxied_without_real_ip", scopeKey: "host-f324df.com", reason: "Kept through the winter", expiresAt: "2027-01-31T00:00:00.000Z",
+      provenance: { kind: "cli", at: "2026-10-26T09:00:00.000Z", by: "lead technician" }, resolutions: [{ with: "mem-1", strategy: "keep_both" }, { with: "mem-21", strategy: "keep_both" }],
+    });
+
+    const held = why("fnd-de3c5e8ebdc2d209", dir);                                   // mem-1, the oldest in force, is recalled
+    expect(held.err).toBe("");
+    expect(held.out).toContain("lesson      mem-1, exception for proxied_without_real_ip on host-f324df.com (client-1)");
+    expect(held.out).toContain(`conflict-${kept.id}-mem-1: a later lesson recorded against this one, ${kept.id}, detected 2026-10-26T09:00:00.`);
+    expect(held.out).toContain("settled keep_both by lead technician at 2026-10-26T09:00:00.");
+    expect(held.out).toContain(`conflict_detected with ${kept.id}  by lead technician`);
+    expect(held.out).toContain(`conflict_resolved keep_both with ${kept.id}  by lead technician`);
+
+    const fresh = why("fnd-de3c5e8ebdc2d209", dir, "2026-12-01T00:00:00Z");         // mem-1 and mem-21 have lapsed: the new lesson is recalled
+    expect(fresh.err).toBe("");
+    expect(fresh.out).toContain(`lesson      ${kept.id}, exception for proxied_without_real_ip on host-f324df.com (client-1), in force until 2027-01-31T00:00:00.000Z`);
+    for (const other of ["mem-1", "mem-21"]) {
+      expect(fresh.out).toContain(`conflict-${kept.id}-${other}: recorded against ${other}, detected 2026-10-26T09:00:00.`);
+    }
+    expect(fresh.out).toContain("settled keep_both by lead technician at 2026-10-26T09:00:00.");
+    expect(fresh.out).toContain("conflict_detected with mem-1  by lead technician");
+    expect(fresh.out).toContain("conflict_resolved keep_both with mem-21  by lead technician");
   }, 240_000);
 });

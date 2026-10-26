@@ -35,7 +35,7 @@
 // `npm run answer` opens it; a store opened without records as it always has, and recall skips a superseded lesson
 // whichever way the store is opened.
 //
-// A rule (recordRule, src/engine/dreaming.ts) is an exception for one class over several scope keys, approved from the
+// A rule (recordRule, src/engine/dreaming.ts) is an exception for one class over one or more scope keys, approved from the
 // reference's dreaming in place of the lessons it is derived from. It is stored as an exception lesson with `scopeKeys` and
 // `derivedFrom` lineage, behind the same gate, and it supersedes those lessons. Recall hands the Decider the rule with
 // `scopeKey` set to the key the finding matched, so the pipeline reads it as it reads a lesson: same verb, same expiry.
@@ -94,7 +94,7 @@ export interface ExceptionLesson extends LessonBase {
   scopeKey: string;
   reason: string;
   /**
-   * A rule (npm run answer -- --approve-dream) is an exception for one class over several scope keys, in place of the
+   * A rule (npm run answer -- --approve-dream) is an exception for one class over one or more scope keys, in place of the
    * lessons it was derived from. `scopeKeys` is every key it covers, sorted, and `scopeKey` is the first; recall hands the
    * Decider the rule with `scopeKey` set to the key the finding matched. Absent on a lesson the technician taught.
    */
@@ -405,15 +405,21 @@ export class TechnicianMemory {
     for (const c of conflicts) {
       const strategy = resolutions.find((r) => r.with === c.with.id)!.strategy;
       const conflictId = `conflict-${winner.id}-${c.with.id}`;
-      this.hmem.ledger.log(winner.id, "conflict_detected", by, { details: { conflictId, with: c.with.id, reason: c.reason, confidence: Number(c.confidence.toFixed(3)) } });
+      const seen = { conflictId, reason: c.reason, confidence: Number(c.confidence.toFixed(3)) };
+      // Both lessons carry the whole trail, so `npm run why` and history() show it from either side: the new lesson was recorded
+      // against the held one ("new"), the held one had a later lesson recorded against it ("held"), whichever way it is settled.
+      this.hmem.ledger.log(winner.id, "conflict_detected", by, { details: { ...seen, with: c.with.id, side: "new" } });
+      this.hmem.ledger.log(c.with.id, "conflict_detected", by, { details: { ...seen, with: winner.id, side: "held" } });
       if (strategy === "supersede") {
         const loser = this.hmem.store.get(c.with.id)!;
         const previousState = snapshot(loser);
         loser.supersededBy = winner.id; // kept and penalised, never deleted (the reference's rule)
-        this.hmem.ledger.log(loser.id, "conflict_resolved", by, { previousState, newState: snapshot(loser), details: { conflictId, strategy, winner: winner.id } });
+        this.hmem.ledger.log(loser.id, "conflict_resolved", by, { previousState, newState: snapshot(loser), details: { conflictId, strategy, winner: winner.id, with: winner.id } });
+        this.hmem.ledger.log(winner.id, "conflict_resolved", by, { details: { conflictId, strategy, winner: winner.id, with: loser.id } });
         this.index.set(loser.id, { ...c.with, supersededBy: winner.id });
       } else {
         this.hmem.ledger.log(winner.id, "conflict_resolved", by, { details: { conflictId, strategy, with: c.with.id } });
+        this.hmem.ledger.log(c.with.id, "conflict_resolved", by, { details: { conflictId, strategy, with: winner.id } });
       }
     }
   }
@@ -479,7 +485,7 @@ export class TechnicianMemory {
   }
 
   /**
-   * (c) A rule approved from dreaming (src/engine/dreaming.ts): one exception for a class over several scope keys, in place of
+   * (c) A rule approved from dreaming (src/engine/dreaming.ts): one exception for a class over one or more scope keys, in place of
    * the lessons it is derived from. Those lessons must be exceptions in force on the rule's tenant and class that state the rule's
    * reason and expiry, and their scope keys must be the rule's keys exactly, so the rule decides what they decided. They are
    * superseded by it (kept on record, marked supersededBy, never recalled) and the ledger holds an update for each and a

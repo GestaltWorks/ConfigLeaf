@@ -20,7 +20,7 @@ import { DEFAULTS, HMEM } from "../../vendor/hmem/src/index.ts";
 import type { FindingClass } from "../catalogue/templates.ts";
 import { MemoryError, cleanFree, oneLine, type ConflictResolution, type ExceptionLesson, type Lesson, type TechnicianMemory } from "./memory.ts";
 
-/** A rule: an exception lesson over several scope keys with `derivedFrom` lineage. */
+/** A rule: an exception lesson over one or more scope keys with `derivedFrom` lineage. */
 export type Rule = ExceptionLesson & { scopeKeys: string[]; derivedFrom: string[] };
 
 export const isRule = (l: Lesson): l is Rule => l.kind === "exception" && Boolean(l.scopeKeys) && Boolean(l.derivedFrom?.length);
@@ -72,8 +72,9 @@ export function inForce(memory: TechnicianMemory): Lesson[] {
   return memory.lessons().filter((l) => !l.supersededBy && l.expiresAt > now && !isRule(l));
 }
 
-const ruleId = (p: Omit<RuleProposal, "id" | "clusters">): string =>
-  `drm-${createHash("sha256").update(JSON.stringify([p.tenantId, p.findingClass, p.reason, p.expiresAt, p.scopeKeys, p.derivedFrom])).digest("hex").slice(0, 12)}`;
+/** The proposal id: the rule's fields hashed with its scope keys and sources sorted here, so no caller has to sort before hashing. */
+export const ruleId = (p: Omit<RuleProposal, "id" | "clusters">): string =>
+  `drm-${createHash("sha256").update(JSON.stringify([p.tenantId, p.findingClass, p.reason, p.expiresAt, [...p.scopeKeys].sort(), [...p.derivedFrom].sort(byId)])).digest("hex").slice(0, 12)}`;
 
 /** Why the lessons of a cluster are in no rule, from the lessons themselves. */
 function whyWithheld(left: readonly Lesson[]): string {

@@ -126,7 +126,11 @@ describe("the conflict gate", () => {
     const a = m.recordException(exception());
     const b = m.recordException(exception({ expiresAt: LATER, resolutions: [{ with: a.id, strategy: "keep_both" }] }));
     expect(m.recall(finding).applicable.map((l) => l.id)).toEqual([a.id, b.id]);
-    expect(m.ledgerEntries().find((x) => x.action === "conflict_resolved")).toMatchObject({ memoryId: b.id, details: { strategy: "keep_both", with: a.id } });
+    // the trail is on both lessons, so history() and `why` show it from either side
+    const trail = (id: string) => m.history(id).filter((x) => x.action.startsWith("conflict_")).map((x) => [x.action, (x.details as { side?: string; with?: string }).side ?? null, (x.details as { with?: string }).with]);
+    expect(trail(b.id)).toEqual([["conflict_detected", "new", a.id], ["conflict_resolved", null, a.id]]);
+    expect(trail(a.id)).toEqual([["conflict_detected", "held", b.id], ["conflict_resolved", null, b.id]]);
+    for (const id of [a.id, b.id]) expect(m.history(id).find((x) => x.action === "conflict_resolved")).toMatchObject({ actor: "technician", details: { strategy: "keep_both" } });
 
     // two held lessons conflict; settling one leaves the other named
     const two = mem();
@@ -196,8 +200,19 @@ describe("the conflict gate", () => {
       const read = new TechnicianMemory({ storage: "read", directory: d, clock: () => T0 });
       expect(read.lesson(a.id)?.supersededBy).toBe(b.id);
       expect(read.recall(finding).applicable.map((l) => l.id)).toEqual([b.id]);
-      expect(read.history(a.id).map((e) => e.action)).toEqual(["create", "conflict_resolved"]);
-      expect(read.history(b.id).map((e) => e.action)).toEqual(["create", "conflict_detected"]);
+      // each lesson carries the whole trail, on disk as in memory
+      expect(read.history(a.id).map((e) => e.action)).toEqual(["create", "conflict_detected", "conflict_resolved"]);
+      expect(read.history(b.id).map((e) => e.action)).toEqual(["create", "conflict_detected", "conflict_resolved"]);
+
+      // keep_both and an answer, written by a store that is then dropped: a reader sees the state the conflict left, nothing lost with the write
+      const c = m.recordException(exception({ scopeKey: "www.example.invalid" }));
+      const e2 = m.recordException(exception({ scopeKey: "www.example.invalid", expiresAt: LATER, resolutions: [{ with: c.id, strategy: "keep_both" }] }));
+      const q1 = m.recordAnswer(answer("Yes"));
+      const q2 = m.recordAnswer(answer("No", "Is the origin reached only through the tunnel?", { resolutions: [{ with: q1.id, strategy: "supersede" }] }));
+      const again = new TechnicianMemory({ storage: "read", directory: d, clock: () => T0 });
+      expect(again.lessons().map((l) => [l.id, l.supersededBy ?? null])).toEqual([[a.id, b.id], [b.id, null], [c.id, null], [e2.id, null], [q1.id, q2.id], [q2.id, null]]);
+      expect(again.lesson(q2.id)?.supersedes).toEqual([q1.id]);
+      for (const id of [c.id, e2.id]) expect(again.history(id).map((x) => x.action)).toEqual(["create", "conflict_detected", "conflict_resolved"]);
     } finally {
       rmSync(d, { recursive: true, force: true });
     }

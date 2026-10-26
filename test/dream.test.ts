@@ -18,7 +18,7 @@ import { lessonRows, ruleRows } from "../src/data/file-rows.ts";
 import { ADOPTION_CHECK_SQL } from "../src/data/files.ts";
 import { decisionInstantWith } from "../src/data/instant.ts";
 import { objects } from "../src/data/queries.ts";
-import { approveDream, dreamOver, renderDream, rulesOf } from "../src/engine/dreaming.ts";
+import { approveDream, dreamOver, renderDream, ruleId, rulesOf } from "../src/engine/dreaming.ts";
 import { lineageOf, renderLineage } from "../src/engine/lineage.ts";
 import { ConflictError, MemoryError, TechnicianMemory, type FindingScope } from "../src/engine/memory.ts";
 import { DriftWorld } from "../src/engine/world.ts";
@@ -324,5 +324,35 @@ describe("approval through npm run answer, and why on the findings the rule cove
     expect(text).toContain("superseded by " + proxiedRule.id);
     expect(text).toContain(`dream_approved proposal ${proxiedRule.proposalId}, derived from 20 lesson(s)  by technician`);
     expect(digest(COMMITTED)).toBe(untouched);
+  }, 240_000);
+
+  it("a proposal id does not depend on the order its keys and sources arrive in", () => {
+    const m = new TechnicianMemory({ clock: () => AT });
+    threeLessons(m);
+    const { id, clusters: _clusters, ...fields } = dreamOver(m).proposals[0];
+    expect(ruleId({ ...fields, scopeKeys: [...fields.scopeKeys].reverse(), derivedFrom: [...fields.derivedFrom].reverse() })).toBe(id);
+    expect(ruleId({ ...fields, reason: "another reason" })).not.toBe(id);
+  });
+
+  it("an id from before another writer's lesson is refused by the command and leaves the store untouched; the id dream prints next is approved", () => {
+    const dir = tmp("dream-race-");
+    const first = new TechnicianMemory({ storage: "local", directory: dir, clock: () => AT });
+    for (const k of ["a", "b", "c"]) first.recordException(lesson(`${k}.example.invalid`, { expiresAt: "2099-12-31T00:00:00.000Z" }));
+    const stale = /(drm-[0-9a-f]{12}) {2}ADOPT/.exec(cli("dream", dir).out);
+    expect(stale, "dream prints a proposal id").not.toBeNull();
+    // another command teaches a fourth lesson that shares the rule's class, reason and expiry, between `dream` and `--approve-dream`
+    new TechnicianMemory({ storage: "local", directory: dir, clock: () => AT }).recordException(lesson("d.example.invalid", { expiresAt: "2099-12-31T00:00:00.000Z" }));
+    const written = digest(dir);
+    const refused = cli("answer", dir, "--approve-dream", stale![1]);
+    expect(refused.status).toBe(1);
+    expect(refused.err.trim().split("\n")).toHaveLength(1);
+    expect(refused.err).toContain(`no rule proposal ${stale![1]} over the lessons as they stand now; run npm run dream again`);
+    expect(digest(dir)).toBe(written);
+    const current = /(drm-[0-9a-f]{12}) {2}ADOPT proxied_without_real_ip on 4 scope\(s\)/.exec(cli("dream", dir).out);
+    expect(current, "dream prints the proposal over four lessons").not.toBeNull();
+    expect(current![1]).not.toBe(stale![1]);
+    const approved = cli("answer", dir, "--approve-dream", current![1]);
+    expect([approved.status, approved.err]).toEqual([0, ""]);
+    expect(approved.out).toContain("derived from 4 lesson(s): mem-1 mem-2 mem-3 mem-4");
   }, 240_000);
 });

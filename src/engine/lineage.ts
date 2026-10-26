@@ -63,7 +63,7 @@ const SCOPE_ORDER: ScopeType[] = ["name", "host", "address"];
 // The details the ledger holds for the entries this module reads, as TechnicianMemory writes them. A ledger entry of one of these
 // actions whose details do not match is corrupt or from another schema: reading it fails loudly, naming the entry, and nothing
 // is guessed.
-const DETECTED = z.object({ conflictId: z.string().min(1), with: z.string().min(1), reason: z.string(), confidence: z.number() });
+const DETECTED = z.object({ conflictId: z.string().min(1), with: z.string().min(1), side: z.enum(["new", "held"]), reason: z.string(), confidence: z.number() });
 const RESOLVED = z.object({ conflictId: z.string().min(1), strategy: z.enum(["supersede", "keep_both"]), winner: z.string().min(1).optional(), with: z.string().min(1).optional() });
 const APPROVED = z.object({ proposalId: z.string().min(1), derivedFrom: z.array(z.string()) });
 
@@ -73,9 +73,6 @@ function detailsOf<T extends z.ZodType>(schema: T, e: LedgerEntry): z.infer<T> {
   throw new MemoryError(`the ledger entry ${e.action} for ${e.memoryId} at ${iso(e.timestamp)} has malformed details: ${r.error.issues.map((i) => `${i.path.join(".") || "details"} ${i.message}`).join("; ")}`);
 }
 
-/** The winner a conflict_resolved entry names, if any. */
-const winnerOf = (e: LedgerEntry): string | undefined => (e.action === "conflict_resolved" ? detailsOf(RESOLVED, e).winner : undefined);
-
 function conflictsOf(memory: TechnicianMemory, id: string): ConflictMet[] {
   const entries = memory.ledgerEntries();
   const resolved = new Map<string, { entry: LedgerEntry; details: z.infer<typeof RESOLVED> }>();
@@ -84,11 +81,11 @@ function conflictsOf(memory: TechnicianMemory, id: string): ConflictMet[] {
   for (const e of entries) {
     if (e.action !== "conflict_detected") continue;
     const d = detailsOf(DETECTED, e);
-    const side = e.memoryId === id ? "new" : d.with === id ? "held" : null;
-    if (!side) continue;
+    if (e.memoryId !== id) continue; // each lesson carries its own side of the trail (TechnicianMemory.settle logs both)
+    const side = d.side;
     const r = resolved.get(d.conflictId);
     met.push({
-      id: d.conflictId, other: side === "new" ? d.with : e.memoryId, side, reason: d.reason, confidence: d.confidence, detectedAt: iso(e.timestamp),
+      id: d.conflictId, other: d.with, side, reason: d.reason, confidence: d.confidence, detectedAt: iso(e.timestamp),
       resolution: r ? { strategy: r.details.strategy, by: r.entry.actor, at: iso(r.entry.timestamp), winner: r.details.winner ?? null } : null,
     });
   }
@@ -135,8 +132,8 @@ export function lineageOf(memory: TechnicianMemory, found: Finding): Lineage {
       rule: rule ? { id: rule.id, proposalId: rule.proposalId ?? "", derivedFrom: rule.derivedFrom, approvedBy: rule.provenance.by, approvedAt: rule.recordedAt } : null,
       taught,
       conflicts: [...conflicts.values()],
-      // Its own entries, and the resolutions logged under a lesson it superseded (the reference logs conflict_resolved under the loser).
-      history: memory.ledgerEntries().filter((e) => e.memoryId === lesson.id || winnerOf(e) === lesson.id),
+      // Its own entries: its creation, both sides of every conflict it met, the steps that touched it.
+      history: memory.history(lesson.id),
     },
   };
 }
