@@ -21,6 +21,12 @@
 // EXPORT_DENY_WORDS). Over rows the collectors already redacted this changes nothing (test/eval.test.ts holds it
 // to that over every finding of test/fixtures/recorded-bundle.json); a label that reached a claim or a row any
 // other way goes out as its pseudonym. The verdict names the ladder's route that answered and its attempts.
+//
+// After the redactor the Scout guard reads the claim and the first MAX_EVIDENCE_ROWS rows, cell by cell (src/guard/
+// scout.ts, wired in src/guard/withhold.ts). A cell it blocks goes out as a marker, so the model reads none of its
+// text; a claim it blocks is not asked of any model: not_judged, "guard blocked the claim", no call, and the verb stays
+// with the rules. Each block and each review leaves a trace line, action "guard", with the class and the text's
+// location and never the text; the verdict's `guard` lists the same facts.
 
 import { z } from "zod";
 import { Nightshift, type ChatMessage, type ChatResult } from "../adapters/nightshift.ts";
@@ -28,6 +34,7 @@ import { config } from "../config.ts";
 import { DataLayerError, assertSelectOnly, stripLiterals, type DataLayer } from "../data/layer.ts";
 import { SCHEMA_SQL, TABLE_NAMES } from "../data/schema.ts";
 import { ReceiptStore, gateChatResult, gateWithCustody, tenantAppId, type CustodyCheck, type GateResult, type ReceiptFinder } from "../gate.ts";
+import { guardJudgePrompt, type GuardNote } from "../guard/withhold.ts";
 import { Redactor } from "../redactor.ts";
 import type { Tracer } from "../trace.ts";
 
@@ -76,6 +83,8 @@ export interface JudgeVerdict {
   /** From the gate: the records Nightshift's memory injected as the signed receipt states (null with no receipt), and the meterless-scope sent. Absent when no gate ran. */
   memoryInjected?: number | null;
   scope?: string | null;
+  /** What the Scout guard found in the claim and the evidence cells (src/guard/withhold.ts): facts only, never the text. Absent when it found nothing. */
+  guard?: GuardNote[];
 }
 
 export interface JudgeInput {
@@ -191,15 +200,26 @@ class ModelUnavailable extends Error {}
 export async function judgeClaim(input: JudgeInput): Promise<JudgeVerdict> {
   const { layer, nightshift, tracer } = input;
   const redactor = input.redactor ?? modelInputRedactor();
-  const claim = redactor.text(input.claim);
-  const evidenceRows = redactEvidence(input.evidenceRows, redactor);
+  // The Scout guard reads what the redactor leaves, before any prompt is built (src/guard/withhold.ts): a blocked
+  // evidence cell is replaced by a marker, and a blocked claim ends the judgement below.
+  const guarded = guardJudgePrompt(redactor.text(input.claim), redactEvidence(input.evidenceRows, redactor), MAX_EVIDENCE_ROWS, { tracer, agent: "judge", prompt: "judge" });
+  const claim = guarded.claim;
+  const evidenceRows = guarded.evidence;
   const tier = input.requestedTier ?? "ultra";
   const requestedModels = input.requestedModels ?? (input.model ? [input.model] : [config.nightshift.modelJudge, ...config.nightshift.fallbackJudge]);
   const receipts = input.receipts ?? new ReceiptStore();
   const t0 = Date.now();
-  const done = (v: Omit<JudgeVerdict, "latencyMs">): JudgeVerdict => ({ ...v, latencyMs: Date.now() - t0 });
+  const done = (v: Omit<JudgeVerdict, "latencyMs">): JudgeVerdict => ({ ...v, latencyMs: Date.now() - t0, ...(guarded.notes.length ? { guard: guarded.notes } : {}) });
   const none = { sql: null, rowCount: null, rationale: null, receiptId: null, servedModel: null };
   const summary = claim.slice(0, 160);
+
+  // 00. A claim the guard blocks is not asked of any model: not_judged, the verb stays with the rules.
+  if (guarded.claimBlocked) {
+    const n = guarded.notes[0];
+    const reason = `guard blocked the claim (${n.class}, line ${n.line}): ${n.reason}; no call made`;
+    tracer?.emit({ agent: "judge", action: "check", status: "not_judged", input_summary: "claim withheld by the Scout guard", output_summary: "not judged", detail: reason });
+    return done({ status: "not_judged", reason, ...none });
+  }
 
   // 0. The tenant's app id. A tenant id that is not a header-safe token cannot go out as meterless-app, so no
   //    call is made: not_judged with the reason, never a throw out of a pass or a live pre-flight.

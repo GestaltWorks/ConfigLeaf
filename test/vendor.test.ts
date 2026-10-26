@@ -4,7 +4,9 @@
 // CRLF turned to LF, the form every vendored file has in the index, so a Windows checkout with
 // core.autocrlf=true hashes to the same ids. `gh api repos/Meterless/Meterless/git/trees/<commit>?recursive=1`
 // lists the same ids. A changed byte, a missing file or an added file fails the first check; the third check
-// shows each one on a copy in a temporary directory. Offline; vendor/ is only read.
+// shows each one on a copy in a temporary directory. vendor/scout-intent holds the 8 data files of the Scout Intent
+// smoke set with a manifest of its own (vendor/scout-intent/UPSTREAM.json, same commit); the walk of vendor/ leaves it
+// to the last describe, which checks it the same way. Offline; vendor/ is only read.
 import { createHash } from "node:crypto";
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -41,15 +43,23 @@ function* walk(dir: string): Generator<string> {
   }
 }
 
-// Walks root/vendor (node_modules and the manifest itself are skipped) and compares each file's blob id, CRLF
-// read as LF, with the manifest's entry for its path relative to root.
-export function verifyVendor(root: string, manifest: VendorManifest): VendorCheck {
+// vendor/scout-intent holds data files and a manifest of its own (vendor/scout-intent/UPSTREAM.json); the walk of
+// vendor/ leaves that directory to its own check below.
+const SCOUT_DIR = "vendor/scout-intent";
+
+// Walks root/<dir> (default vendor; node_modules and the manifest itself are skipped, and so is every directory in
+// `skip`, default vendor/scout-intent) and compares each file's blob id, CRLF read as LF, with the manifest's entry for
+// its path relative to root. A path in `own` is a file written in this repository, present and outside the manifest.
+export function verifyVendor(root: string, manifest: VendorManifest, opts: { dir?: string; skip?: readonly string[]; own?: readonly string[] } = {}): VendorCheck {
+  const dir = opts.dir ?? "vendor";
+  const skip = opts.skip ?? [SCOUT_DIR];
+  const own = new Set(opts.own ?? []);
   const expected = new Map(manifest.files.map((f) => [f.path, f.blob]));
   const seen = new Set<string>();
   const result: VendorCheck = { matched: 0, mismatched: [], missing: [], extra: [] };
-  for (const file of walk(path.join(root, "vendor"))) {
+  for (const file of walk(path.join(root, dir))) {
     const rel = path.relative(root, file).split(path.sep).join("/");
-    if (rel === "vendor/UPSTREAM.json") continue;
+    if (rel === `${dir}/UPSTREAM.json` || own.has(rel) || skip.some((s) => rel.startsWith(`${s}/`))) continue;
     seen.add(rel);
     const want = expected.get(rel);
     if (!want) { result.extra.push(rel); continue; }
@@ -93,6 +103,37 @@ describe("vendored engines against upstream blob ids", () => {
       expect(check.missing).toHaveLength(31);
       expect(check.missing).not.toContain(changed);
       expect(check.missing).not.toContain(kept);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("vendored Scout Intent smoke-set data against upstream blob ids", () => {
+  const SCOUT: VendorManifest = JSON.parse(readFileSync(path.join(ROOT, SCOUT_DIR, "UPSTREAM.json"), "utf8"));
+  const OWN = [`${SCOUT_DIR}/README.md`];
+
+  it("the 8 data files under vendor/scout-intent are the manifest's and match their upstream blob ids at the commit the other engines name", () => {
+    expect(SCOUT.commit).toBe(MANIFEST.commit);
+    expect(SCOUT.files).toHaveLength(8);
+    expect(verifyVendor(ROOT, SCOUT, { dir: SCOUT_DIR, skip: [], own: OWN })).toEqual({ matched: 8, mismatched: [], missing: [], extra: [] });
+  });
+
+  it("a changed byte or an added file under vendor/scout-intent is reported, and the walk of vendor/ leaves the directory alone", () => {
+    const tmp = mkdtempSync(path.join(os.tmpdir(), "vendor-scout-"));
+    try {
+      const changed = `${SCOUT_DIR}/evals/regression-set/v1/intents/deal.jsonl`;
+      mkdirSync(path.dirname(path.join(tmp, changed)), { recursive: true });
+      cpSync(path.join(ROOT, changed), path.join(tmp, changed));
+      const bytes = readFileSync(path.join(tmp, changed));
+      bytes[0] = bytes[0] ^ 1;
+      writeFileSync(path.join(tmp, changed), bytes);
+      writeFileSync(path.join(tmp, `${SCOUT_DIR}/added.jsonl`), "{}\n");
+      const check = verifyVendor(tmp, SCOUT, { dir: SCOUT_DIR, skip: [], own: OWN });
+      expect(check.mismatched).toEqual([changed]);
+      expect(check.extra).toEqual([`${SCOUT_DIR}/added.jsonl`]);
+      expect(check.missing).toHaveLength(7);
+      expect(verifyVendor(tmp, MANIFEST).extra).toEqual([]);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

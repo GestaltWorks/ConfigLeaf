@@ -10,7 +10,8 @@
 // Store is the sink of the action rows and of the approvals a re-created record carries. The verification's population
 // is src/probe/run.ts probePopulation: PROBE_TARGETS_OVERRIDE's names when it is set (a lab aid), else the account's,
 // with the real names the restored object serves as its served names (verifyProbe), so a name a wildcard covers is
-// probed under that wildcard.
+// probed under that wildcard. An apply also gets the contract authority (src/guard/contract.ts): the deployment's
+// Ed25519 key under .scout/, generated the first time a contract is issued or checked, gitignored; a dry run gets none.
 
 import { Nightshift } from "../adapters/nightshift.ts";
 import { Cloudflare } from "../collectors/cloudflare.ts";
@@ -19,6 +20,7 @@ import { config, type ProbeOverride } from "../config.ts";
 import type { DataLayer } from "../data/layer.ts";
 import type { Store } from "../data/store.ts";
 import { ReceiptStore } from "../gate.ts";
+import { LocalContractAuthority } from "../guard/contract.ts";
 import { runPass, type Finding } from "../pipeline.ts";
 import { probePopulation, type PopulationSource, type ProbeSink } from "../probe/run.ts";
 import type { Redactor } from "../redactor.ts";
@@ -75,5 +77,6 @@ export function liveActorDeps(o: LiveOptions): ActorDeps {
     ultra: [config.nightshift.modelJudge, ...config.nightshift.fallbackJudge],
     tracer: o.tracer,
     settleMs: RELOAD_SETTLE_MS,
+    contracts: o.apply ? LocalContractAuthority.local() : null,
   };
 }

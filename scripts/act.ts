@@ -14,6 +14,10 @@
 // the host's ssh alias, the Cloudflare record writes, the probes into the Store, Nemotron through Nightshift, and one
 // action row per action through the Store (DATABASE_URL; --schema for another search_path). --run narrows the
 // dispositions to those runs (repeatable); default: the run of each surface and host's latest decided disposition.
+// Under --apply a ROLLBACK and a FIX run only against a signed execution contract (src/guard/contract.ts): the plan step
+// issues it for the action (five minutes, Ed25519, under the key in .scout/, generated on first use and gitignored), and
+// the Actor refuses an unsigned, expired or out-of-scope one and traces why. The text of a config file or a ticket that
+// a model reads first passes the Scout guard (src/guard/scout.ts); a blocked snippet never reaches the model.
 // Exit 0 when the Actor ran, whatever each action's status; 1 when a read or a write failed; 2 on a usage error, or for
 // --apply a blank REDACT_SALT, DATABASE_URL, CLOUDFLARE_API_TOKEN or ZETARIS_API_KEY, or SAMPLE_MODE.
 
