@@ -335,36 +335,50 @@ evidence row (`2026-10-25 15:52:07 UTC · journal · user-3f2a1c · tee · /etc/
 
 `npm run console` serves the technician's console on `http://127.0.0.1:8090/` (`--port` or `CONSOLE_PORT` names
 another port), every page rendered on the server from the DataLayer the agent reads, with no external script, style or
-font (`src/console/`). Overview is the owner's report, rendered on load. Settings lists every object of the latest
-passing runs, files per host and records per zone, with its live value, its approval, its lock, the governing rule's
-family, its last change and its status; a drawer per object holds the vault diff, the restore proof, what a restore
-from the newest backup would regress, its references, its decisions, its actions with their receipts and its change
-windows. Findings, Actions and tickets, Traces and Sources show the current decisions, the action and ticket rows, the
-trace files of `logs/` and `examples/traces/`, and each source's row counts and DQ results.
+font (`src/console/`). The pages link one stylesheet and one script from `/assets/`, each path naming its content's
+hash and cached for a year; every page is `no-store` and its Content-Security-Policy holds no `'unsafe-inline'`, the
+report's own style and scripts carrying the response's nonce. Overview is the owner's report, rendered on load.
+Settings lists every object of the latest passing runs, one line each: its name with its host or zone, its live
+value, its approval, its lock, the governing rule's family, its last change and its status, the objects with a
+technician, drifted, held or in an open window first; a drawer per object holds the full path, the vault diff, the
+restore proof, what a restore from the newest backup would regress, its references, its decisions, its actions with
+their receipts and its change windows. Findings, Actions and tickets, Traces and Sources show the current decisions
+with every time in their reasons formatted, the action and ticket rows, the tenant's trace files of `logs/` and
+`examples/traces/` (those whose cycle, pass or receipts name it, a ticket's URL shown as its number), and each
+source's row counts and DQ results.
 
 Three actions change a setting, each confirmed on the page and carrying the page's token:
 
-- Unlock opens a change window on the object: who, until (1 to 72 hours from now) and why, one `change_window` row.
-- Approve runs the approve module (`src/vault/approve.ts`, as `npm run approve` does) on the object from the latest passing run of its host or zone, names that run's vault commit and closes the open window.
+- Unlock opens a change window on the object: who (one line, up to 200 characters), until (1 to 72 hours from now) and why (one line, up to 500), one `change_window` row. The table holds `until` after `opened_at`, a `closed_at` at or after it and a known surface. Unlock is refused while a window is open on the object, while the windows cannot be read, and when the same object was unlocked at the same millisecond.
+- Approve runs the approve module (`src/vault/approve.ts`, as `npm run approve` does) on the object from the latest passing run of its host or zone, names that run's vault commit, or says the vault holds no copy of the run or that the read failed, and closes the open window.
 - Lock closes the open window and approves nothing.
 
 While a window is open, a drift on its object (`drift_vs_approved`, `changed_since_backup`, `approved_missing`) that
 the governing rule would roll back, fix or hold is HOLD until the window ends, its reason naming the window, who
-opened it, its end and why; ESCALATE and ADOPT stand, and outside a window the Decider decides as before
-(`src/policy/decide.ts`, step 3). Record exception records an accepted exception on a finding, as
-`npm run answer -- --accept` does, and Run a pass runs the pass over the store; the console never runs act.
+opened it, its end and why, and its disposition row carrying the `window_id`; ESCALATE and ADOPT stand, and outside a
+window the Decider decides as before (`src/policy/decide.ts`, step 3). The prior-HOLD read skips a row with a
+`window_id`, so a window neither starts nor ends a rule's expiry. A pass that cannot read the windows escalates every
+such drift a rule would roll back or fix, its reason "change windows not read: <error>; a technician decides", so a
+declared change is never undone on a failed read. Over Zetaris a pass reads `change_window` only when
+`SHOW DATASOURCE TABLES` lists it. Record exception records an accepted exception on a finding until a date
+(00:00 UTC) or an instant in the millisecond form, as `npm run answer -- --accept` does, and Run a pass runs the pass
+over the store; the console never runs act.
 
 `SAMPLE_MODE=true npm run console` needs no services: the bundle (`--bundle`, default `sample/bundle.json`) loads
 into sql.js, the sample's pass decides at the bundle's instant, and Unlock, Approve, Lock and Run a pass change the
 sql.js store for the life of the process; Record exception writes `examples/memory` only with `--write`.
 `--bundle test/fixtures/policy-bundle.json` loads the loop's fixture world, whose drifted `app.conf` a window holds.
-Live, `--tenant` or `CONSOLE_TENANT` names the tenant, the console applies `sql/schema.sql` when it starts, its passes
-are dry passes that record nothing, and `npm run zetaris:setup` registers `change_window` in `DRIFT` as it registers
-any table the datasource lacks. On the lab, 26 Oct 2026 02:22 to 02:29 UTC through Zetaris: a window opened on
-`lab.example`, a `sudo -n tee` break to port 8095 and its collection, and the console's pass gave
-`drift_vs_approved` and `changed_since_backup` HOLD under rule-6c41a25a00c404c8 with the window's reason, the same
-file the 02:20 UTC pass with no window open gave ROLLBACK; Approve wrote the live file as the approved value and closed
-the window, and the next pass gave no drift and `changed_since_backup` HOLD 24 h, the export holding the old bytes.
+Live, `--tenant` or `CONSOLE_TENANT` names the tenant, the console applies `sql/schema.sql` and the Store's migrations
+when it starts (`disposition.window_id`, the `change_window` constraints), its passes are dry passes that record
+nothing, and it prints one line naming `npm run zetaris:setup` when Zetaris does not list `change_window` or does not
+read `disposition.window_id`; the setup registers the table in `DRIFT` and refreshes the columns. On the lab, 26 Oct
+2026 02:22 to 02:29 UTC through Zetaris: a window opened on `lab.example`, a `sudo -n tee` break to port 8095 and its
+collection, and the console's pass gave `drift_vs_approved` and `changed_since_backup` HOLD under
+rule-6c41a25a00c404c8 with the window's reason, the same file the 02:20 UTC pass with no window open gave ROLLBACK;
+Approve wrote the live file as the approved value and closed the window, and the next pass gave no drift and
+`changed_since_backup` HOLD 24 h, the export holding the old bytes. `test/console.test.ts` covers the window step, the
+failed read, the actions and the pages offline; the migration runs in `test/store.test.ts` against a throwaway
+Postgres schema.
 
 ## Why it changed
 
