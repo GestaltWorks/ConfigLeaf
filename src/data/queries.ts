@@ -317,6 +317,48 @@ export function foundButDifferentSql(dl: DataLayer, params: FoundButDifferentPar
   return dl.run(FOUND_BUT_DIFFERENT_SQL, params, opts);
 }
 
+// ---- Microsoft 365's mail records against what DNS serves ----------------------------------------------------
+//
+// One setting in two systems: Microsoft 365 says which MX, SPF, autodiscover and DKIM records each verified domain
+// needs (the m365.dns run, src/collectors/m365.ts: four observation rows per record, domain, type, name and
+// content, under object_id <domain>/<TYPE>/<label>), and Cloudflare serves what is published (dns_record). The join
+// runs through the names every detector joins through: the name row's refers_to_id is the pseudonym dns_record.name
+// carries, under the tenant's salt. Under the Zetaris measurements above: plain column comparisons in the top-level
+// WHERE, instr and lower in a JOIN ON and in a correlated subquery's WHERE, every correlation in a subquery's WHERE,
+// an ORDER BY ending on keys.
+
+export type MailRecordParams = { tenant_id: string; run_id: string; dns_run_id: string };
+
+/**
+ * m365_mail_record: the records Microsoft 365 requires (run_id, the latest passing m365.dns run) that the DNS run
+ * does not serve as required, for every domain that is a zone of the DNS run: a domain outside the collected zones is
+ * not Cloudflare's to serve and gives no row. A served record matches when it has the record's name and type and,
+ * for an MX or a CNAME, its content (case aside) and is not proxied (a proxied CNAME answers with Cloudflare's
+ * addresses, not the target); for the SPF TXT, when an SPF record at the name (content holding v=spf1) carries
+ * what Microsoft 365 requires of it, its include mechanism, whatever else the record holds. A record with no match
+ * gives one row per served record of its name and type (the SPF records alone for a TXT), state different, or one
+ * row with every served column NULL, state missing.
+ */
+export const MAIL_RECORDS_SQL = `SELECT c.obs_id, c.object_id, m.value_redacted AS domain, t.value_redacted AS type, n.refers_to_id AS name, c.value_hash,
+       c.value_redacted AS expected, c.observed_at, s.record_id, s.content AS served, s.proxied, s.observed_at AS dns_observed_at,
+       CASE WHEN s.record_id IS NULL THEN 'missing' ELSE 'different' END AS state
+FROM {{t:observation}} c
+JOIN {{t:observation}} t ON t.run_id = c.run_id AND t.object_id = c.object_id AND t.setting_path = 'type'
+JOIN {{t:observation}} n ON n.run_id = c.run_id AND n.object_id = c.object_id AND n.setting_path = 'name'
+JOIN {{t:observation}} m ON m.run_id = c.run_id AND m.object_id = c.object_id AND m.setting_path = 'domain'
+LEFT JOIN {{t:dns_record}} s ON s.tenant_id = c.tenant_id AND s.run_id = {{p:dns_run_id}} AND s.name = n.refers_to_id AND s.type = t.value_redacted
+  AND (t.value_redacted <> 'TXT' OR instr(s.content, 'v=spf1') > 0)
+WHERE c.tenant_id = {{p:tenant_id}} AND c.run_id = {{p:run_id}} AND c.setting_path = 'content'
+  AND EXISTS (SELECT 1 FROM {{t:dns_record}} z WHERE z.tenant_id = c.tenant_id AND z.run_id = {{p:dns_run_id}} AND z.zone = m.value_redacted)
+  AND NOT EXISTS (SELECT 1 FROM {{t:dns_record}} d WHERE d.tenant_id = c.tenant_id AND d.run_id = {{p:dns_run_id}} AND d.name = n.refers_to_id AND d.type = t.value_redacted
+    AND ((d.type = 'TXT' AND instr(d.content, 'v=spf1') > 0 AND instr(d.content, c.value_redacted) > 0)
+      OR (d.type <> 'TXT' AND lower(d.content) = lower(c.value_redacted) AND COALESCE(d.proxied, 0) = 0)))
+ORDER BY m.value_redacted, c.object_id, c.obs_id, s.record_id`;
+
+export function mailRecordDrift(dl: DataLayer, params: MailRecordParams, opts?: RunOptions): Promise<QueryResult> {
+  return dl.run(MAIL_RECORDS_SQL, params, opts);
+}
+
 // ---- the Decider's reads: the policy, the approvals, the vault copies, the probes ----------------------------
 //
 // What src/pipeline.ts reads before src/policy/decide.ts decides. Plain column comparisons in every top-level

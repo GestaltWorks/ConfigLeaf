@@ -38,6 +38,9 @@ import { DriftWorld } from "../src/engine/world.ts";
 import { runPass, type Finding } from "../src/pipeline.ts";
 import { refreshText } from "../src/zetaris/filestore.ts";
 import { refreshFileTables } from "../src/zetaris/setup.ts";
+import { exitOnConfigError } from "../src/cli.ts";
+
+exitOnConfigError();
 
 const { values: args } = parseArgs({
   options: {

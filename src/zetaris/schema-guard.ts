@@ -18,7 +18,9 @@
 //     it lacks it, and the pass's window read already decides what its absence means. `tables` counts the DESCRIBEs
 //     that answered, so a failed one, change_window's included, is in no count.
 //   - affectedSurfaces: the surfaces whose findings read a changed DRIFT table. backup_snapshot and backup_item feed
-//     linux.nginx alone; dns_record, audit_event and inventory_asset feed linux.nginx and cloudflare.dns; every other
+//     linux.nginx alone; dns_record and audit_event feed linux.nginx, cloudflare.dns and m365.dns (the Microsoft 365
+//     mail records are compared with the records and checked against the audit log), inventory_asset linux.nginx and
+//     cloudflare.dns; every other
 //     table (the runs, the observations, the approvals, the policy, the vault copies, the probes, the ledger, the
 //     change windows) feeds every surface's decision, so a change there affects them all ("*").
 //   - guardGate: what the guard closes in a live pass, in one place. The affected surfaces' findings are not checked,
@@ -165,7 +167,7 @@ export async function readSchemaGuard(engine: Pick<Engine, "run">, opts: RunOpti
 /** The surfaces whose decisions read a DRIFT table (see the header). */
 const FEEDS: Readonly<Record<string, readonly string[]>> = {
   backup_snapshot: ["linux.nginx"], backup_item: ["linux.nginx"],
-  dns_record: ["linux.nginx", "cloudflare.dns"], audit_event: ["linux.nginx", "cloudflare.dns"], inventory_asset: ["linux.nginx", "cloudflare.dns"],
+  dns_record: ["linux.nginx", "cloudflare.dns", "m365.dns"], audit_event: ["linux.nginx", "cloudflare.dns", "m365.dns"], inventory_asset: ["linux.nginx", "cloudflare.dns"],
 };
 
 /** The surfaces a guard's DRIFT changes affect: "*" for every surface, else the set; empty when DRIFT is as expected. */

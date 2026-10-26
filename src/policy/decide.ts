@@ -8,9 +8,12 @@
 //      HOLD the setting had.
 //   2. Policy, when a rule governs the setting (src/policy/resolve.ts); decided_by "policy", rule_id the rule.
 //      on_drift escalate, first and whatever the lock or the class: ESCALATE, the reason naming the finding's class, its
-//      object and the drift from the approved value when there is one; the agent changes nothing (the rule
-//      zetaris.control carries, the layer the agent reads through). An approved_missing reason names why the run lacks
-//      the object when the collector knows it ("SHOW GRANT refused", src/zetaris/control.ts absentBecause).
+//      object and the drift from the approved value when there is one, and opening with the finding's own line for a
+//      NAMED_CLASSES finding (a Microsoft 365 mail record: the record, the domain's pseudonym, what the zone serves) when
+//      that line is redacted text (redactedLine), else saying it is left out. An approved_missing reason names why the
+//      run lacks the object when the collector knows it ("SHOW GRANT refused", src/zetaris/control.ts absentBecause).
+//      The agent changes nothing (the rule zetaris.control carries, the layer the agent reads through, and the rule
+//      m365.dns carries: mail DNS is never changed automatically).
 //      drift_vs_approved (the live value differs from the latest approval) and approved_missing (the approved
 //      object is absent from the run: a drift from the approved value to the live value ""):
 //        lock 1 or on_drift rollback:
@@ -65,7 +68,9 @@
 // ESCALATE, "no probe run in this pass".
 
 import type { FindingClass } from "../catalogue/templates.ts";
+import { config } from "../config.ts";
 import type { ChangeWindow, DecidedBy, DispositionVerb, PolicyRule } from "../data/rows.ts";
+import { Redactor } from "../redactor.ts";
 
 /** The verb the checks alone give, as the pass computed it before any policy. */
 export type ChecksVerb = "ADOPT" | "ESCALATE";
@@ -103,11 +108,12 @@ export interface PriorHold { decided_at: string; expires_at: string; rule_id: st
 
 export interface DecideInput {
   /**
-   * The finding: its class; its object id as the rows carry it, which an escalate rule's reason names; and for an
-   * approved_missing finding, why the run lacks the object when the collector knows (a statement it could not run:
-   * "SHOW GRANT refused"), which the reason names after the absence.
+   * The finding: its class; its object id as the rows carry it, which an escalate rule's reason names; its one redacted
+   * line, which an escalation of a NAMED_CLASSES finding opens with; and for an approved_missing finding, why the run
+   * lacks the object when the collector knows (a statement it could not run: "SHOW GRANT refused"), which the reason
+   * names after the absence.
    */
-  finding: { class: FindingClass; object_id?: string; absent?: string | null };
+  finding: { class: FindingClass; object_id?: string; summary?: string; absent?: string | null };
   rule: PolicyRule | null;
   exception: ExceptionState;
   checks: { verb: ChecksVerb; why: string };
@@ -189,6 +195,20 @@ export const NO_PROBE_RUN = "no probe run in this pass";
 
 /** The classes the Decider weighs against the setting's approved value and its vault copies. */
 export const APPROVAL_CLASSES: readonly FindingClass[] = ["drift_vs_approved", "approved_missing"];
+
+/**
+ * The classes whose escalation opens with the finding's own line: a Microsoft 365 mail record, whose line names the
+ * record, the domain's pseudonym and what the zone serves, so the technician reads what to fix in the reason itself.
+ */
+export const NAMED_CLASSES: readonly FindingClass[] = ["m365_mail_record"];
+
+/** Any salt will do: redacted text is a fixed point of the redactor under every salt, and a raw name, address or tenant label is not. */
+const GUARD = new Redactor("decide-guard", config.redactWords);
+
+/** The finding's line when it is redacted text (the redactor leaves it as it is); null otherwise, so a reason never carries a raw line. */
+export function redactedLine(s: string | undefined): string | null {
+  return s && GUARD.text(s) === s ? s : null;
+}
 
 const VALID: readonly string[] = ["ok", "ok_with_gaps"];
 const hex = (h: string, n: number): string => h.replace(/^sha256:/, "").slice(0, n);
@@ -285,9 +305,10 @@ function byRule(input: DecideInput, rule: PolicyRule, until = holdUntil(input.de
   if (rule.on_drift === "escalate") {
     const on = input.finding.object_id ? ` on ${input.finding.object_id}` : "";
     const what = APPROVAL_CLASSES.includes(cls) && input.approved
-      ? (cls === "approved_missing" ? `: ${absent(hex(input.approved.value_hash, 12))}` : `: live value drifted from approved ${hex(input.approved.value_hash, 12)}`)
-      : "";
-    return by("ESCALATE", `this ${cls} finding stands${on}${what}; rule ${id} (${rule.criticality}) sends it to a technician and the agent changes nothing`);
+      ? `this ${cls} finding stands${on}: ${cls === "approved_missing" ? absent(hex(input.approved.value_hash, 12)) : `live value drifted from approved ${hex(input.approved.value_hash, 12)}`}`
+      : NAMED_CLASSES.includes(cls) && redactedLine(input.finding.summary) ? input.finding.summary!
+        : `this ${cls} finding stands${on}${NAMED_CLASSES.includes(cls) && input.finding.summary ? " (its line is not redacted text and is left out)" : ""}`;
+    return by("ESCALATE", `${what}; rule ${id} (${rule.criticality}) sends it to a technician and the agent changes nothing`);
   }
 
   if (APPROVAL_CLASSES.includes(cls) && input.approved) {

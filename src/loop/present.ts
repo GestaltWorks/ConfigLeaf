@@ -144,6 +144,7 @@ export const CLASS_LABEL: Readonly<Record<FindingClass, string>> = {
   changed_since_backup: "changed since the last backup",
   proxy_split: "name and its www treated differently by the proxy",
   dns_change: "DNS target moved",
+  m365_mail_record: "mail record Microsoft 365 requires, missing or different in DNS",
 };
 /** A class in plain words; any other class as it is. */
 export const classLabel = (c: string): string => (CLASS_LABEL as Readonly<Record<string, string>>)[c] ?? c;
@@ -1052,12 +1053,13 @@ export function gateView(o: { runs: number; gatedOut: readonly string[] }): Step
 export const observeView = (observed: number): StepView => ({ parts: [`${count(observed, "observation")} in the World Model`] });
 
 /** detect: the findings and their classes; under it, one line per class in plain words, the most first, its count right-aligned. */
-export function detectView(fs: readonly Pick<Finding, "finding">[]): StepView {
+/** detect: the findings by class in plain words; then each note on a line of its own (sample mode's "Microsoft 365 is not in the recorded bundle"). */
+export function detectView(fs: readonly Pick<Finding, "finding">[], notes: readonly string[] = []): StepView {
   const classes = tallyDesc(fs.map((f) => f.finding.class));
   const w = Math.max(0, ...classes.map(([, n]) => thousands(n).length));
   return {
     parts: [`${count(fs.length, "finding")}${classes.length ? ` in ${count(classes.length, "class", "classes")}` : ""}`],
-    sub: classes.map(([c, n]) => ({ label: thousands(n).padStart(w), parts: [classLabel(c)] })),
+    sub: [...classes.map(([c, n]) => ({ label: thousands(n).padStart(w), parts: [classLabel(c)] })), ...notes.map((n) => ({ parts: [n] }))],
   };
 }
 

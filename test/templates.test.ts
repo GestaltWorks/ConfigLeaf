@@ -98,7 +98,7 @@ describe("catalogue shape", () => {
   });
 
   it("every template applies to at least one known class, and every class has a template", () => {
-    expect(FINDING_CLASSES).toEqual(["found_but_different", "changed_since_backup", "drift_vs_approved", "dns_change", "proxy_split", "proxied_without_real_ip", "orphan_record", "orphan_vhost", "approved_missing"]);
+    expect(FINDING_CLASSES).toEqual(["found_but_different", "changed_since_backup", "drift_vs_approved", "dns_change", "proxy_split", "proxied_without_real_ip", "orphan_record", "orphan_vhost", "approved_missing", "m365_mail_record"]);
     for (const t of CATALOGUE) {
       expect(t.appliesTo.length, t.id).toBeGreaterThan(0);
       for (const c of t.appliesTo) expect(FINDING_CLASSES).toContain(c);

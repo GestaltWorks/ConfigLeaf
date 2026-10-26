@@ -116,6 +116,7 @@ import { dispositionId, type ChangeWindow, type DecidedBy, type Disposition, typ
 import type { ExceptionLesson, TechnicianMemory } from "./engine/memory.ts";
 import { DriftWorld, recordExposure, type ExposureLine, type Observation } from "./engine/world.ts";
 import type { Ledger } from "./ledger.ts";
+import { mailRecords } from "./m365.ts";
 // The Decider and the rule that governs a setting (src/policy/).
 import {
   APPROVAL_CLASSES, NO_PROBE_RUN, WINDOW_CLASSES, decide, openWindow, production, productionText, validCopy, type ApprovedValue, type CopyCandidate, type ExceptionState, type PriorHold, type ProbeView,
@@ -487,7 +488,7 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     // An approved object the run lacks because a statement of the run was not checked says so (src/zetaris/control.ts).
     const absent = cls === "approved_missing" ? absentBecause(finding.surface, finding.object_id, (obsByRun.get(finding.run_id) ?? []).map((o) => o.object_id)) : null;
     const decision = decide({
-      finding: { class: cls, object_id: finding.object_id, absent }, rule, exception: exceptionState, checks: { verb: policyVerb, why: policyWhy },
+      finding: { ...finding, absent }, rule, exception: exceptionState, checks: { verb: policyVerb, why: policyWhy },
       approved, copies, probes, serves, decidedAt, priorHold, window, windowError,
     });
     const verb: Verb = decision.verb;
@@ -915,6 +916,11 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
       }
     }
     await detectMissing(dns, "cloudflare.dns", "", "cloudflare.dns", dns.run_id, t, report);
+  });
+
+  // The mail records Microsoft 365 requires, the latest m365.dns run of each tenant, against what the DNS run of its pass serves (src/m365.ts).
+  detectors.push(async (t, report) => {
+    for (const f of await mailRecords(layer, runs, (r) => ({ gated: gatedOut.has(r.run_id), dns: dnsFor(r) }), surveyOpts(t))) report(f);
   });
 
   // The detectors' step. A detector that fails fails its own lines (the trace ends there) and every other detector still

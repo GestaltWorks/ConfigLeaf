@@ -2,7 +2,7 @@
 // the Store holds and the Decider reads.
 //
 // Contract:
-//   - Every value set is closed: surface linux.nginx | cloudflare.dns | zetaris.control | *, criticality critical |
+//   - Every value set is closed: surface linux.nginx | cloudflare.dns | zetaris.control | m365.dns | *, criticality critical |
 //     high | normal | low, on_drift rollback | investigate | adopt | hold | escalate, on_no_copy investigate_ticket |
 //     ticket | adopt, alert always | on_fix | never, psa_priority P1..P4, lock 0 | 1. Every other value
 //     is refused, and so is a key outside the shape.
@@ -17,7 +17,7 @@
 import { z } from "zod";
 import type { PolicyRule } from "../data/rows.ts";
 
-export const SURFACES = ["linux.nginx", "cloudflare.dns", "zetaris.control", "*"] as const;
+export const SURFACES = ["linux.nginx", "cloudflare.dns", "zetaris.control", "m365.dns", "*"] as const;
 export const CRITICALITIES = ["critical", "high", "normal", "low"] as const;
 export const ON_DRIFT = ["rollback", "investigate", "adopt", "hold", "escalate"] as const;
 export const ON_NO_COPY = ["investigate_ticket", "ticket", "adopt"] as const;
