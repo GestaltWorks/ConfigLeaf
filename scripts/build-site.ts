@@ -134,9 +134,10 @@ export const word = (n: number): string => NUMBER_WORDS[n] ?? String(n);
 
 /**
  * The page and every data file together. 300,000 from 24 Oct 2026; 350,000 from 25 Oct 2026, when the Nemotron tab over
- * eval/results/2026-10-25T23-34-17Z, whose Ultra judge SELECTs run longer, took the build to 314,907 bytes.
+ * eval/results/2026-10-25T23-34-17Z, whose Ultra judge SELECTs run longer, took the build to 314,907 bytes; 400,000 from
+ * 26 Oct 2026, when the landing page (docs/site.html, the ConfigLeaf mark inline in it) took the build to 356,981 bytes.
  */
-export const MAX_BYTES = 350_000;
+export const MAX_BYTES = 400_000;
 /** The header's Report link: the owner's report (npm run examples writes it), relative to docs/ in a clone of the repository. */
 export const REPORT_LINK = "../examples/report.html";
 /** Rows shown per query; the count and the rows hash cover every row. */
