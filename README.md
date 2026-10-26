@@ -673,8 +673,8 @@ serves www GO, removing 2; retargeting the apex outside the inventory NO-GO, add
 ## Evaluation
 
 [eval/PROTOCOL.md](eval/PROTOCOL.md) is the contract, pre-registered: the protocol and 38 candidate items in
-`b8b3d41`, the operator's labels in `fede9f7` before any model run (36 no, 2 unsure, 0 yes), the counted terms in
-`f9f036f`. Each item is one real deviation or negative from the live collection and the audit log. A seeded split
+`8afbcb8`, the operator's labels in `c849eb4` before any model run (36 no, 2 unsure, 0 yes), the counted terms in
+`e7d78e2`. Each item is one real deviation or negative from the live collection and the audit log. A seeded split
 gives 15 development items and 23 held out; tuning uses the development set only, and the held-out set runs once,
 after the feature freeze, its results published whatever they say. Yes expects ESCALATE or FIX; no expects ADOPT, HOLD
 or ROLLBACK. Every model call passes the receipt gate with a fresh nonce, a substitution invalidates its run, and the
