@@ -18,7 +18,7 @@
 
 import type { Evidence } from "../agents/judge.ts";
 import type { TraceEvent } from "../trace.ts";
-import { decide, type Pass, type Snippet, type TextDecision, type ThreatClass } from "./scout.ts";
+import { decide, type HitClass, type Pass, type Snippet, type TextDecision } from "./scout.ts";
 
 /** What a withheld text becomes in the prompt. */
 export const WITHHELD = "[withheld by the Scout guard]";
@@ -38,7 +38,7 @@ export interface GuardOptions {
 export interface GuardNote {
   prompt: string;
   source: string;
-  class: ThreatClass;
+  class: HitClass;
   rule: string;
   level: "review" | "block";
   line: number;

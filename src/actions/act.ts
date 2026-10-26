@@ -43,7 +43,7 @@ import type { SqlJsEngine } from "../data/engines/sqljs.ts";
 import { DISPOSITIONS_SQL, approvedCopies, latestApprovals, objects, observationsOf, policyRules, tenantActions } from "../data/queries.ts";
 import { actionId, type Action, type ActionKind, type ActionStatus, type ApprovedSetting, type Disposition, type DispositionVerb } from "../data/rows.ts";
 import type { ReceiptFinder } from "../gate.ts";
-import { contractLine, type ContractAuthority, type ContractCheck, type ContractScope } from "../guard/contract.ts";
+import { contractLine, type ContractAuthority, type ContractCheck, type ContractScope, type GatedKind } from "../guard/contract.ts";
 import type { Finding } from "../pipeline.ts";
 import type { CopyCandidate } from "../policy/decide.ts";
 import type { PopulationRecord } from "../probe/rules.ts";
@@ -119,7 +119,8 @@ export interface ActOptions {
   /**
    * The contracts presented for an apply, by action_id: a saved plan's, or a test's. Each is checked as given, and an
    * action with none presented is refused as unsigned. Absent, the plan step issues each contract itself when it plans
-   * the action (see act()).
+   * the action (see act()). An empty map is an error under --apply (ActorError): it would switch the issuing off and
+   * refuse every action.
    */
   contracts?: ReadonlyMap<string, unknown>;
 }
@@ -194,6 +195,8 @@ export async function act(opts: ActOptions, deps: ActorDeps): Promise<ActResult>
   const { layer, tracer, redactor } = deps;
   const now = deps.now ?? (() => new Date());
   if (opts.apply && !deps.sink) throw new ActorError("--apply records every action; it needs the action table (a sink)");
+  // An empty map would switch the plan step's own issuing off and refuse every action as unsigned: a mistake, so it is an error.
+  if (opts.apply && opts.contracts?.size === 0) throw new ActorError("ActOptions.contracts is an empty map: present a contract for each action, or leave it out and the plan step issues them");
   const q = { tracer, agent: "actor", limit: 100_000 };
 
   const ledger = objects(await layer.run(DISPOSITIONS_SQL, {}, q)).map(dispositionOf).filter((d) => d.tenant_id === opts.tenantId);
@@ -247,8 +250,8 @@ export async function act(opts: ActOptions, deps: ActorDeps): Promise<ActResult>
   // action's plan is made, which is just before the action runs, so its five minutes cover that action alone; the Actor
   // then checks it at the boundary, before any session, write or model call. Presented contracts (opts.contracts) are
   // checked as given.
-  const needsContract = (d: Disposition, kind: ActionKind): boolean => (d.verb === "ROLLBACK" || d.verb === "FIX") && kind !== "fix";
-  const authorize = (d: Disposition, kind: ActionKind): { ok: true; line: string } | { ok: false; outcome: ActionOutcome } => {
+  const needsContract = (d: Disposition, kind: ActionKind): kind is GatedKind => (d.verb === "ROLLBACK" || d.verb === "FIX") && kind !== "fix";
+  const authorize = (d: Disposition, kind: GatedKind): { ok: true; line: string } | { ok: false; outcome: ActionOutcome } => {
     const at = now();
     const scope: ContractScope = { tenant_id: d.tenant_id, action: kind, action_id: actionId(d.tenant_id, d.disposition_id, kind), disposition_id: d.disposition_id, object: targetOf(d) };
     const authority = deps.contracts ?? null;
@@ -277,7 +280,14 @@ export async function act(opts: ActOptions, deps: ActorDeps): Promise<ActResult>
     if (!needsContract(d, kind)) return run();
     const a = authorize(d, kind);
     if (!a.ok) return a.outcome;
-    const o = await run();
+    let o: ActionOutcome;
+    try {
+      o = await run();
+    } catch (e) {
+      // An action that throws after its contract passed is a failed action with a row, not a stop of the whole run.
+      const at = now().toISOString();
+      o = outcome(d, kind, { status: "failed", reason: redactor.text(`the action stopped with an error: ${(e as Error)?.message ?? String(e)}`), started_at: at, finished_at: at });
+    }
     const lines = [redactor.text(a.line), ...o.record];
     return { ...o, record: lines, action: { ...o.action, record: recordText(lines) } };
   };

@@ -22,7 +22,7 @@ import { DataLayer } from "../src/data/layer.ts";
 import { objects, tenantActions } from "../src/data/queries.ts";
 import { actionId, type Action, type ActionKind, type Disposition } from "../src/data/rows.ts";
 import {
-  CAPABILITIES, CONTRACT_KIND, CONTRACT_TTL_MS, ContractKey, DEFAULT_KEY_FILE, LocalContractAuthority, contractLine,
+  CAPABILITIES, CONTRACT_KIND, CONTRACT_TTL_MS, ContractKey, DEFAULT_KEY_FILE, LocalContractAuthority, contractLine, type GatedKind,
   type ContractScope, type SignedContract,
 } from "../src/guard/contract.ts";
 import { GUARD_VERSION } from "../src/guard/scout.ts";
@@ -114,6 +114,41 @@ describe("the execution contract", () => {
     expect(refusalOf(auth.verify(forge(key, good, { expires_at: minutes(15).toISOString() }), SCOPE, NOW))).toEqual(["ttl-too-long", "the contract lives 900 s; the limit is 300 s"]);
   });
 
+  it("checks in the order the file header documents, so a contract that fails two ways reports the earlier one, and every reason is reached", () => {
+    const header = readFileSync(path.join(ROOT, "src", "guard", "contract.ts"), "utf8");
+    const order = ["unsigned", "bad-signature", "malformed", "expired", "not-yet-valid", "ttl-too-long", "scope-mismatch"];
+    const at = header.indexOf("Checks, in the spec's order");
+    const named = order.map((r) => header.indexOf(r, at));
+    expect(named.every((i) => i > at)).toBe(true);
+    expect([...named].sort((a, b) => a - b)).toEqual(named);
+    const other = { ...SCOPE, object: "linux.nginx host-7f1c /etc/nginx/conf.d/blog.conf file" };
+    const stale = { issued_at: minutes(-30).toISOString(), expires_at: minutes(-1).toISOString() };
+    const ahead = { issued_at: minutes(5).toISOString(), expires_at: minutes(25).toISOString() };
+    const cases: [string, unknown, ContractScope, string][] = [
+      ["unsigned and expired", { ...auth.issue(SCOPE, minutes(-10)), sig_b64: "" }, SCOPE, "unsigned"],
+      ["foreign key and expired", LocalContractAuthority.ephemeral().issue(SCOPE, minutes(-10)), SCOPE, "bad-signature"],
+      ["malformed and expired", forge(key, good, { kind: "receipt", ...stale }), SCOPE, "malformed"],
+      ["expired and over five minutes", forge(key, good, stale), SCOPE, "expired"],
+      ["expired and out of scope", auth.issue(SCOPE, minutes(-10)), other, "expired"],
+      ["dated ahead and over five minutes", forge(key, good, ahead), SCOPE, "not-yet-valid"],
+      ["over five minutes and out of scope", forge(key, good, { expires_at: minutes(15).toISOString() }), other, "ttl-too-long"],
+      ["out of scope alone", good, other, "scope-mismatch"],
+    ];
+    for (const [name, presented, expect_, refusal] of cases) expect(refusalOf(auth.verify(presented, expect_, NOW))[0], name).toBe(refusal);
+    // every reason of ContractRefusal is covered above or by the tests before this one
+    expect(new Set(cases.map((c) => c[3]))).toEqual(new Set(order));
+  });
+
+  it("issues a lifetime of exactly five minutes whatever the instant, and rejects an action no contract grants", () => {
+    for (const at of [NOW, minutes(-90), new Date("2027-01-01T00:00:00.000Z")]) {
+      const c = auth.issue(SCOPE, at).body.receipt;
+      expect(Date.parse(c.expires_at) - Date.parse(c.issued_at)).toBe(CONTRACT_TTL_MS);
+    }
+    expect(Object.keys(CAPABILITIES).sort()).toEqual(["investigate", "revert_record", "rollback_file"]);
+    const fix = forge(key, good, { action: "fix", capabilities: ["action:record"] });
+    expect(refusalOf(auth.verify(fix, { ...SCOPE, action: "fix" as GatedKind }, NOW))).toEqual(["scope-mismatch", "fix is not an action a contract grants"]);
+  });
+
   it("refuses a body that is not an execution contract", () => {
     for (const patch of [{ kind: "receipt" }, { signed_by: "someone" }, { object: 7 }, { capabilities: "host:write" }, { capabilities: [1] }, { expires_at: "soon" }, { issued_at: "2026-10-23T03:09:00.000Z" }]) {
       expect(refusalOf(auth.verify(forge(key, good, patch), SCOPE, NOW))[0], JSON.stringify(patch)).toBe("malformed");
@@ -162,6 +197,13 @@ describe("the contract key", () => {
     expect(new LocalContractAuthority(() => a).verify(signed, SCOPE, NOW).ok).toBe(true);
   });
 
+  it.skipIf(process.platform === "win32")("creates the key's directory with mode 0700", () => {
+    const file = path.join(dir, "a", "b", "key.pem");
+    ContractKey.loadOrCreate(file);
+    expect(statSync(path.dirname(file)).mode & 0o777).toBe(0o700);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+  });
+
   it("writes no file until a contract is issued or checked, and never prints the key", () => {
     const file = path.join(dir, "key.pem");
     const lazy = LocalContractAuthority.local(file);
@@ -206,11 +248,11 @@ describe("the Actor behind the execution contract", () => {
   afterEach(() => w.cleanup());
 
   const of = (verb: string, object: string, setting = "file"): Disposition => w.dispositions.find((d) => d.verb === verb && d.object_id === object && d.setting_path === setting && d.decided_at === "2026-10-23T03:00:00.000Z")!;
-  const scopeOf = (d: Disposition, kind: ActionKind): ContractScope => ({
+  const scopeOf = (d: Disposition, kind: GatedKind): ContractScope => ({
     tenant_id: d.tenant_id, action: kind, action_id: actionId(d.tenant_id, d.disposition_id, kind), disposition_id: d.disposition_id, object: targetOf(d),
   });
-  const issue = (d: Disposition, kind: ActionKind, at = NOW): SignedContract => w.contracts.issue(scopeOf(d, kind), at);
-  const presented = (...cs: [Disposition, ActionKind, unknown][]): Map<string, unknown> => new Map(cs.map(([d, k, c]) => [scopeOf(d, k).action_id, c]));
+  const issue = (d: Disposition, kind: GatedKind, at = NOW): SignedContract => w.contracts.issue(scopeOf(d, kind), at);
+  const presented = (...cs: [Disposition, GatedKind, unknown][]): Map<string, unknown> => new Map(cs.map(([d, k, c]) => [scopeOf(d, k).action_id, c]));
   const apply = (opts: Partial<Parameters<typeof act>[0]>, over: Parameters<World["deps"]>[0] = {}): Promise<ActResult> => act({ tenantId: TENANT, apply: true, ...opts }, w.deps(over));
   const pick = (res: ActResult, d: Disposition, kind: ActionKind): ActionOutcome => res.outcomes.find((o) => o.action.disposition_id === d.disposition_id && o.action.kind === kind)!;
   const rows = async (): Promise<Action[]> => objects(await tenantActions(w.layer, TENANT)) as unknown as Action[];
@@ -321,6 +363,25 @@ describe("the Actor behind the execution contract", () => {
     expect(gated).toHaveLength(4);
     for (const o of gated) expect([o.action.status, o.reason]).toEqual(["refused", "execution contract refused (unsigned): the Actor holds no contract authority, so no contract can be issued or checked"]);
     expect([w.host.scripts.length, w.cf.log.length, w.model.calls.length, w.probes.length]).toEqual([0, 0, 0, 0]);
+  });
+
+  it("refuses an empty contracts map with a clear error before anything runs, and ignores it in a dry run", async () => {
+    await expect(apply({ only: ["rollback_file"], contracts: new Map() })).rejects.toThrow(/ActOptions\.contracts is an empty map: present a contract for each action, or leave it out/);
+    expect([w.host.scripts.length, w.cf.log.length, w.model.calls.length, (await rows()).length]).toEqual([0, 0, 0, 0]);
+    expect((await apply({ apply: false, contracts: new Map() })).plan).toHaveLength(5);
+  });
+
+  it("records a failed action, and carries on with the rest, when an action throws after its contract passed", async () => {
+    const d = of("FIX", "/etc/nginx/conf.d/shop.conf");
+    const res = await apply({ only: ["investigate"] }, { findingOf: async () => { throw new Error("the finding read failed: boom"); } });
+    const inv = pick(res, d, "investigate");
+    expect(inv.action.status).toBe("failed");
+    expect(inv.reason).toBe("the action stopped with an error: the finding read failed: boom");
+    expect(inv.record).toHaveLength(1);
+    expect(inv.record[0]).toMatch(/^execution contract ctr-[0-9a-f]{16} verified: investigate on /);
+    expect((await rows()).find((r) => r.action_id === inv.action.action_id)).toMatchObject({ status: "failed", kind: "investigate" });
+    expect(pick(res, d, "fix")).toMatchObject({ action: { status: "refused" }, reason: FIX_REFUSED });
+    expect(w.model.calls).toEqual([]);
   });
 
   it("needs no contract for a dry run, and the plan reads as it did", async () => {

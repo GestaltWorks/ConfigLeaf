@@ -23,12 +23,17 @@
 //     and Unicode tag characters decoded, so fullwidth letters and zero-width splits read as the plain phrase.
 //   - A decision carries a class, a rule id, a line number and a fixed sentence per hit. It never carries the text it
 //     read, so a trace line or a record line built from it leaks nothing.
+//   - Size: one text is read up to MAX_SCAN_CHARS (64 KiB). A longer text is read for its first 64 KiB, and the decision
+//     is review at least, with a hit of class "unread" (rule input.over_limit): the rest of it is not read. The prompts
+//     the code builds are far smaller, so the limit bounds the work per text and a decide() call costs at most that
+//     much per text, whatever an attacker puts in a field.
 //   - Limits: the rules are patterns. A paraphrase that avoids every pattern passes, and so does a homoglyph spelling
-//     or a payload encoded in base64. The guard narrows what a model reads; the Decider, the receipts gate, the
-//     execution contract (src/guard/contract.ts) and --apply bound what a model can cause.
+//     or a payload encoded in base64. The guard is a best-effort filter that narrows what a model reads; the Decider,
+//     the receipts gate, the execution contract (src/guard/contract.ts) and --apply bound what a model can cause.
 //
-// Measured 26 Oct 2026 on the 32-example Meterless v1 smoke set (vendor/scout-intent, src/guard/smoke.ts): 7 of 7
-// injection examples blocked, 0 of 25 benign examples blocked. The set is a smoke test of 32 examples.
+// Measured 26 Oct 2026 on the 32-example Meterless v1 smoke set (vendor/scout-intent, src/guard/smoke.ts), in both
+// passes: the raw-input pass blocks 7 of 7 injection examples and 0 of 25 benign examples; the snippet pass blocks 7 of
+// 7 and 0 of 25. The set is a smoke test of 32 examples, and the rules were written with it in view.
 
 export const GUARD_VERSION = "scout-guard-1";
 
@@ -36,6 +41,8 @@ export type Level = "allow" | "review" | "block";
 export const THREAT_CLASSES = ["instruction_override", "role_confusion", "data_exfiltration", "tool_abuse", "context_poisoning", "indirect_injection"] as const;
 export type ThreatClass = (typeof THREAT_CLASSES)[number];
 export type Pass = "input" | "snippet";
+/** A hit carries one of the spec's six classes, or "unread" for a text longer than the guard reads (MAX_SCAN_CHARS). */
+export type HitClass = ThreatClass | "unread";
 
 /** A retrieved text and where it came from: a label the code chose ("finding.summary", "evidence row 2 value_redacted"), never data. */
 export interface Snippet { source: string; text: string }
@@ -50,7 +57,7 @@ export interface GuardInput {
 export interface Hit {
   pass: Pass;
   source: string;
-  class: ThreatClass;
+  class: HitClass;
   rule: string;
   level: "review" | "block";
   /** The 1-based line of the first match in the text. */
@@ -73,7 +80,7 @@ export interface Decision {
   level: Level;
   reason: string;
   /** The class of the first hit of the worst decision; null for allow. */
-  class: ThreatClass | null;
+  class: HitClass | null;
   /** Where that hit sits; null for allow. */
   location: { source: string; line: number } | null;
   /** The raw-input pass; null when no prompt was given. */
@@ -176,8 +183,13 @@ export const RULES: readonly Rule[] = [
     /(?:^|[\s>*#-])(?:AI|LLM)(?:\s+(?:assistant|model|agent))?\s*:\s+\S/),
 ];
 
-/** Invisible, zero-width and bidirectional control characters. */
-const INVISIBLE = /[­᠎​-‏‪-‮⁠-⁤⁦-⁩﻿]/;
+/**
+ * Invisible, zero-width and bidirectional control characters, written as escapes so the source holds none of them:
+ * soft hyphen U+00AD, Mongolian vowel separator U+180E, zero-width and direction marks U+200B-U+200F, bidirectional
+ * embeddings and overrides U+202A-U+202E, word joiner and invisible operators U+2060-U+2064, bidirectional isolates
+ * U+2066-U+2069, byte order mark U+FEFF.
+ */
+const INVISIBLE = /[\u00AD\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/;
 const INVISIBLE_ALL = new RegExp(INVISIBLE.source, "g");
 /** Unicode tag characters, the block that smuggles ASCII invisibly. */
 const TAGS = /[\u{E0000}-\u{E007F}]/gu;
@@ -245,8 +257,29 @@ const worst = (a: Level, b: Level): Level => (WORSE[b] > WORSE[a] ? b : a);
 /** The class a hit carries: the rule's own on the raw input; on a retrieved snippet, context_poisoning when the text hides in a comment or in invisible characters, else indirect_injection. */
 const classOf = (r: Pick<Rule, "cls">, pass: Pass, hidden: boolean): ThreatClass => (pass === "input" ? r.cls : hidden ? "context_poisoning" : "indirect_injection");
 
-/** One text through every rule. */
-export function scanText(text: string, pass: Pass, source: string): TextDecision {
+/**
+ * The findings that are not a pattern over the flat text, each with its own id, class and sentence. The spec lists
+ * embedded-control attempts with role confusion, so on the raw input both control-character findings carry that class;
+ * on a snippet they are context_poisoning, because characters nobody sees hide text by definition. A text longer than
+ * the guard reads has no class of the spec's: it is "unread", and its level is review.
+ */
+const CONTROL_CHARS = { id: "hidden.control_chars", cls: "role_confusion", reason: "carries invisible, zero-width or bidirectional control characters" } as const;
+const ESCAPED_CONTROLS = { id: "hidden.escaped_control", cls: "role_confusion", reason: "spells out an escaped control character" } as const;
+
+/** The most of one text the guard reads, in UTF-16 units. The rules are linear in it, so a decide() call costs at most this per text. */
+export const MAX_SCAN_CHARS = 64 * 1024;
+export const OVER_LIMIT = { id: "input.over_limit", reason: `is longer than ${MAX_SCAN_CHARS / 1024} KiB, so only the first ${MAX_SCAN_CHARS / 1024} KiB was read` } as const;
+
+/** The 1-based line of the first control character in `text`. */
+const controlLine = (text: string): number => {
+  const m = /[\u00AD\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\u{E0000}-\u{E007F}]/u.exec(text);
+  return m ? text.slice(0, m.index).split("\n").length : 1;
+};
+
+/** One text through every rule: the first MAX_SCAN_CHARS of it, and review at least when there is more. */
+export function scanText(full: string, pass: Pass, source: string): TextDecision {
+  const over = full.length > MAX_SCAN_CHARS;
+  const text = over ? full.slice(0, MAX_SCAN_CHARS) : full;
   const p = prepare(text);
   const hits: Hit[] = [];
   for (const r of RULES) {
@@ -254,10 +287,11 @@ export function scanText(text: string, pass: Pass, source: string): TextDecision
     if (m) hits.push({ pass, source, class: classOf(r, pass, p.hiddenAt(m.index)), rule: r.id, level: r.level, line: p.lineAt(m.index), reason: r.reason });
   }
   if (p.controls) {
-    hits.push({ pass, source, class: classOf({ cls: "role_confusion" }, pass, true), rule: "hidden.control_chars", level: "review", line: 1, reason: "carries invisible, zero-width or bidirectional control characters" });
+    hits.push({ pass, source, class: classOf(CONTROL_CHARS, pass, true), rule: CONTROL_CHARS.id, level: "review", line: controlLine(text), reason: CONTROL_CHARS.reason });
   }
   const esc = ESCAPED_CONTROL.exec(p.flat);
-  if (esc) hits.push({ pass, source, class: classOf({ cls: "role_confusion" }, pass, true), rule: "hidden.escaped_control", level: "review", line: p.lineAt(esc.index), reason: "spells out an escaped control character" });
+  if (esc) hits.push({ pass, source, class: classOf(ESCAPED_CONTROLS, pass, true), rule: ESCAPED_CONTROLS.id, level: "review", line: p.lineAt(esc.index), reason: ESCAPED_CONTROLS.reason });
+  if (over) hits.push({ pass, source, class: "unread", rule: OVER_LIMIT.id, level: "review", line: 1, reason: OVER_LIMIT.reason });
   hits.sort((a, b) => WORSE[b.level] - WORSE[a.level] || a.line - b.line);
   const first = hits[0];
   return {

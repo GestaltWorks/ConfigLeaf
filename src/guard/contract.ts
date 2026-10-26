@@ -13,7 +13,8 @@
 //     signs and verifies receipts serves it unchanged: Ed25519 over canonicalReceiptBody(body), checked by verifyReceipt
 //     (src/adapters/nightshift.ts). The spec names HMAC and calls the signer pluggable; this is the swap.
 //   - Key: ContractKey.loadOrCreate generates an Ed25519 key on first use and keeps it under .scout/ at the repository
-//     root (gitignored), mode 0600. The key is never printed, logged or put in a trace line. A contract verifies only
+//     root (gitignored, the directory created mode 0700, the file mode 0600). The key is never printed, logged or put in
+//     a trace line. A contract verifies only
 //     under the public key of the deployment that holds the private one, so a contract signed by another key is refused
 //     as such even when its signature is valid for its own key.
 //   - Checks, in the spec's order, each a refusal with a plain sentence: unsigned (no signature or no envelope),
@@ -37,19 +38,21 @@ import { GUARD_VERSION } from "./scout.ts";
 export const CONTRACT_TTL_MS = 5 * 60_000;
 export const CONTRACT_KIND = "execution_contract" as const;
 
+/** The actions that need a contract: the ones that write or call a model. The fix row only records a refusal and takes none. */
+export type GatedKind = Exclude<ActionKind, "fix">;
+
 /** The exact set of capabilities a contract for each kind of action grants, sorted. */
-export const CAPABILITIES: Readonly<Record<ActionKind, readonly string[]>> = {
+export const CAPABILITIES: Readonly<Record<GatedKind, readonly string[]>> = {
   rollback_file: ["host:write", "nginx:reload", "probe:run", "vault:read"],
   revert_record: ["dns:write", "probe:run", "vault:read"],
   investigate: ["data:read", "model:call", "probe:read"],
-  fix: ["action:record"],
 };
 
 export type ExecutionContract = {
   kind: typeof CONTRACT_KIND;
   contract_id: string;
   tenant_id: string;
-  action: ActionKind;
+  action: GatedKind;
   action_id: string;
   disposition_id: string;
   object: string;
@@ -92,7 +95,7 @@ export class ContractKey {
       if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
     }
     const key = generateKeyPairSync("ed25519").privateKey;
-    mkdirSync(path.dirname(file), { recursive: true });
+    mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
     try {
       writeFileSync(file, key.export({ type: "pkcs8", format: "pem" }), { flag: "wx", mode: 0o600 });
     } catch (e) {
@@ -170,13 +173,14 @@ export class LocalContractAuthority implements ContractAuthority {
     const issued = Date.parse(contract.issued_at);
     const expires = Date.parse(contract.expires_at);
     if (!Number.isFinite(issued) || !Number.isFinite(expires) || expires <= issued) return refuse("malformed", "the contract's dates are not a lifetime");
-    if (expires - issued > CONTRACT_TTL_MS) return refuse("ttl-too-long", `the contract lives ${Math.round((expires - issued) / 1000)} s; the limit is ${CONTRACT_TTL_MS / 1000} s`);
     if (now.getTime() >= expires) return refuse("expired", `the contract expired at ${contract.expires_at}; it was checked at ${now.toISOString()}`);
     if (now.getTime() < issued) return refuse("not-yet-valid", `the contract is dated ${contract.issued_at}, after the check at ${now.toISOString()}`);
+    if (expires - issued > CONTRACT_TTL_MS) return refuse("ttl-too-long", `the contract lives ${Math.round((expires - issued) / 1000)} s; the limit is ${CONTRACT_TTL_MS / 1000} s`);
     for (const f of ["tenant_id", "action", "action_id", "disposition_id", "object"] as const) {
       if (contract[f] !== expect[f]) return refuse("scope-mismatch", `the contract is for ${f} ${contract[f]}; this action has ${f} ${expect[f]}`);
     }
     const want = CAPABILITIES[expect.action];
+    if (!want) return refuse("scope-mismatch", `${expect.action} is not an action a contract grants`);
     if (!sameSet(contract.capabilities, want)) {
       return refuse("scope-mismatch", `the contract grants capabilities ${contract.capabilities.join(", ") || "none"}; ${expect.action} takes exactly ${want.join(", ")}`);
     }
