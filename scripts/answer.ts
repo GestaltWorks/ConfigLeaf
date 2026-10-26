@@ -2,6 +2,8 @@
 // npm run answer -- --finding <id> --question "..." --answer "..." [--until <ISO 8601 UTC>] [--scope host|name|address] [--by <role>]
 // npm run answer -- --list [--tenant <id>]
 // npm run answer -- --forget <lesson id> [--reason "..."]
+// npm run answer -- --approve-dream <proposal id> [--by <role>]
+//   [--supersede <lesson id>]... [--keep-both <lesson id>]...   (with --accept or --answer, to settle a conflict)
 //   [--bundle sample/bundle.json] [--memory-dir <dir>]
 //
 // The technician teaches the agent one lesson about one finding (src/engine/memory.ts, TechnicianMemory
@@ -18,6 +20,18 @@
 //               its host, or the address it resolves to. Exact match only; a lesson about one name never
 //               applies to another.
 //
+// The conflict gate (src/engine/memory.ts): a lesson that contradicts a lesson in force on the same tenant and scope key
+// (two exceptions for one class that expire at different instants, two different answers to one question, or a text
+// conflict the reference's detector reads in the free text) is refused, naming both, and nothing is stored. Each conflict
+// is settled by id, explicitly: --supersede <id> stores the new lesson and keeps the old one on record, marked superseded
+// and no longer recalled; --keep-both <id> stores it beside the old one. The ledger records the conflict and who settled it,
+// which `npm run why` prints.
+//
+// --approve-dream approves one proposal of `npm run dream` by its id (drm- and 12 hex). Dreaming runs again over the lessons
+// as they stand, so an id from before a lesson changed is refused. The approved rule is a record with `derivedFrom`
+// lineage to its lessons; it changes no decision, since the Decider recalls lessons by exact scope key. This command is the
+// only writer of the store.
+//
 // Lessons live in the directory DRIFT_MEMORY_DIR names (state.json, ledger.jsonl; src/config.ts), --memory-dir
 // for one command: when it is blank, .world/memory (gitignored), or examples/memory in sample mode, the committed store a clean clone
 // and CI decide with. Recording and --forget write the store; --list only reads it. Free text (reason, question,
@@ -33,7 +47,8 @@ import { parseArgs } from "node:util";
 import { config } from "../src/config.ts";
 import { DataLayer } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
-import { MemoryError, TechnicianMemory, scopeValuesOf, type Lesson, type ScopeType } from "../src/engine/memory.ts";
+import { approveDream } from "../src/engine/dreaming.ts";
+import { ConflictError, MemoryError, TechnicianMemory, describeLesson, scopeValuesOf, type ConflictResolution, type Lesson, type ScopeType } from "../src/engine/memory.ts";
 import { DriftWorld } from "../src/engine/world.ts";
 import { runPass, type Finding } from "../src/pipeline.ts";
 import { refreshText } from "../src/zetaris/filestore.ts";
@@ -52,6 +67,9 @@ const { values: args } = parseArgs({
     list: { type: "boolean", default: false },
     tenant: { type: "string" },
     forget: { type: "string" },
+    supersede: { type: "string", multiple: true },
+    "keep-both": { type: "string", multiple: true },
+    "approve-dream": { type: "string" },
     bundle: { type: "string", default: "sample/bundle.json" },
     "memory-dir": { type: "string" },
   },
@@ -63,6 +81,8 @@ const USAGE = [
   '  npm run answer -- --finding <id> --question "..." --answer "..." [--until <ISO 8601 UTC>] [--scope host|name|address] [--by <role>]',
   "  npm run answer -- --list [--tenant <id>]",
   '  npm run answer -- --forget <lesson id> [--reason "..."]',
+  "  npm run answer -- --approve-dream <proposal id> [--by <role>]   (proposal ids: npm run dream)",
+  "  a recorded lesson that contradicts one in force is refused; settle each conflict by id: --supersede <lesson id> or --keep-both <lesson id> (repeat the flag per lesson)",
   "  options: --bundle sample/bundle.json  --memory-dir <dir>   (the store's directory; DRIFT_MEMORY_DIR by default; blank: .world/memory, examples/memory in sample mode)",
 ].join("\n");
 
@@ -71,7 +91,7 @@ const fail = (msg: string, code = 2): never => {
   process.exit(code);
 };
 
-const memory = new TechnicianMemory({ storage: args.list ? "read" : "local", directory: args["memory-dir"] });
+const memory = new TechnicianMemory({ storage: args.list ? "read" : "local", directory: args["memory-dir"], gate: true });
 const where = memory.directory!;
 
 /** After a write: the Zetaris copy of the store the live pass reads, put again when stale. */
@@ -81,9 +101,7 @@ async function refreshZetaris(): Promise<void> {
   console.log(`zetaris: ${refreshText(r)}${r.status === "failed" ? "; the next live pass or npm run zetaris:setup puts them" : ""}`);
 }
 
-const describe = (l: Lesson): string => l.kind === "exception"
-  ? `${l.id}  exception  ${l.findingClass} on ${l.scopeKey} (${l.tenantId})  until ${l.expiresAt}  by ${l.provenance.by} at ${l.recordedAt}: ${l.reason}`
-  : `${l.id}  answer     ${l.scope.type} ${l.scope.key} (${l.tenantId})  until ${l.expiresAt}  by ${l.provenance.by} at ${l.recordedAt}: Q ${l.question} A ${l.answer}`;
+const describe = describeLesson;
 
 if (args.list) {
   const lessons = memory.lessons(args.tenant);
@@ -97,6 +115,19 @@ if (args.forget) {
   if (!l) fail(`no lesson ${args.forget} in ${where}`, 1);
   console.log(`forgot ${describe(l!)}`);
   console.log(`the store now holds ${memory.lessons().length} lesson(s); the withdrawal is in the ledger (${where})`);
+  await refreshZetaris();
+  process.exit(0);
+}
+
+if (args["approve-dream"]) {
+  try {
+    const rule = approveDream(memory, args["approve-dream"], args.by!);
+    console.log(`approved ${rule.proposalId} as ${rule.id}: ${rule.type} derived from ${rule.derivedFrom.length} lesson(s): ${rule.derivedFrom.join(" ")}`);
+    console.log(`approved by ${rule.approvedBy} at ${rule.approvedAt}; stored in ${where}; npm run why -- --finding <id> shows the rule beside the lessons it derives from`);
+  } catch (err) {
+    if (err instanceof MemoryError) fail(err.message, 1);
+    throw err;
+  }
   await refreshZetaris();
   process.exit(0);
 }
@@ -126,14 +157,19 @@ if (!key) fail(`finding ${finding!.id} has no ${type} to scope a lesson on (host
 const now = new Date().toISOString();
 const provenance = { kind: "cli", at: now, by: args.by!, runId: f.run_id };
 const until = args.until ?? new Date(Date.parse(now) + 30 * 86_400_000).toISOString();
+const resolutions: ConflictResolution[] = [
+  ...(args.supersede ?? []).map((id): ConflictResolution => ({ with: id, strategy: "supersede" })),
+  ...(args["keep-both"] ?? []).map((id): ConflictResolution => ({ with: id, strategy: "keep_both" })),
+];
 
 try {
   const lesson: Lesson = args.accept
-    ? memory.recordException({ tenantId: f.tenant_id, findingClass: f.class, scopeKey: key!, reason: args.reason!, expiresAt: until, provenance })
-    : memory.recordAnswer({ tenantId: f.tenant_id, question: args.question!, answer: args.answer!, scope: { type, key: key! }, expiresAt: until, provenance });
+    ? memory.recordException({ tenantId: f.tenant_id, findingClass: f.class, scopeKey: key!, reason: args.reason!, expiresAt: until, provenance, resolutions })
+    : memory.recordAnswer({ tenantId: f.tenant_id, question: args.question!, answer: args.answer!, scope: { type, key: key! }, expiresAt: until, provenance, resolutions });
   console.log(JSON.stringify(lesson, null, 2));
   console.log("");
   console.log(`recorded ${describe(lesson)}`);
+  for (const r of resolutions) console.log(`settled ${r.with}: ${r.strategy === "supersede" ? `superseded by ${lesson.id}, kept on record and no longer recalled` : `kept beside ${lesson.id}, both in force`}; the ledger holds conflict_detected and conflict_resolved by ${lesson.provenance.by}`);
   console.log(`stored in ${where}; the store holds ${memory.lessons().length} lesson(s)`);
   if (lesson.kind === "exception") {
     const affected = pass.findings.filter((x) => x.finding.tenant_id === f.tenant_id && x.finding.class === f.class && Object.values(scopeValuesOf(x.finding)).flat().includes(key!));
@@ -142,6 +178,20 @@ try {
     console.log(`the Decider will not ask "${lesson.question}" again on ${type} ${key} until ${lesson.expiresAt}`);
   }
 } catch (err) {
+  if (err instanceof ConflictError) {
+    console.error(`refused: this lesson contradicts ${err.conflicts.length} lesson(s) in force on ${key} (${f.tenant_id}); nothing is stored`);
+    for (const c of err.conflicts) {
+      console.error(`  held  ${describe(c.with)}`);
+      console.error(`        ${c.reason}`);
+    }
+    console.error(`  new   ${err.candidate}`);
+    console.error("settle each conflict by id and run the command again:");
+    for (const c of err.conflicts) {
+      console.error(`  --supersede ${c.with.id}    the new lesson replaces ${c.with.id}, which stays on record, marked superseded, and is no longer recalled`);
+      console.error(`  --keep-both ${c.with.id}    both stay in force`);
+    }
+    process.exit(1);
+  }
   if (err instanceof MemoryError) fail(err.message, 1);
   throw err;
 }
