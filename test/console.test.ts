@@ -51,7 +51,7 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const SAMPLE = JSON.parse(readFileSync(path.join(ROOT, "sample", "bundle.json"), "utf8")) as Record<string, unknown>;
 const POLICY = JSON.parse(readFileSync(path.join(ROOT, "test", "fixtures", "policy-bundle.json"), "utf8")) as Record<string, unknown>;
 const PAGES: readonly [string, string][] = [
-  ["/overview", "<h1>Overview</h1>"], ["/executive", "<h1>client-1 · executive report</h1>"], ["/settings", "<h1>Settings</h1>"], ["/templates", "<h1>Templates</h1>"],
+  ["/work", "<h1>Work queue</h1>"], ["/overview", "<h1>Overview</h1>"], ["/executive", "<h1>client-1 · executive report</h1>"], ["/settings", "<h1>Settings</h1>"], ["/templates", "<h1>Templates</h1>"],
   ["/findings", "<h1>Findings</h1>"], ["/actions", "<h1>Actions and tickets</h1>"], ["/traces", "<h1>Traces</h1>"], ["/sources", "<h1>Sources</h1>"],
   ["/policy", "<h1>Policy</h1>"], ["/document", "<h1>The owner's document</h1>"],
 ];
@@ -118,10 +118,10 @@ describe("the console over sample/bundle.json, client-1", SERVER, () => {
   beforeAll(async () => { ({ server } = await boot({ bundle: SAMPLE, bundlePath: "sample/bundle.json", tenant: "client-1", at: "2026-10-25T15:00:00.000Z" })); }, BOOT_MS);
   afterAll(async () => { await server?.close(); });
 
-  it("binds 127.0.0.1 on the port it was given, 0 for an ephemeral one, and redirects / to the Overview", async () => {
+  it("binds 127.0.0.1 on the port it was given, 0 for an ephemeral one, and redirects / to the work queue", async () => {
     expect(server.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
     const r = await fetch(`${server.url}/`, { redirect: "manual" });
-    expect([r.status, r.headers.get("location")]).toEqual([303, "/overview"]);
+    expect([r.status, r.headers.get("location")]).toEqual([303, "/work"]);
     // the redirect carries the fixed headers every answer does
     expect([r.headers.get("content-security-policy"), r.headers.get("x-content-type-options"), r.headers.get("referrer-policy"), r.headers.get("cache-control")]).toEqual([csp(""), "nosniff", "no-referrer", "no-store"]);
   });
@@ -132,7 +132,8 @@ describe("the console over sample/bundle.json, client-1", SERVER, () => {
       expect(r.status, p).toBe(200);
       expect(r.body, p).toContain(h);
       expect(r.body, p).toContain('<nav class="side" aria-label="Sections">');
-      if (p !== "/overview") expect(r.body, p).toMatch(/<a href="\/findings#needs" class="need"><b>1<\/b> needs you<\/a>/);
+      // the work queue holds its own strip in the bar's place; every other page but the Overview the summary bar
+      if (p !== "/overview" && p !== "/work") expect(r.body, p).toMatch(/<a href="\/findings#needs" class="need"><b>1<\/b> needs you<\/a>/);
     }
     const report = await get(server, "/overview/report");
     expect(report.status).toBe(200);
@@ -216,7 +217,7 @@ describe("the console over sample/bundle.json, client-1", SERVER, () => {
     expect(new Set(rows.map((r) => r.status))).toEqual(new Set(["in order", "adopted", "held", "with a technician"]));
   });
 
-  it("Settings: one line an object, its name and its host or zone, the full path in the drawer; attention first: with a technician, drifted, held, an open window, then the rest", async () => {
+  it("Settings: one line an object, its name and its host or zone, the full path in the drawer; attention first: needs you (with a technician), drifted, held, an open window, then the rest", async () => {
     const html = (await get(server, "/settings")).body;
     const rows = settingRows(html);
     const rank = (r: { status: string; lock: string }): number => Math.min(...[["with a technician", "drifted", "held"].indexOf(r.status)].filter((i) => i >= 0), r.lock === "window" ? 3 : 4);
@@ -224,9 +225,9 @@ describe("the console over sample/bundle.json, client-1", SERVER, () => {
     expect(ranks).toEqual([...ranks].sort((a, b) => a - b));
     expect(rows[0].status).toBe("with a technician");
     expect(rows.filter((r) => r.tier === "0").map((r) => r.status).every((s) => ["with a technician", "drifted", "held"].includes(s))).toBe(true);
-    expect(html.match(/<tr class="grp" data-tier="\d"><td colspan="7">[^<]+<\/td><\/tr>/g)).toEqual([
-      `<tr class="grp" data-tier="0"><td colspan="7">Needs attention: with a technician, drifted, held or in an open window · ${rows.filter((r) => r.tier === "0").length} objects</td></tr>`,
-      `<tr class="grp" data-tier="1"><td colspan="7">Everything else · ${rows.filter((r) => r.tier === "1").length} objects</td></tr>`,
+    expect(html.match(/<tr class="grp" data-tier="\d"><td colspan="8">[^<]+<\/td><\/tr>/g)).toEqual([
+      `<tr class="grp" data-tier="0"><td colspan="8">Needs attention: needs you, drifted, held or in an open window · ${rows.filter((r) => r.tier === "0").length} objects</td></tr>`,
+      `<tr class="grp" data-tier="1"><td colspan="8">Everything else · ${rows.filter((r) => r.tier === "1").length} objects</td></tr>`,
     ]);
     // no second line in any cell: the date, the criticality and the path live in the drawer and the titles
     for (const r of rows) expect(r.text, r.key).not.toMatch(/class="q"|class="p"/);
@@ -235,8 +236,9 @@ describe("the console over sample/bundle.json, client-1", SERVER, () => {
     expect(conf.text).toContain(`<span class="on">nginx/nginx.conf</span> <span class="oh">${host}</span>`);
     expect(conf.text).toContain(`title="/etc/nginx/nginx.conf on ${host}"`);
     expect(html).toContain('<h2 id="dr-title">/etc/nginx/nginx.conf</h2>');
-    // one line between 6 px paddings and a 1 px rule, no wrapping: Chromium measures 36 px a row
-    expect(CSS).toContain("table.set td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:21px;vertical-align:middle;padding-top:6px;padding-bottom:6px}");
+    // one line between 5 px paddings and a 1 px rule, no wrapping; the row's buttons stay on that line on a wide screen
+    expect(CSS).toContain("table.set td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:20px;vertical-align:middle;padding-top:5px;padding-bottom:5px}");
+    expect(CSS).toContain("table.set .acts{flex-wrap:nowrap}");
   });
 
   it("the summary bar shows 0 windows open in the muted colour, 1 window open in the window's", async () => {
@@ -342,10 +344,10 @@ describe("the console over sample/bundle.json, client-1", SERVER, () => {
       .toBe("issue #7 opened; see (a pseudonymised URL) and https://example.org/docs");
   });
 
-  it("the nav names Executive and Templates beside the other pages, Executive right after the Overview", async () => {
+  it("the nav names the work queue first, then Executive and Templates beside the other pages, Executive right after the Overview", async () => {
     const html = (await get(server, "/templates")).body;
     const nav = [...html.matchAll(/<li><a href="(\/[a-z]+)"(?: aria-current="page")?>([^<]+)/g)].map((m) => [m[1], m[2]]);
-    expect(nav).toEqual([["/overview", "Overview"], ["/executive", "Executive"], ["/settings", "Settings"], ["/templates", "Templates"], ["/findings", "Findings"], ["/actions", "Actions and tickets"], ["/traces", "Traces"], ["/sources", "Sources"]]);
+    expect(nav).toEqual([["/work", "Work queue"], ["/overview", "Overview"], ["/executive", "Executive"], ["/settings", "Settings"], ["/templates", "Templates"], ["/findings", "Findings"], ["/actions", "Actions and tickets"], ["/traces", "Traces"], ["/sources", "Sources"]]);
     expect(html).toContain('<li><a href="/templates" aria-current="page">Templates');
   });
 
@@ -429,6 +431,152 @@ describe("the console over sample/bundle.json, client-1", SERVER, () => {
   });
 });
 
+/** A popover form of a page as a browser posts it: its hidden fields and its submit's confirm=yes, which the form carries itself. */
+function popoverForm(html: string, id: string): { action: string; fields: Record<string, string> } {
+  const m = new RegExp(`<div id="${id}" popover class="pop" role="dialog" aria-labelledby="${id}-h"><form method="post" action="([^"]+)" data-action="[a-z]+">([\\s\\S]*?)</form></div>`).exec(html);
+  if (!m) throw new Error(`no popover form ${id}`);
+  expect(m[2]).toMatch(/<button type="submit" name="confirm" value="yes" class="btn [a-z]+"/);
+  const fields = Object.fromEntries([...m[2].matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)">/g)].map((x) => [x[1], x[2]]));
+  return { action: m[1], fields: { ...fields, confirm: "yes" } };
+}
+
+/** A POST as a browser without the script sends it: no Accept: application/json, so the answer is the page its return names, with the toast. */
+async function formPost(s: ConsoleServer, action: string, fields: Record<string, string>): Promise<{ status: number; body: string }> {
+  const r = await fetch(`${s.url}${action}`, { method: "POST", body: new URLSearchParams(fields) });
+  return { status: r.status, body: (await r.text()).replace(/(?:\?|&amp;)tenant=[A-Za-z0-9._-]+(?=["#])/g, "") };
+}
+
+/** One row of the work queue, by its finding. */
+const workRow = (html: string, finding: string): string => new RegExp(`<tr id="w-${finding}">([\\s\\S]*?)</tr>`).exec(html)?.[1] ?? "";
+
+describe("the work queue, the row actions and an object's page over sample/bundle.json, client-1", SERVER, () => {
+  let server: ConsoleServer;
+  beforeAll(async () => { ({ server } = await boot({ bundle: SAMPLE, bundlePath: "sample/bundle.json", tenant: "client-1", at: "2026-10-25T15:00:00.000Z" })); }, BOOT_MS);
+  afterAll(async () => { await server?.close(); });
+  const ESCALATED = "fnd-b4a40091cdb4f906";
+  const HELD = ["fnd-58b251b5fce8fbff", "fnd-8fc67ccb1e4eebfa", "fnd-d62857e241af66e2"];
+
+  it("/ lands on the work queue: the strip (tenant, pass, counts, Run a pass), what needs a person as rows with live, approved, why, age, status and the actions, the held with their expiry, the adopted folded", async () => {
+    expect((await fetch(`${server.url}/`)).url).toBe(`${server.url}/work`);
+    const html = (await get(server, "/work")).body;
+    expect(html).toContain('<li><a href="/work" aria-current="page">Work queue<span class="cnt need">1</span></a></li>');
+    // the strip in the bar's place, with its own Run a pass, which returns to the queue; the navigation's is left out
+    expect(html).toContain('<header class="bar strip">');
+    expect(html).toContain("<div class=\"strip-id\"><b>client-1</b><span>sample mode · pass decided 25 Oct 2026 14:17 UTC</span></div>");
+    expect([...html.matchAll(/<a href="([^"]+)" class="stat [a-z]+"><b>([\d,]+)<\/b><span>([^<]+)<\/span><\/a>/g)].map((m) => [m[1], m[2], m[3]])).toEqual([
+      ["#needs", "1", "needs you"], ["#held", "3", "held"], ["#adopted", "23", "adopted"], ["/settings?lock=locked", "79", "locked"],
+    ]);
+    expect(html).toContain('<form method="post" action="/do/pass" data-action="pass" class="strip-pass">');
+    expect(html).toContain('<input type="hidden" name="return" value="/work">\n<button type="submit" class="btn primary">Run a pass</button>');
+    expect(html).not.toContain('class="side-pass"');
+    // needs you: the one escalation, as one table row
+    const needs = /<section id="needs">([\s\S]*?)<\/section>/.exec(html)![1];
+    expect([...needs.matchAll(/<tr id="w-(fnd-[0-9a-f]{16})">/g)].map((m) => m[1])).toEqual([ESCALATED]);
+    const row = workRow(html, ESCALATED);
+    expect([...row.matchAll(/<td data-label="([^"]+)"/g)].map((m) => m[1])).toEqual(["Object", "Live", "Approved", "Why", "Age", "Status", "Actions"]);
+    expect(row).toContain('<span class="on">host-524b42.quest (CNAME)</span> <span class="oh">host-4c795e.quest</span><span class="q">proxied</span>');
+    expect(row).toContain('<td data-label="Live"><code>CNAME host-4c795e.quest proxied</code></td>');
+    expect(row).toContain('<td data-label="Approved"><span class="muted">same as live</span></td>');
+    // why: the class, the Decider's own reason with its instants as the page shows a time, the rule
+    expect(row).toContain("hold under rule rule-8e75e1d767980665 expired 25 Oct 2026 03:21 UTC; the finding stands");
+    expect(row).toContain('rule <a href="/policy#rule-8e75e1d767980665">rule-8e75e1d767980665</a>');
+    // raised by every pass since the first that held it, 24 Oct 23:21, then escalated: 15 h before the clock's 25 Oct 15:00
+    expect(row).toContain('<td data-label="Age"><span class="nw" title="raised by every pass since 24 Oct 2026 23:21 UTC">15 h</span><span class="q">since 24 Oct 23:21 UTC</span></td>');
+    expect(row).toContain('<td data-label="Status" class="st"><span class="b need">needs you</span><span class="b locked">locked by rule</span></td>');
+    // the actions: Approve and Unlock open their forms; Lock is disabled with its reason, no window being open; Open goes to the object's page
+    expect(row).toContain('popovertarget="p-approve-q0" title="Approve the live value of host-524b42.quest (CNAME)">Approve</button>');
+    expect(row).toContain('popovertarget="p-unlock-q0" title="Open a change window on host-524b42.quest (CNAME)">Unlock</button>');
+    expect(row).toMatch(/<button type="button" class="btn sm" disabled title="Lock: no change window is open on this object[^"]*">Lock<\/button>/);
+    expect(row).toMatch(/<a class="btn sm" href="\/object\?key=[A-Za-z0-9_-]+" title="Open the object's page">Open<\/a>/);
+    // held: the three orphan records, soonest expiry first, each with its expiry and how far it is
+    const held = /<section id="held">([\s\S]*?)<\/section>/.exec(html)![1];
+    expect([...held.matchAll(/<tr id="w-(fnd-[0-9a-f]{16})">/g)].map((m) => m[1])).toEqual(HELD);
+    for (const f of HELD) expect(workRow(html, f)).toContain('<td data-label="Expires"><span>27 Oct 23:21 UTC</span><span class="q">in 56 h</span></td>');
+    // adopted: folded, 23 rows, Open alone: no form
+    const adopted = /<section id="adopted">([\s\S]*?)<\/section>/.exec(html)![1];
+    expect(adopted).toContain("<details class=\"fold\"><summary>23 findings adopted under exceptions</summary>");
+    expect(adopted.match(/<tr id="w-/g)).toHaveLength(23);
+    expect(adopted).not.toContain("popover");
+    // a form for each action an object can take, in the needs and the held rows: Approve and Unlock on four rows
+    expect(html.match(/ popover class="pop"/g)).toHaveLength(8);
+  });
+
+  it("a row's Unlock, Lock and Approve post as a browser without the script posts them, each answering the queue with its toast; the queue then reads the change", async () => {
+    let html = (await get(server, "/work")).body;
+    const uid = /popovertarget="p-unlock-(q\d+)"/.exec(workRow(html, HELD[0]))![1];
+    const unlock = popoverForm(html, `p-unlock-${uid}`);
+    expect([unlock.action, unlock.fields.return, unlock.fields.page_tenant, unlock.fields.csrf]).toEqual(["/do/unlock", "/work", "client-1", server.csrf]);
+    const u = await formPost(server, unlock.action, { ...unlock.fields, who: "tech-a", hours: "2", why: "a planned change" });
+    expect(u.status).toBe(200);
+    expect(u.body).toContain("<h1>Work queue</h1>");
+    expect(u.body).toMatch(/<div class="toast" role="status"><b>Change window open on host-50b116\.com \(A\) until 25 Oct 2026 17:0\d UTC<\/b>/);
+    html = (await get(server, "/work")).body;
+    let row = workRow(html, HELD[0]);
+    expect(row).toMatch(/<span class="b window" title="[^"]+">open until 25 Oct 17:0\d UTC<\/span>/);
+    expect(row).toMatch(/<button type="button" class="btn sm" disabled title="Unlock: a change window is open until 25 Oct 2026 17:0\d UTC; Lock or Approve closes it first">Unlock<\/button>/);
+    // the strip counts the open window
+    expect(html).toContain('<a href="/settings?lock=window" class="stat window"><b>1</b><span>window open</span></a>');
+    const lock = popoverForm(html, `p-lock-${/popovertarget="p-lock-(q\d+)"/.exec(row)![1]}`);
+    const l = await formPost(server, lock.action, lock.fields);
+    expect([l.status, l.body.includes("<b>Locked: host-50b116.com (A)</b>")]).toEqual([200, true]);
+    row = workRow((await get(server, "/work")).body, HELD[0]);
+    expect(row).toContain('<span class="b locked">locked by rule</span>');
+    expect(row).toMatch(/disabled title="Lock: no change window is open/);
+    // Approve on the escalated record, then the same form without its confirmation: refused, as every action is
+    html = (await get(server, "/work")).body;
+    const approve = popoverForm(html, `p-approve-${/popovertarget="p-approve-(q\d+)"/.exec(workRow(html, ESCALATED))![1]}`);
+    const a = await formPost(server, approve.action, { ...approve.fields, by: "tech-a", note: "checked" });
+    expect([a.status, a.body.includes("<b>Approved: host-524b42.quest (CNAME)</b>")]).toEqual([200, true]);
+    const { confirm: _confirm, ...unconfirmed } = approve.fields;
+    const refused = await formPost(server, approve.action, unconfirmed);
+    expect([refused.status, refused.body.includes("<b>Confirm on the page first: the action carries its confirmation</b>")]).toEqual([400, true]);
+  });
+
+  it("an object's page: live, approved and the template's recommendation, lock and rule, last change and who changed it, and the actions; a key the latest runs do not hold is a 404", async () => {
+    const key = settingRows((await get(server, "/settings")).body).find((r) => r.key.endsWith("\u001f/etc/nginx/nginx.conf"))!.key;
+    const r = await get(server, `/object?key=${encodeURIComponent(encodeKey(key))}`);
+    expect(r.status).toBe(200);
+    expect(r.headers.get("content-security-policy")).toMatch(/^default-src 'none'; style-src 'self' 'nonce-[A-Za-z0-9+/=]+'; script-src 'self' 'nonce-[A-Za-z0-9+/=]+';/);
+    expect(r.body.match(/<style\b|<script(?![^>]*\bsrc=)|\sstyle=|\son[a-z]+=/gi)).toBeNull();
+    expect(r.body).toContain("<title>nginx/nginx.conf · ConfigLeaf console</title>");
+    expect(r.body).toContain('<li><a href="/settings" aria-current="page">Settings');
+    expect(r.body).toContain('<h1 class="oname">/etc/nginx/nginx.conf</h1>');
+    const glance = /<dl class="kv glance">([\s\S]*?)<\/dl>/.exec(r.body)![1];
+    expect([...glance.matchAll(/<dt>([^<]+)<\/dt>/g)].map((m) => m[1])).toEqual(["Live", "Approved", "Recommended (template)", "Lock", "Verdict", "Last change", "Changed by"]);
+    expect(glance).toMatch(/<dt>Live<\/dt><dd><code>[0-9a-f]{12}<\/code><\/dd>/);
+    expect(glance).toMatch(/<dt>Approved<\/dt><dd><code>[0-9a-f]{12}<\/code> <span class="b ok">matches live<\/span><span class="rc">approved \d+ [A-Z][a-z]{2} \d{4} \d\d:\d\d UTC/);
+    expect(glance).toMatch(/<dt>Recommended \(template\)<\/dt><dd><a href="\/policy#rule-[0-9a-f]{16}">[^<]+<\/a><span class="rc">on drift [a-z_]+; no copy [a-z_]+; hold up to \d+ h; alert [a-z_]+, P\d<\/span><\/dd>/);
+    expect(glance).toMatch(/<dt>Lock<\/dt><dd><span class="b locked">locked by rule<\/span> <a class="pill" href="\/policy#rule-[0-9a-f]{16}">rule-[0-9a-f]{16}<\/a>/);
+    expect(glance).toContain('<dt>Changed by</dt><dd><span class="muted">no record</span></dd>');
+    for (const act of ["approve", "unlock"]) expect(r.body).toContain(`<div id="p-${act}-obj" popover class="pop" role="dialog" aria-labelledby="p-${act}-obj-h">`);
+    expect(r.body).toMatch(/disabled title="Lock: no change window is open/);
+    for (const h of ["Live against approved", "Restore proof", "What a restore would regress", "References", "Decisions", "Action history", "Change window"]) expect(r.body).toContain(`<h3>${h}</h3>`);
+    const missing = await get(server, "/object?key=bm9uZQ");
+    expect([missing.status, missing.body.includes("No such object in the latest passing runs of client-1.")]).toEqual([404, true]);
+    expect((await get(server, "/object")).status).toBe(404);
+  });
+
+  it("Settings: every row carries Approve, Unlock and Lock inline and Open; the drawer's buttons open the row's own forms; the header sorts", async () => {
+    const html = (await get(server, "/settings")).body;
+    const rows = settingRows(html);
+    expect(rows).toHaveLength(112);
+    for (const [i, r] of rows.entries()) {
+      for (const label of ["Approve", "Unlock", "Lock"]) expect(r.text, `${r.key} ${label}`).toMatch(new RegExp(`(?:popovertarget="p-${label.toLowerCase()}-o${i}"|disabled) title="[^"]+">${label}</button>`));
+      expect(r.text).toMatch(/<a class="btn sm" href="\/object\?key=[A-Za-z0-9_-]+" title="Open [^"]+ on a page of its own">Open<\/a>/);
+    }
+    // one form per action and row in the page; the drawer holds buttons aimed at them, no form of its own
+    expect(html.match(/<div id="p-approve-o0" popover/g)).toHaveLength(1);
+    const drawer = /<template id="t-o0"[^>]*>([\s\S]*?)<\/template>/.exec(html)![1];
+    expect(drawer).toContain('popovertarget="p-approve-o0"');
+    expect(drawer).not.toContain("popover class=");
+    expect(drawer).toMatch(/<a class="btn" href="\/object\?key=[A-Za-z0-9_-]+">Open page<\/a>/);
+    expect(html).toContain('<thead><tr><th scope="col" data-sort>Object</th><th scope="col" data-sort>Live</th><th scope="col" data-sort>Approved</th><th scope="col" data-sort>Lock</th><th scope="col" data-sort class="hide-m">Template</th><th scope="col" data-sort class="hide-m">Last change</th><th scope="col" data-sort>Status</th><th scope="col">Actions</th></tr></thead>');
+    expect(SCRIPT).toContain('$$("th[data-sort]")');
+    // the status a row shows reads "needs you"; the filter's value, and the row's data-status, keep the status's name
+    expect(html).toContain('<option value="with a technician">needs you</option>');
+  });
+});
+
 describe("the tenant switcher over sample/bundle.json: client-1 and lab-1", SERVER, () => {
   let server: ConsoleServer;
   let backend: Backend;
@@ -450,7 +598,7 @@ describe("the tenant switcher over sample/bundle.json: client-1 and lab-1", SERV
     expect([r.status, r.headers.get("location")]).toEqual([303, "/executive?period=all&tenant=lab-1"]);
     expect(server.tenant()).toBe("lab-1");
     for (const [p] of PAGES) expect((await get(server, p)).body, p).toContain('<option value="lab-1" selected>lab-1</option>');
-    expect((await get(server, "/settings")).body).toContain("Every object the estate holds for lab-1: 5 files on 1 host and 0 records in 0 zones");
+    expect((await get(server, "/settings")).body).toContain("5 objects for lab-1: 5 files on 1 host, 0 records in 0 zones.");
     expect((await get(server, "/overview/report")).body).toContain("lab-1 · configuration assurance");
     const ex = (await get(server, "/executive")).body;
     expect(ex).toContain("<h1>lab-1 · executive report</h1>");
@@ -533,7 +681,7 @@ describe("the download's name, an answer's headers, the switch's return paths an
 
   it("the switch's return paths are read off PAGE_PATH and the periods: every page of the nav and the executive report's three, nothing else", () => {
     expect([...RETURN_PATHS]).toEqual([...Object.values(PAGE_PATH), ...PERIODS.map((p) => `/executive?period=${p}`)]);
-    expect(Object.keys(PAGE_PATH).sort()).toEqual(["actions", "document", "executive", "findings", "overview", "policy", "settings", "sources", "templates", "traces"]);
+    expect(Object.keys(PAGE_PATH).sort()).toEqual(["actions", "document", "executive", "findings", "overview", "policy", "settings", "sources", "templates", "traces", "work"]);
     for (const p of RETURN_PATHS) expect(returnPathOf(p)).toBe(p);
     for (const p of [null, "", "/executive?period=1y", "//elsewhere.example", "/overview/", "/traces/view?f=x", "https://elsewhere.example/", "/Overview"]) expect(returnPathOf(p), String(p)).toBe("/overview");
   });
