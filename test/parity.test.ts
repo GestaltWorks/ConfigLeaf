@@ -538,12 +538,12 @@ describe("the file tables over the committed store and policy, on sql.js: except
   it("the ADOPT under a lesson in force joins it; one naming no lesson, one after the expiry and one of another tenant do not; the HOLD is left out", async () => {
     const files = fileRows({ memoryDir: SAMPLE_MEMORY_DIR, policyFile: "policy/hackathon.json" });
     expect(files.lesson).toHaveLength(23);
-    expect(files.rule).toHaveLength(15);
+    expect(files.rule).toHaveLength(16);
     const lesson = files.lesson[0];
     expect(lesson).toMatchObject({ lesson_id: "mem-1", tenant_id: "client-1", kind: "exception", finding_class: "proxied_without_real_ip", expires_at: "2026-11-30T00:00:00.000Z" });
     const engine = await SqlJsEngine.create();
     engine.loadBundle(bundle);
-    expect(engine.loadFileTables(files)).toEqual({ lesson: 23, rule: 15 });
+    expect(engine.loadFileTables(files)).toEqual({ lesson: 23, rule: 16 });
     const layer = new DataLayer(engine).withOverlays(adoptionsOf(lesson));
     const rows = objects(await layer.run(`${ADOPTION_SQL} ORDER BY disposition_id`, {}));
     expect(rows.map((r) => [r.disposition_id, r.lesson_id, r.lesson_expires_at])).toEqual([

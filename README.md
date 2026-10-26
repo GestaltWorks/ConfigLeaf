@@ -250,7 +250,7 @@ Zetaris also reads one source itself, live: the Cloudflare DNS API, which `npm r
 | source | Zetaris datasource | tables | rows | what it holds |
 |---|---|---|---|---|
 | technician memory store (`examples/memory`) | `LESSONS` | `LESSONS.lesson`, `LESSONS.ledger` | 23 lessons, 23 ledger entries | the lessons the technician taught, in the Meterless H-MEM store, each with its tenant, scope key, expiry and provenance; the Decider recalls them, and an accepted exception makes its finding ADOPT until it expires |
-| policy rules (`policy/hackathon.json`) | `RULES` | `RULES.rule` | 15 rules, version 2 | the MSP's policy, one row per rule under the rule id every disposition decided by policy names |
+| policy rules (`policy/hackathon.json`) | `RULES` | `RULES.rule` | 16 rules, version 2 | the MSP's policy, one row per rule under the rule id every disposition decided by policy names |
 | Cloudflare live (`api.cloudflare.com/client/v4/zones/<zone id>/dns_records`) | `CLOUDFLARE` | `CLOUDFLARE.zone_<zone id>` | 58 records in 6 zones on 26 Oct 2026 | every DNS record at the provider now, which Zetaris fetches itself under the read token at each query; drift_usl.dns_live holds each to the last complete DNS collection run by record id, type and proxied flag |
 
 ## Policy

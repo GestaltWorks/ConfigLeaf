@@ -55,6 +55,8 @@ export { VaultError };
 export const VAULT_AUTHOR = { name: "drift-agent", email: "drift-agent@localhost" } as const;
 /** The repository name a tenant's Cloudflare records live under, beside its host aliases. */
 export const CLOUDFLARE_REPO = "cloudflare";
+/** The repository name a tenant's Zetaris control-plane objects live under (src/zetaris/control.ts), <object id>.json each. */
+export const ZETARIS_REPO = "zetaris";
 export const DRIFT_DIR = ".drift";
 export const PATHS_FILE = `${DRIFT_DIR}/paths.json`;
 export const LINKS_FILE = `${DRIFT_DIR}/links.json`;
