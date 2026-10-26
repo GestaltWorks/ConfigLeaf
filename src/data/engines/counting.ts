@@ -28,8 +28,8 @@ export class CountingEngine implements Engine {
     this.name = inner.name;
   }
 
-  qualify(table: string): string {
-    return this.inner.qualify(table);
+  qualify(table: string, sql?: string): string {
+    return this.inner.qualify(table, sql);
   }
 
   async run(sql: string, opts?: RunOptions): Promise<QueryResult> {
