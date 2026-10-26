@@ -38,6 +38,12 @@ const Schema = z.object({
   ZETARIS_PG_HOST: z.string().default("drift-pg"),
   // Cloudflare API token with Zone:Read, DNS:Read and Account:Audit Logs:Read; the collector only GETs.
   CLOUDFLARE_API_TOKEN: z.string().default(""),
+  // Microsoft 365 through Microsoft Graph, client credentials, read only: an app registration with the application
+  // permission Domain.Read.All. The collector (src/collectors/m365.ts) reads the verified domains and the DNS records
+  // each one needs; the secret and the token it buys are never printed, logged or written.
+  M365_TENANT_ID: z.string().default(""),
+  M365_CLIENT_ID: z.string().default(""),
+  M365_CLIENT_SECRET: z.string().default(""),
   // Salt behind the redactor's pseudonyms. Secret-like: with it a published fixture re-identifies.
   REDACT_SALT: z.string().default(""),
   // The tenant's own labels (zone labels, product names), comma-separated, pseudonymised wherever they stand
@@ -225,6 +231,11 @@ export const config = {
   },
   cloudflare: {
     token: raw.CLOUDFLARE_API_TOKEN,
+  },
+  m365: {
+    tenantId: raw.M365_TENANT_ID.trim(),
+    clientId: raw.M365_CLIENT_ID.trim(),
+    clientSecret: raw.M365_CLIENT_SECRET,
   },
   redactSalt: raw.REDACT_SALT,
   redactWords: raw.REDACT_WORDS.split(",").map((s) => s.trim()).filter(Boolean),
