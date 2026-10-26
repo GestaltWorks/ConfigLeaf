@@ -18,8 +18,12 @@ export interface RunOptions { limit?: number; agent?: string; tracer?: Tracer }
 
 export interface Engine {
   name: "sqljs" | "zetaris";
-  /** Engine-specific table reference: bare name on sql.js, datasource-qualified on Zetaris. */
-  qualify(table: string): string;
+  /**
+   * Engine-specific table reference: the bare name on sql.js; on Zetaris the drift_usl entity the table is read through,
+   * or a parenthesised SELECT of the table's columns from it, which render() gives the query's alias as it does an overlay.
+   * `sql` is the text the reference is rendered into, the query and its overlay bodies; Zetaris reads it to fence a read.
+   */
+  qualify(table: string, sql?: string): string;
   run(sql: string, opts?: RunOptions): Promise<QueryResult>;
 }
 
@@ -88,7 +92,7 @@ export class DataLayer {
     for (const [table, body] of Object.entries(this.overlays)) {
       if (!tables.includes(table)) throw new DataLayerError(`overlay on unknown table: ${table}`);
       if (!body.includes(`{{t:${table}}}`)) throw new DataLayerError(`overlay on ${table} must read its base table as {{t:${table}}}`);
-      assertSelectOnly(this.renderWith(body, {}, {}));
+      assertSelectOnly(this.renderWith(body, {}, {}, body));
     }
   }
 
@@ -99,19 +103,22 @@ export class DataLayer {
 
   /** {{t:name}} must be a known table; {{p:name}} must be present in params. Any other brace pair in the template throws; braces inside a parameter value are data. */
   render(sql: string, params: Params = {}): string {
-    return this.renderWith(sql, params, this.overlays);
+    return this.renderWith(sql, params, this.overlays, [sql, ...Object.values(this.overlays)].join("\n"));
   }
 
-  private renderWith(sql: string, params: Params, overlays: Overlays): string {
+  /** `context`: the query and its overlay bodies, which every table reference in them is rendered into (Engine.qualify). */
+  private renderWith(sql: string, params: Params, overlays: Overlays, context: string): string {
     if (/\{\{|\}\}/.test(sql.replace(/\{\{(t|p):\w+\}\}/g, ""))) throw new DataLayerError("malformed placeholder; use {{t:table}} or {{p:param}}");
     return sql.replace(/\{\{(t|p):(\w+)\}\}/g, (match: string, kind: string, name: string, offset: number, all: string) => {
       if (kind === "t") {
         if (!this.tables.includes(name)) throw new DataLayerError(`unknown table: ${name}`);
         const body = overlays[name];
-        if (body === undefined) return this.engine.qualify(name);
+        const relation = body === undefined ? this.engine.qualify(name, context) : `(${this.renderWith(body, {}, {}, context)})`;
+        if (!relation.startsWith("(")) return relation;
+        // A derived table (an overlay, or the engine's SELECT over an entity) takes the query's alias, else the table name.
         const next = all.slice(offset + match.length).match(AFTER_TABLE)?.[1];
         const aliased = next !== undefined && !NOT_ALIAS.has(next.toLowerCase());
-        return `(${this.renderWith(body, {}, {})})${aliased ? "" : ` ${name}`}`;
+        return `${relation}${aliased ? "" : ` ${name}`}`;
       }
       if (!Object.hasOwn(params, name)) throw new DataLayerError(`missing parameter: ${name}`);
       return literal(params[name]);
