@@ -37,6 +37,7 @@ import { Redactor, countLabels } from "../src/redactor.ts";
 import { AT, TENANT, buildBase, buildWorld, type Base, type World } from "./fixtures/actions/world.ts";
 import { readCopyState, refreshFiles } from "../src/zetaris/filestore.ts";
 import { MemTracer } from "./fixtures/mem-tracer.ts";
+import { zetarisMeta } from "./fixtures/zetaris-meta.ts";
 
 const passOf = (tenant = "t1"): PassStep => ({
   tenant, decidedAt: "2026-10-24T00:00:00.000Z", runs: 1, kept: 0, lines: [], summary: "PASS: fake",
@@ -492,12 +493,12 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
     let answer: () => Promise<{ queryId: string; columns: string[]; rows: string[][]; rowCount: number; total: number; latencyMs: number; raw: unknown }> = async () => ({ queryId: "q", columns: ["decided_at", "adoptions", "in_force"], rows: [["2026-10-25T21:12:42.005Z", "23", "22"]], rowCount: 1, total: 1, latencyMs: 1, raw: {} });
     const dnsRow = { queryId: "q", columns: ["live", "current", "run_id"], rows: [["58", "58", "run-a7ccb5c97d2c781c"]], rowCount: 1, total: 1, latencyMs: 1, raw: {} };
     // sql.js answering under Zetaris's name, the USL reads answered as Zetaris would
-    const live = { name: "zetaris" as const, qualify: (t: string) => own.qualify(t), run: async (sql: string, o?: Parameters<SqlJsEngine["run"]>[1]) => (sql.includes(ADOPTION_ENTITY) ? (reads.push(sql), answer()) : sql.includes(DNS_ENTITY) ? dnsRow : own.run(sql, o)) };
+    const live = { name: "zetaris" as const, qualify: (t: string) => own.qualify(t), run: async (sql: string, o?: Parameters<SqlJsEngine["run"]>[1]) => zetarisMeta(sql) ?? (sql.includes(ADOPTION_ENTITY) ? (reads.push(sql), answer()) : sql.includes(DNS_ENTITY) ? dnsRow : own.run(sql, o)) };
     const dry = await passStep(new DataLayer(live), { tenant: TENANT, ledger: null, decidedAt: AT, world: new DriftWorld("loop_test") });
     expect(reads).toEqual([adoptionCheckSql(TENANT, null)]);
     expect(reads[0]).toBe(`SELECT decided_at, COUNT(*) AS adoptions, SUM(CASE WHEN ${EXCEPTION_IN_FORCE} THEN 1 ELSE 0 END) AS in_force FROM lightning.metastore.drift.drift_usl.adoption WHERE tenant_id = '${TENANT}' GROUP BY decided_at ORDER BY decided_at DESC LIMIT 1`);
     expect(dry.adoptions).toEqual({ rule: "exception_in_force", of: "recorded", decidedAt: "2026-10-25T21:12:42.005Z", adoptions: 23, inForce: 22 });
-    expect(dry.summary.endsWith("; DQ exception_in_force 22 of 23 adoptions of the pass recorded at 2026-10-25T21:12:42.005Z; DQ dns_inventory_current 58 of 58 live records")).toBe(true);
+    expect(dry.summary).toContain("; DQ exception_in_force 22 of 23 adoptions of the pass recorded at 2026-10-25T21:12:42.005Z; DQ dns_inventory_current 58 of 58 live records");
     // with a ledger: the instant of this pass, after the ledger write
     answer = async () => ({ queryId: "q", columns: ["decided_at", "adoptions", "in_force"], rows: [], rowCount: 0, total: 0, latencyMs: 1, raw: {} });
     const recorded = await passStep(new DataLayer(live), { tenant: TENANT, ledger: new MemoryLedger(own), decidedAt: AT, world: new DriftWorld("loop_test") });
@@ -527,29 +528,30 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
     const reads: string[] = [];
     const adoptionRow = { queryId: "q", columns: ["decided_at", "adoptions", "in_force"], rows: [[AT, "1", "1"]], rowCount: 1, total: 1, latencyMs: 1, raw: {} };
     let answer: () => Promise<{ queryId: string; columns: string[]; rows: string[][]; rowCount: number; total: number; latencyMs: number; raw: unknown }> = async () => ({ queryId: "q", columns: ["live", "current", "run_id"], rows: [["58", "58", "run-a7ccb5c97d2c781c"]], rowCount: 1, total: 1, latencyMs: 1, raw: {} });
-    const live = { name: "zetaris" as const, qualify: (t: string) => own.qualify(t), run: async (sql: string, o?: Parameters<SqlJsEngine["run"]>[1]) => (sql.includes(ADOPTION_ENTITY) ? adoptionRow : sql.includes(DNS_ENTITY) ? (reads.push(sql), answer()) : own.run(sql, o)) };
+    const live = { name: "zetaris" as const, qualify: (t: string) => own.qualify(t), run: async (sql: string, o?: Parameters<SqlJsEngine["run"]>[1]) => zetarisMeta(sql) ?? (sql.includes(ADOPTION_ENTITY) ? adoptionRow : sql.includes(DNS_ENTITY) ? (reads.push(sql), answer()) : own.run(sql, o)) };
     /** The Zetaris facts under the pass row: the queries, the DQ label's lines. */
-    const zlines = (r: PassStep, color = false) => new Table({ ...PLAIN, width: 400, color }).row("pass", passView(r, { datasource: "DRIFT", queries: 2, rows: 3, failed: 0 }), null).slice(1, 4);
+    const zlines = (r: PassStep, color = false) => new Table({ ...PLAIN, width: 400, color }).row("pass", passView(r, { datasource: "DRIFT", queries: 2, rows: 3, failed: 0 }), null).slice(1, 5);
     const recordedAt = `${AT.slice(0, 16).replace("T", " ")} UTC`;
     const zetaris = "            Zetaris   2 queries · 3 rows · 0 failed";
     const dq = `            DQ        exception_in_force holds for 1 of 1 adoption of the pass recorded at ${recordedAt}`;
     const under = "                      ";
+    const schema = "            schema    14 tables as expected";
 
     // the live run of 26 Oct 2026, 03:49 UTC for client-1: 58 of 58
     const current = await passStep(new DataLayer(live), { tenant: TENANT, ledger: null, decidedAt: AT, world: new DriftWorld("loop_test") });
     expect(reads).toEqual([dnsInventorySql()]);
     expect(reads[0]).toBe(`SELECT COUNT(*) AS live, SUM(CASE WHEN ${DNS_INVENTORY_CURRENT} THEN 1 ELSE 0 END) AS current, MAX(run_id) AS run_id FROM lightning.metastore.drift.drift_usl.dns_live`);
     expect(current.dns).toEqual({ rule: "dns_inventory_current", live: 58, current: 58, runId: "run-a7ccb5c97d2c781c" });
-    expect(current.summary.endsWith("; DQ dns_inventory_current 58 of 58 live records")).toBe(true);
-    expect(zlines(current)).toEqual([zetaris, dq, `${under}dns_inventory_current holds for 58 of 58 live records`]);
+    expect(current.summary).toContain("; DQ dns_inventory_current 58 of 58 live records");
+    expect(zlines(current)).toEqual([zetaris, schema, dq, `${under}dns_inventory_current holds for 58 of 58 live records`]);
 
     // the provider changed since the run: two records created, one proxied flag turned; the verbs are the pass's own
     answer = async () => ({ queryId: "q", columns: ["live", "current", "run_id"], rows: [["60", "57", "run-a7ccb5c97d2c781c"]], rowCount: 1, total: 1, latencyMs: 1, raw: {} });
     const stale = await passStep(new DataLayer(live), { tenant: TENANT, ledger: null, decidedAt: AT, world: new DriftWorld("loop_test") });
     expect(stale.dns).toEqual({ rule: "dns_inventory_current", live: 60, current: 57, runId: "run-a7ccb5c97d2c781c" });
     expect(stale.findings.map((f) => f.verb)).toEqual(current.findings.map((f) => f.verb));
-    expect(zlines(stale)[2]).toBe(`${under}dns_inventory_current holds for 57 of 60 live records`);
-    expect(zlines(stale, true)[2].endsWith("\x1b[31mdns_inventory_current holds for 57 of 60 live records\x1b[0m")).toBe(true);
+    expect(zlines(stale)[3]).toBe(`${under}dns_inventory_current holds for 57 of 60 live records`);
+    expect(zlines(stale, true)[3].endsWith("\x1b[31mdns_inventory_current holds for 57 of 60 live records\x1b[0m")).toBe(true);
 
     // a failed read (Cloudflare refused the token, as Zetaris reports a REST fetch): carried, yellow on the line
     answer = async () => { throw new Error("Zetaris 400: REST API call failed: Server returned HTTP response code: 403"); };
@@ -557,7 +559,7 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
     expect(failed.dns).toEqual({ rule: "dns_inventory_current", error: "Zetaris 400: REST API call failed: Server returned HTTP response code: 403" });
     expect(failed.findings.map((f) => f.verb)).toEqual(current.findings.map((f) => f.verb));
     expect(failed.summary).toContain("; DQ dns_inventory_current not read: Zetaris 400: REST API call failed");
-    expect(zlines(failed)[2]).toBe(`${under}dns_inventory_current not read`);
+    expect(zlines(failed)[3]).toBe(`${under}dns_inventory_current not read`);
 
     // a tenant with no DNS run reads nothing: the live records are not its picture
     const runs = objects(await own.run("SELECT run_id, tenant_id, surface FROM collection_run"));
@@ -579,7 +581,7 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
     const dnsRow = { queryId: "q", columns: ["live", "current", "run_id"], rows: [["58", "58", "run-a7ccb5c97d2c781c"]], rowCount: 1, total: 1, latencyMs: 1, raw: {} };
     const live = {
       name: "zetaris" as const, qualify: (t: string) => own.qualify(t),
-      run: async (sql: string, o?: Parameters<SqlJsEngine["run"]>[1]) => (sql.includes(ADOPTION_ENTITY) ? (order.push("dq"), dqRow) : sql.includes(DNS_ENTITY) ? (order.push("dq"), dnsRow) : (order.push("query"), own.run(sql, o))),
+      run: async (sql: string, o?: Parameters<SqlJsEngine["run"]>[1]) => zetarisMeta(sql) ?? (sql.includes(ADOPTION_ENTITY) ? (order.push("dq"), dqRow) : sql.includes(DNS_ENTITY) ? (order.push("dq"), dnsRow) : (order.push("query"), own.run(sql, o))),
     };
     const DNS = "                      dns_inventory_current holds for 58 of 58 live records";
     const stateFile = path.join(dir, "filestore-copy.json");
@@ -615,7 +617,7 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
     expect(tracer.events[0].engine).toBeUndefined();
     expect(zlines(first)).toEqual([zetaris, "            files     lessons and rules refreshed in Zetaris", dq]);
     // the DNS read on the line under the DQ label's first
-    expect(new Table({ ...PLAIN, width: 200 }).row("pass", passView(first, { datasource: "DRIFT", queries: 2, rows: 3, failed: 0 }), null)[4]).toBe(DNS);
+    expect(new Table({ ...PLAIN, width: 200 }).row("pass", passView(first, { datasource: "DRIFT", queries: 2, rows: 3, failed: 0 }), null)[5]).toBe(DNS);
 
     // the same store: current, nothing put, the line as before
     const second = await passOnce();

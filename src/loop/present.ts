@@ -20,7 +20,10 @@
 //     (rollback_file) under act, plus two spaces, and a fact's further lines start where its first line's text does.
 //   - Finding classes read in plain words (CLASS_LABEL, one map for the screen, the document and the replay page).
 //   - Under the pass, given the queries it sent through Zetaris (passView's second argument): "Zetaris <n> queries ·
-//     <n> rows · <n> failed", the failures red above 0; "files lessons and rules refreshed in Zetaris" when the pass
+//     <n> rows · <n> failed", the failures red above 0; "schema <n> tables as expected" when the pass ran the
+//     source-schema guard (src/zetaris/schema-guard.ts; red "<ds>.<table> changed: <column>" when a column it reads is
+//     missing or changed type, and under it, red, "<n> findings not checked on <surfaces>: nothing decided or
+//     recorded"); "files lessons and rules refreshed in Zetaris" when the pass
 //     put them again (yellow "... not refreshed" when the put failed, no line when the copy was current); "DQ
 //     exception_in_force holds for <n> of <n> adoptions" when the pass read it (src/loop/pass.ts AdoptionCheck; red when
 //     fewer hold than were read, " of the pass recorded at <YYYY-MM-DD HH:MM> UTC" after a pass with no ledger, yellow
@@ -86,6 +89,7 @@ import type { Finding, Verb } from "../pipeline.ts";
 import type { TicketOp } from "../psa/index.ts";
 import type { TicketOutcome } from "../psa/step.ts";
 import type { HookResult } from "../vault/hook.ts";
+import { schemaText } from "../zetaris/schema-guard.ts";
 import { dispositionIdOf, type AdoptionCheck, type DnsInventoryCheck, type PassStep } from "./pass.ts";
 
 export type Tone = "bold" | "strong" | "red" | "yellow" | "green" | "dim";
@@ -491,12 +495,21 @@ function classLines(fs: readonly Pick<Finding, "finding">[]): SubLine[] {
  * over the live records, each on a line; then the classes in plain words, one a line; then one block per ROLLBACK, FIX
  * and ESCALATE.
  */
-export function passView(p: Pick<PassStep, "findings"> & Partial<Pick<PassStep, "adoptions" | "dns" | "files">>, zetaris?: ZetarisFacts): StepView {
+export function passView(p: Pick<PassStep, "findings"> & Partial<Pick<PassStep, "adoptions" | "dns" | "files" | "schema" | "notChecked">>, zetaris?: ZetarisFacts): StepView {
   const fs = p.findings;
   const parts: Phrase[] = VERB_ORDER.map((v) => [v, fs.filter((f) => f.verb === v).length] as const).filter(([, n]) => n > 0).map(([v, n]) => [verbSpan(v), ` ${thousands(n)}`]);
   const sub: SubLine[] = [];
   if (zetaris) {
     sub.push({ label: "Zetaris", parts: [count(zetaris.queries, "query", "queries"), count(zetaris.rows, "row"), [failedSeg(zetaris.failed)]] });
+    if (p.schema) {
+      const text = schemaText(p.schema);
+      sub.push({ label: "schema", parts: [[p.schema.changes.length ? { text, tone: "red" } : text]] });
+      const nc = p.notChecked ?? [];
+      if (nc.length) {
+        const surfaces = [...new Set(nc.map((f) => f.finding.surface))].sort().join(", ");
+        sub.push({ label: "", parts: [[{ text: `${count(nc.length, "finding")} not checked on ${surfaces}: nothing decided or recorded`, tone: "red" }]] });
+      }
+    }
     const files = p.files ? filesSeg(p.files) : null;
     if (files) sub.push({ label: "files", parts: [[files]] });
     if (p.adoptions) sub.push({ label: "DQ", parts: [[adoptionSeg(p.adoptions)]] });
