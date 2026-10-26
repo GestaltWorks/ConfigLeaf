@@ -1,6 +1,6 @@
 // npm run site [-- --out docs] [-- --examples examples] [-- --allow-stale] [-- --results eval/results/<UTC stamp>]
 //
-// The no-install replay page for judges: docs/index.html and docs/data/*.json, which GitHub Pages serves
+// The no-install replay page for judges: docs/index.html, docs/site.html and docs/data/*.json, which GitHub Pages serves
 // from /docs on main. Built only from what the repo holds, never authored: each examples/<case>/bundle.json
 // (a slice of the recorded, redacted bundle) and the findings.json the pass computed over it.
 //
@@ -54,6 +54,15 @@
 // selection, C3), per run, from the results directory the Nemotron tab is built from: the items labelled no each reads as
 // yes (counts.false_positives of counts.labelled_no), and the planted claims C3 struck in planted.json, under a caption
 // naming the directory and the runs' span from their started_at and finished_at.
+// The landing page, docs/site.html, comes out of the same build (renderSiteHtml, below): scripts/site/landing.html with
+// every {{TOKEN}} filled from what the build already reads, never from a typed number. The hero is the README's first
+// two sentences and the places its list, as written; the semantic layer box is uslRows() and DQ_RULES; the tiles are
+// the owner's document's lines and the index's totals; each act is the README's own words between two of its phrases,
+// with the lines its selector takes from the committed trace it names, each one the replay page's redactor and the scan
+// leave as it is; the eval line is the Nemotron tab's results directory, and its receipts lines are what npm run receipts:verify
+// prints for it, from the function the command runs; the sample line is this build's own sample pass in the format of
+// npm run sample. A token whose source the repository does not hold (DECK_URL empty, no repository field in
+// package.json, a results directory with no receipts.json, a build with no sample pass) leaves out its template line.
 //
 // Refuses to publish (throws, writes nothing) when a check cites a template the catalogue cannot render, or
 // parameters it refuses; when a re-run differs from the record (a check's, a live judge's, or an eval judge SELECT
@@ -64,7 +73,10 @@
 // when any output file holds a label of the operator's deny-list (REDACT_WORDS and EXPORT_DENY_WORDS: the
 // leak test's list and its countLabels scan) or a configured ssh alias, the markdown the two tabs render and the
 // strings the Nemotron tab is built from scanned as written too; when examples/document.md is missing or opens with
-// no heading; when any string in the data files or the Nemotron tab
+// no heading; when the landing page's template holds a token the build does not fill, or lacks one it fills, or a source
+// it quotes (a README phrase, a document line, a trace's lines for an act) is not there; when npm run receipts:verify
+// would find a mismatch in the results directory the landing page states it for; when any string in the data
+// files, the Nemotron tab or the landing page's trace lines
 // changes under the redactor (a name, address, mail address or secret redaction would still replace, which
 // holds with the deny-list blank too); or when the page and its data exceed MAX_BYTES. Every refusal names
 // the file and the position in the list, never the label.
@@ -75,7 +87,7 @@
 // decides here as it decided there.
 //
 // Deterministic: no clock in the output, no machine path, so the committed docs/ is exactly the build of the
-// committed examples and the committed eval results (test/site.test.ts asserts it). File hashes are over LF text,
+// committed examples, the committed eval results and the landing page's template (test/site.test.ts asserts it). File hashes are over LF text,
 // as git stores it.
 
 import { createHash, randomBytes } from "node:crypto";
@@ -96,13 +108,15 @@ import {
   HERO_SQL, ORPHAN_RECORD_SQL, ORPHAN_VHOST_SQL, PROXIED_WITHOUT_REAL_IP_SQL, PROXY_SPLIT_SQL, RUNS_SQL, WILDCARD_WITHOUT_REAL_IP_SQL, objects,
 } from "../src/data/queries.ts";
 import { sourceRows, sourcesMarkdown } from "../src/document/render.ts";
+import { utc } from "../src/document/report.ts";
 import { TechnicianMemory } from "../src/engine/memory.ts";
 import { DriftWorld } from "../src/engine/world.ts";
 import { isSubstitution } from "../src/eval/models.ts";
-import { runPass, type Finding } from "../src/pipeline.ts";
+import { VERBS, runPass, type Finding } from "../src/pipeline.ts";
 import { loadPolicyFile } from "../src/policy/load.ts";
+import { RECEIPTS_FILE, verify } from "../src/receipts/bundle.ts";
 import { Redactor, countLabels, describeRedactions } from "../src/redactor.ts";
-import { DQ_RULES, USL_NAME, USL_TABLES, uslMarkdown } from "../src/zetaris/setup.ts";
+import { DQ_RULES, USL_NAME, USL_TABLES, uslMarkdown, uslRows } from "../src/zetaris/setup.ts";
 import { FILE_DATASOURCES } from "../src/data/files.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -112,7 +126,8 @@ const DATASOURCE = config.zetaris.datasource;
 /** The data layer with Zetaris's table names: the SQL text a live pass sends for a template and its parameters. render() reads qualify() alone. */
 const AS_ZETARIS = new DataLayer(new ZetarisEngine());
 const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen"];
-const word = (n: number): string => NUMBER_WORDS[n] ?? String(n);
+/** A count as the page writes it in prose: a word up to fifteen, digits above. */
+export const word = (n: number): string => NUMBER_WORDS[n] ?? String(n);
 
 /**
  * The page and every data file together. 300,000 from 24 Oct 2026; 350,000 from 25 Oct 2026, when the Nemotron tab over
@@ -253,7 +268,7 @@ export interface BuildOptions {
   resultsDir?: string;
 }
 export interface DocumentTab { file: string; bytes: number; sha256: string; decidedAt: string | null }
-export interface BuildResult { outDir: string; files: Map<string, string>; bytes: number; index: SiteIndex; scan: ScanReport; document: DocumentTab; sources: number; nemotron: NemotronView }
+export interface BuildResult { outDir: string; files: Map<string, string>; bytes: number; index: SiteIndex; scan: ScanReport; document: DocumentTab; sources: number; nemotron: NemotronView; site: SitePage }
 
 // ---- helpers ------------------------------------------------------------------------------------------------
 
@@ -1052,6 +1067,317 @@ function zetarisParagraph(): string {
   return `<p>In a live pass every detector and check query runs as Zetaris Lightning SQL over the ${code(DATASOURCE)} datasource, the app Postgres registered in Zetaris, each table named ${code(`${DATASOURCE}.<table>`)}. Beside it Zetaris reads the technician's memory store as ${code(FILE_DATASOURCES.lesson)} and the policy file as ${code(FILE_DATASOURCES.rule)}, both files in its filestore. Over the three, the ${code(USL_NAME)} semantic layer holds ${word(USL_TABLES.length)} entities (${USL_TABLES.map(code).join(", ")}) and ${word(DQ_RULES.length)} DQ rules (${rules}). On this page the same SQL runs on sql.js over the recorded rows, and each query on the Findings tab carries the text the live pass sends to Zetaris, rendered at build time. <code>test/parity.test.ts</code> holds the two engines to the same columns, rows and totals; the README's "What it proves" table gives its last measured count.</p>`;
 }
 
+// ---- the landing page: docs/site.html, scripts/site/landing.html with every token filled from the repository ------------
+
+/** The landing page's template. A token is {{NAME}}; a token whose source the repository does not hold (null) leaves out the template line it stands on. */
+export const SITE_TEMPLATE = path.join(ROOT, "scripts", "site", "landing.html");
+/** The deck the landing page's header links. Empty: the Deck link is left out of the page. */
+export const DECK_URL = "";
+/** The committed traces the landing page's acts quote, by act. */
+export const ACT_TRACES = { two: "examples/traces/cycle_mvo2bil0.jsonl", three: "examples/traces/cycle_mvo5600q.jsonl", lab: "examples/traces/cycle_mvoa0l1i.jsonl" } as const;
+const TOKEN = /\{\{([A-Z0-9_]+)\}\}/g;
+/** An instant's UTC day as the README writes a date, 25 Oct 2026: the owner's report's utc() without the time. */
+const dayOf = (iso: string): string => utc(iso).replace(/ \d{2}:\d{2} UTC$/, "");
+/** A results directory's stamp (2026-10-25T23-34-17Z) as the README dates a run, 25 Oct 2026 23:34 UTC (utc()); any other name as it is. */
+const stampDate = (stamp: string): string => {
+  const m = /^(\d{4}-\d{2}-\d{2}T\d{2})-(\d{2})-(\d{2}Z)$/.exec(stamp);
+  return m ? utc(`${m[1]}:${m[2]}:${m[3]}`) : stamp;
+};
+/** A count as npm run receipts:verify prints it: 1,234. */
+const figure = (x: number): string => x.toLocaleString("en-US");
+const capital = (s: string): string => `${s[0].toUpperCase()}${s.slice(1)}`;
+
+/** One line of a trace as src/trace.ts writes it (lenient: the fields the landing page reads; the rest pass through). */
+const TraceLine = z.looseObject({ ts: z.string(), agent: z.string(), action: z.string(), status: z.string(), input_summary: z.string().nullish(), output_summary: z.string().nullish() });
+export type TraceEvent = z.infer<typeof TraceLine>;
+
+/** A committed trace (a path relative to the repository), line by line through its schema; a refusal names the file and the line. */
+export function readTrace(file: string): TraceEvent[] {
+  let text: string;
+  try {
+    text = lf(readFileSync(path.join(ROOT, file), "utf8"));
+  } catch {
+    throw new SiteError(`refusing to publish: ${file} is missing; the landing page quotes its lines`);
+  }
+  return text.split("\n").flatMap((l, i) => {
+    if (!l.trim()) return [];
+    let json: unknown;
+    try {
+      json = JSON.parse(l);
+    } catch {
+      throw new SiteError(`refusing to publish: ${file} line ${i + 1} is not JSON`);
+    }
+    const r = TraceLine.safeParse(json);
+    if (!r.success) throw new SiteError(`refusing to publish: ${file} line ${i + 1} is not a trace line: ${r.error.issues.slice(0, 3).map((x) => `${x.path.join(".")} ${x.message}`).join("; ")}`);
+    return [r.data];
+  });
+}
+
+/** A trace line as the landing page prints it: agent/action · status · input_summary · output_summary, through `redact`. */
+export function formatTraceLine(e: TraceEvent, redact: (s: string) => string): string {
+  return redact([`${e.agent}/${e.action}`, e.status, e.input_summary, e.output_summary].filter(Boolean).join(" · "));
+}
+
+/** Act two: the detector's found_but_different findings, then the Actor's revert of the record through the provider (traced as actor/revise, the write's kind opening its input_summary). */
+export function selectActTwoSummaries(events: TraceEvent[], redact: (s: string) => string): string[] {
+  return events
+    .filter((e) =>
+      (e.agent === "detector" && e.action === "detect" && e.output_summary?.startsWith("found_but_different")) ||
+      (e.agent === "actor" && e.action === "revise" && e.output_summary?.startsWith("done: reverted")))
+    .map((e) => formatTraceLine(e, redact));
+}
+
+/** Act three: the Actor's investigation, done, and its fix, refused (traced as actor/check and actor/escalate, the kind opening their input_summary). */
+export function selectActThreeSummaries(events: TraceEvent[], redact: (s: string) => string): string[] {
+  return events
+    .filter((e) =>
+      e.agent === "actor" &&
+      ((e.action === "check" && e.output_summary?.startsWith("done: investigated")) || (e.action === "escalate" && e.output_summary?.startsWith("refused:"))))
+    .map((e) => formatTraceLine(e, redact));
+}
+
+/** The lab chain: the explainer's lines, the cause it names and the rows it writes. */
+export function selectLabChainSummaries(events: TraceEvent[], redact: (s: string) => string): string[] {
+  return events.filter((e) => e.agent === "explainer" && e.action === "explain").map((e) => formatTraceLine(e, redact));
+}
+
+/** A markdown text's paragraphs, each on one line: a blank line ends one, and a line break inside one reads as a space. */
+const paragraphsOf = (md: string): string[] => lf(md).split(/\n[ \t]*\n/).map((p) => p.replace(/\s+/g, " ").trim()).filter(Boolean);
+
+/** The README's own words from `from` through `to`, inside the paragraph that holds `from`; refused unless `from` stands in the README exactly once and `to` follows it there. */
+function readmeSpan(paras: string[], from: string, to: string): string {
+  const hits = paras.reduce((k, p) => k + p.split(from).length - 1, 0);
+  if (hits !== 1) throw new SiteError(`refusing to publish: README.md holds "${from}" ${hits} times; the landing page quotes the sentence it opens from one`);
+  const p = paras.find((x) => x.includes(from))!;
+  const i = p.indexOf(from);
+  const j = p.indexOf(to, i + from.length);
+  if (j < 0) throw new SiteError(`refusing to publish: README.md's paragraph holding "${from}" has no "${to}" after it; the landing page quotes the words between`);
+  return p.slice(i, j + to.length);
+}
+
+/** A span as a sentence on the page: its first letter capitalised, and a period when the span ends inside the README's sentence. */
+const asSentence = (s: string): string => `${capital(s)}${/[.!?]["')]*$/.test(s) ? "" : "."}`;
+
+/** The README's first two sentences: the first paragraph under its title, cut after each sentence's closing period. */
+function readmeHero(paras: string[]): [string, string] {
+  const first = paras.find((p) => !p.startsWith("#"));
+  const m = first ? /^(.+?[.!?])\s+(.+?[.!?])(?=\s|$)/.exec(first) : null;
+  if (!m) throw new SiteError("refusing to publish: README.md's first paragraph holds no two sentences; the landing page opens with them");
+  return [m[1], m[2]];
+}
+
+/** The README's list of the places a setting's truth lives in, "The <count> places: a, b, ... and z.", split at each comma outside parentheses and code; the count as written, held to the list. */
+function readmePlaces(paras: string[]): { title: string; items: string[] } {
+  const m = paras.map((p) => /^The (\w+) places: (.+)\.$/.exec(p)).find((x): x is RegExpExecArray => x !== null);
+  if (!m) throw new SiteError('refusing to publish: README.md holds no paragraph "The <count> places: ..."; the landing page lists them');
+  const items: string[] = [];
+  let depth = 0;
+  let tick = false;
+  let cur = "";
+  for (let i = 0; i < m[2].length; i++) {
+    const c = m[2][i];
+    if (c === "`") tick = !tick;
+    else if (!tick && c === "(") depth++;
+    else if (!tick && c === ")") depth--;
+    if (!tick && depth === 0 && m[2].startsWith(", ", i)) {
+      items.push(cur);
+      cur = "";
+      i++;
+      continue;
+    }
+    cur += c;
+  }
+  items.push(cur);
+  const list = items.map((x, i) => (i === items.length - 1 ? x.replace(/^and /, "") : x));
+  if (m[1] !== word(list.length)) throw new SiteError(`refusing to publish: README.md names ${m[1]} places and lists ${list.length}`);
+  return { title: `The ${m[1]} places`, items: list };
+}
+
+/** The repository package.json names (its repository field, a string or {url}) as an https link; null when it names none, and the header leaves the link out. */
+export function repositoryUrl(pkgPath: string = path.join(ROOT, "package.json")): string | null {
+  const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { repository?: string | { url?: string } };
+  const raw = typeof pkg.repository === "string" ? pkg.repository : pkg.repository?.url;
+  if (!raw) return null;
+  const url = raw.trim().replace(/^git\+/, "").replace(/\.git$/, "");
+  const short = /^(?:github:)?([\w.-]+\/[\w.-]+)$/.exec(url);
+  const out = short ? `https://github.com/${short[1]}` : url;
+  return /^https:\/\/[^\s"'<>]+$/.test(out) ? out : null;
+}
+
+/**
+ * What npm run receipts:verify prints for a results directory, its counts line and its verdict line, from the function the
+ * command runs (src/receipts/bundle.ts verify, over the call records, receipts.json and receipts-withheld.json) in the
+ * command's format, each "…" a run of the lines it prints between (the tenant, the records, the mismatches by check,
+ * the tiers, the previews, the signing key, the runtime's memory); null when the directory holds no receipts.json, and
+ * the page leaves the command out. A mismatch refuses the build: the page beside it counts the calls with a verified
+ * receipt, and a failing verdict under that tile would contradict it.
+ */
+function receiptsVerifyLines(dir: string): string | null {
+  if (!existsSync(path.join(dir, RECEIPTS_FILE))) return null;
+  let r: ReturnType<typeof verify>;
+  try {
+    r = verify(dir);
+  } catch (err) {
+    throw new SiteError(`refusing to publish: the receipts of ${shownPath(dir)} do not read: ${(err as Error).message}`);
+  }
+  if (!r.ok) throw new SiteError(`refusing to publish: npm run receipts:verify -- ${shownPath(dir)} finds ${r.failures.length} mismatch${r.failures.length === 1 ? "" : "es"}; the landing page states the verdict it prints`);
+  return [
+    "…",
+    `receipts: ${figure(r.wanted)} receipt ids, ${figure(r.receipts)} in ${RECEIPTS_FILE}, ${figure(r.withheld)} withheld; ${figure(r.verified)} of ${figure(r.receipts)} signatures verified`,
+    "…",
+    `receipts: OK, ${figure(r.verified)} signatures verified, 0 mismatches`,
+  ].join("\n");
+}
+
+/**
+ * The summary line SAMPLE_MODE=true npm run sample prints (scripts/sample.ts), from the build's own pass over the same
+ * bundle and lessons, in the script's format, cut to the counts and the verbs; each "…" marks what it prints and the
+ * page leaves out (the lines before it, one per finding, disposition and cause; in the line, the findings one by one, the
+ * judge, the memory, the rules, the ledger and the explain step; the REPORT line after it).
+ */
+export function sampleLineOf(pass: Awaited<ReturnType<typeof runPass>>): string {
+  const verbs = VERBS.filter((v) => pass.verbs[v] > 0).map((v) => `${v} ${pass.verbs[v]}`).join(", ") || "none";
+  return `…\nSAMPLE: ${pass.runs} collection runs, ${pass.gatedOut.length} failed the DQ gate (${pass.gatedOut.join(", ") || "none"}), ${pass.observed} observations in the World Model, ${pass.findings.length} finding(s): …; verbs: ${verbs}; …\n…`;
+}
+
+export interface SiteInput {
+  index: SiteIndex;
+  nemotron: NemotronView;
+  /** The results directory the Nemotron tab is built from: its receipts give the receipts line. */
+  resultsDir: string;
+  /** The owner's document (examples/document.md) and its name as the page shows it: two of the tiles read it. */
+  documentText: string;
+  documentFile: string;
+  /** The build's own sample pass as npm run sample summarises it (sampleLineOf); null when the build ran none. */
+  sampleLine: string | null;
+}
+export interface SitePage {
+  html: string;
+  /** Each token's HTML; null for a token whose source the repository does not hold, its template line left out. */
+  tokens: Record<string, string | null>;
+  /** Each act's trace and the lines the page quotes from it, as printed (before the HTML escape). */
+  traces: { act: string; file: string; lines: string[] }[];
+}
+
+/**
+ * The landing page: scripts/site/landing.html with every token filled from what the build already reads, never from a
+ * typed number. The hero is the README's first two sentences; the places are the README's list; the semantic layer box
+ * is uslRows() and DQ_RULES (src/zetaris/setup.ts, the rows npm run sources -- --usl prints); the tiles are the owner's
+ * document's lines and the index's totals; each act is README words between two phrases of one paragraph, quoted as
+ * written, with the lines its committed trace holds for it, each one the replay page's redactor leaves as it is (a line
+ * it would rewrite refuses the build); the timeline's title dates the acts from the README and the traces; the eval line and the
+ * receipts line are the results directory the Nemotron tab is built from; the sample line is the build's own sample
+ * pass. Refuses on a template token it does not fill, a token it fills that the template does not hold, or a source that
+ * does not say what the page reads from it.
+ */
+export function renderSiteHtml(input: SiteInput, template: string = readFileSync(SITE_TEMPLATE, "utf8")): SitePage {
+  const readme = paragraphsOf(readFileSync(path.join(ROOT, "README.md"), "utf8"));
+  const [heroOne, heroTwo] = readmeHero(readme);
+  const places = readmePlaces(readme);
+  const span = (from: string, to: string): string => readmeSpan(readme, from, to);
+  const prose = (...parts: string[]): string => inline(parts.map(asSentence).join(" "));
+
+  // the acts: README words, and for a cycle the repository holds as a trace, the lines its selector takes
+  const actOne = span("a `rollback_file` on a vhost at", "closed its ticket, #5)");
+  const actOneAt = /\bat (\d{2}:\d{2} UTC)\b/.exec(actOne);
+  const actOneKind = /`(\w+)`/.exec(actOne);
+  if (!actOneAt || !actOneKind) throw new SiteError("refusing to publish: README.md's sentence on the vhost rollback names no time or no action; act one's badge reads both");
+  const actOneDay = /\b(\d{1,2} [A-Z][a-z]{2} \d{4})\b/.exec(span("On the operator's own estate the Actor ran", "in the operator's rehearsal"))?.[1];
+  if (!actOneDay) throw new SiteError("refusing to publish: README.md's sentence on the Actor's actions on the operator's estate names no day; the timeline's title reads it");
+  const traced = [
+    { act: "two", file: ACT_TRACES.two, select: selectActTwoSummaries },
+    { act: "three", file: ACT_TRACES.three, select: selectActThreeSummaries },
+    { act: "lab chain", file: ACT_TRACES.lab, select: selectLabChainSummaries },
+  ].map(({ act, file, select }) => {
+    const events = readTrace(file);
+    // the replay page's redactor must leave each line as the tracer wrote it: a line it would rewrite refuses the build, by kind, never the value
+    const asIs = (s: string): string => {
+      const out = AS_IS.text(s);
+      if (out !== s) throw new SiteError(`refusing to publish: a line of ${file} that the landing page's act ${act} quotes changes under the redactor (${Object.entries(describeRedactions(s, out)).map(([k, n]) => `${n} ${k}`).join(", ") || "text"})`);
+      return s;
+    };
+    const lines = select(events, asIs);
+    if (!lines.length) throw new SiteError(`refusing to publish: ${file} holds no line the landing page's act ${act} quotes`);
+    return { act, file, lines, days: [...new Set(events.map((e) => dayOf(e.ts)))] };
+  });
+  const [two, three, lab] = traced;
+  const block = (t: { lines: string[] }): string => t.lines.map(escapeHtml).join("\n");
+
+  const t = input.index.totals;
+  const nm = input.nemotron.totals;
+  const docLine = (re: RegExp, what: string): RegExpExecArray => {
+    const m = re.exec(input.documentText);
+    if (!m) throw new SiteError(`refusing to publish: ${input.documentFile} holds no line ${what}; the landing page's tiles read it`);
+    return m;
+  };
+  const open = docLine(/^(\d+) findings? (?:is|are) open on the latest passing runs: (.+)\.$/m, '"<n> findings are open on the latest passing runs: ..."');
+  const copies = docLine(/^(\d+) vault cop(?:y|ies) at the latest commit of each repository\b/m, '"<n> vault copies at the latest commit of each repository"');
+  const decided = /^Decided at (\S+)\.$/m.exec(input.documentText)?.[1] ?? null;
+  const tile = (value: string, label: string): string => `<div class="metric-card"><div class="metric-val">${escapeHtml(value)}</div><div class="metric-label">${escapeHtml(label)}</div></div>`;
+  const tiles = [
+    tile(open[1], `findings open in the owner's document${decided ? `, decided at ${decided}` : ""}: ${open[2]}`),
+    tile(copies[1], "vault copies at the latest commit of each repository, in the owner's document"),
+    tile(`${t.checksRerun} / ${t.checks}`, `checks re-run at build over the ${t.findings} findings of the ${t.examples} examples, counts equal`),
+    tile(`${nm.signatureVerified} / ${nm.calls}`, `Nemotron calls with a verified receipt in the eval run of ${stampDate(nm.stamp)}, ${nm.substitutions} substitutions`),
+  ];
+
+  const usl = uslRows();
+  const rules = usl.flatMap((r) => (r.rule ? [r.rule] : []));
+  const datasources = [...new Set(usl.flatMap((r) => r.builtFrom.map((x) => (x.includes(".") ? x.split(".")[0] : DATASOURCE))))];
+  const configs = [...new Set(input.nemotron.runs.map((r) => r.config))];
+  const code = (s: string): string => `<code>${escapeHtml(s)}</code>`;
+  const repo = repositoryUrl();
+  const receipts = receiptsVerifyLines(input.resultsDir);
+
+  const tokens: Record<string, string | null> = {
+    REPORT_HREF: escapeHtml(REPORT_LINK),
+    DECK_HREF: DECK_URL ? escapeHtml(DECK_URL) : null,
+    REPO_HREF: repo ? escapeHtml(repo) : null,
+    README_SENTENCE_ONE: inline(heroOne),
+    README_SENTENCE_TWO: inline(heroTwo),
+    TILES_HTML: tiles.join("\n        "),
+    SOURCES_TITLE: escapeHtml(places.title),
+    SOURCES_HTML: places.items.map((x) => `<div class="source-item">${inline(x)}</div>`).join("\n          "),
+    USL_SCHEMA_NAME: escapeHtml(USL_NAME),
+    USL_DATASOURCE: escapeHtml(datasources.join(", ")),
+    USL_ENTITY_COUNT_WORD: word(usl.length),
+    USL_RULE_COUNT_WORD: word(rules.length),
+    USL_ENTITY_NAMES: escapeHtml(usl.map((r) => r.entity).join(", ")),
+    USL_RULE_NAMES: escapeHtml(rules.map((r) => `${r.name} on ${r.table}`).join(", ")),
+    TIMELINE_TITLE: escapeHtml(`The production estate and the lab chain, ${[...new Set([actOneDay, ...traced.flatMap((x) => x.days)])].join(" and ")}`),
+    ACT_ONE_BADGE: escapeHtml(`${actOneAt[1]}, ${actOneKind[1]}`),
+    ACT_ONE_TEXT: prose(span("A config lock on a setting class", "at the next cycle."), actOne),
+    ACT_TWO_BADGE: escapeHtml(two.file),
+    ACT_TWO_TEXT: prose(span("FOUND-BUT-DIFFERENT on real rows:", "each held 72 h under rule 15"), span("a `revert_record` through the provider at", "with the provider confirming the value")),
+    ACT_TWO_SUMMARIES: block(two),
+    ACT_THREE_BADGE: escapeHtml(three.file),
+    ACT_THREE_TEXT: prose(span("an `investigate` with Nemotron Lightning and Ultra followed by", "which opened incident #7.")),
+    ACT_THREE_SUMMARIES: block(three),
+    LAB_CHAIN_BADGE: escapeHtml(lab.file),
+    LAB_CHAIN_TEXT: prose(span("On 25 Oct 2026 on the lab estate", "the trace in examples/traces/).")),
+    LAB_CHAIN_SUMMARIES: block(lab),
+    EVAL_SUMMARY_LINE: `The ${code(nm.set)} set, run from ${escapeHtml(stampDate(nm.stamp))} (${code(input.nemotron.dir)}): ${input.nemotron.runs.length} configuration runs of ${escapeHtml(configs.join(", "))}, ${figure(nm.calls)} Nemotron calls, ${figure(nm.signatureVerified)} with a verified receipt, ${nm.substitutions} substitutions, ${nm.cacheHits} cache hits; of the ${nm.judgeSelects} judge SELECTs recorded with a row count, ${nm.rerunEqual} re-run at build to the recorded count${nm.notRunnable ? ` and the recorded text of ${nm.notRunnable} does not run` : ""}.`,
+    EVAL_DIR: escapeHtml(input.nemotron.dir),
+    RECEIPTS_VERIFY_RESULT: receipts === null ? null : escapeHtml(receipts),
+    SAMPLE_RUN_RESULT: input.sampleLine === null ? null : escapeHtml(input.sampleLine),
+  };
+
+  const file = shownPath(SITE_TEMPLATE);
+  const used = new Set<string>();
+  const lines = lf(template).split("\n").flatMap((line) => {
+    const names = [...line.matchAll(TOKEN)].map((m) => m[1]);
+    for (const k of names) {
+      if (!(k in tokens)) throw new SiteError(`refusing to publish: ${file} holds the token {{${k}}}, which the build does not fill`);
+      used.add(k);
+    }
+    return names.some((k) => tokens[k] === null) ? [] : [line.replace(TOKEN, (_, k: string) => tokens[k] as string)];
+  });
+  const unused = Object.keys(tokens).filter((k) => !used.has(k));
+  if (unused.length) throw new SiteError(`refusing to publish: the build fills ${unused.map((k) => `{{${k}}}`).join(", ")}, which ${file} does not hold`);
+  const html = lines.join("\n").replace(/\n*$/, "\n");
+  return { html, tokens, traces: traced.map(({ act, file: f, lines: l }) => ({ act, file: f, lines: l })) };
+}
+
 // ---- the build --------------------------------------------------------------------------------------------------
 
 /** The key the header counts a finding by: the pass's finding id, or the row's own id for an older record that has none. */
@@ -1076,11 +1402,13 @@ export async function buildSite(opts: BuildOptions = {}): Promise<BuildResult> {
   const memory = new TechnicianMemory({ storage: "read", directory: opts.memoryDir ?? memoryDir(undefined, true) });
 
   let sample: SampleSummary | null = null;
+  let sampleLine: string | null = null;
   let full: Map<string, Finding> | null = null;
   if (samplePath) {
     const text = lf(readFileSync(samplePath, "utf8"));
     const { pass } = await passOver(JSON.parse(text), "site_sample", memory);
     full = new Map(pass.findings.map((f) => [keyOf(f.finding), f]));
+    sampleLine = sampleLineOf(pass);
     sample = {
       bundle: shownPath(samplePath), sha256: sha(text), runs: pass.runs, gatedOut: pass.gatedOut.length, observed: pass.observed, findings: pass.findings.length,
       classes: tally(pass.findings.map((f) => f.finding.class)), verbs: tally(pass.findings.map((f) => f.verb)),
@@ -1125,8 +1453,11 @@ export async function buildSite(opts: BuildOptions = {}): Promise<BuildResult> {
   const sourcesText = sourcesMarkdown();
   const uslText = uslMarkdown();
 
+  const site = renderSiteHtml({ index, nemotron, resultsDir, documentText: docText, documentFile: docFile, sampleLine });
+
   const files = new Map<string, string>();
   files.set("index.html", page(headlineTile(nemotron), headerStats(index.totals), doc.html, sourcesPanel(sourcesText, uslText), nemotronPanel(nemotron)));
+  files.set("site.html", site.html);
   files.set(".nojekyll", "");
   files.set("data/index.json", `${JSON.stringify(index, null, 2)}\n`);
   for (const e of examples) files.set(`data/${e.dir}.json`, `${JSON.stringify(e, null, 1)}\n`);
@@ -1135,7 +1466,7 @@ export async function buildSite(opts: BuildOptions = {}): Promise<BuildResult> {
   const scan = scanOutput(
     files,
     new Map([[`${docFile} (the Document tab)`, docText], ["sourcesMarkdown() (the Sources tab)", sourcesText], ["uslMarkdown() (the Sources tab)", uslText], [nemotronName, leavesOf(nemotron).join("\n")]]),
-    new Map([[nemotronName, nemotron]]),
+    new Map<string, unknown>([[nemotronName, nemotron], ["examples/traces (the landing page's acts)", Object.fromEntries(site.traces.map((x) => [x.file, x.lines]))]]),
   );
   const bytes = [...files.values()].reduce((n, s) => n + Buffer.byteLength(s), 0);
   if (bytes > MAX_BYTES) throw new SiteError(`refusing to publish: the page and its data are ${bytes} bytes, over the ${MAX_BYTES}-byte budget`);
@@ -1152,6 +1483,7 @@ export async function buildSite(opts: BuildOptions = {}): Promise<BuildResult> {
     document: { file: docFile, bytes: Buffer.byteLength(docText), sha256: sha(docText), decidedAt: doc.decidedAt },
     sources: sourceRows().length,
     nemotron,
+    site,
   };
 }
 
@@ -1495,7 +1827,9 @@ if (invoked === import.meta.url.toLowerCase()) {
     const n = r.nemotron.totals;
     console.log(`nemotron: ${n.stamp} ${n.set}: ${n.calls} calls, ${n.signatureVerified} receipts verified, ${n.substitutions} substitutions; ${n.judgeSelects} judge SELECTs, ${n.rerunEqual} re-run equal, ${n.notRunnable} recorded text does not run`);
     console.log(`tabs: Findings; Document (${r.document.file}, ${r.document.bytes} bytes, decided at ${r.document.decidedAt ?? "no instant stated"}); Sources (${r.sources} finding classes); Nemotron (${r.nemotron.dir}, ${r.nemotron.claims.length} planted claims, ${r.nemotron.items.length} item judges)`);
-    console.log(`scan: ${r.scan.files} files and ${r.scan.shown} rendered markdown text(s), ${r.scan.labels} deny-list label(s), ${r.scan.aliases} ssh alias(es), ${r.scan.leaves} data and Nemotron tab strings through the redactor unchanged${r.scan.skipped ? ` (${r.scan.skipped})` : ""}`);
+    const left = Object.entries(r.site.tokens).filter(([, v]) => v === null).map(([k]) => k);
+    console.log(`landing: site.html from ${shownPath(SITE_TEMPLATE)}, ${Object.keys(r.site.tokens).length - left.length} of ${Object.keys(r.site.tokens).length} tokens filled${left.length ? `, the lines of ${left.join(", ")} left out (no source)` : ""}; trace lines quoted: ${r.site.traces.map((x) => `act ${x.act} ${x.lines.length} (${x.file})`).join(", ")}`);
+    console.log(`scan: ${r.scan.files} files and ${r.scan.shown} rendered markdown text(s), ${r.scan.labels} deny-list label(s), ${r.scan.aliases} ssh alias(es), ${r.scan.leaves} data, Nemotron tab and landing page trace strings through the redactor unchanged${r.scan.skipped ? ` (${r.scan.skipped})` : ""}`);
     for (const [name, text] of r.files) console.log(`  ${rel(path.join(r.outDir, name))} ${Buffer.byteLength(text)} bytes`);
     console.log(`site: ${r.bytes} bytes in ${r.files.size} files (budget ${MAX_BYTES}) -> ${rel(r.outDir) || "."}`);
     if (r.index.examples.some((e) => !e.reproduced)) console.log("warning: published with --allow-stale; at least one example is stale and the page says so. Run npm run examples, then npm run site");
