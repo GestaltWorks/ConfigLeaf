@@ -48,7 +48,11 @@ jobs:
           git diff --exit-code -- docs
       - name: No secrets committed
         run: |
-          # The one allowance is the fake key the kit's vendored review test feeds its own redactor
-          # (.github/scripts/test_claude_review.py); every other match in every tracked file fails.
-          if git grep -nE 'nvapi-[A-Za-z0-9_-]{20,}|sk-or-[A-Za-z0-9]{20,}|sk-ant-[A-Za-z0-9_-]{20,}|rt-[A-Za-z0-9]{24,}' -- ':!.github/workflows/ci.yml' | grep -vF 'sk-ant-api03-AbCdEf0123456789ZzYyXx'; then
-            echo "secret-looking string found"; exit 1; fi
+          # git grep exits 1 for no match; anything above 1 means the scan itself did not run, and that fails the step.
+          rc=0
+          hits=$(git grep -nE 'nvapi-[A-Za-z0-9_-]{20,}|sk-or-[A-Za-z0-9]{20,}|sk-ant-[A-Za-z0-9_-]{20,}|rt-[A-Za-z0-9]{24,}' -- ':!.github/workflows/ci.yml') || rc=$?
+          if [ "$rc" -gt 1 ]; then echo "secret scan did not run: git grep exited $rc"; exit 1; fi
+          # The one allowance is the fake key the kit's vendored review test feeds its own redactor, in that file only.
+          hits=$(printf '%s\n' "$hits" | grep -vE '^\.github/scripts/test_claude_review\.py:[0-9]+:.*sk-ant-api03-AbCdEf0123456789ZzYyXx' || true)
+          # Only the file and line are printed, so a real key is not copied into the job log.
+          if [ -n "$hits" ]; then printf '%s\n' "$hits" | cut -d: -f1,2; echo "secret-looking string found"; exit 1; fi
