@@ -1,9 +1,10 @@
 # ConfigLeaf
 
 ConfigLeaf, package `drift-agent`, is a configuration assurance agent for an MSP. An MSP's knowledge of one setting
-could live in eight different places, and whether that setting is: Correct, Backed up, Restorable and that it all Means
-what it Meant... takes an awareness of all of them at once. ConfigLeaf reads the eight as one through one Zetaris layer
-and decides each finding under the MSP's policy: ROLLBACK, FIX, ESCALATE, HOLD with an expiry, or ADOPT.
+could live in eight different places, and whether that setting is: Correct, Documented, Backed-Up, Restorable, and that
+it all still means what it used to... takes an awareness of many sources at once. ConfigLeaf reads the eight as one
+through one Zetaris layer and decides each finding under the MSP's policy: ROLLBACK, FIX, ESCALATE, HOLD with an expiry,
+or ADOPT.
 
 The eight places: the live host (over SSH), the nightly export (the backup tarball), the documentation of record
 (`approved_setting`, the rows an IT Glue or Hudu adapter would write), the DNS provider (Cloudflare), the provider's
