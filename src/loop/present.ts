@@ -32,7 +32,8 @@
 //     DNS API returns (the provider changed since the last complete DNS run), yellow "dns_inventory_current not read"
 //     when the read failed. When the pass ran the judge (src/agents/falsifier.ts), "judge <model> · <n> judged · <n> struck
 //     · <n> held · <n> not counted", the model its last path segment, the not counted yellow above 0; yellow "not counted:
-//     no model configured · <n> findings" when the live pass had no runtime token or URL; no line when it ran no judge. Then "classes", one class a line, its count right-aligned
+//     judge off · <n> findings" with DRIFT_JUDGE off, "not counted: no model configured · <n> findings" with no runtime
+//     token, URL or judge model; no line when the pass ran no judge. Then "classes", one class a line, its count right-aligned
 //     in the counts' width, two spaces, its words, the most first. Then one block per ROLLBACK, FIX and ESCALATE, in
 //     that order, at most FINDING_LINES: the verb, coloured, and the class's words; the object on the next line; the
 //     copy a ROLLBACK restores, or why a FIX or an ESCALATE goes as it does, on the third.
@@ -82,6 +83,7 @@
 // the live screen is in scripts/cycle.ts.
 
 import type { ActResult } from "../actions/act.ts";
+import { unavailableLabel } from "../agents/falsifier.ts";
 import type { ActionOutcome, PlanItem } from "../actions/plan.ts";
 import type { FindingClass } from "../catalogue/templates.ts";
 import type { QueryTally } from "../data/engines/counting.ts";
@@ -518,7 +520,7 @@ export function passView(p: Pick<PassStep, "findings"> & Partial<Pick<PassStep, 
     if (p.dns) sub.push({ label: p.adoptions ? "" : "DQ", parts: [[dnsSeg(p.dns)]] });
   }
   const j = p.pass?.judge;
-  if (j?.missing) sub.push({ label: "judge", parts: [[{ text: "not counted: no model configured", tone: "yellow" }], count(j.not_counted, "finding")] });
+  if (j?.unavailable) sub.push({ label: "judge", parts: [[{ text: `not counted: ${unavailableLabel(j.unavailable)}`, tone: "yellow" }], count(j.not_counted, "finding")] });
   else if (j) {
     const notCounted = `${thousands(j.not_counted)} not counted`;
     sub.push({ label: "judge", parts: [shortModel(j.model), `${thousands(j.judged)} judged`, `${thousands(j.struck)} struck`, `${thousands(j.held)} held`, [j.not_counted > 0 ? { text: notCounted, tone: "yellow" } : notCounted]] });

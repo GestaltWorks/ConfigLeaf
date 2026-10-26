@@ -29,7 +29,7 @@
 
 import type { FindingSummary } from "../catalogue/select.ts";
 import type { Action, Disposition, DispositionVerb, FindingCause, PolicyRule, PsaPriority } from "../data/rows.ts";
-import { judgeDetail, signatureText } from "../agents/falsifier.ts";
+import { judgeDetail, modelName, receiptText, type PassJudgement } from "../agents/falsifier.ts";
 import { timelineLine, withRestore, type Evidence } from "../explain/cause.ts";
 import type { ActionView, TicketFinding, TicketType } from "./index.ts";
 
@@ -91,21 +91,25 @@ function evidenceLines(f: TicketFinding, probes: ProbeEvidence, actions: readonl
   return out;
 }
 
-/** The live pass's verdict on the finding, when its judge ran: what it said, what it did to the decision, then its SELECT, rows, receipt and model. */
+/** The live pass's judgement of the finding, when its judge ran on it; absent or "skipped" otherwise. */
+export function isJudged(f: Pick<TicketFinding, "judge">): f is Pick<TicketFinding, "judge"> & { judge: PassJudgement } {
+  return f.judge !== undefined && f.judge !== "skipped";
+}
+
+/** The live pass's verdict on the finding, when its judge ran: what it said, what it did to the decision, then its SELECT, rows, receipt, model and any cell cut. */
 function judgeLines(f: TicketFinding): string[] {
+  if (!isJudged(f)) return [];
   const j = f.judge;
-  if (!j || j === "skipped") return [];
   const said = j.outcome === "struck" ? `Nemotron 3 Ultra struck the claim: ${j.reason}`
     : j.outcome === "held" ? `the claim held against Nemotron 3 Ultra's refuting SELECT: ${j.reason}`
     : `not counted: ${j.reason}`;
   return [`- judge: ${said}; ${j.effect}`, `  - ${judgeDetail(j)}`];
 }
 
-/** The judge's receipt, when the verdict named one: its id, the model it says served, its signature. */
+/** The judge's receipt, when the verdict named one: its id, whether it verified, the model it says served. */
 function judgeReceiptLine(f: TicketFinding): string | null {
-  const j = f.judge;
-  if (!j || j === "skipped" || !j.receipt_id) return null;
-  return `- judge ${j.receipt_id}: served ${j.served_model ?? "none"}, ${signatureText(j.verified)}`;
+  if (!isJudged(f) || !f.judge.receipt_id) return null;
+  return `- judge ${receiptText(f.judge.receipt_id, f.judge.verified)}, served ${f.judge.served_model ? modelName(f.judge.served_model) : "none"}`;
 }
 
 function ruleText(rule: PolicyRule | null): string {

@@ -12,9 +12,12 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { SignedReceipt } from "../src/adapters/nightshift.ts";
 import { JUDGE_MAX_TOKENS, SYSTEM_PROMPT, type JudgeModel, type JudgeStatus } from "../src/agents/judge.ts";
-import { applyVerdict, judgeClause, judgeDetail, judgeFinding, liveJudge, otherTenant, outcomeOf, tallyText, ultraLadder, type JudgeOutcome, type PassJudge, type PassJudgement } from "../src/agents/falsifier.ts";
+import {
+  MAX_CELL, PROMPT_LIMIT, applyVerdict, cutEvidence, cutText, fitEvidence, userChars, judgeClause, judgeDetail, judgeFinding, liveJudge, modelName, otherTenant, outcomeOf, tallyText, ultraLadder,
+  type JudgeOutcome, type LiveJudgeSettings, type PassJudge, type PassJudgement,
+} from "../src/agents/falsifier.ts";
 import { defaultChecks, type FindingSummary } from "../src/catalogue/select.ts";
-import { config } from "../src/config.ts";
+import { config, parseJudgeSwitch } from "../src/config.ts";
 import { DataLayer, type Engine } from "../src/data/layer.ts";
 import { SqlJsEngine, type Bundle } from "../src/data/engines/sqljs.ts";
 import { decisionInstant } from "../src/data/instant.ts";
@@ -23,14 +26,14 @@ import type { Disposition } from "../src/data/rows.ts";
 import { DriftWorld } from "../src/engine/world.ts";
 import { loadEvalSet } from "../src/eval/items.ts";
 import { loadEvalPolicy, underPolicy } from "../src/eval/policy.ts";
-import { EVIDENCE_SQL } from "../src/eval/queries.ts";
+import { EVIDENCE_SQL, evidenceParams } from "../src/eval/queries.ts";
 import { runEval } from "../src/eval/run.ts";
 import type { ReceiptFinder } from "../src/gate.ts";
 import { MemoryLedger } from "../src/ledger.ts";
 import { passStep } from "../src/loop/pass.ts";
 import { PLAIN, Table, passView, shortModel } from "../src/loop/present.ts";
 import { runPass, type DispositionNote, type Finding, type PassOptions, type Verb } from "../src/pipeline.ts";
-import { ticketBody } from "../src/psa/body.ts";
+import { isJudged, ticketBody } from "../src/psa/body.ts";
 import type { TraceEvent } from "../src/trace.ts";
 import authored from "./fixtures/authored-bundle.json" with { type: "json" };
 import policyBundle from "./fixtures/policy-bundle.json" with { type: "json" };
@@ -41,7 +44,10 @@ import { ULTRA_MODEL, signed } from "./fixtures/signed-receipt.ts";
 const AT = "2026-10-23T03:00:00.000Z";
 const REFUTE = "SELECT run_id FROM {{t:collection_run}}";
 const STAND = "SELECT run_id FROM {{t:collection_run}} WHERE run_id = 'run-none'";
-const LIGHTNING_MODEL = "nvidia/nemotron-3.5-lightning-30b-a3b";
+const LIGHTNING_MODEL = config.nightshift.modelFast;
+const URL = "http://127.0.0.1:8088/v1";
+/** liveJudge in live mode, judge on, a token, a URL and Ultra's ladder, each overridable. */
+const live = (o: Partial<LiveJudgeSettings> = {}) => liveJudge({ sampleMode: false, judge: "on", token: "test-token", baseUrl: URL, models: ultraLadder(), ...o });
 
 type ChatOpts = Parameters<JudgeModel["chatWithFallback"]>[0];
 
@@ -173,11 +179,26 @@ describe("a verdict and the decision: C3's mapping, rules deciding, a strike nev
     }
   });
 
+  it("holds the invariant whoever decided: a struck claim never turns HOLD or ESCALATE into ADOPT, and the expiry, rule and decider stay", () => {
+    for (const decided_by of ["policy", "operator", "default"] as const) {
+      for (const verb of ["HOLD", "ESCALATE"] as const) {
+        const d: DispositionNote = { verb, reason: "r", expires_at: verb === "HOLD" ? AT : null, decided_by, rule_id: decided_by === "policy" ? "rule-1" : null };
+        for (const outcome of ["struck", "held", "not_counted"] as const) {
+          const out = applyVerdict(d, outcome, "why");
+          expect(out.disposition.verb, `${verb} by ${decided_by}, ${outcome}`).toBe(verb);
+          expect([out.disposition.expires_at, out.disposition.rule_id, out.disposition.decided_by]).toEqual([d.expires_at, d.rule_id, decided_by]);
+        }
+      }
+    }
+  });
+
   it("names the effect in a sentence, and the tally in one line", () => {
     const d: DispositionNote = { verb: "HOLD", reason: "held", expires_at: AT, decided_by: "policy", rule_id: "rule-9" };
     expect(applyVerdict(d, "struck", "r").effect).toBe("HOLD by policy under rule-9 stands: the rule decides, the verdict is evidence");
     expect(applyVerdict(d, "not_counted", "r").effect).toBe("HOLD by policy under rule-9 stands, as decided before the judge");
-    expect(tallyText({ model: "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free", judged: 4, struck: 1, held: 2, not_counted: 1 })).toBe("nemotron-3-ultra-550b-a55b judged 4: 1 struck, 2 held, 1 not counted");
+    const model = config.nightshift.modelJudge;
+    expect(tallyText({ model, judged: 4, struck: 1, held: 2, not_counted: 1 })).toBe(`${modelName(model)} judged 4: 1 struck, 2 held, 1 not counted`);
+    expect(modelName(model)).not.toContain("/");
   });
 });
 
@@ -221,7 +242,8 @@ describe("judgeFinding: C3's call for one finding, through the stubbed Nightshif
       });
       expect(line.output_summary).toMatch(/^struck: \d+ row\(s\) satisfy the refuting SELECT; ESCALATE by default stands: a strike never turns ESCALATE into ADOPT/);
       expect(line.detail).toBe(judgeDetail(judgement));
-      expect(line.detail).toContain(`served ${ULTRA_MODEL}; refuting SQL: ${REFUTE} LIMIT 50; ${judgement.rows} row(s); receipt ${judgement.receipt_id}, signature verified`);
+      expect(line.detail).toContain(`served ${modelName(ULTRA_MODEL)}; refuting SQL: ${REFUTE} LIMIT 50; ${judgement.rows} row(s); receipt ${judgement.receipt_id} verified`);
+      expect(judgement.cut).toEqual([]);
     } finally {
       engine.close();
     }
@@ -295,36 +317,133 @@ describe("judgeFinding: C3's call for one finding, through the stubbed Nightshif
   });
 });
 
-describe("liveJudge: none in sample mode; live with no token or no URL, a judge that calls nothing and counts nothing", () => {
-  const URL = "http://127.0.0.1:8088/v1";
+describe("liveJudge and DRIFT_JUDGE: none in sample mode; off, or no token, URL or model, a judge that calls nothing and counts nothing", () => {
+  it("parses DRIFT_JUDGE as on or off, blank on, any case; anything else is refused", () => {
+    expect([parseJudgeSwitch(""), parseJudgeSwitch(" on "), parseJudgeSwitch("OFF"), parseJudgeSwitch("Off")]).toEqual(["on", "on", "off", "off"]);
+    expect(() => parseJudgeSwitch("yes")).toThrow("DRIFT_JUDGE: on or off, got \"yes\"");
+  });
 
-  it("is null in sample mode, has no client with a blank token or a blank URL, and Ultra's ladder otherwise", () => {
-    expect(liveJudge({ sampleMode: true, token: "t", baseUrl: URL })).toBeNull();
-    expect(liveJudge({ sampleMode: false, token: "", baseUrl: URL })).toMatchObject({ nightshift: null, receipts: null, missing: expect.stringMatching(/^no Nightshift runtime token/) });
-    expect(liveJudge({ sampleMode: false, token: "t", baseUrl: " " })).toMatchObject({ nightshift: null, receipts: null, missing: "METERLESS_BASE_URL is blank" });
-    const j = liveJudge({ sampleMode: false, token: "test-token", baseUrl: URL })!;
-    expect(j.models).toEqual([config.nightshift.modelJudge, ...config.nightshift.fallbackJudge]);
+  it("is null in sample mode whatever the switch; has no client when off, with a blank token, URL or judge model; Ultra's ladder otherwise", () => {
+    expect(live({ sampleMode: true })).toBeNull();
+    expect(live({ sampleMode: true, judge: "off" })).toBeNull();
+    expect(live({ judge: "off" })).toMatchObject({ nightshift: null, receipts: null, unavailable: "judge off: DRIFT_JUDGE is off" });
+    expect(live({ token: "" })).toMatchObject({ nightshift: null, receipts: null, unavailable: expect.stringMatching(/^no model configured: no Nightshift runtime token/) });
+    expect(live({ baseUrl: " " })).toMatchObject({ nightshift: null, receipts: null, unavailable: "no model configured: METERLESS_BASE_URL is blank" });
+    expect(live({ models: [" ", ""] })).toMatchObject({ nightshift: null, unavailable: "no model configured: METERLESS_MODEL_JUDGE and METERLESS_FALLBACK_JUDGE are blank" });
+    expect(ultraLadder([" ", "a/b-ultra", "", "c/d-ultra "])).toEqual(["a/b-ultra", "c/d-ultra"]);
+    const j = live()!;
+    expect(j.models).toEqual(ultraLadder([config.nightshift.modelJudge, ...config.nightshift.fallbackJudge]));
     expect(typeof j.nightshift?.chatWithFallback).toBe("function");
     expect(typeof j.receipts?.find).toBe("function");
   });
 
-  it("with no model configured, no read and no call: the finding keeps its decision, traced \"judge not counted: no model configured\"", async () => {
-    const { engine, layer } = await layerOver(authored);
+  for (const [name, settings, said] of [
+    ["no model is configured", { token: "" }, /^judge not counted: no model configured: no Nightshift runtime token /],
+    ["DRIFT_JUDGE is off", { judge: "off" as const }, /^judge not counted: judge off: DRIFT_JUDGE is off; no call made; /],
+  ] as const) {
+    it(`when ${name}: no read and no call, the finding keeps its decision, and the trace says why`, async () => {
+      const { engine, layer } = await layerOver(authored);
+      try {
+        const f = (await runPass(layer, { world: new DriftWorld("test_falsifier"), decidedAt: AT })).findings[0];
+        const tracer = new MemTracer("test_falsifier");
+        const { disposition, judgement } = await judgeFinding(layer, f.finding, f.disposition, live(settings)!, tracer);
+        expect(disposition).toEqual(f.disposition);
+        expect([judgement.outcome, judgement.evidence_rows, judgement.receipt_id]).toEqual(["not_counted", 0, null]);
+        expect(tracer.events).toHaveLength(1);
+        expect(tracer.events[0]).toMatchObject({ agent: "judge", action: "judge", status: "not_judged" });
+        expect(tracer.events[0].output_summary).toMatch(said);
+      } finally {
+        engine.close();
+      }
+    });
+  }
+});
+
+describe("evidence cells: cut to 240 characters when the user message would pass Nightshift's 4,000, said so; nothing of the recording's is cut", () => {
+  it("cuts each cell over MAX_CELL to MAX_CELL characters, the last an ellipsis, and names each cut", () => {
+    const e = { columns: ["a", "b"], rows: [["x".repeat(MAX_CELL), "y".repeat(5120)], ["short", "z".repeat(900)]] };
+    const { evidence, cut } = cutEvidence(e);
+    expect(cut).toEqual([5120, 900]);
+    expect(evidence.rows.map((r) => r.map((v) => v.length))).toEqual([[MAX_CELL, MAX_CELL], [5, MAX_CELL]]);
+    expect(evidence.rows[0][1].endsWith("…")).toBe(true);
+    expect(cutText([5120])).toBe("cell cut to 240 of 5120 characters");
+    expect(cutText([5120, 900])).toBe("2 cells cut to 240 of 5120 and 900 characters");
+    expect(cutText([])).toBe("");
+  });
+
+  it("hands Ultra the cut cell, and the judge line and the ticket say \"cell cut to 240 of N characters\"", async () => {
+    const { engine } = await layerOver(authored);
     try {
-      const f = (await runPass(layer, { world: new DriftWorld("test_falsifier"), decidedAt: AT })).findings[0];
+      const long: Engine = {
+        name: engine.name, qualify: (t) => engine.qualify(t),
+        run: async (sql, o) => {
+          const r = await engine.run(sql, o);
+          return sql.includes("'backup_item' AS source") ? { ...r, rows: r.rows.map((row, i) => (i === 0 ? row.map((v, c) => (c === 4 ? "d".repeat(5120) : v)) : row)) } : r;
+        },
+      };
+      const layer = new DataLayer(long);
+      const f = (await runPass(new DataLayer(engine), { world: new DriftWorld("test_falsifier"), decidedAt: AT })).findings[0];
+      const { judge, sent } = stubNightshift();
       const tracer = new MemTracer("test_falsifier");
-      const { disposition, judgement } = await judgeFinding(layer, f.finding, f.disposition, liveJudge({ sampleMode: false, token: "", baseUrl: URL })!, tracer);
-      expect(disposition).toEqual(f.disposition);
-      expect([judgement.outcome, judgement.evidence_rows, judgement.receipt_id]).toEqual(["not_counted", 0, null]);
-      expect(judgement.reason).toMatch(/^no model configured: no Nightshift runtime token .*; no call made$/);
-      expect(tracer.events).toHaveLength(1);
-      expect(tracer.events[0]).toMatchObject({ agent: "judge", action: "judge", status: "not_judged" });
-      expect(tracer.events[0].output_summary).toMatch(/^judge not counted: no model configured: /);
+      const { judgement } = await judgeFinding(layer, f.finding, f.disposition, judge, tracer);
+      expect(judgement.cut).toEqual([5120]);
+      const user = sent[0].messages.at(-1)!.content;
+      expect(user).not.toContain("d".repeat(MAX_CELL));
+      expect(user).toContain(`${"d".repeat(MAX_CELL - 1)}…`);
+      expect(tracer.events.at(-1)!.detail).toContain(", cell cut to 240 of 5120 characters;");
+      const body = ticketBody({ finding: { ...f, judge: judgement }, disposition: { ...f.disposition, disposition_id: "d", tenant_id: "t", surface: "s", host: null, object_id: "o", setting_path: "p", value_hash: "", finding_id: f.id, run_id: "r", decided_at: AT } as Disposition, rule: null, actions: [], probes: { run_id: null, rows: [] }, ticketId: "t", type: "incident", priority: "P2" });
+      expect(body).toContain("cell cut to 240 of 5120 characters");
     } finally {
       engine.close();
     }
   });
+
+  it("over every finding of the recording the eval runs over, no judge prompt reaches the limit, so no cell is cut: the live judge's inputs there are C3's", { timeout: 60_000 }, async () => {
+    const { engine, layer } = await layerOver(recorded);
+    try {
+      const fs = (await runPass(layer, { world: new DriftWorld("test_falsifier"), decidedAt: decisionInstant(recorded) })).findings;
+      expect(fs.length).toBeGreaterThan(30);
+      let longest = 0;
+      let longCells = 0;
+      for (const f of fs) {
+        const r = await layer.run(EVIDENCE_SQL, evidenceParams(f.finding), { limit: 200 });
+        const e = { columns: r.columns, rows: r.rows };
+        expect(fitEvidence(f.finding.summary, e), f.id).toEqual({ evidence: e, cut: [] });
+        longest = Math.max(longest, userChars(f.finding.summary, e));
+        longCells += cutEvidence(e).cut.length;
+      }
+      // measured 26 Oct 2026: the longest judge user message 1,775 characters; 11 cells over 240 (observation values up to 698), none cut
+      expect(longest).toBeLessThan(PROMPT_LIMIT / 2);
+      expect(longCells).toBeGreaterThan(0);
+    } finally {
+      engine.close();
+    }
+  });
+
+  it("cuts nothing while the user message fits, however long a cell", () => {
+    const e = { columns: ["value"], rows: [["v".repeat(698)]] };
+    expect(fitEvidence("a short claim", e)).toEqual({ evidence: e, cut: [] });
+    const big = { columns: ["value"], rows: [["v".repeat(PROMPT_LIMIT)]] };
+    expect(fitEvidence("a short claim", big).cut).toEqual([PROMPT_LIMIT]);
+  });
 });
+
+describe("the judge line's detail: each field scrubbed on its own, no credential word, so field order cannot mangle it", () => {
+  it("survives the trace's redactor unchanged when the reason and the SQL carry credential words beside the model", () => {
+    const j: PassJudgement = {
+      status: "refuted", outcome: "struck", reason: "auth token signature secret: 2 row(s) satisfy the refuting SELECT", rows: 2,
+      sql: "SELECT author FROM {{t:policy_rule}} WHERE note = 'private key credential' LIMIT 50", receipt_id: "rcpt_req_abc", verified: true,
+      served_model: config.nightshift.modelJudge, route: config.nightshift.modelJudge, evidence_rows: 1, cut: [5120], before: "HOLD", effect: "e",
+    };
+    const tracer = new MemTracer("test_falsifier");
+    const detail = judgeDetail(j);
+    expect(tracer.emit({ agent: "judge", action: "judge", status: "ok", detail }).detail).toBe(detail);
+    expect(detail).toContain(`served ${modelName(config.nightshift.modelJudge)}; `);
+    expect(detail).toContain("receipt rcpt_req_abc verified");
+    expect(detail).not.toMatch(/signature|<secret:/);
+  });
+});
+
 
 // ------------------------------------------------------------------------------------------------ the pass
 
@@ -405,10 +524,10 @@ describe("the pass with the judge", () => {
 
   it("live with no model configured: every open finding \"judge not counted: no model configured\", every decision as without the judge, no throw", async () => {
     const without = await passOver(policyBundle);
-    const r = await passOver(policyBundle, { judge: liveJudge({ sampleMode: false, token: "", baseUrl: "" })! });
+    const r = await passOver(policyBundle, { judge: live({ baseUrl: "" })! });
     expect(r.result.findings.map((f) => f.disposition)).toEqual(without.result.findings.map((f) => f.disposition));
     const open = r.result.findings.filter((f) => !f.judgeWithheld);
-    expect(r.result.judge).toEqual({ model: config.nightshift.modelJudge, judged: open.length, struck: 0, held: 0, not_counted: open.length, missing: "METERLESS_BASE_URL is blank" });
+    expect(r.result.judge).toEqual({ model: config.nightshift.modelJudge, judged: open.length, struck: 0, held: 0, not_counted: open.length, unavailable: "no model configured: METERLESS_BASE_URL is blank" });
     expect(passJudgeLines(r.tracer).filter((e) => e.status === "not_judged").every((e) => /^judge not counted: no model configured: METERLESS_BASE_URL is blank/.test(e.output_summary ?? ""))).toBe(true);
     expect(r.dispositions).toEqual(without.dispositions);
   });
@@ -511,9 +630,14 @@ describe("the pass step, its row and the ticket", () => {
     expect(t.judged).toBeGreaterThan(0);
     expect(new Table({ ...PLAIN, width: 200 }).row("pass", passView(plain), null).some((l) => /^ +judge +\S/.test(l))).toBe(false);
     // live with no runtime token: the pass runs, each open finding not counted, said so on the summary and the row
-    const none = await run(liveJudge({ sampleMode: false, token: "", baseUrl: "http://127.0.0.1:8088/v1" })!);
+    const none = await run(live({ token: "" })!);
     expect(none.pass.findings.map((f) => f.disposition)).toEqual(plain.pass.findings.map((f) => f.disposition));
-    expect(none.summary).toMatch(/; judge not counted: no model configured \(no Nightshift runtime token .*\), \d+ finding\(s\); /);
+    expect(none.summary).toMatch(/; judge not counted: no model configured: no Nightshift runtime token .*, \d+ finding\(s\); /);
+    // DRIFT_JUDGE off: the same, said as "judge off"
+    const off = await run(live({ judge: "off" })!);
+    expect(off.pass.findings.map((f) => f.disposition)).toEqual(plain.pass.findings.map((f) => f.disposition));
+    expect(off.summary).toMatch(/; judge not counted: judge off: DRIFT_JUDGE is off, \d+ finding\(s\); /);
+    expect(new Table({ ...PLAIN, width: 200 }).row("pass", passView(off), null).find((l) => /^ +judge +\S/.test(l))?.trim()).toMatch(/^judge +not counted: judge off · \d+ findings?$/);
     const noneRow = new Table({ ...PLAIN, width: 200 }).row("pass", passView(none), null).find((l) => /^ +judge +\S/.test(l));
     expect(noneRow?.trim()).toMatch(/^judge +not counted: no model configured · \d+ findings?$/);
   });
@@ -527,7 +651,13 @@ describe("the pass step, its row and the ticket", () => {
     const j = judged(f)!;
     expect(body).toContain(`- judge: Nemotron 3 Ultra struck the claim: ${j.reason}; ${j.effect}`);
     expect(body).toContain(`  - ${judgeDetail(j)}`);
-    expect(body).toContain(`- judge ${j.receipt_id}: served ${ULTRA_MODEL}, signature verified`);
+    // no action receipt: the Receipts section is the judge's line alone, no "- none"
+    expect(body).toContain(`### Receipts\n- judge receipt ${j.receipt_id} verified, served ${modelName(ULTRA_MODEL)}\n`);
+    const withAction = ticketBody({ finding: f, disposition: d, rule: null, actions: [{ action_id: "act-1", kind: "investigate", status: "done", started_at: AT, finished_at: AT, before_hash: null, after_hash: null, vault_commit: null, verification: "", target: "t", reason: "", record: "", receipts: "rcpt_act_1", disposition_id: d.disposition_id } as never], probes: { run_id: null, rows: [] }, ticketId: "tkt-1", type: "incident", priority: "P2" });
+    expect(withAction).toContain(`### Receipts\n- rcpt_act_1\n- judge receipt ${j.receipt_id} verified`);
+    expect(isJudged(f)).toBe(true);
+    expect(isJudged({ judge: "skipped" })).toBe(false);
+    expect(isJudged({})).toBe(false);
     const plain = ticketBody({ finding: { ...f, judge: "skipped" }, disposition: d, rule: null, actions: [], probes: { run_id: null, rows: [] }, ticketId: "tkt-1", type: "incident", priority: "P2" });
     expect(plain).not.toContain("- judge");
   });

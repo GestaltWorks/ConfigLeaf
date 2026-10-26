@@ -4,8 +4,14 @@
 // Contract.
 //   liveJudge   the pass's judge in live mode: the Nightshift client, its receipt list and Ultra's ladder
 //               (METERLESS_MODEL_JUDGE, then METERLESS_FALLBACK_JUDGE, the ladder C3 requests). null in sample mode: the
-//               pass runs no model and traces each judge "model: none (sample)". Live with no runtime token or no base
-//               URL, a judge with no client: no call is made, and each finding is "judge not counted: no model configured".
+//               pass runs no model and traces each judge "model: none (sample)". Live with DRIFT_JUDGE off, a judge with
+//               no client: no call, and each finding is "judge not counted: judge off"; the same with no runtime token,
+//               base URL or judge model, "judge not counted: no model configured: <why>". The switch is independent of --apply.
+//   evidence    when the judge's user message would pass 4,000 characters (PROMPT_LIMIT), every evidence cell over 240
+//               (MAX_CELL) is cut to 240 before the call, and the judge line and the ticket say so ("cell cut to 240 of <n>
+//               characters"): Nightshift passes on only the last 4,000 characters of a user message, so a long cell (a USL
+//               definition) pushed the claim line out of what Ultra saw and custody refused the answer. Under the limit the
+//               evidence goes as C3 hands it.
 //   judgeFinding  the call C3 makes for a finding (src/eval/models.ts judge): judgeClaim (src/agents/judge.ts) over the
 //               finding's summary as the claim and its evidence rows (src/eval/queries.ts EVIDENCE_SQL, the rows C3 hands
 //               the judge, through the same DataLayer), under the tenant's app id with custody, the receipt gate expecting
@@ -36,7 +42,7 @@ import { EVIDENCE_SQL, evidenceParams } from "../eval/queries.ts";
 import { ReceiptStore, type ReceiptFinder } from "../gate.ts";
 import type { DispositionNote, Verb } from "../pipeline.ts";
 import type { Tracer } from "../trace.ts";
-import { judgeClaim, modelInputRedactor, type Evidence, type JudgeModel, type JudgeStatus, type JudgeVerdict } from "./judge.ts";
+import { buildMessages, judgeClaim, modelInputRedactor, redactEvidence, type Evidence, type JudgeModel, type JudgeStatus, type JudgeVerdict } from "./judge.ts";
 
 /** The rows a finding's evidence read returns at most; C3 reads them under the same limit (src/eval/run.ts evidenceOf). */
 export const EVIDENCE_LIMIT = 200;
@@ -48,8 +54,8 @@ export interface PassJudge {
   receipts: ReceiptFinder | null;
   /** The ladder, first id first; default ultraLadder(), the one C3 requests. */
   models?: readonly string[];
-  /** Why no model is configured, when nightshift is null. */
-  missing?: string;
+  /** Why no call can be made, when nightshift is null: "judge off: ..." or "no model configured: ...". */
+  unavailable?: string;
   /**
    * Only this tenant's findings are judged. runPass reads every run of the datasource, so a live pass for one tenant also
    * decides the others' findings; src/loop/pass.ts sets its tenant here, whose findings alone it reports. Absent: every finding.
@@ -62,23 +68,73 @@ export const otherTenant = (finding: string, judged: string): string => `not jud
 
 /** The reason a judgement does not count when the live pass has no Nightshift to call. */
 export const NO_MODEL = "no model configured";
+/** The reason a judgement does not count when DRIFT_JUDGE is off. */
+export const JUDGE_OFF = "judge off";
 
-/** Ultra's ladder as C3 requests it (src/eval/models.ts ladder("ultra")): the judge model, then its fallbacks. */
-export const ultraLadder = (): string[] => [config.nightshift.modelJudge, ...config.nightshift.fallbackJudge];
+/** Ultra's ladder as C3 requests it (src/eval/models.ts ladder("ultra")): the judge model, then its fallbacks, blank ids left out. */
+export const ultraLadder = (ids: readonly string[] = [config.nightshift.modelJudge, ...config.nightshift.fallbackJudge]): string[] => ids.map((m) => m.trim()).filter(Boolean);
+
+export interface LiveJudgeSettings { sampleMode: boolean; judge: "on" | "off"; token: string; baseUrl: string; models: readonly string[] }
+
+const settings = (): LiveJudgeSettings => ({ sampleMode: config.sampleMode, judge: config.judge, token: config.nightshift.token, baseUrl: config.nightshift.baseUrl, models: ultraLadder() });
 
 /**
- * The live pass's judge. null in sample mode: the pass runs no model and traces each judge "model: none (sample)". Live
- * with no runtime token or no base URL, a judge with no client: every finding the withdraw rule leaves open is traced
- * "judge not counted: no model configured: <why>" and keeps its decision, and nothing throws.
+ * The live pass's judge. null in sample mode: the pass runs no model and traces each judge "model: none (sample)". Live, a
+ * judge with no client when DRIFT_JUDGE is off, or with no runtime token, base URL or judge model: no call is made, every
+ * finding the withdraw rule leaves open is traced "judge not counted: judge off" or "judge not counted: no model
+ * configured: <why>" and keeps its decision, and nothing throws.
  */
-export function liveJudge(
-  o: { sampleMode: boolean; token: string; baseUrl: string } = { sampleMode: config.sampleMode, token: config.nightshift.token, baseUrl: config.nightshift.baseUrl },
-): PassJudge | null {
+export function liveJudge(o: LiveJudgeSettings = settings()): PassJudge | null {
   if (o.sampleMode) return null;
-  const missing = !o.baseUrl.trim() ? "METERLESS_BASE_URL is blank" : !o.token ? "no Nightshift runtime token (METERLESS_RUNTIME_TOKEN is blank and the runtime wrote no proxy-token file)" : null;
-  if (missing) return { nightshift: null, receipts: null, models: ultraLadder(), missing };
+  const models = ultraLadder(o.models);
+  const why = o.judge === "off" ? `${JUDGE_OFF}: DRIFT_JUDGE is off`
+    : !o.baseUrl.trim() ? `${NO_MODEL}: METERLESS_BASE_URL is blank`
+    : !o.token ? `${NO_MODEL}: no Nightshift runtime token (METERLESS_RUNTIME_TOKEN is blank and the runtime wrote no proxy-token file)`
+    : !models.length ? `${NO_MODEL}: METERLESS_MODEL_JUDGE and METERLESS_FALLBACK_JUDGE are blank`
+    : null;
+  if (why) return { nightshift: null, receipts: null, models, unavailable: why };
   const nightshift = new Nightshift({ token: o.token });
-  return { nightshift, receipts: new ReceiptStore(nightshift), models: ultraLadder() };
+  return { nightshift, receipts: new ReceiptStore(nightshift), models };
+}
+
+/**
+ * The user message Nightshift passes on whole. Measured 26 Oct 2026 in the live pass: a judge user message over 4,000
+ * characters has egress.sent.prompt_chars 4000 on its receipt and a prompt_preview that starts mid-message, so Nightshift kept
+ * its last 4,000 characters, Ultra never saw the claim line and custody refused the answer. A USL definition as an evidence
+ * cell makes one. Over the recording the eval runs over the longest judge user message is 1,775 characters
+ * (test/falsifier.test.ts), so no cell there is cut and C3's inputs are what they were.
+ */
+export const PROMPT_LIMIT = 4000;
+/** The length a cell is cut to when the user message would pass PROMPT_LIMIT. */
+export const MAX_CELL = 240;
+
+/** The judge's user message for `claim` and `e` as judgeClaim builds it (redacted, a 16-hex nonce line first), in characters. */
+export function userChars(claim: string, e: Evidence): number {
+  const r = modelInputRedactor();
+  return buildMessages(r.text(claim), redactEvidence(e, r), "0".repeat(16))[1].content.length;
+}
+
+/** The evidence as C3 hands it, unless the user message would pass PROMPT_LIMIT: then every cell over MAX_CELL is cut (cutEvidence). */
+export function fitEvidence(claim: string, e: Evidence): { evidence: Evidence; cut: number[] } {
+  return userChars(claim, e) <= PROMPT_LIMIT ? { evidence: e, cut: [] } : cutEvidence(e);
+}
+
+/** Every cell over MAX_CELL cut to MAX_CELL characters, the last an ellipsis; the lengths of the cells cut, in row order. */
+export function cutEvidence(e: Evidence): { evidence: Evidence; cut: number[] } {
+  const cut: number[] = [];
+  const rows = e.rows.map((row) => row.map((v) => {
+    if (typeof v !== "string" || v.length <= MAX_CELL) return v;
+    cut.push(v.length);
+    return `${v.slice(0, MAX_CELL - 1)}…`;
+  }));
+  return { evidence: { columns: e.columns, rows }, cut };
+}
+
+/** "cell cut to 240 of 5120 characters", "2 cells cut to 240 of 5120 and 900 characters"; "" when none was cut. */
+export function cutText(cut: readonly number[]): string {
+  if (!cut.length) return "";
+  const of = cut.length === 1 ? String(cut[0]) : `${cut.slice(0, -1).join(", ")} and ${cut.at(-1)}`;
+  return `${cut.length === 1 ? "cell" : `${cut.length} cells`} cut to ${MAX_CELL} of ${of} characters`;
 }
 
 /** struck: refuted and counted; held: the claim stood, counted; not_counted: anything else. */
@@ -103,16 +159,19 @@ export interface PassJudgement {
   route: string | null;
   /** The evidence rows the claim went out with (the judge's prompt shows at most 20). */
   evidence_rows: number;
+  /** The lengths of the evidence cells cut to MAX_CELL characters before the call, in row order; empty when none was. */
+  cut: number[];
   /** The verb before the verdict, and what the verdict did to the decision. */
   before: Verb;
   effect: string;
 }
 
-/** A pass's judge calls: the ladder's first id, the findings judged and how their verdicts came out; `missing` when no model is configured. */
-export interface JudgeTally { model: string; judged: number; struck: number; held: number; not_counted: number; missing?: string }
+/** A pass's judge calls: the ladder's first id, the findings judged and how their verdicts came out; `unavailable` when no call could be made. */
+export interface JudgeTally { model: string; judged: number; struck: number; held: number; not_counted: number; unavailable?: string }
 
 export const zeroTally = (judge: PassJudge): JudgeTally => ({
-  model: (judge.models ?? ultraLadder())[0], judged: 0, struck: 0, held: 0, not_counted: 0, ...(judge.nightshift ? {} : { missing: judge.missing ?? "no Nightshift client" }),
+  model: (judge.models ?? ultraLadder())[0] ?? "none", judged: 0, struck: 0, held: 0, not_counted: 0,
+  ...(judge.nightshift && judge.receipts ? {} : { unavailable: judge.unavailable ?? `${NO_MODEL}: no Nightshift client` }),
 });
 
 export function addToTally(t: JudgeTally, j: Pick<PassJudgement, "outcome">): void {
@@ -122,15 +181,20 @@ export function addToTally(t: JudgeTally, j: Pick<PassJudgement, "outcome">): vo
   else t.not_counted += 1;
 }
 
-/** "Ultra judged 4: 1 struck, 2 held, 1 not counted", the ladder's first id cut to its last segment. */
+/** A model id's last path segment, ":free" dropped: what the trace's text and the ticket name. */
+export const modelName = (m: string): string => (m.split("/").at(-1) ?? m).replace(/:free$/, "");
+
+/** "nemotron-3-ultra-550b-a55b judged 4: 1 struck, 2 held, 1 not counted". */
 export function tallyText(t: JudgeTally): string {
-  const model = (t.model.split("/").at(-1) ?? t.model).replace(/:free$/, "");
-  return `${model} judged ${t.judged}: ${t.struck} struck, ${t.held} held, ${t.not_counted} not counted`;
+  return `${modelName(t.model)} judged ${t.judged}: ${t.struck} struck, ${t.held} held, ${t.not_counted} not counted`;
 }
 
-/** The pass summary's judge clause: "judge: <tally>", or "judge not counted: no model configured (<why>), <n> finding(s)". */
+/** The label of an unavailable judge: "judge off" or "no model configured". */
+export const unavailableLabel = (why: string): string => why.split(":")[0];
+
+/** The pass summary's judge clause: "judge: <tally>", or "judge not counted: <why>, <n> finding(s)" when no call could be made. */
 export function judgeClause(t: JudgeTally): string {
-  return t.missing ? `judge not counted: ${NO_MODEL} (${t.missing}), ${t.not_counted} finding(s)` : `judge: ${tallyText(t)}`;
+  return t.unavailable ? `judge not counted: ${t.unavailable}, ${t.not_counted} finding(s)` : `judge: ${tallyText(t)}`;
 }
 
 /** Counted only when the verdict is stands or refuted and the gate verified the receipt's signature. */
@@ -141,18 +205,34 @@ export function outcomeOf(v: Pick<JudgeVerdict, "status" | "signatureOk">): Judg
 
 const decidedText = (d: Pick<DispositionNote, "verb" | "decided_by" | "rule_id">): string => `${d.verb} by ${d.decided_by}${d.rule_id ? ` under ${d.rule_id}` : ""}`;
 
-/** What the verdict does to the decision (see the header): C3's mapping, with a strike never turning ESCALATE into ADOPT. */
-export function applyVerdict(d: DispositionNote, outcome: JudgeOutcome, reason: string): { disposition: DispositionNote; effect: string } {
+/** C3's mapping (see the header), before the invariant. */
+function mapVerdict(d: DispositionNote, outcome: JudgeOutcome, reason: string): { disposition: DispositionNote; effect: string } {
   if (outcome === "not_counted") return { disposition: d, effect: `${decidedText(d)} stands, as decided before the judge` };
   if (d.decided_by !== "default") return { disposition: d, effect: `${decidedText(d)} stands: the ${d.decided_by === "policy" ? "rule" : "exception"} decides, the verdict is evidence` };
   if (outcome === "held") return { disposition: { ...d, reason: `${d.reason}; the claim stands: ${reason}` }, effect: `${decidedText(d)} stands: the claim stands` };
-  if (d.verb === "ESCALATE") {
+  // a default decides ADOPT or ESCALATE; any verb but ADOPT stands on a strike, so no model loosens a decision
+  if (d.verb !== "ADOPT") {
     return {
-      disposition: { ...d, reason: `${d.reason}; the judge struck the claim (${reason}), and a strike never turns ESCALATE into ADOPT` },
-      effect: "ESCALATE by default stands: a strike never turns ESCALATE into ADOPT, a technician decides",
+      disposition: { ...d, reason: `${d.reason}; the judge struck the claim (${reason}), and a strike never turns ${d.verb} into ADOPT` },
+      effect: `${d.verb} by default stands: a strike never turns ${d.verb} into ADOPT, a technician decides`,
     };
   }
   return { disposition: { ...d, verb: "ADOPT", reason: `the judge struck the claim: ${reason}` }, effect: "ADOPT by default: the judge struck the claim" };
+}
+
+/**
+ * What the verdict does to the decision: C3's mapping, then the invariant, whoever decided: a verdict never turns a HOLD or
+ * an ESCALATE into ADOPT, and never changes the expiry, the rule, the decider or the change window. A mapping that would is a
+ * bug, and it throws rather than loosen a decision.
+ */
+export function applyVerdict(d: DispositionNote, outcome: JudgeOutcome, reason: string): { disposition: DispositionNote; effect: string } {
+  const out = mapVerdict(d, outcome, reason);
+  const n = out.disposition;
+  const loosened = (d.verb === "HOLD" || d.verb === "ESCALATE") && n.verb === "ADOPT";
+  if (loosened || n.expires_at !== d.expires_at || n.rule_id !== d.rule_id || n.decided_by !== d.decided_by || n.window_id !== d.window_id) {
+    throw new Error(`judge invariant: a ${outcome} verdict would change ${decidedText(d)} to ${decidedText(n)}; a verdict never loosens a decision`);
+  }
+  return out;
 }
 
 const scrub = (s: string | null | undefined): string | null => (s ? modelInputRedactor().text(redact(s)) : null);
@@ -167,9 +247,10 @@ export async function judgeFinding(
 ): Promise<{ disposition: DispositionNote; judgement: PassJudgement }> {
   const models = [...(judge.models ?? ultraLadder())];
   const { nightshift, receipts } = judge;
-  const evidence = nightshift && receipts ? await readEvidence(layer, finding, tracer) : `${NO_MODEL}: ${judge.missing ?? "no Nightshift client"}; no call made`;
-  const v: JudgeVerdict = typeof evidence === "string" || !nightshift || !receipts
-    ? { status: "not_judged", reason: typeof evidence === "string" ? evidence : NO_MODEL, sql: null, rowCount: null, rationale: null, receiptId: null, servedModel: null, latencyMs: 0 }
+  const read = nightshift && receipts ? await readEvidence(layer, finding, tracer) : `${judge.unavailable ?? `${NO_MODEL}: no Nightshift client`}; no call made`;
+  const { evidence, cut } = typeof read === "string" ? { evidence: null, cut: [] } : fitEvidence(finding.summary, read);
+  const v: JudgeVerdict = typeof read === "string" || !evidence || !nightshift || !receipts
+    ? { status: "not_judged", reason: typeof read === "string" ? read : NO_MODEL, sql: null, rowCount: null, rationale: null, receiptId: null, servedModel: null, latencyMs: 0 }
     : await judgeClaim({
       claim: finding.summary, evidenceRows: evidence, layer, nightshift, receipts, tracer,
       requestedModels: models, requestedTier: "ultra", model: models[0], tenantId: finding.tenant_id,
@@ -179,7 +260,7 @@ export async function judgeFinding(
   const { disposition, effect } = applyVerdict(decision, outcome, reason);
   const judgement: PassJudgement = {
     status: v.status, outcome, reason, sql: scrub(v.sql), rows: v.rowCount, receipt_id: v.receiptId, verified: v.signatureOk ?? null,
-    served_model: scrub(v.servedModel), route: scrub(v.route), evidence_rows: typeof evidence === "string" ? 0 : evidence.rows.length, before: decision.verb, effect,
+    served_model: scrub(v.servedModel), route: scrub(v.route), evidence_rows: evidence?.rows.length ?? 0, cut, before: decision.verb, effect,
   };
   tracer?.emit({
     agent: "judge", action: "judge", status: outcome === "not_counted" ? "not_judged" : "ok",
@@ -202,21 +283,25 @@ async function readEvidence(layer: DataLayer, finding: FindingSummary, tracer?: 
   }
 }
 
-/** "signature verified", "signature does not verify" or "no signed receipt read". */
-export const signatureText = (verified: boolean | null): string => (verified === true ? "signature verified" : verified === false ? "signature does not verify" : "no signed receipt read");
+/** "receipt rcpt_x verified", "receipt rcpt_x does not verify", "no receipt read": no credential word (src/redactor.ts KEYLIKE). */
+export const receiptText = (id: string | null, verified: boolean | null): string =>
+  verified === true ? `receipt ${id} verified` : verified === false ? `receipt ${id} does not verify` : `no receipt read${id ? ` for ${id}` : ""}`;
 
 /**
- * The judge line's detail and the ticket's: the verdict, the model, the SELECT and its rows, the receipt and its signature.
- * The model id comes before the word "signature": the redactor reads a long run after a credential word as a key (src/redactor.ts).
+ * The judge line's detail and the ticket's: the verdict, the model, the SELECT and its rows, the receipt, the evidence. Each
+ * field passes the secret scrub and the model redactor on its own, no field names a credential word, and the model is named by
+ * its last path segment, so the redactor's key heuristic (a long run within 64 characters after a credential word) fires on
+ * no field whatever the order; the full id is the trace line's model_routed.
  */
 export function judgeDetail(j: PassJudgement): string {
-  return [
+  const fields = [
     `verdict ${j.status}${j.outcome === "not_counted" ? ", not counted" : ""}`,
-    `served ${j.served_model ?? "none"}`,
+    `served ${j.served_model ? modelName(j.served_model) : "none"}`,
     j.sql ? `refuting SQL: ${j.sql}` : "no refuting SQL",
     j.rows === null ? "not run" : `${j.rows} row(s)`,
-    `receipt ${j.receipt_id ?? "none"}, ${signatureText(j.verified)}`,
-    `${j.evidence_rows} evidence row(s)`,
+    receiptText(j.receipt_id, j.verified),
+    `${j.evidence_rows} evidence row(s)${j.cut.length ? `, ${cutText(j.cut)}` : ""}`,
     `${j.before} before the judge`,
-  ].join("; ");
+  ];
+  return fields.map((f) => scrub(f) ?? "").join("; ");
 }

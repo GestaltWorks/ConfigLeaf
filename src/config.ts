@@ -74,6 +74,10 @@ const Schema = z.object({
   // findings' checks and decisions, each finding's checks still one after another. Every decision, ledger row and trace line is
   // the same at any value; 1 runs the reads one after another, as the pass did before. At most 16 (MAX_PASS_CONCURRENCY).
   PASS_CONCURRENCY: z.string().default("4"),
+  // The live pass's judge (src/agents/falsifier.ts): on, the eval's C3 judge, Nemotron 3 Ultra through Nightshift, tries to
+  // refute each finding the withdraw rule leaves open; off, no model call, and each such finding is "judge not counted:
+  // judge off". Blank is on. Independent of --apply. Sample mode runs no model whatever this says.
+  DRIFT_JUDGE: z.string().default("on"),
   LOG_DIR: z.string().default("logs"),
 });
 
@@ -157,6 +161,23 @@ function passConcurrencyOrExit(s: string): number {
   }
 }
 
+/** DRIFT_JUDGE as a switch: "on" (or blank) or "off", any case. Throws on any other value. */
+export function parseJudgeSwitch(s: string): "on" | "off" {
+  const t = s.trim().toLowerCase() || "on";
+  if (t !== "on" && t !== "off") throw new Error(`DRIFT_JUDGE: on or off, got ${JSON.stringify(s)}`);
+  return t;
+}
+
+/** DRIFT_JUDGE as every process reads it at startup: an invalid value is one plain line on stderr and exit 2, never a stack trace. */
+function judgeSwitchOrExit(s: string): "on" | "off" {
+  try {
+    return parseJudgeSwitch(s);
+  } catch (e) {
+    process.stderr.write(`${(e as Error).message}\n`);
+    process.exit(2);
+  }
+}
+
 /** Where the technician's lessons live when DRIFT_MEMORY_DIR is blank: under .world/, which .gitignore keeps out of the repository. */
 export const DEFAULT_MEMORY_DIR = ".world/memory";
 
@@ -223,6 +244,8 @@ export const config = {
   probeOverride: parseProbeOverride(raw.PROBE_TARGETS_OVERRIDE),
   /** PASS_CONCURRENCY, parsed; default 4, 1 = one read at a time. */
   passConcurrency: passConcurrencyOrExit(raw.PASS_CONCURRENCY),
+  /** DRIFT_JUDGE, parsed; default on: the live pass runs the eval's C3 judge. */
+  judge: judgeSwitchOrExit(raw.DRIFT_JUDGE),
   logDir: raw.LOG_DIR,
 } as const;
 
