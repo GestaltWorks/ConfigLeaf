@@ -6,7 +6,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import type { JudgeInput, JudgeVerdict } from "../src/agents/judge.ts";
 import { config } from "../src/config.ts";
-import { DataLayer, DataLayerError, assertSelectOnly, type Overlays } from "../src/data/layer.ts";
+import { DataLayer, DataLayerError, LAYER_TABLES, assertSelectOnly, type Overlays } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { ZetarisEngine } from "../src/data/engines/zetaris.ts";
 import { HERO_SQL, OBSERVATIONS_SQL, PROXIED_WITHOUT_REAL_IP_SQL, objects } from "../src/data/queries.ts";
@@ -25,6 +25,17 @@ import c from "../examples/proposals/c-vhost-real-ip.json" with { type: "json" }
 import d from "../examples/proposals/d-retarget-apex-outside-inventory.json" with { type: "json" };
 import { APEX_NAME, APEX_RECORD, CONFD_HOST, DNS_RUN, SITES_HOST, SITES_RUN, QUEST_FILE, T, WWW_NAME, WWW_RECORD } from "./fixtures/catalogue-params.ts";
 import { MemTracer } from "./fixtures/mem-tracer.ts";
+import { USL, uslRelation } from "../src/zetaris/setup.ts";
+
+/** Zetaris's text with each relation it names a table by put back as the table's name: what sql.js renders. */
+function asTables(sql: string): string {
+  let s = sql;
+  for (const t of LAYER_TABLES) {
+    const rel = uslRelation(t)!;
+    s = rel.startsWith("(") ? s.split(`${rel} ${t}`).join(t).split(rel).join(t) : s.replace(new RegExp(`${rel.replaceAll(".", "\\.")}(?!\\w)`, "g"), t);
+  }
+  return s;
+}
 
 type R = typeof recorded;
 
@@ -146,7 +157,7 @@ describe("overlay: derived tables the guard accepts, identical on both engines, 
     expect(quoted.dns_record).toContain(`THEN 'o''neil.invalid''; DROP TABLE dns_record; --' ELSE content END`);
   });
 
-  it("renders identically on sql.js and on Zetaris except the datasource qualifier, for the hero, the survey and a bare-table query", () => {
+  it("renders identically on sql.js and on Zetaris except the relation each table is read as, for the hero, the survey and a bare-table query", () => {
     const s = sqljsBare.withOverlays(both);
     const z = zetaris.withOverlays(both);
     const params = { tenant_id: T, run_id: SITES_RUN, dns_run_id: DNS_RUN };
@@ -154,7 +165,8 @@ describe("overlay: derived tables the guard accepts, identical on both engines, 
       const a1 = s.render(sql, params);
       const b1 = z.render(sql, params);
       expect(b1).not.toBe(a1);
-      expect(b1.split(`${ds}.`).join("")).toBe(a1);
+      expect(b1).not.toContain(`${ds}.`);
+      expect(asTables(b1)).toBe(a1);
       expect(() => assertSelectOnly(a1)).not.toThrow();
       expect(() => assertSelectOnly(b1)).not.toThrow();
       expect(a1).not.toContain("{{");
@@ -167,7 +179,7 @@ describe("overlay: derived tables the guard accepts, identical on both engines, 
     expect(s.render("SELECT COUNT(*) FROM {{t:observation}} AS o WHERE o.run_id = {{p:r}}", { r: SITES_RUN })).toMatch(/FROM \(SELECT .* FROM observation\) AS o WHERE/);
     expect(s.render("SELECT COUNT(*) FROM {{t:observation}} AS o WHERE o.run_id = {{p:r}}", { r: SITES_RUN })).not.toMatch(/\) observation AS o/);
     expect(s.render("SELECT COUNT(*) FROM {{t:observation}}\n  as o WHERE o.run_id = {{p:r}}", { r: SITES_RUN })).toMatch(/FROM \(SELECT .* FROM observation\)\n {2}as o WHERE/);
-    expect(z.render("SELECT COUNT(*) FROM {{t:dns_record}} AS d WHERE d.run_id = {{p:r}}", { r: DNS_RUN })).toMatch(new RegExp(`FROM \\(SELECT .* FROM ${ds}\\.dns_record\\) AS d WHERE`));
+    expect(z.render("SELECT COUNT(*) FROM {{t:dns_record}} AS d WHERE d.run_id = {{p:r}}", { r: DNS_RUN })).toMatch(new RegExp(`FROM \\(SELECT .* FROM \\(SELECT .* FROM ${USL.replaceAll(".", "\\.")}\\.dns_record\\) dns_record\\) AS d WHERE`));
     expect(s.render("SELECT 1 FROM {{t:dns_record}} WHERE 1 = 1 AND EXISTS (SELECT 1 FROM {{t:dns_record}})")).toMatch(/\) dns_record WHERE 1 = 1 AND EXISTS \(SELECT 1 FROM \(SELECT .*\) dns_record\)$/);
   });
 
