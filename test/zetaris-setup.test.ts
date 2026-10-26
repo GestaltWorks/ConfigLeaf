@@ -1,7 +1,9 @@
 // The Zetaris setup with no live call: plan() order and texts (the copy into the filestore, the LESSONS and RULES
-// Lightning databases and their file tables, the CLOUDFLARE REST tables one per zone and page, fifteen USL tables, each
-// activation returning exactly its declared columns, the adoption entity across DRIFT and LESSONS, dns_live across
-// CLOUDFLARE and DRIFT, six DQ rules), the semantic layer's table uslRows() and uslMarkdown() read off the
+// Lightning databases and their file tables, the CLOUDFLARE REST tables one per zone and page, twenty-five USL tables,
+// the DDL checked without DEPLOY before a stale USL is removed, each activation returning exactly its declared columns,
+// an entity per catalogue table that is the table's columns bare, the adoption entity across DRIFT and LESSONS, dns_live
+// across CLOUDFLARE and DRIFT, six DQ rules), READ_AS and uslRelation() (the relation each catalogue table is read as on
+// Zetaris, fenced or not), the semantic layer's table uslRows() and uslMarkdown() read off the
 // DDL, the activation SELECTs and DQ_RULES, staleness() of a USL model, exception_in_force and dns_inventory_current on
 // plain columns, the docker command line of the copy, the password and the Cloudflare token kept out of every
 // string that is printed, traced or redact()ed, apply() over a scripted client and a recorded copy (an instance already set up,
@@ -30,7 +32,7 @@ const { redact } = await import("../src/config.ts");
 const { Zetaris, ZetarisError } = await import("../src/adapters/zetaris.ts");
 const { stripLiterals } = await import("../src/data/layer.ts");
 const setup = await import("../src/zetaris/setup.ts");
-const { TABLE_NAMES } = await import("../src/data/schema.ts");
+const { TABLE_NAMES, tableDef } = await import("../src/data/schema.ts");
 const { ADOPTION_SQL, fileTableDef } = await import("../src/data/files.ts");
 const { COPY_STATE_FILE, dockerArgv, filesHash, putFiles, readCopyState } = await import("../src/zetaris/filestore.ts");
 const { MemTracer } = await import("./fixtures/mem-tracer.ts");
@@ -59,6 +61,11 @@ const ELEVEN = ["collection", "setting", "referent", "backup_copy", "policy", "c
 const FOURTEEN = [...ELEVEN, "lesson", "rule", "adoption"];
 /** Then the live records across CLOUDFLARE and DRIFT. */
 const FIFTEEN = [...FOURTEEN, "dns_live"];
+/** Then one entity per catalogue table no entity above is built from alone: each the table's columns. */
+const MIRRORS = ["dns_record", "inventory_asset", "approved_setting", "backup_snapshot", "backup_item", "vault_copy", "copy_validation", "referent_fingerprint", "audit_event", "change_window"];
+const ALL = [...FIFTEEN, ...MIRRORS];
+/** What staleness() says a model of `tables` lacks of ALL, in ALL order. */
+const lacking = (tables: readonly string[]): string => ALL.filter((t) => !tables.includes(t)).join(", ");
 const RULES = ["run_complete", "copy_validated", "action_verified", "cause_evidenced", "exception_in_force", "dns_inventory_current"];
 /** exception_in_force: the ADOPT names a lesson the store holds, an exception, taught at or before the decision and expiring after it. */
 const EXCEPTION_IN_FORCE_EXPR = "lesson_id IS NOT NULL AND lesson_kind = 'exception' AND lesson_recorded_at <= decided_at AND decided_at < lesson_expires_at";
@@ -135,9 +142,10 @@ describe("plan()", () => {
       ["namespace lightning.metastore.drift", ""],
       ["list lightning.metastore.drift", ""],
       ["load usl drift_usl", "usl_present"],
+      ["check usl drift_usl", "usl_stale"],
       ["remove usl drift_usl", "usl_stale"],
       ["compile usl drift_usl", "usl_absent"],
-      ...FIFTEEN.map((t) => [`activate ${t}`, ""]),
+      ...ALL.map((t) => [`activate ${t}`, ""]),
       ["list dq rules", ""],
       ...RULES.flatMap((r) => [[`register dq ${r}`, "dq_rule_absent"], [`update dq ${r}`, "dq_rule_differs"]]),
       ["run dq collection", ""],
@@ -147,11 +155,11 @@ describe("plan()", () => {
       ["run dq adoption", ""],
       ["run dq dns_live", ""],
       ["show lightning.metastore.drift.drift_usl", ""],
-      ...FIFTEEN.map((t) => [`count ${t}`, ""]),
+      ...ALL.map((t) => [`count ${t}`, ""]),
       ["count LESSONS.ledger", ""],
     ]);
-    expect(steps).toHaveLength(84);
-    expect(setup.USL_TABLES).toEqual(FIFTEEN);
+    expect(steps).toHaveLength(105);
+    expect(setup.USL_TABLES).toEqual(ALL);
   });
 
   it("the REST source: one table per zone and page of 500 records, none for an empty zone; each CREATE printed with the token redacted and built with it in memory; the count of dns_live states what the zones report", () => {
@@ -231,18 +239,25 @@ describe("plan()", () => {
     expect(steps.filter((s) => s.secret && !s.name.startsWith("create CLOUDFLARE.")).map((s) => s.name)).toEqual(["create datasource DRIFT"]);
   });
 
-  it("namespaces, the USL probes and REMOVE, then the fifteen-table USL DDL in one request with the renamed reserved words", () => {
+  it("namespaces, the USL probes, the DDL checked without DEPLOY and REMOVE, then the twenty-five-table USL DDL in one request with the renamed reserved words", () => {
     expect(step("namespace lightning.metastore", steps).sql).toBe("CREATE NAMESPACE IF NOT EXISTS lightning.metastore");
     expect(step("namespace lightning.metastore.drift", steps).sql).toBe("CREATE NAMESPACE IF NOT EXISTS lightning.metastore.drift");
     expect(step("list lightning.metastore.drift", steps).sql).toBe("SHOW NAMESPACES OR TABLES IN lightning.metastore.drift");
     expect(step("load usl drift_usl", steps).sql).toBe("LOAD USL drift_usl NAMESPACE lightning.metastore.drift");
     expect(step("remove usl drift_usl", steps).sql).toBe("REMOVE USL drift_usl NAMESPACE lightning.metastore.drift");
+    // the check: the same DDL, COMPILE without DEPLOY, which stores nothing; one request, only when the USL is stale
+    const check = step("check usl drift_usl", steps);
+    expect(check).toMatchObject({ sql: setup.CHECK_USL, multi: true, when: "usl_stale" });
+    expect(setup.CHECK_USL.startsWith("COMPILE USL drift_usl NAMESPACE lightning.metastore.drift DDL\nCREATE TABLE collection (\n")).toBe(true);
+    expect(setup.CHECK_USL.slice(setup.CHECK_USL.indexOf(" DDL\n"))).toBe(setup.COMPILE_USL.slice(setup.COMPILE_USL.indexOf(" DDL\n")));
+    expect(setup.CHECK_USL).not.toMatch(/DEPLOY|IF NOT EXISTS/);
+    expect(steps.findIndex((s) => s === check)).toBe(steps.findIndex((s) => s.name === "remove usl drift_usl") - 1);
     const ddl = step("compile usl drift_usl", steps);
     expect(ddl.multi).toBe(true);
     expect(ddl.sql).toBe(setup.COMPILE_USL);
     expect(ddl.sql.startsWith("COMPILE USL IF NOT EXISTS drift_usl DEPLOY NAMESPACE lightning.metastore.drift DDL\nCREATE TABLE collection (\n")).toBe(true);
-    expect([...ddl.sql.matchAll(/^CREATE TABLE (\w+) \($/gm)].map((m) => m[1])).toEqual(FIFTEEN);
-    expect(ddl.sql.match(/\);\nCREATE TABLE /g)).toHaveLength(14);
+    expect([...ddl.sql.matchAll(/^CREATE TABLE (\w+) \($/gm)].map((m) => m[1])).toEqual(ALL);
+    expect(ddl.sql.match(/\);\nCREATE TABLE /g)).toHaveLength(ALL.length - 1);
     expect(ddl.sql).toContain("  run_id varchar(128) NOT NULL FOREIGN KEY REFERENCES collection(run_id),");
     expect(ddl.sql).toContain("  setting_id varchar(128) NOT NULL FOREIGN KEY REFERENCES setting(setting_id),");
     expect(ddl.sql).toContain("  disposition_id varchar(128) NOT NULL FOREIGN KEY REFERENCES disposition(disposition_id)\n);");
@@ -260,39 +275,51 @@ describe("plan()", () => {
     expect(ddl.sql).toContain("  locked int NOT NULL,");
     expect(ddl.sql).toContain("  description varchar(1024)\n);\nCREATE TABLE adoption (\n");
     expect(ddl.sql).toContain("  lesson_id varchar(64) FOREIGN KEY REFERENCES lesson(lesson_id),\n  lesson_kind varchar(16),\n  lesson_recorded_at varchar(40),\n  lesson_expires_at varchar(40)\n);\nCREATE TABLE dns_live (\n");
-    // dns_live last: the record id the key, its run a foreign key into collection, the flags and the held type NOT NULL
-    expect(ddl.sql.endsWith("CREATE TABLE dns_live (\n  record_id varchar(64) NOT NULL PRIMARY KEY,\n  tenant_id varchar(64) NOT NULL,\n  zone_id varchar(64) NOT NULL,\n  live_type varchar(16) NOT NULL,\n  live_proxied int NOT NULL,\n  run_id varchar(128) FOREIGN KEY REFERENCES collection(run_id),\n  run_started_at varchar(40),\n  held_type varchar(16) NOT NULL,\n  held_proxied int NOT NULL\n)")).toBe(true);
+    // dns_live after adoption: the record id the key, its run a foreign key into collection, the flags and the held type NOT NULL
+    expect(ddl.sql).toContain("CREATE TABLE dns_live (\n  record_id varchar(64) NOT NULL PRIMARY KEY,\n  tenant_id varchar(64) NOT NULL,\n  zone_id varchar(64) NOT NULL,\n  live_type varchar(16) NOT NULL,\n  live_proxied int NOT NULL,\n  run_id varchar(128) FOREIGN KEY REFERENCES collection(run_id),\n  run_started_at varchar(40),\n  held_type varchar(16) NOT NULL,\n  held_proxied int NOT NULL\n);\nCREATE TABLE dns_record (\n");
+    // then the catalogue's own tables: a record of one DNS run keyed run_id:record_id, its run a collection; a copy's
+    // validation keyed to its vault_copy; a fingerprint to its setting; change_window last (measured 26 Oct 2026: zone,
+    // name, content, action and until pass the validator)
+    expect(ddl.sql).toContain("CREATE TABLE dns_record (\n  dns_record_id varchar(256) NOT NULL PRIMARY KEY,\n  record_id varchar(64) NOT NULL,\n  run_id varchar(128) NOT NULL FOREIGN KEY REFERENCES collection(run_id),\n");
+    expect(ddl.sql).toContain("  copy_id varchar(128) NOT NULL FOREIGN KEY REFERENCES vault_copy(copy_id),\n");
+    expect(ddl.sql).toContain("  obs_id varchar(128) NOT NULL FOREIGN KEY REFERENCES setting(setting_id),\n");
+    expect(ddl.sql).toContain("  snapshot_id varchar(128) NOT NULL FOREIGN KEY REFERENCES backup_snapshot(snapshot_id),\n");
+    expect(ddl.sql.endsWith("  until varchar(40) NOT NULL,\n  reason varchar(1024) NOT NULL,\n  closed_at varchar(40)\n)")).toBe(true);
     // the file tables' USL columns are the columns the setup writes and sql.js holds
     expect([...setup.USL_COLUMNS.lesson]).toEqual(fileTableDef("lesson")!.columns);
     expect([...setup.USL_COLUMNS.rule]).toEqual(fileTableDef("rule")!.columns);
     // USL_COLUMNS is read off the same DDL lines
-    for (const t of FIFTEEN) {
+    for (const t of ALL) {
       const block = ddl.sql.slice(ddl.sql.indexOf(`CREATE TABLE ${t} (\n`)).split("\n)")[0].split("\n").slice(1);
       expect(block.map((l) => l.trim().split(" ")[0]), t).toEqual([...setup.USL_COLUMNS[t as keyof typeof setup.USL_COLUMNS]]);
     }
   });
 
-  it("activates each of the fifteen tables over its datasource, returning exactly the declared columns", () => {
-    for (const t of FIFTEEN) {
+  it("activates each of the twenty-five tables over its datasource, returning exactly the declared columns", () => {
+    for (const t of ALL) {
       const s = step(`activate ${t}`, steps).sql;
       expect(s.startsWith(`ACTIVATE USL TABLE ${USL}.${t} AS SELECT `)).toBe(true);
       expect(activatedColumns(s), t).toEqual([...setup.USL_COLUMNS[t as keyof typeof setup.USL_COLUMNS]]);
     }
     expect(step("activate collection", steps).sql).toMatch(/CAST\(expected_count AS INT\) AS expected_count, .* FROM DRIFT\.collection_run$/);
-    expect(step("activate setting", steps).sql).toMatch(/COALESCE\(source, ''\) AS source_kind, CAST\(COALESCE\(authority, 0\) AS INT\) AS authority FROM DRIFT\.observation$/);
+    expect(step("activate setting", steps).sql).toBe(`ACTIVATE USL TABLE ${USL}.setting AS SELECT obs_id AS setting_id, run_id, tenant_id, host, surface, object_id, setting_path, value_hash, value_redacted, refers_to_type, refers_to_id, observed_at, source AS source_kind, CAST(authority AS INT) AS authority FROM DRIFT.observation`);
     expect(step("activate referent", steps).sql).toMatch(/FROM DRIFT\.observation o JOIN DRIFT\.dns_record d ON d\.tenant_id = o\.tenant_id AND d\.name = o\.refers_to_id WHERE o\.refers_to_type = 'dns_name'$/);
     expect(step("activate backup_copy", steps).sql).toMatch(/FROM DRIFT\.backup_item b JOIN DRIFT\.backup_snapshot s ON s\.snapshot_id = b\.snapshot_id$/);
-    expect(step("activate policy", steps).sql).toMatch(/CAST\(COALESCE\(lock, 0\) AS INT\) AS lock, .* note FROM DRIFT\.policy_rule$/);
+    expect(step("activate policy", steps).sql).toMatch(/criticality, CAST\(lock AS INT\) AS lock, .* note FROM DRIFT\.policy_rule$/);
     const copy = step("activate copy", steps).sql;
     expect(copy).toContain("COALESCE(c.source, '') AS source_kind");
     expect(copy).toContain("CAST(CASE WHEN l.result IN ('ok', 'ok_with_gaps') THEN 1 ELSE 0 END AS INT) AS validated");
     expect(copy).toMatch(/FROM DRIFT\.vault_copy c LEFT JOIN \(SELECT v\.copy_id, v\.validator, v\.result, v\.validated_at FROM DRIFT\.copy_validation v WHERE NOT EXISTS \(SELECT 1 FROM DRIFT\.copy_validation w WHERE w\.copy_id = v\.copy_id AND .*\)\) l ON l\.copy_id = c\.copy_id$/);
-    expect(step("activate probe", steps).sql).toMatch(/CAST\(latency_ms AS INT\) AS latency_ms, COALESCE\(observed_at, ''\) AS observed_at FROM DRIFT\.probe$/);
-    expect(step("activate disposition", steps).sql).toMatch(/COALESCE\(reason, ''\) AS reason, expires_at, COALESCE\(decided_by, ''\) AS decided_by, rule_id, .* FROM DRIFT\.disposition$/);
-    expect(step("activate action", steps).sql).toMatch(/COALESCE\(verification, ''\) AS verification, COALESCE\(receipts, ''\) AS receipts, COALESCE\(status, ''\) AS status, COALESCE\(reason, ''\) AS reason, COALESCE\(record, ''\) AS record, .* FROM DRIFT\.action$/);
-    expect(step("activate ticket", steps).sql).toMatch(/external_id, url, COALESCE\(type, ''\) AS type, .* FROM DRIFT\.ticket$/);
-    // cause: each NOT NULL column in COALESCE, class read as cause_class, the nullable ones bare
-    expect(step("activate cause", steps).sql).toBe(`ACTIVATE USL TABLE ${USL}.cause AS SELECT COALESCE(cause_id, '') AS cause_id, COALESCE(tenant_id, '') AS tenant_id, COALESCE(finding_id, '') AS finding_id, COALESCE(disposition_id, '') AS disposition_id, COALESCE(class, '') AS cause_class, actor, mechanism, occurred_at, source_host, COALESCE(evidence_ids, '') AS evidence_ids, diff, COALESCE(summary, '') AS summary, COALESCE(window_from, '') AS window_from, COALESCE(window_to, '') AS window_to, COALESCE(decided_at, '') AS decided_at FROM DRIFT.finding_cause`);
+    expect(step("activate probe", steps).sql).toMatch(/CAST\(latency_ms AS INT\) AS latency_ms, observed_at FROM DRIFT\.probe$/);
+    expect(step("activate disposition", steps).sql).toMatch(/ reason, expires_at, decided_by, rule_id, finding_id, run_id, decided_at, window_id FROM DRIFT\.disposition$/);
+    expect(step("activate action", steps).sql).toMatch(/ verification, receipts, status, reason, record, started_at, finished_at, disposition_id FROM DRIFT\.action$/);
+    expect(step("activate ticket", steps).sql).toMatch(/external_id, url, type, priority, .* FROM DRIFT\.ticket$/);
+    // cause: every column of finding_cause bare, class read as cause_class
+    expect(step("activate cause", steps).sql).toBe(`ACTIVATE USL TABLE ${USL}.cause AS SELECT cause_id, tenant_id, finding_id, disposition_id, class AS cause_class, actor, mechanism, occurred_at, source_host, evidence_ids, diff, summary, window_from, window_to, decided_at FROM DRIFT.finding_cause`);
+    // a table whose key is several columns gets one, its columns joined by ':'
+    expect(step("activate dns_record", steps).sql).toBe(`ACTIVATE USL TABLE ${USL}.dns_record AS SELECT CONCAT(run_id, ':', record_id) AS dns_record_id, record_id, run_id, tenant_id, zone, name, type, content, CAST(ttl AS INT) AS ttl, CAST(proxied AS INT) AS proxied, observed_at FROM DRIFT.dns_record`);
+    expect(step("activate backup_item", steps).sql).toBe(`ACTIVATE USL TABLE ${USL}.backup_item AS SELECT CONCAT(snapshot_id, ':', object_id, ':', setting_path) AS item_id, snapshot_id, object_id, setting_path, value_hash FROM DRIFT.backup_item`);
+    expect(step("activate inventory_asset", steps).sql).toBe(`ACTIVATE USL TABLE ${USL}.inventory_asset AS SELECT asset_id, tenant_id, host, address, kind, source AS source_kind, observed_at FROM DRIFT.inventory_asset`);
     // the file tables: lesson and rule over their Lightning databases; adoption is the catalogue's ADOPTION_SQL on one line, DRIFT x LESSONS
     expect(step("activate lesson", steps).sql).toBe(`ACTIVATE USL TABLE ${USL}.lesson AS SELECT COALESCE(lesson_id, '') AS lesson_id, COALESCE(tenant_id, '') AS tenant_id, COALESCE(kind, '') AS kind, finding_class, COALESCE(scope_key, '') AS scope_key, COALESCE(reason, '') AS reason, COALESCE(recorded_at, '') AS recorded_at, COALESCE(expires_at, '') AS expires_at, COALESCE(provenance, '') AS provenance FROM LESSONS.lesson`);
     expect(step("activate rule", steps).sql).toMatch(/CAST\(COALESCE\(version, 0\) AS INT\) AS version, .* CAST\(COALESCE\(locked, 0\) AS INT\) AS locked, .* CAST\(COALESCE\(hold_hours, 0\) AS INT\) AS hold_hours, .* description FROM RULES\.rule$/);
@@ -305,13 +332,55 @@ describe("plan()", () => {
     // the CAST list: each entity's int columns of the DDL, each out of a CAST AS INT, and no other column; cause has none
     const casts: Record<string, string[]> = {};
     const ints: Record<string, string[]> = {};
-    for (const t of FIFTEEN) {
+    for (const t of ALL) {
       casts[t] = [...step(`activate ${t}`, steps).sql.matchAll(/ AS INT\) AS (\w+)/g)].map((m) => m[1]);
       const block = setup.COMPILE_USL.slice(setup.COMPILE_USL.indexOf(`CREATE TABLE ${t} (\n`)).split("\n)")[0];
       ints[t] = [...block.matchAll(/^ {2}(\w+) int\b/gm)].map((m) => m[1]);
     }
     expect(casts).toEqual(ints);
-    expect(casts).toMatchObject({ collection: ["expected_count", "observed_count"], policy: ["lock", "hold_max_hours", "version"], copy: ["validated"], cause: [], lesson: [], rule: ["version", "locked", "hold_hours"], adoption: [], dns_live: ["live_proxied", "held_proxied"] });
+    expect(casts).toMatchObject({ collection: ["expected_count", "observed_count"], policy: ["lock", "hold_max_hours", "version"], copy: ["validated"], cause: [], lesson: [], rule: ["version", "locked", "hold_hours"], adoption: [], dns_live: ["live_proxied", "held_proxied"], dns_record: ["ttl", "proxied"] });
+  });
+
+  it("an entity READ_AS builds from one DRIFT table is that table's columns, bare, NOT NULL exactly where sql/schema.sql says so; every catalogue table has one", () => {
+    const schema = readFileSync(new URL("../sql/schema.sql", import.meta.url), "utf8");
+    const notNull = (table: string, col: string): boolean => {
+      const body = new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\(([\\s\\S]*?)\\n\\);`).exec(schema)![1];
+      const line = body.split("\n").map((l) => l.replace(/--.*$/, "").trim()).find((l) => l.split(/\s+/)[0] === col)!;
+      return /NOT NULL|PRIMARY KEY/.test(line);
+    };
+    expect(Object.keys(setup.READ_AS).sort()).toEqual([...TABLE_NAMES, "lesson", "rule"].sort());
+    for (const [table, r] of Object.entries(setup.READ_AS)) {
+      const columns = (tableDef(table) ?? fileTableDef(table))!.columns;
+      // the entity holds every column of its table, under its own name or the one READ_AS gives, and the key it adds
+      expect([...setup.USL_COLUMNS[r.entity]].sort(), table).toEqual([...columns.map((c) => r.renames?.[c] ?? c), ...(r.key ? [r.key.column] : [])].sort());
+      if (!tableDef(table)) continue;
+      const sql = setup.activation(r.entity, "DRIFT");
+      expect(sql.endsWith(` FROM DRIFT.${table}`), table).toBe(true);
+      expect(sql, table).not.toContain("COALESCE");
+      const block = setup.COMPILE_USL.slice(setup.COMPILE_USL.indexOf(`CREATE TABLE ${r.entity} (\n`)).split("\n)")[0].split("\n").slice(1);
+      for (const line of block) {
+        const name = line.trim().split(" ")[0];
+        if (name === r.key?.column) continue;
+        const source = Object.entries(r.renames ?? {}).find(([, e]) => e === name)?.[0] ?? name;
+        expect(line.includes(" NOT NULL"), `${r.entity}.${name}`).toBe(notNull(table, source));
+      }
+    }
+    expect(setup.READ_AS.observation).toEqual({ entity: "setting", renames: { obs_id: "setting_id", source: "source_kind" } });
+    expect(setup.readsOf("setting")).toEqual(["observation"]);
+    expect(setup.readsOf("referent")).toEqual([]);
+  });
+
+  it("uslRelation(): the entity itself when it holds the table's columns as they stand, else a SELECT of them from it under the table's names; fenced, always the SELECT with LIMIT", () => {
+    expect(setup.uslRelation("collection_run")).toBe(`${USL}.collection`);
+    expect(setup.uslRelation("policy_rule")).toBe(`${USL}.policy`);
+    expect(setup.uslRelation("lesson")).toBe(`${USL}.lesson`);
+    expect(setup.uslRelation("observation")).toBe(`(SELECT setting_id AS obs_id, run_id, tenant_id, surface, host, object_id, setting_path, value_hash, value_redacted, refers_to_type, refers_to_id, observed_at, source_kind AS source, authority FROM ${USL}.setting)`);
+    expect(setup.uslRelation("dns_record")).toBe(`(SELECT record_id, run_id, tenant_id, zone, name, type, content, ttl, proxied, observed_at FROM ${USL}.dns_record)`);
+    expect(setup.uslRelation("finding_cause")).toContain("cause_class AS class, actor");
+    expect(setup.uslRelation("collection_run", { fence: true })).toBe(`(SELECT run_id, tenant_id, surface, host, started_at, finished_at, expected_count, observed_count, status FROM ${USL}.collection LIMIT 2147483647)`);
+    expect(setup.uslRelation("observation", { fence: true })).toMatch(/source_kind AS source, authority FROM lightning\.metastore\.drift\.drift_usl\.setting LIMIT 2147483647\)$/);
+    expect(setup.uslRelation("nope")).toBeUndefined();
+    expect(setup.uslRelation("toString")).toBeUndefined();
   });
 
   it("activates dns_live over every REST table and DRIFT in one SELECT: each table's result exploded, the last complete DNS run by run_complete's own expression, its dns_record joined on the record id; no name or content read", () => {
@@ -356,7 +425,7 @@ describe("plan()", () => {
     expect(step("update dq cause_evidenced", steps).sql).toBe(`UPDATE DQ cause_evidenced TABLE ${USL}.cause SET NAME = cause_evidenced, EXPRESSION = ${CAUSE_EVIDENCED_EXPR}`);
     for (const t of ["collection", "copy", "action", "cause", "adoption", "dns_live"]) expect(step(`run dq ${t}`, steps)).toMatchObject({ sql: `RUN DQ TABLE ${USL}.${t}`, dqTable: t, show: true });
     expect(step("show lightning.metastore.drift.drift_usl", steps).sql).toBe(`SHOW NAMESPACES OR TABLES IN ${USL}`);
-    for (const t of FIFTEEN) expect(step(`count ${t}`, steps).sql).toBe(`SELECT COUNT(*) AS n FROM ${USL}.${t}`);
+    for (const t of ALL) expect(step(`count ${t}`, steps).sql).toBe(`SELECT COUNT(*) AS n FROM ${USL}.${t}`);
   });
 
   it("one statement per call except the COMPILE, no trailing semicolon, no double-quoted identifier in SQL text", () => {
@@ -364,25 +433,26 @@ describe("plan()", () => {
       expect(s.sql.trimEnd().endsWith(";")).toBe(false);
       if (!s.multi) expect(stripLiterals(s.sql)).not.toContain(";");
     }
-    expect(steps.filter((s) => s.multi).map((s) => s.name)).toEqual(["compile usl drift_usl"]);
+    expect(steps.filter((s) => s.multi).map((s) => s.name)).toEqual(["check usl drift_usl", "compile usl drift_usl"]);
     for (const s of steps.filter((x) => /^(?:activate|count|register dq|update dq)/.test(x.name))) expect(stripLiterals(s.sql)).not.toContain('"');
   });
 
-  it("staleness(): LOAD USL's model against the fifteen tables and their columns", () => {
+  it("staleness(): LOAD USL's model against the twenty-five tables and their columns", () => {
     const model = (tables: Record<string, readonly string[]>) => ({ queryId: "q", columns: ["json"], rows: [[JSON.stringify({ tables: Object.entries(tables).map(([name, cols]) => ({ name, columnSpecs: cols.map((c) => ({ name: c })) })) })]], rowCount: 1, total: 1, latencyMs: 1, raw: {} });
     const current = { ...setup.USL_COLUMNS };
     const only = (names: readonly string[]) => Object.fromEntries(names.map((n) => [n, current[n as keyof typeof current]]));
     expect(setup.staleness(model(current))).toBeNull();
-    expect(setup.staleness(model(only(ELEVEN.slice(0, 4))))).toBe("4 table(s); lacks policy, copy, probe, disposition, action, ticket, cause, lesson, rule, adoption, dns_live");
-    // the eleven-table USL of 25 Oct, 20:44 UTC: what the live run of 22:27 UTC removed and compiled again
-    expect(setup.staleness(model(only(ELEVEN)))).toBe("11 table(s); lacks lesson, rule, adoption, dns_live");
-    // the fourteen-table USL of 25 Oct, 22:27 UTC: what the live run of 26 Oct, 03:47 UTC removed and compiled again
-    expect(setup.staleness(model(only(FOURTEEN)))).toBe("14 table(s); lacks dns_live");
-    const { cause: _k2, ...fourteen } = current;
-    expect(setup.staleness(model(fourteen))).toBe("14 table(s); lacks cause");
-    expect(setup.staleness(model({ ...current, extra: ["x"] }))).toBe("16 table(s); holds extra beyond the 15");
-    expect(setup.staleness(model({ ...current, policy: current.policy.filter((c) => c !== "note") }))).toBe("15 table(s); columns differ in policy");
-    expect(setup.staleness(model({ ...current, cause: current.cause.map((c) => (c === "cause_class" ? "class" : c)) }))).toBe("15 table(s); columns differ in cause");
+    expect(setup.staleness(model(only(ELEVEN.slice(0, 4))))).toBe(`4 table(s); lacks ${lacking(ELEVEN.slice(0, 4))}`);
+    expect(setup.staleness(model(only(ELEVEN)))).toBe(`11 table(s); lacks ${lacking(ELEVEN)}`);
+    // the fifteen-table USL of 26 Oct, 03:47 UTC: what the live run of 06:20 UTC removed and compiled again
+    expect(setup.staleness(model(only(FIFTEEN)))).toBe(`15 table(s); lacks ${MIRRORS.join(", ")}`);
+    const { cause: _k2, ...lessCause } = current;
+    expect(setup.staleness(model(lessCause))).toBe("24 table(s); lacks cause");
+    expect(setup.staleness(model({ ...current, extra: ["x"] }))).toBe("26 table(s); holds extra beyond the 25");
+    expect(setup.staleness(model({ ...current, policy: current.policy.filter((c) => c !== "note") }))).toBe("25 table(s); columns differ in policy");
+    expect(setup.staleness(model({ ...current, cause: current.cause.map((c) => (c === "cause_class" ? "class" : c)) }))).toBe("25 table(s); columns differ in cause");
+    // the setting and collection of 03:47 UTC, before value_redacted and finished_at
+    expect(setup.staleness(model({ ...current, setting: current.setting.filter((c) => c !== "value_redacted"), collection: current.collection.filter((c) => c !== "finished_at") }))).toBe("25 table(s); columns differ in collection, setting");
     expect(setup.staleness({ ...model(current), rows: [["not json"]] })).toBe("LOAD USL returned no model that parses");
     expect(setup.staleness({ ...model(current), rows: [] })).toBe("LOAD USL returned no model that parses");
   });
@@ -419,18 +489,26 @@ describe("uslRows() and uslMarkdown(): the semantic layer's table", () => {
   const rows = setup.uslRows();
 
   it("one row per entity in USL_TABLES order, each built from the tables its activation SELECT reads: DRIFT's by name, every one in sql/schema.sql; a file or REST table as <database>.<table>", () => {
-    expect(rows.map((r) => r.entity)).toEqual(FIFTEEN);
+    expect(rows.map((r) => r.entity)).toEqual(ALL);
     expect(Object.fromEntries(rows.map((r) => [r.entity, r.builtFrom]))).toEqual({
       collection: ["collection_run"], setting: ["observation"], referent: ["observation", "dns_record"],
       backup_copy: ["backup_item", "backup_snapshot"], policy: ["policy_rule"], copy: ["vault_copy", "copy_validation"],
       probe: ["probe"], disposition: ["disposition"], action: ["action"], ticket: ["ticket"], cause: ["finding_cause"],
       lesson: ["LESSONS.lesson"], rule: ["RULES.rule"], adoption: ["disposition", "LESSONS.lesson"],
       dns_live: ["CLOUDFLARE.zone_<zone id>", "collection_run", "dns_record"],
+      ...Object.fromEntries(MIRRORS.map((t) => [t, [t]])),
+    });
+    // the catalogue reads each of its tables through the entity built from it alone; the joins and dns_live it reads directly
+    expect(Object.fromEntries(rows.map((r) => [r.entity, r.reads]))).toEqual({
+      collection: ["collection_run"], setting: ["observation"], referent: [], backup_copy: [], policy: ["policy_rule"], copy: [],
+      probe: ["probe"], disposition: ["disposition"], action: ["action"], ticket: ["ticket"], cause: ["finding_cause"],
+      lesson: ["lesson"], rule: ["rule"], adoption: [], dns_live: [],
+      ...Object.fromEntries(MIRRORS.map((t) => [t, [t]])),
     });
     const files = [...setup.FILE_SOURCES.map((f) => `${f.db}.${f.table}`), "CLOUDFLARE.zone_<zone id>"];
     for (const r of rows) for (const t of r.builtFrom) expect(t.includes(".") ? files : TABLE_NAMES, `${r.entity} reads ${t}`).toContain(t);
     // the exported activation() is the one plan() sends
-    for (const t of FIFTEEN) expect(step(`activate ${t}`).sql).toBe(`ACTIVATE USL TABLE ${USL}.${t} AS ${setup.activation(t as never, "DRIFT", setup.restTables(ZONES))}`);
+    for (const t of ALL) expect(step(`activate ${t}`).sql).toBe(`ACTIVATE USL TABLE ${USL}.${t} AS ${setup.activation(t as never, "DRIFT", setup.restTables(ZONES))}`);
   });
 
   it("an entity over more than one table says how its rows are formed, naming each table; referent is the setting-to-record join of the hero query", () => {
@@ -447,7 +525,7 @@ describe("uslRows() and uslMarkdown(): the semantic layer's table", () => {
       expect(setup.COMPILE_USL).toContain(`  ${r.primaryKey} varchar(`);
       for (const f of r.foreignKeys) {
         const [, entity, column] = /^(\w+)\((\w+)\)$/.exec(f.references)!;
-        expect(FIFTEEN, `${r.entity}.${f.column}`).toContain(entity);
+        expect(ALL, `${r.entity}.${f.column}`).toContain(entity);
         expect(setup.USL_COLUMNS[entity as never], `${r.entity}.${f.column}`).toContain(column);
         expect(setup.USL_COLUMNS[r.entity]).toContain(f.column);
       }
@@ -467,8 +545,8 @@ describe("uslRows() and uslMarkdown(): the semantic layer's table", () => {
     expect(ruled.map((r) => r.rule!.expression)).toEqual([RUN_COMPLETE_EXPR, "validated = 1", ACTION_VERIFIED_EXPR, CAUSE_EVIDENCED_EXPR, EXCEPTION_IN_FORCE_EXPR, DNS_EXPR]);
     const md = setup.uslMarkdown();
     const table = md.split("\n").filter((l) => l.startsWith("|"));
-    expect(table).toHaveLength(2 + FIFTEEN.length);
-    expect(table[0]).toBe("| entity | built from | key | DQ rule | expression |");
+    expect(table).toHaveLength(2 + ALL.length);
+    expect(table[0]).toBe("| entity | built from | catalogue table | key | DQ rule | expression |");
     for (const [i, r] of rows.entries()) {
       expect(table[i + 2].startsWith(`| \`${r.entity}\` |`), r.entity).toBe(true);
       if (r.rule) expect(table[i + 2].endsWith(`| \`${r.rule.name}\` | \`${r.rule.expression}\` |`), r.entity).toBe(true);
@@ -476,8 +554,10 @@ describe("uslRows() and uslMarkdown(): the semantic layer's table", () => {
     }
     expect(md).toContain("`drift_usl` in `lightning.metastore.drift`");
     expect(md).toContain("over four datasources: `DRIFT`, the app Postgres; `LESSONS`, the technician's memory store; `RULES`, the policy file; `CLOUDFLARE`, the Cloudflare DNS API, which Zetaris reads itself at each query.");
-    expect(md).toContain("It holds 15 entities, ");
+    expect(md).toContain("It holds 25 entities, ");
     expect(md).toContain(", and 6 DQ rules, ");
+    expect(md).toContain("Every catalogue query reads through it: on Zetaris each of the 20 tables the SQL names is read as the entity whose row lists it under \"catalogue table\"");
+    expect(table.find((l) => l.startsWith("| `setting` |"))).toContain("| `observation` | `setting_id`;");
     expect(md).not.toMatch(/\b20\d\d\b|\bOct\b|\d+ of \d+/);
     expect(md.endsWith("|\n")).toBe(true);
   });
@@ -640,7 +720,7 @@ const restTablesListed = (rows: readonly [string, string][]) => result(LT_COLS, 
 const described = (cols: readonly string[]) => result(["col_name", "data_type", "comment", "description", "tags"], [...cols].sort().map((c) => [c, '"string"', "", "", ""]));
 const FILES = { "ledger.json": '[{"memoryId":"mem-1"}]', "lessons.json": '[{"lesson_id":"mem-1"}]', "rules.json": '[{"rule_id":"rule-1"}]' };
 
-/** The instance as it stands after the live run of 26 Oct, 03:47 UTC: DRIFT with every schema table, LESSONS and RULES with their tables over the filestore, CLOUDFLARE with a REST table per zone and page, the fifteen-table USL, the six rules as stated. */
+/** The instance as it stands after the live run of 26 Oct, 06:20 UTC: DRIFT with every schema table, LESSONS and RULES with their tables over the filestore, CLOUDFLARE with a REST table per zone and page, the twenty-five-table USL, the six rules as stated. */
 function configured(sql: string): QueryResult | Error {
   if (sql === "SHOW DATASOURCES") return result(["name", "description"], [["DRIFT", "drift-agent app Postgres on the zetaris network"]]);
   if (sql === "SHOW DATASOURCE TABLES DRIFT") return result(["name", "relation", "source_table", "partition clause", "description", "materialized table", "datasource_id", "relation_id"], SCHEMA_TABLES_LISTED);
@@ -651,7 +731,7 @@ function configured(sql: string): QueryResult | Error {
   if (sql === "DESCRIBE DATASOURCE TABLE LESSONS.lesson") return described(fileTableDef("lesson")!.columns);
   if (sql === "DESCRIBE DATASOURCE TABLE RULES.rule") return described(fileTableDef("rule")!.columns);
   if (sql === "SHOW NAMESPACES OR TABLES IN lightning.metastore.drift") return result(["name", "type", "usl_id", "count", "activated"], [["drift_usl", "usl", "3954", "15", ""]]);
-  if (sql === `SHOW NAMESPACES OR TABLES IN ${USL}`) return result(["name", "type", "usl_id", "count", "activated"], FIFTEEN.map((t) => [t, "table", "", "0", "true"]));
+  if (sql === `SHOW NAMESPACES OR TABLES IN ${USL}`) return result(["name", "type", "usl_id", "count", "activated"], ALL.map((t) => [t, "table", "", "0", "true"]));
   if (sql.startsWith("LOAD USL")) return model(CURRENT_MODEL);
   if (sql.startsWith("REMOVE USL")) return result(["removed"], [["true"]]);
   if (sql.startsWith("COMPILE USL")) return result(["json"], [['{"name":"drift_usl"}']]);
@@ -685,15 +765,15 @@ describe("apply()", () => {
   it("against an instance already set up: the files copied again, a no-op otherwise, the file and REST tables, the USL and its rules kept, RUN DQ printed for six tables", async () => {
     const { r, client, tracer, out, puts, status } = await run(configured);
     expect(r.ok).toBe(true);
-    expect(r.results).toHaveLength(84);
+    expect(r.results).toHaveLength(105);
     expect(skippedOf(status)).toEqual([
       "create datasource DRIFT", "register datasource tables", "create lightning database LESSONS", "create lightning database RULES", ...FILE_SKIPS, ...REST_SKIPS,
-      "remove usl drift_usl", "compile usl drift_usl", ...RULES.flatMap((n) => [`register dq ${n}`, `update dq ${n}`]),
+      "check usl drift_usl", "remove usl drift_usl", "compile usl drift_usl", ...RULES.flatMap((n) => [`register dq ${n}`, `update dq ${n}`]),
     ]);
     expect(r.results.every((x) => x.status === "ok" || x.status === "skipped")).toBe(true);
     expect(sent(client, /^(?:CREATE DATASOURCE|REGISTER DATASOURCE|CREATE LIGHTNING|DROP LIGHTNING|REMOVE USL|COMPILE USL|REGISTER DQ|UPDATE DQ)/)).toEqual([]);
     expect(client.calls.filter((c) => c.opts.allowMultiStatement)).toEqual([]);
-    expect(sent(client, /^ACTIVATE/)).toHaveLength(15);
+    expect(sent(client, /^ACTIVATE/)).toHaveLength(25);
     // every run writes the three files: a file table re-reads its file on every query (measured 25 Oct 2026)
     expect(puts).toEqual([FILES]);
     expect(r.dq?.rows).toEqual(DQ_ROWS);
@@ -711,20 +791,20 @@ describe("apply()", () => {
     expect(out.find((l) => l.includes("16 create LESSONS.lesson"))).toMatch(/^skipped 16 create LESSONS\.lesson\s+LESSONS\.lesson listed as stated$/);
     expect(out.find((l) => l.includes("21 list CLOUDFLARE tables"))).toMatch(/^ok\s+21 list CLOUDFLARE tables\s+3 rows, 3 of 3 REST tables listed over their endpoint {2}\(\d+ ms\)$/);
     expect(out.find((l) => l.includes(`23 create CLOUDFLARE.zone_${ZA}`))).toBe(`skipped 23 create CLOUDFLARE.zone_${ZA} CLOUDFLARE.zone_${ZA} listed over its endpoint`);
-    expect(out.find((l) => l.includes("31 load usl drift_usl"))).toMatch(/^ok\s+31 load usl drift_usl\s+15 tables as compiled {2}\(\d+ ms\)$/);
-    expect(out.find((l) => l.includes("32 remove usl"))).toMatch(/^skipped 32 remove usl drift_usl\s+drift_usl holds the 15 tables as compiled$/);
-    expect(out.find((l) => l.includes("49 list dq rules"))).toMatch(/^ok\s+49 list dq rules\s+9 rows, run_complete listed, copy_validated listed, action_verified listed, cause_evidenced listed, exception_in_force listed, dns_inventory_current listed {2}\(\d+ ms\)$/);
-    expect(out.find((l) => l.includes("51 update dq run_complete"))).toMatch(/^skipped 51 update dq run_complete\s+run_complete listed as stated$/);
-    expect(out.find((l) => l.includes("59 update dq exception_in_force"))).toMatch(/^skipped 59 update dq exception_in_force\s+exception_in_force listed as stated$/);
-    expect(out.find((l) => l.includes("61 update dq dns_inventory_current"))).toMatch(/^skipped 61 update dq dns_inventory_current\s+dns_inventory_current listed as stated$/);
-    expect(out.find((l) => l.includes("69 count collection"))).toMatch(/^ok\s+69 count collection\s+= 12 {2}\(\d+ ms\)$/);
-    expect(out.find((l) => l.includes("83 count dns_live"))).toMatch(/^ok\s+83 count dns_live\s+= 12, the zones report 603 {2}\(\d+ ms\)$/);
-    expect(out.find((l) => l.includes("84 count LESSONS.ledger"))).toMatch(/^ok\s+84 count LESSONS\.ledger\s+= 12 {2}\(\d+ ms\)$/);
+    expect(out.find((l) => l.includes("31 load usl drift_usl"))).toMatch(/^ok\s+31 load usl drift_usl\s+25 tables as compiled {2}\(\d+ ms\)$/);
+    expect(out.find((l) => l.includes("33 remove usl"))).toMatch(/^skipped 33 remove usl drift_usl\s+drift_usl holds the 25 tables as compiled$/);
+    expect(out.find((l) => l.includes("60 list dq rules"))).toMatch(/^ok\s+60 list dq rules\s+9 rows, run_complete listed, copy_validated listed, action_verified listed, cause_evidenced listed, exception_in_force listed, dns_inventory_current listed {2}\(\d+ ms\)$/);
+    expect(out.find((l) => l.includes("62 update dq run_complete"))).toMatch(/^skipped 62 update dq run_complete\s+run_complete listed as stated$/);
+    expect(out.find((l) => l.includes("70 update dq exception_in_force"))).toMatch(/^skipped 70 update dq exception_in_force\s+exception_in_force listed as stated$/);
+    expect(out.find((l) => l.includes("72 update dq dns_inventory_current"))).toMatch(/^skipped 72 update dq dns_inventory_current\s+dns_inventory_current listed as stated$/);
+    expect(out.find((l) => l.includes("80 count collection"))).toMatch(/^ok\s+80 count collection\s+= 12 {2}\(\d+ ms\)$/);
+    expect(out.find((l) => l.includes("94 count dns_live"))).toMatch(/^ok\s+94 count dns_live\s+= 12, the zones report 603 {2}\(\d+ ms\)$/);
+    expect(out.find((l) => l.includes("105 count LESSONS.ledger"))).toMatch(/^ok\s+105 count LESSONS\.ledger\s+= 12 {2}\(\d+ ms\)$/);
     // the live re-run of 26 Oct 2026, 03:48 UTC over six zones: 90 steps, 53 ok, 37 skipped, 0 failed, 38.1 s; here three REST tables
-    expect(out.at(-1)).toMatch(/^ZETARIS SETUP: 84 statements, 53 ok, 31 skipped, 0 failed, \d+\.\d s$/);
+    expect(out.at(-1)).toMatch(/^ZETARIS SETUP: 105 statements, 73 ok, 32 skipped, 0 failed, \d+\.\d s$/);
     // env carries the zones, so no zone read: one trace line per statement
     expect(out.some((l) => l.includes("00 read the Cloudflare zones"))).toBe(false);
-    expect(tracer.events).toHaveLength(84);
+    expect(tracer.events).toHaveLength(105);
     // every statement is a query on zetaris; the copy reads the sources and names no engine
     const copyAt = r.results.findIndex((x) => x.name === "copy files to the filestore");
     expect(tracer.events[copyAt]).toMatchObject({ agent: "zetaris-setup", action: "observe", status: "ok", input_summary: expect.stringContaining("docker exec -i") });
@@ -733,7 +813,7 @@ describe("apply()", () => {
     expect(tracer.events[1]).toMatchObject({ status: "skipped", input_summary: "CREATE DATASOURCE DRIFT (credentials redacted)", output_summary: "DRIFT exists" });
   });
 
-  it("against the four-table USL and the eight-table datasource of 24 Oct: REGISTER the new tables, REMOVE USL, COMPILE the fifteen, register the six rules", async () => {
+  it("against the four-table USL and the eight-table datasource of 24 Oct: REGISTER the new tables, CHECK and REMOVE USL, COMPILE the twenty-five, register the six rules", async () => {
     const { r, client, status, out } = await run((sql) => {
       if (sql === "SHOW DATASOURCE TABLES DRIFT") return result(["name"], SCHEMA_TABLES_LISTED.slice(0, 8).map((row) => [row[0]]));
       if (sql.startsWith("LOAD USL")) return model(FOUR_TABLE_MODEL);
@@ -748,16 +828,17 @@ describe("apply()", () => {
       "register dq cause_evidenced": "ok", "update dq cause_evidenced": "skipped",
     });
     expect(out.find((l) => l.includes("03 list datasource tables"))).toContain(`${TABLE_NAMES.length - 8} of ${TABLE_NAMES.length} schema tables unregistered: ${TABLE_NAMES.slice(8).join(", ")}`);
-    expect(out.find((l) => l.includes("31 load usl drift_usl"))).toContain("stale: 4 table(s); lacks policy, copy, probe, disposition, action, ticket, cause, lesson, rule, adoption, dns_live");
+    expect(out.find((l) => l.includes("31 load usl drift_usl"))).toContain(`stale: 4 table(s); lacks ${lacking(ELEVEN.slice(0, 4))}`);
     const order = client.calls.map((c) => c.sql.split(/\s+/).slice(0, 2).join(" "));
-    expect(order.indexOf("REMOVE USL")).toBeLessThan(order.indexOf("COMPILE USL"));
-    expect(order.indexOf("COMPILE USL")).toBeLessThan(order.indexOf("ACTIVATE USL"));
-    expect(client.calls.filter((c) => c.opts.allowMultiStatement).map((c) => c.sql)).toEqual([setup.COMPILE_USL]);
+    expect(order.indexOf("COMPILE USL")).toBeLessThan(order.indexOf("REMOVE USL"));
+    expect(order.lastIndexOf("COMPILE USL")).toBeGreaterThan(order.indexOf("REMOVE USL"));
+    expect(order.lastIndexOf("COMPILE USL")).toBeLessThan(order.indexOf("ACTIVATE USL"));
+    expect(client.calls.filter((c) => c.opts.allowMultiStatement).map((c) => c.sql)).toEqual([setup.CHECK_USL, setup.COMPILE_USL]);
     expect(sent(client, /^REGISTER DQ/)).toEqual(setup.DQ_RULES.map((d) => `REGISTER DQ ${d.name} TABLE ${USL}.${d.table} AS ${d.expression}`));
-    expect(out.at(-1)).toMatch(/^ZETARIS SETUP: 84 statements, 61 ok, 23 skipped, 0 failed/);
+    expect(out.at(-1)).toMatch(/^ZETARIS SETUP: 105 statements, 82 ok, 23 skipped, 0 failed/);
   });
 
-  it("against the fourteen-table USL of 25 Oct, 22:27 UTC and no CLOUDFLARE database: create it and its REST tables with the token, REMOVE USL, COMPILE the fifteen, register all six, as the live run of 26 Oct, 03:47 UTC did", async () => {
+  it("against the fourteen-table USL of 25 Oct, 22:27 UTC and no CLOUDFLARE database: create it and its REST tables with the token, REMOVE USL, COMPILE the twenty-five, register all six, as the live run of 26 Oct, 03:47 UTC did for its fifteen", async () => {
     const fourteen = Object.fromEntries(FOURTEEN.map((t) => [t, setup.USL_COLUMNS[t as keyof typeof setup.USL_COLUMNS]]));
     const { r, client, tracer, out, status } = await run((sql) => {
       if (sql === "SHOW LIGHTNING DATABASES") return result(["name", "description", "id"], LIGHTNING_DBS_LISTED.slice(0, 2));
@@ -769,7 +850,7 @@ describe("apply()", () => {
     expect(r.ok).toBe(true);
     expect(out.find((l) => l.includes("07 show lightning databases"))).toContain("2 rows, LESSONS listed, RULES listed, CLOUDFLARE not listed");
     expect(out.find((l) => l.includes("21 list CLOUDFLARE tables"))).toContain("0 rows, 0 of 3 REST tables listed over their endpoint");
-    expect(out.find((l) => l.includes("31 load usl drift_usl"))).toContain("stale: 14 table(s); lacks dns_live");
+    expect(out.find((l) => l.includes("31 load usl drift_usl"))).toContain(`stale: 14 table(s); lacks ${lacking(FOURTEEN)}`);
     expect(status).toMatchObject({
       "create lightning database CLOUDFLARE": "ok", "remove usl drift_usl": "ok", "compile usl drift_usl": "ok", "activate dns_live": "ok",
       "register dq dns_inventory_current": "ok", "update dq dns_inventory_current": "skipped", "run dq dns_live": "ok",
@@ -785,7 +866,7 @@ describe("apply()", () => {
     expect(out.join("\n")).not.toContain(TOKEN);
     expect(sent(client, /^REGISTER DQ dns_inventory_current/)).toEqual([`REGISTER DQ dns_inventory_current TABLE ${USL}.dns_live AS ${DNS_EXPR}`]);
     // the live run of 26 Oct 2026, 03:47 UTC over six zones: 90 steps, 68 ok, 22 skipped, 0 failed, 44.4 s; here three REST tables
-    expect(out.at(-1)).toMatch(/^ZETARIS SETUP: 84 statements, 65 ok, 19 skipped, 0 failed/);
+    expect(out.at(-1)).toMatch(/^ZETARIS SETUP: 105 statements, 86 ok, 19 skipped, 0 failed/);
   });
 
   it("a REST table listed over another endpoint is dropped and created again; the others are kept", async () => {
@@ -826,7 +907,7 @@ describe("apply()", () => {
     expect(out[0]).toMatch(/^ok {6}00 read the Cloudflare zones {17}3 zone\(s\) the token sees, 603 record\(s\), 3 REST table\(s\) of 500 records a page {2}\(\d+ ms\)$/);
     expect(tracer.events[0]).toMatchObject({ agent: "zetaris-setup", action: "observe", status: "ok", input_summary: "Cloudflare GET /zones and each zone's record count" });
     expect(tracer.events[0].engine).toBeUndefined();
-    expect(r.results).toHaveLength(84);
+    expect(r.results).toHaveLength(105);
 
     const failed = new Scripted(configured);
     const lines: string[] = [];
@@ -837,7 +918,7 @@ describe("apply()", () => {
     expect(lines.join("\n")).not.toContain(TOKEN);
   });
 
-  it("against the eleven-table USL of 25 Oct, 20:44 UTC, the ledger table over its newline-delimited file: DROP and CREATE the ledger, REMOVE USL, COMPILE the fifteen, register all six, as the live run of 25 Oct, 22:27 UTC did for its fourteen", async () => {
+  it("against the eleven-table USL of 25 Oct, 20:44 UTC, the ledger table over its newline-delimited file: DROP and CREATE the ledger, REMOVE USL, COMPILE the twenty-five, register all six, as the live run of 25 Oct, 22:27 UTC did for its fourteen", async () => {
     const { r, client, status, out } = await run((sql) => {
       if (sql === "SHOW LIGHTNING TABLES LESSONS") return lightningTables([["ledger", "ledger.jsonl"], ["lesson", "lessons.json"]]);
       if (sql.startsWith("LOAD USL")) return model(ELEVEN_TABLE_MODEL);
@@ -847,7 +928,7 @@ describe("apply()", () => {
     });
     expect(r.ok).toBe(true);
     expect(out.find((l) => l.includes("10 list LESSONS tables"))).toContain(`2 rows, ledger listed over ${DIR}/ledger.jsonl as json, lesson listed`);
-    expect(out.find((l) => l.includes("31 load usl drift_usl"))).toContain("stale: 11 table(s); lacks lesson, rule, adoption, dns_live");
+    expect(out.find((l) => l.includes("31 load usl drift_usl"))).toContain(`stale: 11 table(s); lacks ${lacking(ELEVEN)}`);
     expect(status).toMatchObject({
       "drop LESSONS.ledger": "ok", "create LESSONS.ledger": "ok", "drop LESSONS.lesson": "skipped", "create LESSONS.lesson": "skipped",
       "remove usl drift_usl": "ok", "compile usl drift_usl": "ok", "activate adoption": "ok", "register dq exception_in_force": "ok", "update dq exception_in_force": "skipped", "run dq adoption": "ok",
@@ -856,7 +937,7 @@ describe("apply()", () => {
     expect(order.indexOf("DROP LIGHTNING DATABASE TABLE LESSONS.ledger")).toBeLessThan(order.indexOf(`CREATE LIGHTNING FILESTORE TABLE ledger FROM LESSONS FORMAT JSON OPTIONS (path "${DIR}/ledger.json")`));
     expect(sent(client, /^REGISTER DQ/)).toEqual(setup.DQ_RULES.map((d) => `REGISTER DQ ${d.name} TABLE ${USL}.${d.table} AS ${d.expression}`));
     expect(sent(client, /^REGISTER DQ exception_in_force/)).toEqual([`REGISTER DQ exception_in_force TABLE ${USL}.adoption AS ${EXCEPTION_IN_FORCE_EXPR}`]);
-    expect(out.at(-1)).toMatch(/^ZETARIS SETUP: 84 statements, 63 ok, 21 skipped, 0 failed/);
+    expect(out.at(-1)).toMatch(/^ZETARIS SETUP: 105 statements, 84 ok, 21 skipped, 0 failed/);
   });
 
   it("a file table with other columns than the setup writes is dropped and created again; one listed as stated is kept", async () => {
@@ -899,7 +980,7 @@ describe("apply()", () => {
       return configured(sql);
     });
     expect(r.ok).toBe(true);
-    expect(out.find((l) => l.includes("31 load usl drift_usl"))).toContain("stale: 15 table(s); columns differ in action");
+    expect(out.find((l) => l.includes("31 load usl drift_usl"))).toContain("stale: 25 table(s); columns differ in action");
     expect(status).toMatchObject({ "remove usl drift_usl": "ok", "compile usl drift_usl": "ok", "update dq run_complete": "skipped", "update dq action_verified": "ok" });
     expect(sent(client, /^(?:REGISTER|UPDATE) DQ/)).toEqual([`UPDATE DQ action_verified TABLE ${USL}.action SET NAME = action_verified, EXPRESSION = ${ACTION_VERIFIED_EXPR}`]);
   });
@@ -920,7 +1001,7 @@ describe("apply()", () => {
     expect(create[0].sql).toBe(CREATE_PRINTED.replace("<redacted>", PW));
     expect(status).toMatchObject({
       "create datasource DRIFT": "ok", "list datasource tables": "skipped", "register datasource tables": "ok", "refresh datasource tables": "skipped",
-      "load usl drift_usl": "skipped", "remove usl drift_usl": "skipped", "compile usl drift_usl": "skipped", "register dq run_complete": "ok",
+      "load usl drift_usl": "skipped", "check usl drift_usl": "skipped", "remove usl drift_usl": "skipped", "compile usl drift_usl": "skipped", "register dq run_complete": "ok",
     });
     expect(r.results.find((x) => x.name === "compile usl drift_usl")?.note).toBe("already exists");
     // the file sources: both databases created, each table created over its file, nothing to describe or drop
@@ -1034,7 +1115,7 @@ describe("Zetaris adapter", () => {
     expect(tracer.events.map((e) => [e.action, e.engine, e.status])).toEqual([
       ["query", "zetaris", "ok"], ["query", "zetaris", "failed"], ["query", "sqljs", "ok"], ["query", "sqljs", "failed"],
     ]);
-    expect(tracer.events[0].input_summary).toContain("DRIFT.collection_run");
+    expect(tracer.events[0].input_summary).toContain(`FROM ${USL}.collection WHERE`);
     expect(tracer.events[2].input_summary).toContain("FROM collection_run WHERE");
   });
 });

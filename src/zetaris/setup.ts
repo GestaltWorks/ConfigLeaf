@@ -1,12 +1,20 @@
 // Idempotent Zetaris setup: the DRIFT datasource over the app Postgres, the LESSONS and RULES Lightning databases
 // over files in the Zetaris filestore (the technician's memory store and the policy file, src/data/files.ts), the
 // CLOUDFLARE Lightning database over the Cloudflare DNS API (one REST table per zone and page, read live), the
-// drift_usl Unified Semantic Layer over the four (fifteen tables) and six DQ rules on it. plan() lists the steps
+// drift_usl Unified Semantic Layer over the four (twenty-five tables) and six DQ rules on it. plan() lists the steps
 // in the order they run, apply() runs them one at a time. uslRows() and uslMarkdown() read the layer's table off
-// USL_DDL, activation() and DQ_RULES: each entity, the tables its activation SELECT reads, its keys and its DQ rule
-// with the rule's expression. npm run sources -- --usl prints it, and the README and the replay page's Sources tab carry it.
+// USL_DDL, activation() and DQ_RULES: each entity, the tables its activation SELECT reads, the catalogue tables read
+// through it, its keys and its DQ rule with the rule's expression. npm run sources -- --usl prints it, and the README
+// and the replay page's Sources tab carry it.
 //
-// The fifteen tables: collection (collection_run), setting (observation; source_kind for source), referent (each
+// The USL is what the agent reads: READ_AS names, for each of the twenty tables the catalogue reads as {{t:<table>}},
+// the entity built from that table alone, and uslRelation() the relation the live engine renders it as (the entity, or a
+// SELECT of the table's columns from it under the table's own names, src/data/engines/zetaris.ts). Ten entities exist
+// for that alone: dns_record, inventory_asset, approved_setting, backup_snapshot, backup_item, vault_copy,
+// copy_validation, referent_fingerprint, audit_event and change_window, each its table's columns, source as
+// source_kind, and a key of its key columns joined by ':' where the table's key is several columns.
+//
+// The first fifteen tables: collection (collection_run), setting (observation; source_kind for source), referent (each
 // dns_name observation joined to the records of its name), backup_copy (backup_item joined to its snapshot),
 // policy (policy_rule), copy (vault_copy with its latest copy_validation and a validated flag), probe,
 // disposition, action (the Actor's rows, the reason and the record among them), ticket, cause (finding_cause,
@@ -44,17 +52,19 @@
 //     a table of sql/schema.sql; REFRESH DATASOURCE TABLES runs when it lists all of them. Namespaces carry
 //     IF NOT EXISTS. An error saying "already exist" is done (skipped). Any other error stops the run.
 //   - The USL: SHOW NAMESPACES OR TABLES IN lightning.metastore.drift says whether drift_usl exists; LOAD
-//     USL reads its model. A model whose tables or columns differ from COMPILE_USL's is stale: REMOVE USL,
-//     then COMPILE afresh. COMPILE runs only when the USL is absent or was removed this run, so an instance
-//     already holding the fourteen tables keeps its USL and its DQ rules. The USL is derived from the
-//     datasources, so a removal loses nothing.
-//   - Every run re-ACTIVATEs the fourteen tables (each a SELECT over DRIFT.*, LESSONS.* or RULES.* returning exactly
-//     the declared columns, NOT NULL varchars in COALESCE, ints CAST), then LIST DQ USL decides each rule of DQ_RULES:
+//     USL reads its model. A model whose tables or columns differ from COMPILE_USL's is stale: CHECK_USL compiles the
+//     DDL without DEPLOY, which stores nothing, so a DDL the validator refuses stops the run with the deployed USL
+//     intact; then REMOVE USL, then COMPILE afresh. COMPILE runs only when the USL is absent or was removed this run,
+//     so an instance already holding the twenty-five tables keeps its USL and its DQ rules. The USL is derived from
+//     the datasources, so a removal loses nothing.
+//   - Every run re-ACTIVATEs every table (each a SELECT over DRIFT.*, LESSONS.*, RULES.* or CLOUDFLARE.* returning
+//     exactly the declared columns, ints CAST; an entity READ_AS builds from one DRIFT table reads its columns bare,
+//     the others wrap each NOT NULL varchar in COALESCE), then LIST DQ USL decides each rule of DQ_RULES:
 //     REGISTER when the listing lacks it, UPDATE DQ ... SET NAME, EXPRESSION when it is listed with another
 //     expression (whitespace aside), nothing when it is listed as stated. RUN DQ on collection, copy,
 //     action, cause and adoption, the USL's table listing, a count per table and one of LESSONS.ledger.
-//   - One statement per call, except COMPILE USL ... DDL: fourteen CREATE TABLE blocks separated by ';' in
-//     one request, sent with the adapter's allowMultiStatement (honoured for COMPILE USL only). The copy is the
+//   - One statement per call, except CHECK_USL and COMPILE USL ... DDL: twenty-five CREATE TABLE blocks separated by
+//     ';' in one request, sent with the adapter's allowMultiStatement (honoured for COMPILE USL only). The copy is the
 //     one step that is no statement: docker, its trace line action observe with no engine.
 //   - The CREATE DATASOURCE statement carries the Postgres password and is built in memory when it is
 //     sent, nowhere else: plan() holds password "<redacted>", its trace line says only "CREATE DATASOURCE
@@ -144,13 +154,24 @@
 // 0 failed, 38.1 s. RUN DQ: run_complete 157 / 157 / 0, copy_validated 2641 / 2303 / 338, action_verified 18 / 16 / 2,
 // cause_evidenced 10 / 10 / 0, exception_in_force 230 / 230 / 0, dns_inventory_current on dns_live 58 / 58 / 0 in 15.6
 // s, its record_id key 58 / 58 / 0 and its run_id foreign key 58 / 58 / 0; count dns_live 58, the zones report 58.
+//
+// Measured live 26 Oct 2026, 06:16 to 07:07 UTC, the USL as the catalogue's one model: CHECK_USL alone compiled the
+// twenty-five tables in 47 ms and stored nothing (zone, name, content, type, action and until pass the validator as
+// column names; varchar(1048576) passes). Then the setup: the fifteen-table USL stale ("lacks dns_record, ..."), the
+// check, REMOVE USL, COMPILE of the twenty-five, every activation accepted, the bare columns of a mirror included under
+// their NOT NULL declarations, REGISTER for all six rules: 111 statements, 82 ok, 29 skipped, 0 failed, 62.0 s. RUN DQ:
+// run_complete 162 / 162 / 0, copy_validated 2791 / 2791 / 0, action_verified 18 / 16 / 2, cause_evidenced 10 / 10 / 0,
+// exception_in_force 230 / 230 / 0, dns_inventory_current 58 / 58 / 0. Again at once: load usl "25 tables as compiled",
+// check, remove and compile skipped, 111 statements, 73 ok, 38 skipped, 0 failed, 98.6 s. The read-only pass through
+// the USL equals the pass on main over the same rows: 36 findings, 36 dispositions, 549 queries, 30,125 rows; every
+// one of its SELECTs reads drift_usl, none DRIFT (the schema guard's DESCRIBEs aside).
 
 import { Zetaris, type QueryResult } from "../adapters/zetaris.ts";
 import { API, Cloudflare, RECORDS_PER_PAGE } from "../collectors/cloudflare.ts";
 import { config, redact } from "../config.ts";
 import { ADOPTION_SQL, EXCEPTION_IN_FORCE, FILE_DATASOURCES, fileTableDef } from "../data/files.ts";
 import type { Engine, RunOptions } from "../data/layer.ts";
-import { TABLE_NAMES } from "../data/schema.ts";
+import { TABLE_NAMES, tableDef } from "../data/schema.ts";
 import type { Tracer, TraceEvent } from "../trace.ts";
 import { COPY_STATE_FILE, FILESTORE_DIR, filesHash, putFiles, recordCopy, refreshFiles, type PutResult, type Refresh, type RefreshDeps } from "./filestore.ts";
 
@@ -168,7 +189,8 @@ const PG_IDENT = /^[A-Za-z0-9_-]+$/;
  * record included) and ticket are their datasource tables; cause is finding_cause, class named cause_class;
  * lesson, rule and adoption are over the file tables; dns_live is the DNS API's records now against the last
  * complete DNS run: live_proxied and held_proxied are 1, 0, or -1 when the flag is absent, held_type '' when the
- * run lacks the record, so the rule compares NOT NULL columns.
+ * run lacks the record, so the rule compares NOT NULL columns. Then one table per catalogue table that none of the
+ * fifteen is built from alone (READ_AS), each its table's columns, NOT NULL where sql/schema.sql says so.
  */
 const USL_DDL = {
   collection: [
@@ -177,6 +199,7 @@ const USL_DDL = {
     "surface varchar(64) NOT NULL",
     "host varchar(128)",
     "started_at varchar(40) NOT NULL",
+    "finished_at varchar(40)",
     "expected_count int",
     "observed_count int",
     "status varchar(16) NOT NULL",
@@ -190,6 +213,7 @@ const USL_DDL = {
     "object_id varchar(512) NOT NULL",
     "setting_path varchar(512) NOT NULL",
     "value_hash varchar(80) NOT NULL",
+    "value_redacted varchar(1048576)",
     "refers_to_type varchar(32)",
     "refers_to_id varchar(255)",
     "observed_at varchar(40) NOT NULL",
@@ -279,6 +303,7 @@ const USL_DDL = {
     "finding_id varchar(255) NOT NULL",
     "run_id varchar(128) NOT NULL FOREIGN KEY REFERENCES collection(run_id)",
     "decided_at varchar(40) NOT NULL",
+    "window_id varchar(128)",
   ],
   action: [
     "action_id varchar(128) NOT NULL PRIMARY KEY",
@@ -376,6 +401,109 @@ const USL_DDL = {
     "held_type varchar(16) NOT NULL",
     "held_proxied int NOT NULL",
   ],
+  dns_record: [
+    "dns_record_id varchar(256) NOT NULL PRIMARY KEY",
+    "record_id varchar(64) NOT NULL",
+    "run_id varchar(128) NOT NULL FOREIGN KEY REFERENCES collection(run_id)",
+    "tenant_id varchar(64) NOT NULL",
+    "zone varchar(255) NOT NULL",
+    "name varchar(255) NOT NULL",
+    "type varchar(16) NOT NULL",
+    "content varchar(65535) NOT NULL",
+    "ttl int",
+    "proxied int",
+    "observed_at varchar(40) NOT NULL",
+  ],
+  inventory_asset: [
+    "asset_id varchar(128) NOT NULL PRIMARY KEY",
+    "tenant_id varchar(64) NOT NULL",
+    "host varchar(128)",
+    "address varchar(255) NOT NULL",
+    "kind varchar(32)",
+    "source_kind varchar(255) NOT NULL",
+    "observed_at varchar(40) NOT NULL",
+  ],
+  approved_setting: [
+    "approval_id varchar(128) NOT NULL PRIMARY KEY",
+    "tenant_id varchar(64) NOT NULL",
+    "surface varchar(64) NOT NULL",
+    "host varchar(128)",
+    "object_id varchar(512) NOT NULL",
+    "setting_path varchar(512) NOT NULL",
+    "value_hash varchar(80) NOT NULL",
+    "approved_at varchar(40) NOT NULL",
+    "approved_by varchar(255)",
+    "note varchar(2048)",
+  ],
+  backup_snapshot: [
+    "snapshot_id varchar(128) NOT NULL PRIMARY KEY",
+    "tenant_id varchar(64) NOT NULL",
+    "host varchar(128) NOT NULL",
+    "kind varchar(16) NOT NULL",
+    "taken_at varchar(40) NOT NULL",
+    "source_ref varchar(1024)",
+  ],
+  backup_item: [
+    "item_id varchar(1200) NOT NULL PRIMARY KEY",
+    "snapshot_id varchar(128) NOT NULL FOREIGN KEY REFERENCES backup_snapshot(snapshot_id)",
+    "object_id varchar(512) NOT NULL",
+    "setting_path varchar(512) NOT NULL",
+    "value_hash varchar(80) NOT NULL",
+  ],
+  vault_copy: [
+    "copy_id varchar(128) NOT NULL PRIMARY KEY",
+    "tenant_id varchar(64) NOT NULL",
+    "surface varchar(64) NOT NULL",
+    "host varchar(128)",
+    "object_id varchar(512) NOT NULL",
+    "run_id varchar(128) NOT NULL FOREIGN KEY REFERENCES collection(run_id)",
+    "git_commit varchar(64) NOT NULL",
+    "blob_sha256 varchar(80) NOT NULL",
+    "taken_at varchar(40) NOT NULL",
+    "source_kind varchar(32) NOT NULL",
+  ],
+  copy_validation: [
+    "validation_id varchar(255) NOT NULL PRIMARY KEY",
+    "copy_id varchar(128) NOT NULL FOREIGN KEY REFERENCES vault_copy(copy_id)",
+    "tenant_id varchar(64) NOT NULL",
+    "validator varchar(16) NOT NULL",
+    "result varchar(16) NOT NULL",
+    "missing_dependencies varchar(8192) NOT NULL",
+    "output_redacted varchar(8192) NOT NULL",
+    "validated_at varchar(40) NOT NULL",
+  ],
+  referent_fingerprint: [
+    "fingerprint_id varchar(256) NOT NULL PRIMARY KEY",
+    "obs_id varchar(128) NOT NULL FOREIGN KEY REFERENCES setting(setting_id)",
+    "dns_run_id varchar(128) NOT NULL",
+    "fingerprint varchar(8192) NOT NULL",
+    "resolved_at varchar(40) NOT NULL",
+  ],
+  audit_event: [
+    "event_id varchar(128) NOT NULL PRIMARY KEY",
+    "tenant_id varchar(64) NOT NULL",
+    "source_kind varchar(32) NOT NULL",
+    "actor varchar(255)",
+    "action varchar(64) NOT NULL",
+    "resource_type varchar(64)",
+    "resource_id varchar(255)",
+    "old_value varchar(65535)",
+    "new_value varchar(65535)",
+    "occurred_at varchar(40) NOT NULL",
+  ],
+  change_window: [
+    "window_id varchar(128) NOT NULL PRIMARY KEY",
+    "tenant_id varchar(64) NOT NULL",
+    "surface varchar(64) NOT NULL",
+    "host varchar(128)",
+    "object_id varchar(512) NOT NULL",
+    "setting_path varchar(512) NOT NULL",
+    "opened_by varchar(255) NOT NULL",
+    "opened_at varchar(40) NOT NULL",
+    "until varchar(40) NOT NULL",
+    "reason varchar(1024) NOT NULL",
+    "closed_at varchar(40)",
+  ],
 } as const;
 
 export type UslTable = keyof typeof USL_DDL;
@@ -386,8 +514,108 @@ export const USL_COLUMNS: Readonly<Record<UslTable, readonly string[]>> = Object
   USL_TABLES.map((t) => [t, USL_DDL[t].map((l) => l.split(" ")[0])]),
 ) as unknown as Record<UslTable, readonly string[]>;
 
-/** Each CREATE TABLE starts on its own line; the whole block is one request. */
-export const COMPILE_USL = `COMPILE USL IF NOT EXISTS ${USL_NAME} DEPLOY NAMESPACE ${NAMESPACE} DDL\n${USL_TABLES.map((t) => `CREATE TABLE ${t} (\n${USL_DDL[t].map((l) => `  ${l}`).join(",\n")}\n)`).join(";\n")}`;
+/** The DDL blocks: each CREATE TABLE starts on its own line, separated by ';'. */
+const USL_DDL_TEXT = USL_TABLES.map((t) => `CREATE TABLE ${t} (\n${USL_DDL[t].map((l) => `  ${l}`).join(",\n")}\n)`).join(";\n");
+
+/** The whole block is one request. */
+export const COMPILE_USL = `COMPILE USL IF NOT EXISTS ${USL_NAME} DEPLOY NAMESPACE ${NAMESPACE} DDL\n${USL_DDL_TEXT}`;
+
+/**
+ * The same DDL without DEPLOY: Zetaris compiles it, returns the model as JSON and stores nothing (SQL reference 13.1).
+ * The setup sends it before REMOVE USL, so a DDL the validator refuses stops the run while the deployed USL still stands.
+ */
+export const CHECK_USL = `COMPILE USL ${USL_NAME} NAMESPACE ${NAMESPACE} DDL\n${USL_DDL_TEXT}`;
+
+/**
+ * How a catalogue table is read on Zetaris: through `entity`, the USL table built from it alone (READ_AS). `renames`
+ * gives the entity's name for each column it names otherwise: the DDL validator refuses a column named source (and
+ * class is renamed with it), and setting keeps the key name it had before the catalogue read it. `key` is the key the
+ * entity adds to a table whose key is several columns: those columns joined by ':'.
+ */
+export interface ReadAs {
+  entity: UslTable;
+  renames?: Readonly<Record<string, string>>;
+  key?: { column: string; of: readonly string[] };
+}
+
+/**
+ * Every table the catalogue names as {{t:<table>}} (sql/schema.sql's eighteen and the file tables lesson and rule), and
+ * the entity it is read through. Each entity here holds every column of its table, so any SQL in the portable subset
+ * reads it as it reads the table: src/data/engines/zetaris.ts renders {{t:<table>}} as uslRelation(<table>).
+ */
+export const READ_AS: Readonly<Record<string, ReadAs>> = {
+  collection_run: { entity: "collection" },
+  observation: { entity: "setting", renames: { obs_id: "setting_id", source: "source_kind" } },
+  approved_setting: { entity: "approved_setting" },
+  backup_snapshot: { entity: "backup_snapshot" },
+  backup_item: { entity: "backup_item", key: { column: "item_id", of: ["snapshot_id", "object_id", "setting_path"] } },
+  dns_record: { entity: "dns_record", key: { column: "dns_record_id", of: ["run_id", "record_id"] } },
+  audit_event: { entity: "audit_event", renames: { source: "source_kind" } },
+  inventory_asset: { entity: "inventory_asset", renames: { source: "source_kind" } },
+  policy_rule: { entity: "policy" },
+  vault_copy: { entity: "vault_copy", renames: { source: "source_kind" } },
+  copy_validation: { entity: "copy_validation" },
+  probe: { entity: "probe" },
+  disposition: { entity: "disposition" },
+  action: { entity: "action" },
+  ticket: { entity: "ticket" },
+  referent_fingerprint: { entity: "referent_fingerprint", key: { column: "fingerprint_id", of: ["obs_id", "dns_run_id"] } },
+  finding_cause: { entity: "cause", renames: { class: "cause_class" } },
+  change_window: { entity: "change_window" },
+  lesson: { entity: "lesson" },
+  rule: { entity: "rule" },
+};
+
+/** A catalogue table's columns in DDL order: sql/schema.sql's, or the file table's (src/data/files.ts). */
+const tableColumns = (table: string): readonly string[] | undefined => (tableDef(table) ?? fileTableDef(table))?.columns;
+
+/** The table each entity of READ_AS is built from, by entity. */
+const BUILT_FROM: ReadonlyMap<string, string> = new Map(Object.entries(READ_AS).map(([table, r]) => [r.entity, table]));
+
+/** The catalogue tables read through an entity, in READ_AS order: one, or none for an entity built from several (referent, copy, ...). */
+export function readsOf(entity: UslTable): string[] {
+  return Object.entries(READ_AS).filter(([, r]) => r.entity === entity).map(([table]) => table);
+}
+
+/** The LIMIT of a fenced read: above any row count, so it bounds nothing; Spark pushes no filter below a LIMIT. */
+export const FENCE_LIMIT = 2_147_483_647;
+
+/**
+ * The relation {{t:<table>}} names on Zetaris: the entity's qualified name when it holds the table's columns under
+ * their own names in their order; otherwise a SELECT of the table's columns from the entity, each renamed one AS its
+ * table name, so the catalogue's one SQL text reads either engine (DataLayer.render gives it the query's alias, as it
+ * does an overlay). `fence`: always that SELECT, with LIMIT FENCE_LIMIT, so Spark evaluates every filter above the
+ * scan and pushes none into it (src/data/engines/zetaris.ts says when). undefined for a table READ_AS lacks.
+ */
+export function uslRelation(table: string, opts: { fence?: boolean } = {}): string | undefined {
+  const r = Object.hasOwn(READ_AS, table) ? READ_AS[table] : undefined;
+  const columns = tableColumns(table);
+  if (!r || !columns) return undefined;
+  const entity = `${USL}.${r.entity}`;
+  if (!opts.fence && columns.join(",") === USL_COLUMNS[r.entity].join(",")) return entity;
+  const named = columns.map((c) => r.renames?.[c] ?? c);
+  return `(SELECT ${columns.map((c, i) => (named[i] === c ? c : `${named[i]} AS ${c}`)).join(", ")} FROM ${entity}${opts.fence ? ` LIMIT ${FENCE_LIMIT}` : ""})`;
+}
+
+/**
+ * The activation of an entity READ_AS builds from one DRIFT table: each declared column from the table's column of
+ * that name (or the one it renames), bare, so a predicate on it reaches the datasource as it is written; an int CAST to
+ * INT; the added key CONCAT of its columns. Every column READ_AS reads is NOT NULL in sql/schema.sql where the DDL
+ * declares it NOT NULL, so no COALESCE is needed to meet the declaration.
+ */
+function mirror(entity: UslTable, ds: string): string {
+  const table = BUILT_FROM.get(entity);
+  if (!table) throw new SetupError(`no activation for ${entity}: READ_AS builds no entity of that name`);
+  const r = READ_AS[table];
+  const back = new Map(Object.entries(r.renames ?? {}).map(([c, e]) => [e, c]));
+  const cols = (USL_DDL[entity] as readonly string[]).map((line) => {
+    const [name, type] = line.split(" ");
+    if (r.key?.column === name) return `CONCAT(${r.key.of.join(", ':', ")}) AS ${name}`;
+    const expr = type === "int" ? `CAST(${back.get(name) ?? name} AS INT)` : (back.get(name) ?? name);
+    return expr === name ? name : `${expr} AS ${name}`;
+  });
+  return `SELECT ${cols.join(", ")} FROM ${ds}.${table}`;
+}
 
 export interface DqRule { name: string; table: UslTable; expression: string }
 
@@ -435,6 +663,12 @@ const USL_FORMED: Partial<Record<UslTable, string>> = {
   rule: "one row per rule of the policy file, as `rules.json` in the Zetaris filestore; `lock` as `locked`, `hold_max_hours` as `hold_hours`, `note` as `description`",
   adoption: "each `disposition` decided ADOPT by the operator, under an accepted exception, LEFT JOINed across the two datasources to the `LESSONS.lesson` row its reason names, on the tenant and the lesson id",
   dns_live: "each record the DNS API returns at the query, the `result` array of every `CLOUDFLARE.zone_<zone id>` REST table exploded (one table per zone and page), LEFT JOINed across the datasources to the last complete `cloudflare.dns` run of `collection_run` and to that run's `dns_record` row of the same Cloudflare record id; ids are joined on, never a name or a content",
+  dns_record: "`dns_record_id` is `run_id:record_id`, a Cloudflare record id being unique within one DNS run only",
+  inventory_asset: "`source` as `source_kind`",
+  backup_item: "`item_id` is `snapshot_id:object_id:setting_path`",
+  vault_copy: "`source` as `source_kind`",
+  referent_fingerprint: "`fingerprint_id` is `obs_id:dns_run_id`",
+  audit_event: "`source` as `source_kind`",
 };
 
 // ---- the REST source: the Cloudflare DNS API as the CLOUDFLARE Lightning database ---------------------------------
@@ -503,6 +737,8 @@ export interface UslRow {
   builtFrom: string[];
   /** How its rows are formed from those tables; empty when each row is one row of its one table. */
   formed: string;
+  /** The catalogue tables read through it on Zetaris (READ_AS): {{t:<table>}} names it. Empty for an entity the catalogue does not read. */
+  reads: string[];
   /** The PRIMARY KEY column of USL_DDL. */
   primaryKey: string;
   /** Each FOREIGN KEY of USL_DDL: the column and the entity(column) it references. */
@@ -523,6 +759,7 @@ export function uslRows(): UslRow[] {
       entity,
       builtFrom: [...new Set([...activation(entity, "DRIFT", DOC_REST).matchAll(SOURCE_TABLE)].map((m) => (m[1] === "DRIFT" ? m[2] : `${m[1]}.${m[2]}`)))],
       formed: USL_FORMED[entity] ?? "",
+      reads: readsOf(entity),
       primaryKey: name(lines.find((l) => l.includes(" PRIMARY KEY"))!),
       foreignKeys: lines.flatMap((l) => {
         const fk = / FOREIGN KEY REFERENCES (\w+\(\w+\))/.exec(l);
@@ -540,15 +777,17 @@ export function uslMarkdown(): string {
   const cells = (r: UslRow): string[] => [
     code(r.entity),
     [r.builtFrom.map(code).join(", "), r.formed].filter(Boolean).join(": "),
+    r.reads.map(code).join(", "),
     [code(r.primaryKey), ...r.foreignKeys.map((f) => `${code(f.column)} references ${code(f.references)}`)].join("; "),
     r.rule ? code(r.rule.name) : "",
     r.rule ? code(r.rule.expression) : "",
   ];
+  const read = Object.keys(READ_AS).length;
   return [
-    `${code(USL_NAME)} in ${code(NAMESPACE)} is the semantic layer over four datasources: ${code("DRIFT")}, the app Postgres; ${code(FILE_DATASOURCES.lesson)}, the technician's memory store; ${code(FILE_DATASOURCES.rule)}, the policy file; ${code(REST_DB)}, the Cloudflare DNS API, which Zetaris reads itself at each query. It holds ${rows.length} entities, each activated as one SELECT over the tables it is built from (${code("activation()")} in ${code("src/zetaris/setup.ts")}), a table of ${code("DRIFT")} by its name and a file or REST table as ${code("<datasource>.<table>")}, and ${DQ_RULES.length} DQ rules, each an expression RUN DQ tests on every row of its entity.`,
+    `${code(USL_NAME)} in ${code(NAMESPACE)} is the semantic layer over four datasources: ${code("DRIFT")}, the app Postgres; ${code(FILE_DATASOURCES.lesson)}, the technician's memory store; ${code(FILE_DATASOURCES.rule)}, the policy file; ${code(REST_DB)}, the Cloudflare DNS API, which Zetaris reads itself at each query. It holds ${rows.length} entities, each activated as one SELECT over the tables it is built from (${code("activation()")} in ${code("src/zetaris/setup.ts")}), a table of ${code("DRIFT")} by its name and a file or REST table as ${code("<datasource>.<table>")}, and ${DQ_RULES.length} DQ rules, each an expression RUN DQ tests on every row of its entity. Every catalogue query reads through it: on Zetaris each of the ${read} tables the SQL names is read as the entity whose row lists it under "catalogue table", with each of the table's columns under the table's own name (${code("READ_AS")} and ${code("uslRelation()")} in ${code("src/zetaris/setup.ts")}), so the detectors, the hero query and the Decider's reads run over this one model and join through its keys.`,
     "",
-    "| entity | built from | key | DQ rule | expression |",
-    "|---|---|---|---|---|",
+    "| entity | built from | catalogue table | key | DQ rule | expression |",
+    "|---|---|---|---|---|---|",
     ...rows.map((r) => `| ${cells(r).join(" | ")} |`),
     "",
   ].join("\n");
@@ -669,32 +908,20 @@ function lastCompleteDnsRun(ds: string): string {
   return `SELECT c.run_id, c.tenant_id, c.started_at FROM ${ds}.collection_run c WHERE c.surface = 'cloudflare.dns' AND ${complete("c")} AND NOT EXISTS (SELECT 1 FROM ${ds}.collection_run w WHERE w.surface = 'cloudflare.dns' AND ${complete("w")} AND (w.started_at > c.started_at OR (w.started_at = c.started_at AND w.run_id > c.run_id)))`;
 }
 
-/** The activation query per USL table: exactly the declared columns, NOT NULL varchars wrapped in COALESCE, ints CAST. dns_live reads the REST tables given. */
+/**
+ * The activation query per USL table: exactly the declared columns, ints CAST. An entity READ_AS builds from one DRIFT
+ * table is that table's columns, bare (mirror()); the file tables' entities and the entities built from several tables
+ * wrap each NOT NULL varchar in COALESCE. dns_live reads the REST tables given.
+ */
 export function activation(table: UslTable, ds: string, rest: readonly RestTable[] = []): string {
   switch (table) {
-    case "collection":
-      return `SELECT COALESCE(run_id, '') AS run_id, COALESCE(tenant_id, '') AS tenant_id, COALESCE(surface, '') AS surface, host, COALESCE(started_at, '') AS started_at, CAST(expected_count AS INT) AS expected_count, CAST(observed_count AS INT) AS observed_count, COALESCE(status, '') AS status FROM ${ds}.collection_run`;
-    case "setting":
-      return `SELECT COALESCE(obs_id, '') AS setting_id, COALESCE(run_id, '') AS run_id, COALESCE(tenant_id, '') AS tenant_id, host, COALESCE(surface, '') AS surface, COALESCE(object_id, '') AS object_id, COALESCE(setting_path, '') AS setting_path, COALESCE(value_hash, '') AS value_hash, refers_to_type, refers_to_id, COALESCE(observed_at, '') AS observed_at, COALESCE(source, '') AS source_kind, CAST(COALESCE(authority, 0) AS INT) AS authority FROM ${ds}.observation`;
     case "referent":
       return `SELECT CONCAT(o.obs_id, ':', d.record_id, ':', d.run_id) AS ref_id, COALESCE(o.obs_id, '') AS setting_id, COALESCE(o.tenant_id, '') AS tenant_id, COALESCE(o.refers_to_type, '') AS target_type, COALESCE(o.refers_to_id, '') AS target_name, COALESCE(d.content, '') AS resolves_to, CAST(d.proxied AS INT) AS proxied, COALESCE(d.observed_at, '') AS resolved_at, COALESCE(d.run_id, '') AS dns_run_id FROM ${ds}.observation o JOIN ${ds}.dns_record d ON d.tenant_id = o.tenant_id AND d.name = o.refers_to_id WHERE o.refers_to_type = 'dns_name'`;
     case "backup_copy":
       return `SELECT CONCAT(b.snapshot_id, ':', b.object_id, ':', b.setting_path) AS copy_id, COALESCE(s.tenant_id, '') AS tenant_id, COALESCE(s.host, '') AS host, COALESCE(s.kind, '') AS kind, COALESCE(b.object_id, '') AS object_id, COALESCE(b.setting_path, '') AS setting_path, COALESCE(b.value_hash, '') AS value_hash, COALESCE(s.taken_at, '') AS taken_at FROM ${ds}.backup_item b JOIN ${ds}.backup_snapshot s ON s.snapshot_id = b.snapshot_id`;
-    case "policy":
-      return `SELECT ${keep("rule_id tenant_id surface object_glob setting_glob criticality")}, CAST(COALESCE(lock, 0) AS INT) AS lock, ${keep("on_drift on_no_copy")}, CAST(COALESCE(hold_max_hours, 0) AS INT) AS hold_max_hours, ${keep("alert psa_priority")}, CAST(COALESCE(version, 0) AS INT) AS version, ${keep("author since ?note")} FROM ${ds}.policy_rule`;
     case "copy":
       // The latest validation per copy (latest validated_at, then validation_id): the correlation sits in the subquery's WHERE.
       return `SELECT COALESCE(c.copy_id, '') AS copy_id, COALESCE(c.tenant_id, '') AS tenant_id, COALESCE(c.surface, '') AS surface, c.host, COALESCE(c.object_id, '') AS object_id, COALESCE(c.run_id, '') AS run_id, COALESCE(c.git_commit, '') AS git_commit, COALESCE(c.blob_sha256, '') AS blob_sha256, COALESCE(c.taken_at, '') AS taken_at, COALESCE(c.source, '') AS source_kind, l.validator, l.result, l.validated_at, CAST(CASE WHEN l.result IN ('ok', 'ok_with_gaps') THEN 1 ELSE 0 END AS INT) AS validated FROM ${ds}.vault_copy c LEFT JOIN (SELECT v.copy_id, v.validator, v.result, v.validated_at FROM ${ds}.copy_validation v WHERE NOT EXISTS (SELECT 1 FROM ${ds}.copy_validation w WHERE w.copy_id = v.copy_id AND (w.validated_at > v.validated_at OR (w.validated_at = v.validated_at AND w.validation_id > v.validation_id)))) l ON l.copy_id = c.copy_id`;
-    case "probe":
-      return `SELECT ${keep("probe_id run_id tenant_id kind target expected observed status")}, CAST(latency_ms AS INT) AS latency_ms, ${keep("observed_at")} FROM ${ds}.probe`;
-    case "disposition":
-      return `SELECT ${keep("disposition_id tenant_id surface ?host object_id setting_path value_hash verb reason ?expires_at decided_by ?rule_id finding_id run_id decided_at")} FROM ${ds}.disposition`;
-    case "action":
-      return `SELECT ${keep("action_id tenant_id kind target ?before_hash ?after_hash ?vault_commit verification receipts status reason record started_at ?finished_at disposition_id")} FROM ${ds}.action`;
-    case "ticket":
-      return `SELECT ${keep("ticket_id tenant_id psa ?external_id ?url type priority status ?action_id finding_id created_at updated_at")} FROM ${ds}.ticket`;
-    case "cause":
-      return `SELECT ${keep("cause_id tenant_id finding_id disposition_id")}, COALESCE(class, '') AS cause_class, ${keep("?actor ?mechanism ?occurred_at ?source_host evidence_ids ?diff summary window_from window_to decided_at")} FROM ${ds}.finding_cause`;
     case "lesson":
       return `SELECT ${keep("lesson_id tenant_id kind ?finding_class scope_key reason recorded_at expires_at provenance")} FROM ${FILE_DATASOURCES.lesson}.lesson`;
     case "rule":
@@ -708,6 +935,8 @@ export function activation(table: UslTable, ds: string, rest: readonly RestTable
       const live = rest.map((t) => `SELECT r.id AS record_id, '${t.zoneId}' AS zone_id, r.type AS type, r.proxied AS proxied FROM ${REST_DB}.${t.table} LATERAL VIEW explode(result) AS r`).join(" UNION ALL ");
       return `SELECT COALESCE(l.record_id, '') AS record_id, COALESCE(k.tenant_id, '') AS tenant_id, COALESCE(l.zone_id, '') AS zone_id, COALESCE(l.type, '') AS live_type, CAST(CASE WHEN l.proxied THEN 1 WHEN NOT l.proxied THEN 0 ELSE -1 END AS INT) AS live_proxied, k.run_id AS run_id, k.started_at AS run_started_at, COALESCE(d.type, '') AS held_type, CAST(COALESCE(d.proxied, -1) AS INT) AS held_proxied FROM (${live}) l LEFT JOIN (${lastCompleteDnsRun(ds)}) k ON 1 = 1 LEFT JOIN ${ds}.dns_record d ON d.run_id = k.run_id AND d.record_id = l.record_id`;
     }
+    default:
+      return mirror(table, ds);
   }
 }
 
@@ -758,6 +987,7 @@ export function plan(env: SetupEnv = envFromProcess()): Step[] {
     { name: `namespace ${NAMESPACE}`, sql: `CREATE NAMESPACE IF NOT EXISTS ${NAMESPACE}` },
     { name: `list ${NAMESPACE}`, sql: `SHOW NAMESPACES OR TABLES IN ${NAMESPACE}`, probe: "usl" },
     { name: `load usl ${USL_NAME}`, sql: `LOAD USL ${USL_NAME} NAMESPACE ${NAMESPACE}`, when: "usl_present", probe: "usl_model" },
+    { name: `check usl ${USL_NAME}`, sql: CHECK_USL, when: "usl_stale", multi: true, timeoutMs: 120_000 },
     { name: `remove usl ${USL_NAME}`, sql: `REMOVE USL ${USL_NAME} NAMESPACE ${NAMESPACE}`, when: "usl_stale", removesUsl: true },
     { name: `compile usl ${USL_NAME}`, sql: COMPILE_USL, when: "usl_absent", multi: true, timeoutMs: 120_000 },
     ...USL_TABLES.map((tb): Step => ({ name: `activate ${tb}`, sql: `ACTIVATE USL TABLE ${USL}.${tb} AS ${activation(tb, ds, rest)}`, timeoutMs: 120_000 })),
