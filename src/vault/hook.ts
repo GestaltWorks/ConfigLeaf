@@ -30,7 +30,7 @@ import { redact } from "../config.ts";
 import type { CollectionRun, VaultCopy } from "../data/rows.ts";
 import type { Redactor } from "../redactor.ts";
 import type { TraceEvent } from "../trace.ts";
-import { CLOUDFLARE_REPO, Vault, VaultError, type VaultCommit, type VaultFile } from "./vault.ts";
+import { CLOUDFLARE_REPO, Vault, VaultError, ZETARIS_REPO, type VaultCommit, type VaultFile } from "./vault.ts";
 
 export interface CopyStore { insertVaultCopies(rows: readonly VaultCopy[]): Promise<number> }
 export interface Emitter { emit(e: Omit<TraceEvent, "ts" | "trace_id">): unknown }
@@ -160,6 +160,13 @@ export function vaultLinuxRun(
   return commitAndStore(vault, store, run, `${opts.tenantId}/${run.host ?? "?"}`, () => ({
     tenantId: opts.tenantId, repo: opts.alias, files: linuxVaultFiles(res, opts.redactor), links: { ...res.links },
   }), opts.redactor, opts.tracer);
+}
+
+/** After a zetaris.control run's Store writes: commit the run's objects (when complete) and store its vault_copy rows. */
+export function vaultZetarisRun(
+  vault: Vault | null, store: CopyStore, run: CollectionRun, files: readonly VaultFile[], opts: { redactor: Redactor; tracer?: Emitter },
+): Promise<HookResult> {
+  return commitAndStore(vault, store, run, `${run.tenant_id}/${ZETARIS_REPO}`, () => ({ tenantId: run.tenant_id, repo: ZETARIS_REPO, files: [...files] }), opts.redactor, opts.tracer);
 }
 
 /** After a DNS run's Store writes: commit the run's records (when complete) and store its vault_copy rows. */

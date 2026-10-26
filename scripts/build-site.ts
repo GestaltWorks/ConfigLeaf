@@ -54,15 +54,18 @@
 // selection, C3), per run, from the results directory the Nemotron tab is built from: the items labelled no each reads as
 // yes (counts.false_positives of counts.labelled_no), and the planted claims C3 struck in planted.json, under a caption
 // naming the directory and the runs' span from their started_at and finished_at.
-// The landing page, docs/site.html, comes out of the same build (renderSiteHtml, below): scripts/site/landing.html with
-// every {{TOKEN}} filled from what the build already reads, never from a typed number. The hero is the README's first
-// two sentences and the places its list, as written; the semantic layer box is uslRows() and DQ_RULES; the tiles are
-// the owner's document's lines and the index's totals; each act is the README's own words between two of its phrases,
-// with the lines its selector takes from the committed trace it names, each one the replay page's redactor and the scan
-// leave as it is; the eval line is the Nemotron tab's results directory, and its receipts lines are what npm run receipts:verify
-// prints for it, from the function the command runs; the sample line is this build's own sample pass in the format of
-// npm run sample. A token whose source the repository does not hold (DECK_URL empty, no repository field in
-// package.json, a results directory with no receipts.json, a build with no sample pass) leaves out its template line.
+// The landing page, docs/site.html, comes out of the same build (renderSiteHtml, below): scripts/site/landing.html, the
+// page's frame and styles, with every {{TOKEN}} filled from what the build already reads, never from a typed number. The
+// README gives the opening (its track, its first three sentences as written), the places, the stack, the policy and the
+// acts (its own words between two of its phrases); the owner's document gives the estate tiles and the decision bar;
+// uslRows() and DQ_RULES give the semantic layer; the Nemotron tab's results directory gives the headline (Ultra alone
+// beside the checks with Ultra as the falsifier, per run), the eval line, the rings, and the receipts lines npm run
+// receipts:verify prints, from the function the command runs; each act quotes the lines its selector takes from the
+// committed trace it names, each one the replay page's redactor and the scan leave as it is; the sample line is this
+// build's own sample pass in the format of npm run sample -- --json; the provenance list names each file it reads, with
+// its hash where the page quotes it. The page holds no script and fetches nothing. A token whose source the repository
+// does not hold (DECK_URL empty, no repository field in package.json) leaves out its template line; a results directory
+// with no receipts.json leaves out the receipts command and ring, and a build with no sample pass the sample command.
 //
 // Refuses to publish (throws, writes nothing) when a check cites a template the catalogue cannot render, or
 // parameters it refuses; when a re-run differs from the record (a check's, a live judge's, or an eval judge SELECT
@@ -116,7 +119,7 @@ import { VERBS, runPass, type Finding } from "../src/pipeline.ts";
 import { loadPolicyFile } from "../src/policy/load.ts";
 import { RECEIPTS_FILE, verify } from "../src/receipts/bundle.ts";
 import { Redactor, countLabels, describeRedactions } from "../src/redactor.ts";
-import { DQ_RULES, USL_NAME, USL_TABLES, uslMarkdown, uslRows } from "../src/zetaris/setup.ts";
+import { DQ_RULES, NAMESPACE, REST_DB, USL_NAME, USL_TABLES, uslMarkdown, uslRows } from "../src/zetaris/setup.ts";
 import { FILE_DATASOURCES } from "../src/data/files.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -131,9 +134,10 @@ export const word = (n: number): string => NUMBER_WORDS[n] ?? String(n);
 
 /**
  * The page and every data file together. 300,000 from 24 Oct 2026; 350,000 from 25 Oct 2026, when the Nemotron tab over
- * eval/results/2026-10-25T23-34-17Z, whose Ultra judge SELECTs run longer, took the build to 314,907 bytes.
+ * eval/results/2026-10-25T23-34-17Z, whose Ultra judge SELECTs run longer, took the build to 314,907 bytes; 400,000 from
+ * 26 Oct 2026, when the landing page (docs/site.html, the ConfigLeaf mark inline in it) took the build to 356,981 bytes.
  */
-export const MAX_BYTES = 350_000;
+export const MAX_BYTES = 400_000;
 /** The header's Report link: the owner's report (npm run examples writes it), relative to docs/ in a clone of the repository. */
 export const REPORT_LINK = "../examples/report.html";
 /** Rows shown per query; the count and the rows hash cover every row. */
@@ -885,13 +889,6 @@ const dated = (iso: string): string => {
 export function headlineTile(v: NemotronView): string {
   const h = v.headline;
   if (!h) return "";
-  const runsText = (xs: { run: number }[]): string => {
-    const ns = xs.map((x) => x.run);
-    return ns.length === 1 ? `run ${ns[0]}` : `runs ${ns.slice(0, -1).join(", ")} and ${ns[ns.length - 1]}`;
-  };
-  // "6, 5, 6 of 9" when every run has the same total, else each run's own
-  const perRun = (xs: [number, number][]): string =>
-    !xs.length ? "-" : xs.every(([, d]) => d === xs[0][1]) ? `${xs.map(([k]) => k).join(", ")} of ${xs[0][1]}` : xs.map(([k, d]) => `${k} of ${d}`).join(", ");
   const li = (b: string, label: string): string => `<li><b>${escapeText(b)}</b>${escapeText(label)}</li>`;
   const invalid = [h.alone, h.checks].flatMap((c) => c.runs.filter((r) => !r.valid).map((r) => `${c.config} run ${r.run}`));
   const span = h.started && h.finished ? `, ${dated(h.started)} to ${dated(h.finished)}` : "";
@@ -1064,7 +1061,7 @@ ${markdownToHtml(usl, 1)}</div></section>`;
 function zetarisParagraph(): string {
   const code = (s: string): string => `<code>${escapeHtml(s)}</code>`;
   const rules = DQ_RULES.map((r) => `${code(r.name)} on ${code(r.table)}`).join(", ");
-  return `<p>In a live pass every detector and check query runs as Zetaris Lightning SQL over the ${code(DATASOURCE)} datasource, the app Postgres registered in Zetaris, each table named ${code(`${DATASOURCE}.<table>`)}. Beside it Zetaris reads the technician's memory store as ${code(FILE_DATASOURCES.lesson)} and the policy file as ${code(FILE_DATASOURCES.rule)}, both files in its filestore. Over the three, the ${code(USL_NAME)} semantic layer holds ${word(USL_TABLES.length)} entities (${USL_TABLES.map(code).join(", ")}) and ${word(DQ_RULES.length)} DQ rules (${rules}). On this page the same SQL runs on sql.js over the recorded rows, and each query on the Findings tab carries the text the live pass sends to Zetaris, rendered at build time. <code>test/parity.test.ts</code> holds the two engines to the same columns, rows and totals; the README's "What it proves" table gives its last measured count.</p>`;
+  return `<p>In a live pass every detector and check query runs as Zetaris Lightning SQL over the ${code(DATASOURCE)} datasource, the app Postgres registered in Zetaris, each table named ${code(`${DATASOURCE}.<table>`)}. Beside it Zetaris reads the technician's memory store as ${code(FILE_DATASOURCES.lesson)} and the policy file as ${code(FILE_DATASOURCES.rule)}, both files in its filestore, and the Cloudflare DNS API as ${code(REST_DB)}, a REST datasource it fetches at each query. Over the four, the ${code(USL_NAME)} semantic layer holds ${word(USL_TABLES.length)} entities (${USL_TABLES.map(code).join(", ")}) and ${word(DQ_RULES.length)} DQ rules (${rules}). On this page the same SQL runs on sql.js over the recorded rows, and each query on the Findings tab carries the text the live pass sends to Zetaris, rendered at build time. <code>test/parity.test.ts</code> holds the two engines to the same columns, rows and totals; the README's "What it proves" table gives its last measured count.</p>`;
 }
 
 // ---- the landing page: docs/site.html, scripts/site/landing.html with every token filled from the repository ------------
@@ -1158,14 +1155,6 @@ function readmeSpan(paras: string[], from: string, to: string): string {
 /** A span as a sentence on the page: its first letter capitalised, and a period when the span ends inside the README's sentence. */
 const asSentence = (s: string): string => `${capital(s)}${/[.!?]["')]*$/.test(s) ? "" : "."}`;
 
-/** The README's first two sentences: the first paragraph under its title, cut after each sentence's closing period. */
-function readmeHero(paras: string[]): [string, string] {
-  const first = paras.find((p) => !p.startsWith("#"));
-  const m = first ? /^(.+?[.!?])\s+(.+?[.!?])(?=\s|$)/.exec(first) : null;
-  if (!m) throw new SiteError("refusing to publish: README.md's first paragraph holds no two sentences; the landing page opens with them");
-  return [m[1], m[2]];
-}
-
 /** The README's list of the places a setting's truth lives in, "The <count> places: a, b, ... and z.", split at each comma outside parentheses and code; the count as written, held to the list. */
 function readmePlaces(paras: string[]): { title: string; items: string[] } {
   const m = paras.map((p) => /^The (\w+) places: (.+)\.$/.exec(p)).find((x): x is RegExpExecArray => x !== null);
@@ -1208,11 +1197,11 @@ export function repositoryUrl(pkgPath: string = path.join(ROOT, "package.json"))
  * What npm run receipts:verify prints for a results directory, its counts line and its verdict line, from the function the
  * command runs (src/receipts/bundle.ts verify, over the call records, receipts.json and receipts-withheld.json) in the
  * command's format, each "…" a run of the lines it prints between (the tenant, the records, the mismatches by check,
- * the tiers, the previews, the signing key, the runtime's memory); null when the directory holds no receipts.json, and
- * the page leaves the command out. A mismatch refuses the build: the page beside it counts the calls with a verified
- * receipt, and a failing verdict under that tile would contradict it.
+ * the tiers, the previews, the signing key, the runtime's memory), with the counts the proof ring reads; null when the
+ * directory holds no receipts.json, and the page leaves the command and the ring out. A mismatch refuses the build: the
+ * page beside it counts the calls with a verified receipt, and a failing verdict under that would contradict it.
  */
-function receiptsVerifyLines(dir: string): string | null {
+function receiptsVerify(dir: string): { lines: string; verified: number; receipts: number; withheld: number } | null {
   if (!existsSync(path.join(dir, RECEIPTS_FILE))) return null;
   let r: ReturnType<typeof verify>;
   try {
@@ -1221,34 +1210,119 @@ function receiptsVerifyLines(dir: string): string | null {
     throw new SiteError(`refusing to publish: the receipts of ${shownPath(dir)} do not read: ${(err as Error).message}`);
   }
   if (!r.ok) throw new SiteError(`refusing to publish: npm run receipts:verify -- ${shownPath(dir)} finds ${r.failures.length} mismatch${r.failures.length === 1 ? "" : "es"}; the landing page states the verdict it prints`);
-  return [
-    "…",
-    `receipts: ${figure(r.wanted)} receipt ids, ${figure(r.receipts)} in ${RECEIPTS_FILE}, ${figure(r.withheld)} withheld; ${figure(r.verified)} of ${figure(r.receipts)} signatures verified`,
-    "…",
-    `receipts: OK, ${figure(r.verified)} signatures verified, 0 mismatches`,
-  ].join("\n");
+  return {
+    lines: [
+      "…",
+      `receipts: ${figure(r.wanted)} receipt ids, ${figure(r.receipts)} in ${RECEIPTS_FILE}, ${figure(r.withheld)} withheld; ${figure(r.verified)} of ${figure(r.receipts)} signatures verified`,
+      "…",
+      `receipts: OK, ${figure(r.verified)} signatures verified, 0 mismatches`,
+    ].join("\n"),
+    verified: r.verified, receipts: r.receipts, withheld: r.withheld,
+  };
 }
 
+/** The command whose summary line the landing page quotes: --json prints the SAMPLE line alone (scripts/sample.ts). */
+export const SAMPLE_COMMAND = "SAMPLE_MODE=true npm run sample -- --json";
+
 /**
- * The summary line SAMPLE_MODE=true npm run sample prints (scripts/sample.ts), from the build's own pass over the same
- * bundle and lessons, in the script's format, cut to the counts and the verbs; each "…" marks what it prints and the
- * page leaves out (the lines before it, one per finding, disposition and cause; in the line, the findings one by one, the
- * judge, the memory, the rules, the ledger and the explain step; the REPORT line after it).
+ * The summary line SAMPLE_COMMAND prints (scripts/sample.ts), from the build's own pass over the same bundle and lessons,
+ * in the script's format, cut to the counts and the verbs; each "…" marks what the line holds and the page leaves out
+ * (the findings one by one, the judge, the memory; the rules, the ledger and the explain step).
  */
 export function sampleLineOf(pass: Awaited<ReturnType<typeof runPass>>): string {
   const verbs = VERBS.filter((v) => pass.verbs[v] > 0).map((v) => `${v} ${pass.verbs[v]}`).join(", ") || "none";
-  return `…\nSAMPLE: ${pass.runs} collection runs, ${pass.gatedOut.length} failed the DQ gate (${pass.gatedOut.join(", ") || "none"}), ${pass.observed} observations in the World Model, ${pass.findings.length} finding(s): …; verbs: ${verbs}; …\n…`;
+  return `SAMPLE: ${pass.runs} collection runs, ${pass.gatedOut.length} failed the DQ gate (${pass.gatedOut.join(", ") || "none"}), ${pass.observed} observations in the World Model, ${pass.findings.length} finding(s): …; verbs: ${verbs}; …`;
+}
+
+/** README.md's opening sentences: its first paragraph under the title, split after each sentence's closing period. */
+function readmeOpening(paras: string[], n: number): string[] {
+  const s = (paras.find((p) => !p.startsWith("#")) ?? "").split(/(?<=[.!?])\s+(?=[A-Z])/);
+  if (s.length < n) throw new SiteError(`refusing to publish: README.md's first paragraph holds ${s.length} sentence(s); the landing page opens with ${n}`);
+  return s.slice(0, n);
+}
+
+/** The verbs a sentence names after its colon, in its order, each with the words that follow it ("HOLD with an expiry"); refused unless it names each of VERBS once. */
+function verbsOf(sentence: string): { verb: string; rest: string }[] {
+  const items = (/:\s*(.+?)\.?$/.exec(sentence)?.[1] ?? "").split(/,\s*(?:or\s+)?/).filter(Boolean).map((x) => {
+    const [verb, ...rest] = x.trim().split(" ");
+    return { verb, rest: rest.join(" ") };
+  });
+  const named = items.map((x) => x.verb);
+  if (named.length !== VERBS.length || !VERBS.every((v) => named.includes(v))) {
+    throw new SiteError(`refusing to publish: README.md's third sentence names ${named.join(", ") || "no verb"}; the landing page reads each of ${VERBS.join(", ")} from it`);
+  }
+  return items;
+}
+
+/** README.md's bullet lines "- <lead>: <text>": before the first "## " heading when `section` is null, else under "## <section>" up to the next "## ". */
+function readmeBullets(md: string, section: string | null, lead: RegExp): { lead: string; text: string }[] {
+  const lines = lf(md).split("\n");
+  const from = section === null ? 0 : lines.indexOf(`## ${section}`) + 1;
+  if (section !== null && from === 0) throw new SiteError(`refusing to publish: README.md has no "## ${section}" section; the landing page reads its bullets`);
+  const end = lines.findIndex((l, i) => i >= from && l.startsWith("## "));
+  const re = new RegExp(`^- ${lead.source}: (.+)$`);
+  const out = lines.slice(from, end < 0 ? undefined : end).flatMap((l) => {
+    const m = re.exec(l);
+    return m ? [{ lead: m[1], text: m[2] }] : [];
+  });
+  if (!out.length) throw new SiteError(`refusing to publish: README.md holds no bullet "- <lead>: ..." ${section === null ? "before its first section" : `under "## ${section}"`}; the landing page reads them`);
+  return out;
+}
+
+/** The owner's document's lines the landing page reads: the runs and the DQ gate, the hosts and zones, the approvals, the copies, the findings open by verb, the tenant and the decision instant. */
+function documentFacts(text: string, file: string) {
+  const line = (re: RegExp, what: string): RegExpExecArray => {
+    const m = re.exec(text);
+    if (!m) throw new SiteError(`refusing to publish: ${file} holds no line ${what}; the landing page reads it`);
+    return m;
+  };
+  const runs = line(/^(\d+) collection runs? on record, (\d+) passing the DQ gate\. (\d+ hosts?) and (\d+ zones?) in the latest passing runs\./m, '"<n> collection runs on record, <n> passing the DQ gate. <n> hosts and <n> zones in the latest passing runs."');
+  const approvals = line(/^(\d+) settings? (?:has|have) an approval of record\b/m, '"<n> settings have an approval of record"');
+  const copies = line(/^(\d+) vault cop(?:y|ies) at the latest commit of each repository, each with its latest validation\b/m, '"<n> vault copies at the latest commit of each repository, each with its latest validation"');
+  const open = line(/^(\d+) findings? (?:is|are) open on the latest passing runs: (.+)\.$/m, '"<n> findings are open on the latest passing runs: <verb> <n>, ..."');
+  const verbs = [...open[2].matchAll(/\b([A-Z]+) (\d+)\b/g)].map((m) => ({ verb: m[1], n: Number(m[2]) }));
+  if (!verbs.length || verbs.reduce((k, v) => k + v.n, 0) !== Number(open[1])) throw new SiteError(`refusing to publish: ${file}'s findings open by verb do not add up to the findings open; the landing page's decision bar reads both`);
+  return {
+    runs: runs[1], passing: runs[2], hosts: runs[3], zones: runs[4], approvals: approvals[1], copies: copies[1], open: open[1], openVerbs: open[2], verbs,
+    tenant: /^# Configuration document: (\S+)$/m.exec(text)?.[1] ?? null, decided: /^Decided at (\S+)\.$/m.exec(text)?.[1] ?? null,
+  };
+}
+
+
+/** One row of dots per run: k filled (b) of d, then "k of d". */
+const dotRows = (xs: { run: number; k: number; d: number }[]): string =>
+  `<div class="dots">${xs.map((x) => `<p><span>run ${x.run}</span>${"<b></b>".repeat(x.k)}${"<i></i>".repeat(Math.max(0, x.d - x.k))} ${x.k} of ${x.d}</p>`).join("")}</div>`;
+
+/** The section that sets Ultra alone beside the checks with Ultra as the falsifier, per run, from the Nemotron tab's headline (run files and planted.json); empty when the results hold no such pair. */
+function headlineSection(v: NemotronView): string {
+  const h = v.headline;
+  if (!h) return "";
+  const span = h.started && h.finished ? `, ${utc(h.started)} to ${utc(h.finished)}` : "";
+  const invalid = [h.alone, h.checks].flatMap((c) => c.runs.filter((r) => !r.valid).map((r) => `${c.config} run ${r.run}`));
+  const alone = h.alone.runs.map((r) => ({ run: r.run, k: r.readYes, d: r.labelledNo }));
+  const checks = h.checks.runs.map((r) => ({ run: r.run, k: r.readYes, d: r.labelledNo }));
+  const struck = h.checks.runs.map((r) => ({ run: r.run, k: r.struck, d: r.claims }));
+  const pairs = (xs: { k: number; d: number }[]): [number, number][] => xs.map((x) => [x.k, x.d]);
+  return `<section class="band" id="nemotron"><div class="wrap">
+<p class="kicker">NVIDIA Nemotron</p>
+<h2>Ultra alone, and the checks with Ultra as the falsifier</h2>
+<p class="sub">Items the operator labelled no, before any model ran, that each configuration reads as yes, ${escapeHtml(runsText(h.alone.runs))}; and the planted false claims the falsifier strikes. From <code>${escapeHtml(v.dir)}</code>, the <code>${escapeHtml(v.totals.set)}</code> set${escapeHtml(span)}.${invalid.length ? ` Not valid: ${escapeHtml(invalid.join(", "))}.` : ""}</p>
+<div class="duel">
+<article class="side c-bad"><h3>Nemotron 3 Ultra alone</h3><small>${escapeHtml(h.alone.config)} · the verdict from the rows, no SQL checks</small><p class="big">${escapeHtml(perRun(pairs(alone)))}</p><p>items labelled no that it reads as yes</p>${dotRows(alone)}</article>
+<article class="side c-good"><h3>The SQL checks, Ultra as the falsifier</h3><small>${escapeHtml(h.checks.config)} · Lightning selects the checks, Ultra writes the refuting SELECT</small><p class="big">${escapeHtml(perRun(pairs(checks)))}</p><p>items labelled no that it reads as yes</p>${dotRows(checks)}<p class="big">${escapeHtml(perRun(pairs(struck)))}</p><p>planted false claims struck</p>${dotRows(struck)}</article>
+</div>
+</div></section>`;
 }
 
 export interface SiteInput {
   index: SiteIndex;
   nemotron: NemotronView;
-  /** The results directory the Nemotron tab is built from: its receipts give the receipts line. */
+  /** The results directory the Nemotron tab is built from: its receipts give the receipts line and ring. */
   resultsDir: string;
-  /** The owner's document (examples/document.md) and its name as the page shows it: two of the tiles read it. */
+  /** The owner's document (examples/document.md) and its name as the page shows it: the tiles and the decision bar read it. */
   documentText: string;
   documentFile: string;
-  /** The build's own sample pass as npm run sample summarises it (sampleLineOf); null when the build ran none. */
+  /** The build's own sample pass as SAMPLE_COMMAND summarises it (sampleLineOf); null when the build ran none. */
   sampleLine: string | null;
 }
 export interface SitePage {
@@ -1260,106 +1334,180 @@ export interface SitePage {
 }
 
 /**
- * The landing page: scripts/site/landing.html with every token filled from what the build already reads, never from a
- * typed number. The hero is the README's first two sentences; the places are the README's list; the semantic layer box
- * is uslRows() and DQ_RULES (src/zetaris/setup.ts, the rows npm run sources -- --usl prints); the tiles are the owner's
- * document's lines and the index's totals; each act is README words between two phrases of one paragraph, quoted as
- * written, with the lines its committed trace holds for it, each one the replay page's redactor leaves as it is (a line
- * it would rewrite refuses the build); the timeline's title dates the acts from the README and the traces; the eval line and the
- * receipts line are the results directory the Nemotron tab is built from; the sample line is the build's own sample
- * pass. Refuses on a template token it does not fill, a token it fills that the template does not hold, or a source that
- * does not say what the page reads from it.
+ * The landing page: scripts/site/landing.html, the page's frame and styles, with every token filled from what the build
+ * already reads, never from a typed number. The README gives the opening (its first three sentences, as written), the
+ * places, the stack, the policy and the acts (its own words between two phrases of one paragraph); the owner's document
+ * gives the estate tiles and the decision bar; uslRows() and DQ_RULES give the semantic layer; the Nemotron tab's results
+ * directory gives the headline, the eval line, the rings and the receipts lines; each act quotes the lines its selector
+ * takes from the committed trace it names, each one the replay page's redactor leaves as it is (a line it would rewrite
+ * refuses the build); the sample line is this build's own sample pass; the provenance list names each file with its hash.
+ * Refuses on a template token it does not fill, a token it fills that the template does not hold, or a source that does
+ * not say what the page reads from it.
  */
 export function renderSiteHtml(input: SiteInput, template: string = readFileSync(SITE_TEMPLATE, "utf8")): SitePage {
-  const readme = paragraphsOf(readFileSync(path.join(ROOT, "README.md"), "utf8"));
-  const [heroOne, heroTwo] = readmeHero(readme);
+  const readmeText = readFileSync(path.join(ROOT, "README.md"), "utf8");
+  const readme = paragraphsOf(readmeText);
+  const [heroOne, heroTwo, heroThree] = readmeOpening(readme, 3);
   const places = readmePlaces(readme);
   const span = (from: string, to: string): string => readmeSpan(readme, from, to);
   const prose = (...parts: string[]): string => inline(parts.map(asSentence).join(" "));
+  const code = (s: string): string => `<code>${escapeHtml(s)}</code>`;
+  const doc = documentFacts(input.documentText, input.documentFile);
+  const t = input.index.totals;
+  const nm = input.nemotron.totals;
 
   // the acts: README words, and for a cycle the repository holds as a trace, the lines its selector takes
   const actOne = span("a `rollback_file` on a vhost at", "closed its ticket, #5)");
-  const actOneAt = /\bat (\d{2}:\d{2} UTC)\b/.exec(actOne);
-  const actOneKind = /`(\w+)`/.exec(actOne);
-  if (!actOneAt || !actOneKind) throw new SiteError("refusing to publish: README.md's sentence on the vhost rollback names no time or no action; act one's badge reads both");
+  const actOneKind = /`(\w+)`/.exec(actOne)?.[1];
+  if (!actOneKind) throw new SiteError("refusing to publish: README.md's sentence on the vhost rollback names no action in code; act one's badge reads it");
   const actOneDay = /\b(\d{1,2} [A-Z][a-z]{2} \d{4})\b/.exec(span("On the operator's own estate the Actor ran", "in the operator's rehearsal"))?.[1];
   if (!actOneDay) throw new SiteError("refusing to publish: README.md's sentence on the Actor's actions on the operator's estate names no day; the timeline's title reads it");
   const traced = [
-    { act: "two", file: ACT_TRACES.two, select: selectActTwoSummaries },
-    { act: "three", file: ACT_TRACES.three, select: selectActThreeSummaries },
-    { act: "lab chain", file: ACT_TRACES.lab, select: selectLabChainSummaries },
+    { act: "act two", file: ACT_TRACES.two, select: selectActTwoSummaries },
+    { act: "act three", file: ACT_TRACES.three, select: selectActThreeSummaries },
+    { act: "the lab chain", file: ACT_TRACES.lab, select: selectLabChainSummaries },
   ].map(({ act, file, select }) => {
+    const text = lf(readFileSync(path.join(ROOT, file), "utf8"));
     const events = readTrace(file);
     // the replay page's redactor must leave each line as the tracer wrote it: a line it would rewrite refuses the build, by kind, never the value
     const asIs = (s: string): string => {
       const out = AS_IS.text(s);
-      if (out !== s) throw new SiteError(`refusing to publish: a line of ${file} that the landing page's act ${act} quotes changes under the redactor (${Object.entries(describeRedactions(s, out)).map(([k, n]) => `${n} ${k}`).join(", ") || "text"})`);
+      if (out !== s) throw new SiteError(`refusing to publish: a line of ${file} that ${act} on the landing page quotes changes under the redactor (${Object.entries(describeRedactions(s, out)).map(([k, n]) => `${n} ${k}`).join(", ") || "text"})`);
       return s;
     };
     const lines = select(events, asIs);
-    if (!lines.length) throw new SiteError(`refusing to publish: ${file} holds no line the landing page's act ${act} quotes`);
-    return { act, file, lines, days: [...new Set(events.map((e) => dayOf(e.ts)))] };
+    if (!lines.length) throw new SiteError(`refusing to publish: ${file} holds no line ${act} on the landing page quotes`);
+    const ts = events.map((e) => e.ts).sort();
+    return { act, file, lines, events: events.length, first: ts[0], last: ts[ts.length - 1], days: [...new Set(ts.map(dayOf))], sha256: sha(text) };
   });
   const [two, three, lab] = traced;
-  const block = (t: { lines: string[] }): string => t.lines.map(escapeHtml).join("\n");
-
-  const t = input.index.totals;
-  const nm = input.nemotron.totals;
-  const docLine = (re: RegExp, what: string): RegExpExecArray => {
-    const m = re.exec(input.documentText);
-    if (!m) throw new SiteError(`refusing to publish: ${input.documentFile} holds no line ${what}; the landing page's tiles read it`);
-    return m;
+  const timeOf = (s: string, what: string): string => {
+    const m = /\bat (\d{2}:\d{2}(?: to \d{2}:\d{2})? UTC)\b/.exec(s);
+    if (!m) throw new SiteError(`refusing to publish: README.md's sentence on ${what} names no time; the timeline reads it`);
+    return m[1];
   };
-  const open = docLine(/^(\d+) findings? (?:is|are) open on the latest passing runs: (.+)\.$/m, '"<n> findings are open on the latest passing runs: ..."');
-  const copies = docLine(/^(\d+) vault cop(?:y|ies) at the latest commit of each repository\b/m, '"<n> vault copies at the latest commit of each repository"');
-  const decided = /^Decided at (\S+)\.$/m.exec(input.documentText)?.[1] ?? null;
-  const tile = (value: string, label: string): string => `<div class="metric-card"><div class="metric-val">${escapeHtml(value)}</div><div class="metric-label">${escapeHtml(label)}</div></div>`;
+  const traceLine = (l: string): string => {
+    const [head, status, ...rest] = l.split(" · ");
+    if (!/^\w+$/.test(status ?? "")) return `<b>${escapeHtml(head)}</b>${l.length > head.length ? escapeHtml(l.slice(head.length)) : ""}`;
+    return `<b>${escapeHtml(head)}</b> · <i${status === "ok" ? "" : ' class="w"'}>${escapeHtml(status)}</i>${rest.length ? ` · ${escapeHtml(rest.join(" · "))}` : ""}`;
+  };
+  const traceFigure = (x: (typeof traced)[number]): string =>
+    `<figure class="trace"><figcaption><span>${escapeHtml(x.file)}</span><span>${x.lines.length} of ${figure(x.events)} lines · ${escapeHtml(x.first.slice(11, 19))} to ${escapeHtml(x.last.slice(11, 19))} UTC</span></figcaption><pre>${x.lines.map(traceLine).join("\n")}</pre></figure>`;
+  const actTwoText = [span("FOUND-BUT-DIFFERENT on real rows:", "each held 72 h under rule 15"), span("a `revert_record` through the provider at", "with the provider confirming the value")];
+  const actThreeText = span("an `investigate` with Nemotron Lightning and Ultra followed by", "which opened incident #7.");
+  const labText = span("On 25 Oct 2026 on the lab estate", "the trace in examples/traces/).");
+  const acts = [
+    { lab: false, title: "A locked vhost, broken and rolled back", time: timeOf(actOne, "the vhost rollback"), text: prose(span("A config lock on a setting class", "at the next cycle."), actOne), more: `<span class="kind">${escapeHtml(actOneKind)}</span>` },
+    { lab: false, title: "A record pointed outside the inventory and reverted", time: timeOf(actTwoText[0], "FOUND-BUT-DIFFERENT"), text: prose(...actTwoText), more: traceFigure(two) },
+    { lab: false, title: "A no-copy case, investigated and ticketed", time: timeOf(actThreeText, "the investigation"), text: prose(actThreeText), more: traceFigure(three) },
+    { lab: true, title: "Why it changed", time: timeOf(labText, "the lab chain"), text: prose(labText), more: traceFigure(lab) },
+  ];
+  const actsHtml = `<ol class="acts">${acts.map((a) => `
+<li class="act${a.lab ? " act-lab" : ""}"><div class="act-time">${escapeHtml(a.time)}<span>${a.lab ? "lab" : "production"}</span></div><article class="act-card"><h3>${escapeHtml(a.title)}</h3><p>${a.text}</p>${a.more}</article></li>`).join("")}
+</ol>`;
+
+  // the opening: the README's track, its first sentences, and the estate from the owner's document
+  const tile = (value: string, label: string): string => `<div class="tile"><b>${escapeHtml(value)}</b><span>${escapeHtml(label)}</span></div>`;
   const tiles = [
-    tile(open[1], `findings open in the owner's document${decided ? `, decided at ${decided}` : ""}: ${open[2]}`),
-    tile(copies[1], "vault copies at the latest commit of each repository, in the owner's document"),
-    tile(`${t.checksRerun} / ${t.checks}`, `checks re-run at build over the ${t.findings} findings of the ${t.examples} examples, counts equal`),
-    tile(`${nm.signatureVerified} / ${nm.calls}`, `Nemotron calls with a verified receipt in the eval run of ${stampDate(nm.stamp)}, ${nm.substitutions} substitutions`),
+    tile(`${doc.passing} / ${doc.runs}`, "collection runs pass the DQ gate"),
+    tile(doc.approvals, "settings with an approval of record"),
+    tile(doc.copies, "vault copies, each with its latest validation"),
+    tile(doc.open, `findings open: ${doc.openVerbs}`),
   ];
 
+  // read as one: the places, the semantic layer and the verbs the README's third sentence names
   const usl = uslRows();
   const rules = usl.flatMap((r) => (r.rule ? [r.rule] : []));
-  const datasources = [...new Set(usl.flatMap((r) => r.builtFrom.map((x) => (x.includes(".") ? x.split(".")[0] : DATASOURCE))))];
-  const configs = [...new Set(input.nemotron.runs.map((r) => r.config))];
-  const code = (s: string): string => `<code>${escapeHtml(s)}</code>`;
-  const repo = repositoryUrl();
-  const receipts = receiptsVerifyLines(input.resultsDir);
+  const sourceOf = (table: string): string => (table.includes(".") ? table.split(".")[0] : DATASOURCE);
+  const datasources = [...new Set(usl.flatMap((r) => r.builtFrom.map(sourceOf)))];
+  const described = new Map([...(/datasources: (.+?)\. It holds/.exec(uslMarkdown())?.[1] ?? "").matchAll(/`(\w+)`, ([^;]+)/g)].map((m) => [m[1], m[2]]));
+  const verbs = verbsOf(heroThree);
+  const flow = `<div class="flow">
+<ol class="src">${places.items.map((x) => {
+    const m = /^(.*?) \((.*)\)$/.exec(x);
+    return `<li><b>${inline(m ? m[1] : x)}</b>${m ? `<span>${inline(m[2])}</span>` : ""}</li>`;
+  }).join("")}</ol>
+<div class="hub"><div class="hub-card"><small>Zetaris</small><b>${escapeHtml(USL_NAME)}</b><span>${escapeHtml(datasources.join(" · "))}</span><span>${word(usl.length)} entities · ${word(rules.length)} DQ rules</span></div></div>
+<ol class="out">${verbs.map((v) => `<li class="v-${v.verb}"><b>${escapeHtml(v.verb)}</b>${v.rest ? escapeHtml(v.rest) : ""}</li>`).join("")}</ol>
+</div>`;
 
+  // the stack and the layer
+  const stack = readmeBullets(readmeText, null, /\*\*(.+?)\*\*/).map((b) => ({ lead: b.lead, text: b.text.replace(/\s*\(\[[^\]]*\]\(#[^)]*\)\)(?=\.?$)/, "") }));
+  const stackTitle = stack.length > 1 ? `${stack.slice(0, -1).map((b) => b.lead).join(", ")} and ${stack[stack.length - 1].lead}` : stack[0].lead;
+  const lanes = datasources.map((ds) => ({ ds, rows: usl.filter((r) => sourceOf(r.builtFrom[0] ?? DATASOURCE) === ds) })).filter((l) => l.rows.length);
+  for (const l of lanes) if (!described.has(l.ds)) throw new SiteError(`refusing to publish: uslMarkdown() describes no datasource ${l.ds}; the landing page's lane names it with the semantic layer's own words`);
+  const uslHtml = `<div class="lanes" style="grid-template-columns:${lanes.map((l) => `minmax(0,${Math.max(1, Math.ceil(l.rows.length / 4))}fr)`).join(" ")}">${lanes.map((l) => `
+<div class="lane"><div class="lane-h"><b>${escapeHtml(l.ds)}</b><span>${escapeHtml(described.get(l.ds) ?? "")}</span></div><ul class="ents">${l.rows.map((r) => `<li><code>${escapeHtml(r.entity)}</code>${escapeHtml(r.builtFrom.join(", "))}${r.rule ? `<br><em>${escapeHtml(r.rule.name)}</em>` : ""}</li>`).join("")}</ul></div>`).join("")}
+</div>
+<p class="cap">Each DQ rule is an expression RUN DQ tests on every row of its entity; the replay page's <a href="index.html#sources">Sources tab</a> holds the ${word(rules.length)} expressions.</p>`;
+
+  // decide: the README's policy, and the findings open by verb in the owner's document
+  const verbTag = (label: string): string => label.split(/(, | or )/).map((x) => ((VERBS as readonly string[]).includes(x) ? `<span class="vtag v-${x}">${x}</span>` : escapeHtml(x))).join("");
+  const policy = readmeBullets(readmeText, "Policy", /([A-Z]+(?:(?:, | or )[A-Z]+)*)/);
+  const verbsHtml = `<div class="vgrid">${policy.map((p) => `<article class="vcard v-${p.lead.split(/,| /)[0]}"><h3>${verbTag(p.lead)}</h3><p>${inline(asSentence(p.text))}</p></article>`).join("")}</div>
+<div class="bar" role="img" aria-label="${escapeHtml(`${doc.open} findings open: ${doc.openVerbs}`)}">${doc.verbs.map((v) => `<span class="v-${v.verb}" style="flex:${v.n}"></span>`).join("")}</div>
+<ul class="legend">${doc.verbs.map((v) => `<li class="v-${v.verb}">${v.verb} ${v.n}</li>`).join("")}</ul>
+<p class="cap">The ${escapeHtml(doc.open)} findings open in the owner's document, ${code(input.documentFile)}${doc.decided ? `, decided at ${escapeHtml(doc.decided)}` : ""}, by verb.</p>`;
+
+  // proof: the rings, the eval line and the two commands
+  const receipts = receiptsVerify(input.resultsDir);
+  const ring = (k: number, d: number, label: string): string =>
+    `<figure class="ring"><svg viewBox="0 0 88 88" aria-hidden="true"><circle cx="44" cy="44" r="38" pathLength="100"/><circle class="fg" cx="44" cy="44" r="38" pathLength="100" stroke-dasharray="${d ? Math.round((k / d) * 1000) / 10 : 0} 100"/></svg><b>${figure(k)} / ${figure(d)}</b><figcaption>${escapeHtml(label)}</figcaption></figure>`;
+  const configs = [...new Set(input.nemotron.runs.map((r) => r.config))];
+  const consoleBox = (cmd: string, out: string, note: string): string =>
+    `<figure class="console"><figcaption>${note}</figcaption><pre>$ ${escapeHtml(cmd)}\n<span class="out">${escapeHtml(out)}</span></pre></figure>`;
+  const proofHtml = `<div class="rings">
+${ring(t.checksRerun, t.checks, `checks re-run at build over the ${t.examples} slices of the replay page, counts equal`)}
+${ring(nm.rerunEqual, nm.judgeSelects, `Nemotron judge SELECTs re-run at build to the recorded count${nm.notRunnable ? `; the recorded text of ${nm.notRunnable} does not run` : ""}`)}
+${ring(nm.signatureVerified, nm.calls, `Nemotron calls with a verified receipt, ${nm.substitutions} substitutions`)}
+${receipts ? ring(receipts.verified, receipts.receipts, `published receipts whose Ed25519 signature verifies offline, ${receipts.withheld} withheld`) : ""}
+</div>
+<p class="evalline">The ${code(nm.set)} set, run from ${escapeHtml(stampDate(nm.stamp))} (${code(input.nemotron.dir)}): ${input.nemotron.runs.length} configuration runs of ${escapeHtml(configs.join(", "))}, ${figure(nm.calls)} Nemotron calls, ${figure(nm.signatureVerified)} with a verified receipt, ${nm.substitutions} substitutions, ${nm.cacheHits} cache hits; of the ${nm.judgeSelects} judge SELECTs recorded with a row count, ${nm.rerunEqual} re-run at build to the recorded count${nm.notRunnable ? ` and the recorded text of ${nm.notRunnable} does not run` : ""}.</p>
+<div class="consoles">${receipts ? consoleBox(`npm run receipts:verify -- ${input.nemotron.dir}`, receipts.lines, "The receipts, checked offline: the lines this page quotes, each … a run of lines between.") : ""}${input.sampleLine === null ? "" : consoleBox(SAMPLE_COMMAND, input.sampleLine, "The whole pass, no credentials, no model: its summary line, from this build's own pass.")}</div>`;
+
+  // provenance: each file the page reads, with its hash where the page quotes it
+  const short = (h: string): string => `${h.slice(0, 19)}…`;
+  const prov: { file: string; feeds: string; meta: string }[] = [
+    { file: "README.md", feeds: "the opening, the places, the stack, the policy and the acts, quoted as written", meta: "the build refuses when a quoted phrase is missing" },
+    { file: input.documentFile, feeds: "the estate tiles and the decision bar", meta: `${short(sha(input.documentText))} · ${figure(Buffer.byteLength(input.documentText))} bytes` },
+    { file: "src/zetaris/setup.ts", feeds: "the semantic layer: uslRows() and DQ_RULES", meta: "the rows npm run sources -- --usl prints" },
+    ...traced.map((x) => ({ file: x.file, feeds: `the lines ${x.act} quotes`, meta: `${short(x.sha256)} · ${figure(x.events)} lines` })),
+    { file: input.nemotron.dir, feeds: "the headline, the eval line, the rings and the receipts lines", meta: `${input.nemotron.runs.length} run files, planted.json${receipts ? ", receipts.json" : ""}` },
+    ...(input.index.sample ? [{ file: input.index.sample.bundle, feeds: "the sample line, from this build's own pass", meta: short(input.index.sample.sha256) }] : []),
+    { file: "data/index.json", feeds: "the checks ring", meta: "beside this page, written by the same build" },
+  ];
+  const provHtml = `<ul class="prov">${prov.map((p) => `<li><code>${escapeHtml(p.file)}</code><span>${escapeHtml(p.feeds)}</span><small>${escapeHtml(p.meta)}</small></li>`).join("")}</ul>`;
+
+  const repo = repositoryUrl();
+  const headline = headlineSection(input.nemotron);
+  const sections: [string, string][] = [...(headline ? [["nemotron", "Nemotron"] as [string, string]] : []), ["sources", "Sources"], ["stack", "Stack"], ["layer", "Layer"], ["decide", "Decide"], ["acts", "Acts"], ["proof", "Proof"], ["provenance", "Provenance"]];
   const tokens: Record<string, string | null> = {
+    META_DESCRIPTION: escapeHtml(`${heroOne} ${heroTwo}`.replace(/`/g, "")),
+    NAV_SECTIONS: sections.map(([id, label]) => `<a href="#${id}">${label}</a>`).join(""),
     REPORT_HREF: escapeHtml(REPORT_LINK),
     DECK_HREF: DECK_URL ? escapeHtml(DECK_URL) : null,
     REPO_HREF: repo ? escapeHtml(repo) : null,
-    README_SENTENCE_ONE: inline(heroOne),
+    HERO_EYEBROW: escapeHtml(span("GenAI Works Open Agent Hackathon 2026", "(Solving Fragmented Intelligence)")),
+    README_SENTENCE_ONE: inline(heroOne).replace(/^ConfigLeaf\b/, '<span class="grad">ConfigLeaf</span>'),
     README_SENTENCE_TWO: inline(heroTwo),
-    TILES_HTML: tiles.join("\n        "),
+    TILES_HTML: tiles.join(""),
+    TILES_CAPTION: `From the owner's document, ${code(input.documentFile)}${doc.tenant ? `, tenant ${code(doc.tenant)}` : ""}: ${escapeHtml(doc.hosts)} and ${escapeHtml(doc.zones)} in the latest passing runs${doc.decided ? `, decided at ${escapeHtml(doc.decided)}` : ""}.`,
+    HEADLINE_HTML: headline,
     SOURCES_TITLE: escapeHtml(places.title),
-    SOURCES_HTML: places.items.map((x) => `<div class="source-item">${inline(x)}</div>`).join("\n          "),
+    README_SENTENCE_THREE: inline(heroThree),
+    FLOW_HTML: flow,
+    STACK_TITLE: escapeHtml(stackTitle),
+    STACK_HTML: `<div class="grid3">${stack.map((b) => `<article class="card"><h3>${escapeHtml(b.lead)}</h3><p>${inline(asSentence(b.text))}</p></article>`).join("")}</div>`,
     USL_SCHEMA_NAME: escapeHtml(USL_NAME),
-    USL_DATASOURCE: escapeHtml(datasources.join(", ")),
-    USL_ENTITY_COUNT_WORD: word(usl.length),
-    USL_RULE_COUNT_WORD: word(rules.length),
-    USL_ENTITY_NAMES: escapeHtml(usl.map((r) => r.entity).join(", ")),
-    USL_RULE_NAMES: escapeHtml(rules.map((r) => `${r.name} on ${r.table}`).join(", ")),
+    USL_SUMMARY: `${code(USL_NAME)} in ${code(NAMESPACE)} holds ${word(usl.length)} entities over ${word(datasources.length)} datasources, each built from the tables its activation SELECT reads, and ${word(rules.length)} DQ rules.`,
+    USL_HTML: uslHtml,
+    VERBS_HTML: verbsHtml,
     TIMELINE_TITLE: escapeHtml(`The production estate and the lab chain, ${[...new Set([actOneDay, ...traced.flatMap((x) => x.days)])].join(" and ")}`),
-    ACT_ONE_BADGE: escapeHtml(`${actOneAt[1]}, ${actOneKind[1]}`),
-    ACT_ONE_TEXT: prose(span("A config lock on a setting class", "at the next cycle."), actOne),
-    ACT_TWO_BADGE: escapeHtml(two.file),
-    ACT_TWO_TEXT: prose(span("FOUND-BUT-DIFFERENT on real rows:", "each held 72 h under rule 15"), span("a `revert_record` through the provider at", "with the provider confirming the value")),
-    ACT_TWO_SUMMARIES: block(two),
-    ACT_THREE_BADGE: escapeHtml(three.file),
-    ACT_THREE_TEXT: prose(span("an `investigate` with Nemotron Lightning and Ultra followed by", "which opened incident #7.")),
-    ACT_THREE_SUMMARIES: block(three),
-    LAB_CHAIN_BADGE: escapeHtml(lab.file),
-    LAB_CHAIN_TEXT: prose(span("On 25 Oct 2026 on the lab estate", "the trace in examples/traces/).")),
-    LAB_CHAIN_SUMMARIES: block(lab),
-    EVAL_SUMMARY_LINE: `The ${code(nm.set)} set, run from ${escapeHtml(stampDate(nm.stamp))} (${code(input.nemotron.dir)}): ${input.nemotron.runs.length} configuration runs of ${escapeHtml(configs.join(", "))}, ${figure(nm.calls)} Nemotron calls, ${figure(nm.signatureVerified)} with a verified receipt, ${nm.substitutions} substitutions, ${nm.cacheHits} cache hits; of the ${nm.judgeSelects} judge SELECTs recorded with a row count, ${nm.rerunEqual} re-run at build to the recorded count${nm.notRunnable ? ` and the recorded text of ${nm.notRunnable} does not run` : ""}.`,
-    EVAL_DIR: escapeHtml(input.nemotron.dir),
-    RECEIPTS_VERIFY_RESULT: receipts === null ? null : escapeHtml(receipts),
-    SAMPLE_RUN_RESULT: input.sampleLine === null ? null : escapeHtml(input.sampleLine),
+    ACTS_HTML: actsHtml,
+    PROOF_HTML: proofHtml,
+    PROVENANCE_LEDE: `Every figure above is read from these files when ${code("npm run site")} builds the page, and the build refuses to publish when a file does not say what the page reads from it.`,
+    PROVENANCE_HTML: provHtml,
+    FOOTER_LINE: `Built by ${code("npm run site")}. ${code("test/site.test.ts")} holds this page to the build, and CI rebuilds it on every push to main and every pull request.`,
   };
 
   const file = shownPath(SITE_TEMPLATE);
@@ -1379,6 +1527,13 @@ export function renderSiteHtml(input: SiteInput, template: string = readFileSync
 }
 
 // ---- the build --------------------------------------------------------------------------------------------------
+
+/** "6, 5, 6 of 9" when every run has the same total, else each run's own "k of d"; "-" for no run. The replay page's tile and the landing page's headline share it. */
+const perRun = (xs: [number, number][]): string =>
+  !xs.length ? "-" : xs.every(([, d]) => d === xs[0][1]) ? `${xs.map(([k]) => k).join(", ")} of ${xs[0][1]}` : xs.map(([k, d]) => `${k} of ${d}`).join(", ");
+/** "run 1", "runs 1, 2 and 3"; "no run" for none. */
+const runsText = (xs: { run: number }[]): string =>
+  !xs.length ? "no run" : xs.length === 1 ? `run ${xs[0].run}` : `runs ${xs.slice(0, -1).map((x) => x.run).join(", ")} and ${xs[xs.length - 1].run}`;
 
 /** The key the header counts a finding by: the pass's finding id, or the row's own id for an older record that has none. */
 const findingKey = (f: FindingView): string => f.fields.find(([k]) => k === "finding id")?.[1] ?? f.id;
@@ -1593,7 +1748,7 @@ td pre{white-space:pre-wrap;word-break:break-word;margin:4px 0 0;min-width:36ch;
 <body>
 <header><div class="wrap">
 <h1>ConfigLeaf: every finding, with the SQL behind it</h1>
-<p class="lede">A config-drift assurance pass for MSP technicians, replayed from recorded collections. Open a finding to see the detector query that raised it, each precondition check with the SQL that ran, the rows it returned and the hashes, and the judge step. The Document tab holds the owner's document over the full recorded bundle, the Sources tab names the tables and the source behind each finding class, and the Nemotron tab holds the eval's Nemotron calls with every SELECT its judges wrote, re-run at build. In a live pass the same detector and check SQL runs as Zetaris Lightning SQL over the <code>${escapeHtml(DATASOURCE)}</code> datasource, beside the technician's memory store and the policy file, with the <code>${escapeHtml(USL_NAME)}</code> semantic layer and its ${word(DQ_RULES.length)} DQ rules over the three; on this page it runs on sql.js over the recorded rows, and <code>test/parity.test.ts</code> holds the two engines to the same columns, rows and totals.</p>
+<p class="lede">A config-drift assurance pass for MSP technicians, replayed from recorded collections. Open a finding to see the detector query that raised it, each precondition check with the SQL that ran, the rows it returned and the hashes, and the judge step. The Document tab holds the owner's document over the full recorded bundle, the Sources tab names the tables and the source behind each finding class, and the Nemotron tab holds the eval's Nemotron calls with every SELECT its judges wrote, re-run at build. In a live pass the same detector and check SQL runs as Zetaris Lightning SQL over the <code>${escapeHtml(DATASOURCE)}</code> datasource, beside the technician's memory store, the policy file and the Cloudflare DNS API, which it reads live, with the <code>${escapeHtml(USL_NAME)}</code> semantic layer and its ${word(DQ_RULES.length)} DQ rules over the four; on this page it runs on sql.js over the recorded rows, and <code>test/parity.test.ts</code> holds the two engines to the same columns, rows and totals.</p>
 ${headline}
 ${stats}
 <p class="report"><a href="${REPORT_LINK}">Report</a><br><span class="meta">The owner's report, <code>examples/report.html</code>: one HTML file over the same recorded bundle as the Document tab, opened from a clone of the repository.</span></p>
@@ -1828,7 +1983,7 @@ if (invoked === import.meta.url.toLowerCase()) {
     console.log(`nemotron: ${n.stamp} ${n.set}: ${n.calls} calls, ${n.signatureVerified} receipts verified, ${n.substitutions} substitutions; ${n.judgeSelects} judge SELECTs, ${n.rerunEqual} re-run equal, ${n.notRunnable} recorded text does not run`);
     console.log(`tabs: Findings; Document (${r.document.file}, ${r.document.bytes} bytes, decided at ${r.document.decidedAt ?? "no instant stated"}); Sources (${r.sources} finding classes); Nemotron (${r.nemotron.dir}, ${r.nemotron.claims.length} planted claims, ${r.nemotron.items.length} item judges)`);
     const left = Object.entries(r.site.tokens).filter(([, v]) => v === null).map(([k]) => k);
-    console.log(`landing: site.html from ${shownPath(SITE_TEMPLATE)}, ${Object.keys(r.site.tokens).length - left.length} of ${Object.keys(r.site.tokens).length} tokens filled${left.length ? `, the lines of ${left.join(", ")} left out (no source)` : ""}; trace lines quoted: ${r.site.traces.map((x) => `act ${x.act} ${x.lines.length} (${x.file})`).join(", ")}`);
+    console.log(`landing: site.html from ${shownPath(SITE_TEMPLATE)}, ${Object.keys(r.site.tokens).length - left.length} of ${Object.keys(r.site.tokens).length} tokens filled${left.length ? `, the lines of ${left.join(", ")} left out (no source)` : ""}; trace lines quoted: ${r.site.traces.map((x) => `${x.act} ${x.lines.length} (${x.file})`).join(", ")}`);
     console.log(`scan: ${r.scan.files} files and ${r.scan.shown} rendered markdown text(s), ${r.scan.labels} deny-list label(s), ${r.scan.aliases} ssh alias(es), ${r.scan.leaves} data, Nemotron tab and landing page trace strings through the redactor unchanged${r.scan.skipped ? ` (${r.scan.skipped})` : ""}`);
     for (const [name, text] of r.files) console.log(`  ${rel(path.join(r.outDir, name))} ${Buffer.byteLength(text)} bytes`);
     console.log(`site: ${r.bytes} bytes in ${r.files.size} files (budget ${MAX_BYTES}) -> ${rel(r.outDir) || "."}`);

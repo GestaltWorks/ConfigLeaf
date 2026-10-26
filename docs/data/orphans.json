@@ -18,8 +18,8 @@
  "files": [
   {
    "path": "examples/orphans/bundle.json",
-   "bytes": 2145694,
-   "sha256": "sha256:2434be8095cae67e26bada07b50faac1f19118e9fb55ee5497d154ba4c0544fb"
+   "bytes": 2145717,
+   "sha256": "sha256:d6030d30ac0009bb5060a9e9ecb9432ca75911a9746b9fa0160bf7d248ac8a93"
   },
   {
    "path": "examples/orphans/findings.json",

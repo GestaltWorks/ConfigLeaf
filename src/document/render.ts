@@ -80,6 +80,7 @@ import { fileURLToPath } from "node:url";
 import { SAMPLE_MEMORY_DIR } from "../config.ts";
 import { fileRows, ledgerEntries } from "../data/file-rows.ts";
 import { FILE_DATASOURCES } from "../data/files.ts";
+import { REST_DB } from "../zetaris/setup.ts";
 import { ruleOf, VERBS } from "../pipeline.ts";
 import { resolvePolicy } from "../policy/resolve.ts";
 import type { Tracer } from "../trace.ts";
@@ -208,7 +209,9 @@ function groupBy<T>(rows: readonly T[], key: (r: T) => string): [string, T[]][] 
 // sql in src/catalogue/templates.ts), and the source each table's rows come from. Read off the SQL text when the
 // section renders, so a changed query changes the row. Then the two file sources Zetaris registers beside DRIFT
 // (fileSourceRows: the technician's memory store as LESSONS, the policy file as RULES), counted off the committed
-// files. The README carries the same section (npm run sources), and test/document.test.ts holds the two equal.
+// files, and the live source Zetaris reads itself (the Cloudflare DNS API as the REST datasource CLOUDFLARE), counted
+// as measured (LIVE_MEASURED). The README carries the same section (npm run sources), and test/document.test.ts holds
+// the two equal.
 
 /** The committed policy file, under the repository root: the RULES row counts it. */
 const COMMITTED_POLICY = fileURLToPath(new URL("../../policy/hackathon.json", import.meta.url));
@@ -295,15 +298,24 @@ function sourceLines(): string[] {
     "",
     ...SOURCES.filter((s) => rows.some((r) => r.sources.includes(s.name))).map((s) => `- ${s.name} (${s.tables.map(code).join(", ")}): ${s.holds}.`),
     "",
-    "Two more sources decide what happens to a finding: the technician's memory store, which the Decider recalls from, and the policy file, which `npm run policy:load` turns into the `policy_rule` rows. Zetaris reads both as files beside `DRIFT`: `npm run zetaris:setup` writes them into its filestore and registers them. The DQ rule `exception_in_force` on `drift_usl.adoption` joins every ADOPT the ledger holds under an accepted exception to its lesson, across the two datasources. The rows are those of the committed files:",
+    "Two more sources decide what happens to a finding: the technician's memory store, which the Decider recalls from, and the policy file, which `npm run policy:load` turns into the `policy_rule` rows. Zetaris reads both as files beside `DRIFT`: `npm run zetaris:setup` writes them into its filestore and registers them. The DQ rule `exception_in_force` on `drift_usl.adoption` joins every ADOPT the ledger holds under an accepted exception to its lesson, across the two datasources.",
+    "",
+    `Zetaris also reads one source itself, live: the Cloudflare DNS API, which \`npm run zetaris:setup\` registers as the REST datasource \`${REST_DB}\`, one table per zone, fetched again at each query. The DQ rule \`dns_inventory_current\` on \`drift_usl.dns_live\` holds every record live at the provider to the last complete DNS collection run, joined on Cloudflare's record id; a record that fails means the provider changed since that run. The file sources' rows are those of the committed files, the live source's the count measured on ${LIVE_MEASURED.at}:`,
     "",
     ...table(["source", "Zetaris datasource", "tables", "rows", "what it holds"], fileSourceRows().map((r) => [`${r.name} (${code(r.file)})`, code(r.datasource), r.tables.map(code).join(", "), r.rows, r.holds])),
   ];
 }
 
+/**
+ * The live source as measured: the zones the read token saw and the records the DNS API returned, at the live run of
+ * npm run zetaris:setup on 26 Oct 2026, 03:47 UTC (count dns_live = 58, the zones report 58). Typed here because the
+ * section is the same in every clone and reads no live source.
+ */
+export const LIVE_MEASURED = { at: "26 Oct 2026", zones: 6, records: 58 } as const;
+
 export interface FileSourceRow {
   name: string;
-  /** The committed file or directory the rows are read from. */
+  /** The committed file or directory the rows are read from; for the live source, the endpoint. */
   file: string;
   /** The Zetaris Lightning database it is registered as. */
   datasource: string;
@@ -314,7 +326,10 @@ export interface FileSourceRow {
   holds: string;
 }
 
-/** The two file sources, counted off the committed store (examples/memory) and policy file (policy/hackathon.json): no query, the same in every clone. */
+/**
+ * The two file sources, counted off the committed store (examples/memory) and policy file (policy/hackathon.json), then
+ * the live one, counted as LIVE_MEASURED states: no query, the same in every clone.
+ */
 export function fileSourceRows(): FileSourceRow[] {
   const files = fileRows({ memoryDir: SAMPLE_MEMORY_DIR, policyFile: COMMITTED_POLICY });
   const ledger = ledgerEntries(SAMPLE_MEMORY_DIR).length;
@@ -329,6 +344,11 @@ export function fileSourceRows(): FileSourceRow[] {
       name: "policy rules", file: "policy/hackathon.json", datasource: FILE_DATASOURCES.rule, tables: [`${FILE_DATASOURCES.rule}.rule`],
       rows: `${files.rule.length} rules, version ${versions}`,
       holds: "the MSP's policy, one row per rule under the rule id every disposition decided by policy names",
+    },
+    {
+      name: "Cloudflare live", file: "api.cloudflare.com/client/v4/zones/<zone id>/dns_records", datasource: REST_DB, tables: [`${REST_DB}.zone_<zone id>`],
+      rows: `${LIVE_MEASURED.records} records in ${LIVE_MEASURED.zones} zones on ${LIVE_MEASURED.at}`,
+      holds: "every DNS record at the provider now, which Zetaris fetches itself under the read token at each query; drift_usl.dns_live holds each to the last complete DNS collection run by record id, type and proxied flag",
     },
   ];
 }

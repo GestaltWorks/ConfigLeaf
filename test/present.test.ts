@@ -19,7 +19,7 @@ import {
   nemotronOf, passView, presentOptions, probeView, seconds, shortModel, shortUtc, thousands, ticketsView, utcMinute, validateView, whatHappened, withoutRunIds, type PresentOptions,
   type CauseFacts, type StepView, type StoryInput, type TicketFacts,
 } from "../src/loop/present.ts";
-import { dispositionIdOf, type AdoptionCheck, type PassStep } from "../src/loop/pass.ts";
+import { dispositionIdOf, type AdoptionCheck, type DnsInventoryCheck, type PassStep } from "../src/loop/pass.ts";
 import type { Finding, Verb } from "../src/pipeline.ts";
 import type { TicketOp } from "../src/psa/index.ts";
 import type { TicketOutcome } from "../src/psa/step.ts";
@@ -248,6 +248,31 @@ describe("the table over a clean dry run", () => {
     expect(new Table({ ...PLAIN, color: true }).row("pass", passView({ ...cleanPass, files: { status: "failed" } as PassStep["files"] }, sent), null)[2])
       .toBe(`            files     ${ESC}[33mlessons and rules not refreshed in Zetaris${ESC}[0m`);
     expect(files("current")).toBe("            classes   20  proxied name, origin trusts no Cloudflare range");
+  });
+
+  it("then the pass's read of dns_inventory_current over the live records, as the live pass of 26 Oct 2026, 03:49 UTC printed it; red when the provider changed since the last complete DNS run, yellow when not read", () => {
+    const sent = { datasource: "DRIFT", queries: 458, rows: 29_640, failed: 0 };
+    const adoptions: AdoptionCheck = { rule: "exception_in_force", of: "recorded", decidedAt: "2026-10-26T01:14:00.000Z", adoptions: 23, inForce: 23 };
+    const pass = (dns: DnsInventoryCheck) => ({ ...cleanPass, adoptions, dns });
+    const rows = t.row("pass", passView(pass({ rule: "dns_inventory_current", live: 58, current: 58, runId: "run-a7ccb5c97d2c781c" }), sent), 97_800);
+    expect(rows.slice(1, 5)).toEqual([
+      "            Zetaris   458 queries · 29,640 rows · 0 failed",
+      "            DQ        exception_in_force holds for 23 of 23 adoptions of the pass recorded",
+      "                      at 2026-10-26 01:14 UTC",
+      "                      dns_inventory_current holds for 58 of 58 live records",
+    ]);
+    // the rest of the row is the row without the read
+    expect([...rows.slice(0, 4), ...rows.slice(5)]).toEqual(t.row("pass", passView({ ...cleanPass, adoptions }, sent), 97_800));
+    // without the Zetaris facts (sql.js, sample mode) no line names it
+    expect(t.row("pass", passView(pass({ rule: "dns_inventory_current", live: 1, current: 1, runId: null })), null)).toEqual(t.row("pass", passView(cleanPass), null));
+    expect(t.row("pass", passView(pass({ rule: "dns_inventory_current", live: 1, current: 1, runId: null }), sent), null)[4]).toBe("                      dns_inventory_current holds for 1 of 1 live record");
+    // with no adoption read the DNS read carries the DQ label itself
+    expect(t.row("pass", passView({ ...cleanPass, dns: { rule: "dns_inventory_current", live: 58, current: 58, runId: null } }, sent), null)[2]).toBe("            DQ        dns_inventory_current holds for 58 of 58 live records");
+    const c = new Table({ ...PLAIN, color: true });
+    expect(c.row("pass", passView(pass({ rule: "dns_inventory_current", live: 60, current: 57, runId: "run-a7ccb5c97d2c781c" }), sent), null)[4])
+      .toBe(`                      ${ESC}[31mdns_inventory_current holds for 57 of 60 live records${ESC}[0m`);
+    expect(c.row("pass", passView(pass({ rule: "dns_inventory_current", error: "Zetaris 400: REST API call failed: 403" }), sent), null)[4])
+      .toBe(`                      ${ESC}[33mdns_inventory_current not read${ESC}[0m`);
   });
 
   it("says nothing new when no vault commit came in, and names the repositories it could not validate", () => {

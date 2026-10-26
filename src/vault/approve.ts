@@ -13,6 +13,8 @@
 //       record   every field (type, name, content, ttl, proxied) of one Cloudflare record
 //       zone     every field of every record listed (the script lists a zone's record ids)
 //       account  every field of every record in the observations
+//       surface  every setting of one surface and host in the observations: zetaris.control on the Zetaris
+//                instance (src/zetaris/control.ts), each object's definition
 //     by and note are stored as given: the script passes them through the redactor first, so a dry run
 //     prints the rows the Store writes.
 //   resolveObject   a real path (redacted the way the collector redacts it, linux.ts redactText) or a
@@ -42,7 +44,8 @@ export type ApprovalSelection =
   | { kind: "object"; host: string; object_id: string }
   | { kind: "record"; record_id: string }
   | { kind: "zone"; record_ids: readonly string[] }
-  | { kind: "account" };
+  | { kind: "account" }
+  | { kind: "surface"; surface: string; host: string };
 
 const ISO_MS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const codeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
@@ -61,6 +64,8 @@ export function selects(sel: ApprovalSelection, o: Observation): boolean {
       return o.surface === DNS_SURFACE && o.host === null && isField(o.setting_path) && sel.record_ids.includes(o.object_id);
     case "account":
       return o.surface === DNS_SURFACE && o.host === null && isField(o.setting_path);
+    case "surface":
+      return o.surface === sel.surface && o.host === sel.host;
   }
 }
 

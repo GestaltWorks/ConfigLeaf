@@ -13,7 +13,8 @@
 //     the vault (Vault.treeOf, one read per commit); the diff's "---" header names the approved copy's commit; any other
 //     setting's approved value text (APPROVED_VALUE_SQL: the latest observation that carries the approved hash).
 //   - The diff (diff.ts), every line through linux.ts redactText: a file's approved bytes against its live bytes (an
-//     approved_missing file against nothing); else an approved value against the observed one; else, for a hero
+//     approved_missing file against nothing); else an approved value against the observed one, line by line when
+//     either holds several lines (a zetaris.control object's canonical JSON, src/zetaris/control.ts); else, for a hero
 //     finding, the referent's fingerprint before against now. null when there is nothing to compare: no vault, no
 //     copy, no approval. A vault or SQL error on one finding leaves its diff null and is counted, never thrown.
 //   - account_change values: a record finding's approved value and its observed value; a hero finding's referent
@@ -221,6 +222,10 @@ export async function explainPass(pass: { tenant: string; decidedAt: string; fin
     if (s.setting_path === "file" && s.surface.startsWith("linux.")) return { diff: approval ? await fileDiff(f, approval) : null, values: hero ?? { from: null, to: null } };
     const approved = approval && approval.value_hash !== s.value_hash ? await approvedText(f, approval.value_hash) : null;
     const values: Values = hero ?? (s.surface === "cloudflare.dns" ? { from: approved, to: observed } : { from: null, to: null });
+    // A value of several lines (a zetaris.control object's canonical JSON) diffs line by line; one line, as one change.
+    if (approved !== null && (approved.includes("\n") || (observed ?? "").includes("\n"))) {
+      return { diff: unifiedDiff(approved, observed ?? "", { from: `approved ${s.setting_path}`, to: observed === null ? "live (absent)" : `live ${s.setting_path}`, line }), values };
+    }
     if (approved !== null) return { diff: valueDiff(s.setting_path, approved, observed, { from: "approved", to: "live", line }), values };
     if (hero) return { diff: valueDiff(s.dns_name ?? "referent", hero.from, hero.to, { from: "before", to: "now", line }), values };
     return { diff: null, values };
