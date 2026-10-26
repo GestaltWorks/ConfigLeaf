@@ -1,19 +1,27 @@
 import { describe, expect, it } from "vitest";
 import { generateKeyPairSync, sign } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { canonicalReceiptBody, verifyReceipt, type SignedReceipt } from "../src/adapters/nightshift.ts";
+import { RECEIPT_KEY, canonicalReceiptBody, receiptKeyFingerprint, verifyReceipt, type SignedReceipt } from "../src/adapters/nightshift.ts";
+import lightningJson from "./fixtures/receipt-lightning.json" with { type: "json" };
+import ultraJson from "./fixtures/receipt-ultra.json" with { type: "json" };
 
 // The body of rcpt_req_afqg8yrc (25 Oct 2026: Lightning, app drift-agent-memtest, a fresh scope, hmem null) byte for
 // byte as meterlessd signed and stored it in receipts.jsonl, prompt_preview redacted: its 30-token cost is
 // 3.3000000000000006e-6 in the signer's spelling, which the receipts endpoint serves as 0.0000033000000000000006.
 const TINY_COST_BODY = readFileSync(new URL("./fixtures/receipt-lightning-tiny-cost.json", import.meta.url), "utf8").trimEnd();
 
+/** The committed probe receipts of 23 Oct, as the runtime signed them. */
+const REAL = [lightningJson, ultraJson] as unknown as SignedReceipt[];
+
+/** The key pair the tests here sign with, and its fingerprint, which each check of a receipt signed here trusts. */
+const PAIR = generateKeyPairSync("ed25519");
+const PUBKEY_B64 = PAIR.publicKey.export({ type: "spki", format: "der" }).subarray(12).toString("base64");
+const KEY = receiptKeyFingerprint(PUBKEY_B64);
+
 function signed(body: SignedReceipt["body"], tamper = false): SignedReceipt {
-  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
-  const sig = sign(null, Buffer.from(canonicalReceiptBody(body), "utf8"), privateKey);
-  const raw = publicKey.export({ type: "spki", format: "der" }).subarray(12);
+  const sig = sign(null, Buffer.from(canonicalReceiptBody(body), "utf8"), PAIR.privateKey);
   const b = tamper ? { ...body, receipt: { ...body.receipt, routed_model: "someone-else" } } : body;
-  return { body: b, pubkey_b64: raw.toString("base64"), sig_b64: sig.toString("base64") };
+  return { body: b, pubkey_b64: PUBKEY_B64, sig_b64: sig.toString("base64") };
 }
 
 describe("Nightshift receipt verification", () => {
@@ -24,11 +32,11 @@ describe("Nightshift receipt verification", () => {
   });
 
   it("accepts a valid Ed25519 signature over the canonical body", () => {
-    expect(verifyReceipt(signed(body))).toBe(true);
+    expect(verifyReceipt(signed(body), [KEY])).toBe(true);
   });
 
   it("rejects a receipt whose body was altered after signing", () => {
-    expect(verifyReceipt(signed(body, true))).toBe(false);
+    expect(verifyReceipt(signed(body, true), [KEY])).toBe(false);
   });
 
   it("spells numbers as the runtime's Rust signer prints them: an exponent below 1e-5, integers as digits", () => {
@@ -42,9 +50,34 @@ describe("Nightshift receipt verification", () => {
     const served = JSON.parse(TINY_COST_BODY) as SignedReceipt["body"]; // the value GET /v1/meterless/receipts returns
     expect(JSON.stringify(served)).toContain('"actual_usd":0.0000033000000000000006');
     expect(canonicalReceiptBody(served)).toBe(TINY_COST_BODY);
-    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
-    const sig = sign(null, Buffer.from(TINY_COST_BODY, "utf8"), privateKey); // over the signer's bytes, not our canonical form
-    const raw = publicKey.export({ type: "spki", format: "der" }).subarray(12);
-    expect(verifyReceipt({ body: served, pubkey_b64: raw.toString("base64"), sig_b64: sig.toString("base64") })).toBe(true);
+    const sig = sign(null, Buffer.from(TINY_COST_BODY, "utf8"), PAIR.privateKey); // over the bytes the signer wrote
+    expect(verifyReceipt({ body: served, pubkey_b64: PUBKEY_B64, sig_b64: sig.toString("base64") }, [KEY])).toBe(true);
+  });
+});
+
+describe("the pinned signing key", () => {
+  const body = { llama_cpp_ref: "abc", manifest_hash: "def", receipt: { receipt_id: "rcpt_pin", routed_model: "nvidia/nemotron-3-ultra-550b-a55b" } };
+
+  it("RECEIPT_KEY is the fingerprint of the key both committed probe receipts carry, and they verify under the default keys", () => {
+    expect(RECEIPT_KEY).toMatch(/^sha256:[0-9a-f]{64}$/);
+    for (const r of REAL) {
+      expect(receiptKeyFingerprint(r.pubkey_b64)).toBe(RECEIPT_KEY);
+      expect(verifyReceipt(r)).toBe(true);
+    }
+  });
+
+  it("refuses a correctly signed receipt under a fresh key with the default keys, and accepts it when its fingerprint is trusted", () => {
+    const fresh = signed(body);
+    expect(KEY).not.toBe(RECEIPT_KEY);
+    expect(verifyReceipt(fresh)).toBe(false);
+    expect(verifyReceipt(fresh, [RECEIPT_KEY])).toBe(false);
+    expect(verifyReceipt(fresh, [KEY])).toBe(true);
+    expect(verifyReceipt(fresh, [RECEIPT_KEY, KEY])).toBe(true);
+    expect(verifyReceipt(REAL[0], [KEY])).toBe(false);
+  });
+
+  it("refuses a receipt that carries the pinned key with a signature made by another key", () => {
+    const sig = sign(null, Buffer.from(canonicalReceiptBody(body), "utf8"), PAIR.privateKey);
+    expect(verifyReceipt({ body, pubkey_b64: REAL[0].pubkey_b64, sig_b64: sig.toString("base64") })).toBe(false);
   });
 });

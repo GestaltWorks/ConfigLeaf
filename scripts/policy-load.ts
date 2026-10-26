@@ -15,7 +15,7 @@ import { config, redact } from "../src/config.ts";
 import { Store } from "../src/data/store.ts";
 import type { PolicyRule } from "../src/data/rows.ts";
 import { PolicyError, loadPolicyFile } from "../src/policy/load.ts";
-import { TENANT } from "../src/policy/schema.ts";
+import { TENANT, TENANT_ID_SHAPE } from "../src/policy/schema.ts";
 import { Redactor } from "../src/redactor.ts";
 
 const USAGE = "usage: npm run policy:load -- --tenant <id|*> [--file <path>] [--schema <name>] [--dry-run] [--help]";
@@ -36,7 +36,7 @@ if (args.help) {
   process.exit(0);
 }
 if (!args.tenant || !TENANT.test(args.tenant)) {
-  console.error(`--tenant is required: a tenant id ([A-Za-z0-9._-], up to 64) or *\n${USAGE}`);
+  console.error(`--tenant is required: ${TENANT_ID_SHAPE}, or *\n${USAGE}`);
   process.exit(2);
 }
 const dryRun = args["dry-run"] === true;

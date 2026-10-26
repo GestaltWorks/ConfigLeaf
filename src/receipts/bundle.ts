@@ -19,15 +19,16 @@
 //                  where HEX_RUN and B64_RUN would fire on every receipt.
 //   select(...)    the export's split of the runtime's receipts into kept and withheld, by id and by probe.
 //   verify(dir)    the offline report, with no .env and no network: every call record with a receipt_id has its
-//                  receipt in receipts.json or listed as withheld; the signature verifies; servedModelOf equals
-//                  served_model and its tier the requested tier; receipt.app is drift-agent-<tenant>; request_id is
-//                  present; cache.status equals cache_status; signature_ok is true as recorded. The preview rule
+//                  receipt in receipts.json or listed as withheld; its signing key is pinned (RECEIPT_KEY, else the
+//                  keys given: check signing_key); the signature verifies under it (check signature); servedModelOf
+//                  equals served_model and its tier the requested tier; receipt.app is drift-agent-<tenant>; request_id
+//                  is present; cache.status equals cache_status; signature_ok is true as recorded. The preview rule
 //                  follows the gate: a counted call's prompt_preview opens with "[request ", and a call the gate
 //                  discarded or refused for custody keeps the preview mismatch the gate recorded (the preview does not
 //                  open with the request line), counted "custody refused, as recorded". The report also names each
-//                  distinct signing key by the sha256 of its raw bytes, whether it is the key of the 23 Oct probe
-//                  receipt test/fixtures/receipt-lightning.json, and the runtime's own memory injection
-//                  (hmem.injected, egress.sent.context_sources) summed over the receipts.
+//                  distinct signing key by the sha256 of its raw bytes (receiptKeyFingerprint), whether it is pinned
+//                  and whether it is the key of the 23 Oct probe receipt test/fixtures/receipt-lightning.json, and the
+//                  runtime's own memory injection (hmem.injected, egress.sent.context_sources) summed over the receipts.
 //
 // Measured 25 Oct 2026, read only: GET /v1/meterless/receipts returned the newest 100 receipts, and 200 with
 // ?limit=1000 or ?limit=500 (13:41 to 18:02 UTC that day), a window holding 179 of the development run's 383; the
@@ -37,12 +38,12 @@
 // prompt_preview the runtime cut inside a pseudonymised file name, host-XXXXXX.<tld>.con, which the redactor reads as
 // a new host name), 380 published and verified under the key of the 23 Oct probe receipts.
 
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { isIPv6 } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { verifyReceipt, type SignedReceipt } from "../adapters/nightshift.ts";
+import { RECEIPT_KEY, receiptKeyFingerprint, verifyReceipt, type SignedReceipt } from "../adapters/nightshift.ts";
 import type { CallRecord } from "../eval/models.ts";
 import { servedModelOf, tenantAppId, tierOf } from "../gate.ts";
 import { countLabels, Redactor } from "../redactor.ts";
@@ -207,13 +208,17 @@ export function readReceipts(file: string): SignedReceipt[] {
 /** receipts-withheld.json: the tenant, the ids asked for when the export was given ids, each receipt kept back. */
 export interface WithheldFile { tenant: string; ids?: string[]; withheld: Withheld[] }
 
-export type Check = "missing" | "signature" | "served_model" | "served_tier" | "app" | "request_id" | "cache_status" | "signature_ok" | "prompt_preview" | "unnamed" | "custody";
+/** A failed check: signing_key when the receipt's key is not pinned, signature when a pinned key's signature does not verify. */
+export type Check = "missing" | "signing_key" | "signature" | "served_model" | "served_tier" | "app" | "request_id" | "cache_status" | "signature_ok" | "prompt_preview" | "unnamed" | "custody";
 
 export interface Failure { receipt_id: string; check: Check; file?: string }
 
-export interface KeyLine { fingerprint: string; pubkey_b64: string; receipts: number; fixture: boolean | null }
+/** One distinct signing key: its fingerprint, its receipts, whether it is pinned, whether it is the 23 Oct fixture key (null when the fixture is absent). */
+export interface KeyLine { fingerprint: string; pubkey_b64: string; receipts: number; pinned: boolean; fixture: boolean | null }
 
 export interface VerifyReport {
+  /** The signing keys the check trusts, as fingerprints: BundleInput.keys, else [RECEIPT_KEY]. */
+  pinned: readonly string[];
   tenant: string | null;
   app: string | null;
   runFiles: number;
@@ -249,10 +254,11 @@ export interface BundleInput {
   withheld: Withheld[];
   /** The 23 Oct fixture key; null when the fixture is not there to compare with. */
   fixtureKey: string | null;
+  /** The pinned signing keys, as fingerprints (receiptKeyFingerprint); [RECEIPT_KEY] when absent. */
+  keys?: readonly string[];
 }
 
 const REQUEST_LINE = /^\[request /;
-const fingerprint = (pubkeyB64: string): string => `sha256:${createHash("sha256").update(Buffer.from(pubkeyB64, "base64")).digest("hex")}`;
 const isCustodyFailure = (r: RecordLite): boolean => r.gate === "discarded" || (r.gate === "refused" && /custody/.test(r.reason ?? ""));
 
 /** The check over data already read: pure, for the tests and for verify(). */
@@ -263,8 +269,10 @@ export function verifyBundle(input: BundleInput): VerifyReport {
   const byId = new Map<string, SignedReceipt>();
   for (const r of input.receipts) byId.set(String(r.body?.receipt?.receipt_id ?? ""), r);
   const withheld = new Set(input.withheld.map((w) => w.receipt_id));
+  const pinned = input.keys ?? [RECEIPT_KEY];
+  const isPinned = (pubkeyB64: unknown): boolean => typeof pubkeyB64 === "string" && pinned.includes(receiptKeyFingerprint(pubkeyB64));
   const sigOk = new Map<string, boolean>();
-  for (const [id, r] of byId) sigOk.set(id, verifyReceipt(r));
+  for (const [id, r] of byId) sigOk.set(id, verifyReceipt(r, pinned));
 
   const runRecords = input.records.filter((r) => r.file !== "planted.json");
   const receiptedRecords = input.records.filter((r) => typeof r.receipt_id === "string" && r.receipt_id);
@@ -273,12 +281,13 @@ export function verifyBundle(input: BundleInput): VerifyReport {
   let custodyAsRecorded = 0;
   const previewSeen = new Set<string>();
 
-  // Per receipt: present or withheld, signed, filed under the tenant's app, carrying a request_id.
+  // Per receipt: present or withheld, signed under a pinned key, filed under the tenant's app, carrying a request_id.
   for (const id of wanted) {
     if (withheld.has(id)) continue;
     const r = byId.get(id);
     if (!r) { fail(id, "missing"); continue; }
-    if (!sigOk.get(id)) fail(id, "signature");
+    if (!isPinned(r.pubkey_b64)) fail(id, "signing_key");
+    else if (!sigOk.get(id)) fail(id, "signature");
     const rc = r.body.receipt ?? {};
     if (app === null || rc.app !== app) fail(id, "app");
     if (typeof rc.request_id !== "string" || !rc.request_id) fail(id, "request_id");
@@ -326,11 +335,11 @@ export function verifyBundle(input: BundleInput): VerifyReport {
   }
 
   return {
-    tenant: input.tenant, app, runFiles: input.runFiles ?? new Set(runRecords.map((r) => r.file)).size,
+    pinned, tenant: input.tenant, app, runFiles: input.runFiles ?? new Set(runRecords.map((r) => r.file)).size,
     records: runRecords.length, receipted: runRecords.filter((r) => r.receipt_id).length, planted: input.planted ?? input.records.length - runRecords.length,
     wanted: wanted.size, receipts: byId.size, withheld: [...wanted].filter((id) => withheld.has(id)).length,
     verified: [...sigOk.values()].filter(Boolean).length, previewOk, custodyAsRecorded, failures,
-    keys: [...keys].map(([k, n]) => ({ fingerprint: fingerprint(k), pubkey_b64: k, receipts: n, fixture: input.fixtureKey === null ? null : k === input.fixtureKey })),
+    keys: [...keys].map(([k, n]) => ({ fingerprint: receiptKeyFingerprint(k), pubkey_b64: k, receipts: n, pinned: isPinned(k), fixture: input.fixtureKey === null ? null : k === input.fixtureKey })),
     servedTiers, memory, ok: failures.length === 0,
   };
 }
@@ -344,8 +353,8 @@ export function fixtureKey(file: string = FIXTURE_RECEIPT): string | null {
   }
 }
 
-/** The offline report over a published directory: its call records, receipts.json and receipts-withheld.json. */
-export function verify(dir: string, opts: { tenant?: string; fixtureKey?: string | null } = {}): VerifyReport {
+/** The offline report over a published directory: its call records, receipts.json and receipts-withheld.json, under the pinned keys (`keys`, [RECEIPT_KEY] when absent). */
+export function verify(dir: string, opts: { tenant?: string; fixtureKey?: string | null; keys?: readonly string[] } = {}): VerifyReport {
   const calls = idsFrom(dir);
   const receiptsPath = path.join(dir, RECEIPTS_FILE);
   const receipts = existsSync(receiptsPath) ? readReceipts(receiptsPath) : [];
@@ -355,6 +364,6 @@ export function verify(dir: string, opts: { tenant?: string; fixtureKey?: string
   if (calls.tenant && manifest?.tenant && calls.tenant !== manifest.tenant) throw new Error(`${dir}: the run files name tenant ${calls.tenant} and ${WITHHELD_FILE} names ${manifest.tenant}`);
   return verifyBundle({
     tenant, records: calls.records, runFiles: calls.runFiles, planted: calls.planted, ids: manifest?.ids,
-    receipts, withheld: manifest?.withheld ?? [], fixtureKey: opts.fixtureKey === undefined ? fixtureKey() : opts.fixtureKey,
+    receipts, withheld: manifest?.withheld ?? [], fixtureKey: opts.fixtureKey === undefined ? fixtureKey() : opts.fixtureKey, keys: opts.keys,
   });
 }

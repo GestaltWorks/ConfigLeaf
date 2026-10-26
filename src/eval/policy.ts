@@ -104,7 +104,7 @@ export async function decideHistory(layer: DataLayer, hp: HistoryPolicy, finding
     ? { run_id: probeRun.run_id, rows: objects(await probesOfRun(layer, { tenant_id: finding.tenant_id, run_id: probeRun.run_id }, opts)).map((p) => ({ kind: p.kind, target: p.target, status: p.status })) }
     : { run_id: null, rows: [] };
   const d = decide({
-    finding: { class: finding.class }, rule, exception: { state: "none" }, checks: own, approved: null, copies: [], probes,
+    finding: { class: finding.class, object_id: finding.object_id }, rule, exception: { state: "none" }, checks: own, approved: null, copies: [], probes,
     serves: finding.dns_name ? [finding.dns_name] : [], decidedAt: hp.decidedAt, priorHold: hp.holds.get(holdKey(finding)) ?? null,
   });
   return { verb: d.verb, reason: d.decided_by === "default" ? d.reason : `${d.reason}; this configuration alone says ${own.verb}: ${own.why}`, decided_by: d.decided_by, rule_id: d.rule_id };

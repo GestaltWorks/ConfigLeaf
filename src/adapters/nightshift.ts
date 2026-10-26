@@ -33,7 +33,7 @@
 // (opts.scope); the result returns the scope that answer's request used, and the response's own copy of hmem.injected.
 // The gate (src/gate.ts) reads hmem from the signed receipt, never from the response.
 
-import { createPublicKey, randomBytes, verify as cryptoVerify } from "node:crypto";
+import { createHash, createPublicKey, randomBytes, verify as cryptoVerify } from "node:crypto";
 import { config, redact } from "../config.ts";
 import type { Tracer } from "../trace.ts";
 
@@ -353,9 +353,25 @@ export function canonicalReceiptBody(body: unknown): string {
   return ser(body);
 }
 
-/** Verify a receipt's Ed25519 signature offline. Verified 9/9 against the build machine's runtime on 23 Oct. */
-export function verifyReceipt(r: SignedReceipt): boolean {
+/** A signing key as the receipt check names it: "sha256:<64 hex>", the sha256 of the raw 32-byte Ed25519 public key `pubkey_b64` carries. */
+export function receiptKeyFingerprint(pubkeyB64: string): string {
+  return `sha256:${createHash("sha256").update(Buffer.from(pubkeyB64, "base64")).digest("hex")}`;
+}
+
+/**
+ * The pinned receipt signing key: the fingerprint (receiptKeyFingerprint) of the Ed25519 key the build machine's
+ * Nightshift runtime signs with. Every committed receipt verifies under it, 26 Oct 2026: 908 receipts, the two probe
+ * receipts of 23 Oct in test/fixtures/ and those of every receipts.json under eval/ and lab/.
+ */
+export const RECEIPT_KEY = "sha256:6ee50b5d11fdd693e1ee80635ea1868bb1addefb5823768192849709928ff8c1";
+
+/**
+ * Verify a receipt offline: true only when its key's fingerprint is one of `trusted` and its Ed25519 signature over
+ * the canonical body verifies under that key. Verified 9/9 against the build machine's runtime on 23 Oct.
+ */
+export function verifyReceipt(r: SignedReceipt, trusted: readonly string[] = [RECEIPT_KEY]): boolean {
   try {
+    if (!trusted.includes(receiptKeyFingerprint(r.pubkey_b64))) return false;
     const raw = Buffer.from(r.pubkey_b64, "base64");
     // Ed25519 raw public key -> SPKI DER (12-byte prefix)
     const spki = Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), raw]);

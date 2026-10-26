@@ -23,13 +23,13 @@ import { config, redact } from "../src/config.ts";
 import { Cloudflare } from "../src/collectors/cloudflare.ts";
 import type { Probe, ProbeKind } from "../src/data/rows.ts";
 import { Store } from "../src/data/store.ts";
+import { TENANT_ID, TENANT_ID_SHAPE } from "../src/policy/schema.ts";
 import { PROBE_KINDS } from "../src/probe/rules.ts";
 import { probePopulation, runProbes, vaultServedNames } from "../src/probe/run.ts";
 import { Redactor } from "../src/redactor.ts";
 import { Tracer } from "../src/trace.ts";
 import { Vault } from "../src/vault/vault.ts";
 
-const TENANT = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const USAGE = "usage: npm run probe -- --tenant <id> [--only http|dns|tls] [--schema <name>] [--dry-run] [--help]";
 
 function die(msg: string): never {
@@ -54,7 +54,7 @@ if (args.help) {
   process.exit(0);
 }
 const tenant = args.tenant ?? die("--tenant is required");
-if (!TENANT.test(tenant)) die(`--tenant must be lowercase letters, digits and dashes, got ${tenant}`);
+if (!TENANT_ID.test(tenant)) die(`--tenant must be ${TENANT_ID_SHAPE}, got ${tenant}`);
 if (args.only !== undefined && !(PROBE_KINDS as readonly string[]).includes(args.only)) die(`--only must be one of ${PROBE_KINDS.join(", ")}, got ${args.only}`);
 const kinds: readonly ProbeKind[] = args.only ? [args.only as ProbeKind] : PROBE_KINDS;
 const dry = args["dry-run"] === true;
