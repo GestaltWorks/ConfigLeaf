@@ -72,11 +72,15 @@ const text = (s: string): string => s.replace(/&/g, "&amp;").replace(/</g, "&lt;
 
 let built: BuildResult;
 const example = (dir: string): ExampleView => JSON.parse(built.files.get(`data/${dir}.json`)!) as ExampleView;
+/** The match of `re` in `text`; a miss fails with a message naming `what` and the pattern, so a drifted sentence reports itself. */
+function matchOf(re: RegExp, text: string, what: string): RegExpExecArray {
+  const m = re.exec(text);
+  expect(m, `${what}: no match for ${re}`).not.toBeNull();
+  return m!;
+}
 /** One tab's static HTML in the page: its section, whole. */
 function panel(id: string): string {
-  const m = new RegExp(`<section class="panel" id="${id}">[\\s\\S]*?</section>`).exec(built.files.get("index.html")!);
-  expect(m, `the page has no ${id} tab`).not.toBeNull();
-  return m![0];
+  return matchOf(new RegExp(`<section class="panel" id="${id}">[\\s\\S]*?</section>`), built.files.get("index.html")!, `the page's ${id} tab`)[0];
 }
 const count = (s: string, tag: string): number => s.split(tag).length - 1;
 /** Every judge record of the Nemotron tab: the planted claims', then the item judges'. */
@@ -182,7 +186,7 @@ describe("the replay page", () => {
 
   it("names Zetaris where the page opens, in the Sources tab and in the footer: the datasource, the semantic layer and its DQ rules, the parity test", () => {
     const html = built.files.get("index.html")!;
-    const lede = /<p class="lede">([\s\S]*?)<\/p>/.exec(html)![1];
+    const lede = matchOf(/<p class="lede">([\s\S]*?)<\/p>/, html, "the replay page's lede")[1];
     for (const s of ["Zetaris Lightning SQL", `<code>${DS}</code> datasource`, "beside the technician's memory store, the policy file and the Cloudflare DNS API, which it reads live", `<code>${USL_NAME}</code> semantic layer`, "six DQ rules over the four", "<code>test/parity.test.ts</code>"]) expect(lede).toContain(s);
     const src = panel("sources");
     expect(src).toContain(`Zetaris Lightning SQL over the <code>${USL_NAME}</code> semantic layer, each table read as the entity built from it, <code>${NAMESPACE}.${USL_NAME}.&lt;entity&gt;</code>, over the <code>${DS}</code> datasource`);
@@ -228,18 +232,18 @@ describe("the replay page", () => {
 
   it("links the owner's report from the header, ../examples/report.html with one line saying what it is, outside the tab row the script drives", () => {
     const html = built.files.get("index.html")!;
-    const header = /<header>[\s\S]*?<\/header>/.exec(html)![0];
+    const header = matchOf(/<header>[\s\S]*?<\/header>/, html, "the replay page's header")[0];
     expect(REPORT_LINK).toBe("../examples/report.html");
     expect(existsSync(path.join(ROOT, "docs", REPORT_LINK))).toBe(true);
     expect(header).toContain(`<p class="report"><a href="${REPORT_LINK}">Report</a><br><span class="meta">The owner's report, <code>examples/report.html</code>: one HTML file over the same recorded bundle as the Document tab, opened from a clone of the repository.</span></p>`);
-    const nav = /<nav class="tabs"[\s\S]*?<\/nav>/.exec(header)![0];
+    const nav = matchOf(/<nav class="tabs"[\s\S]*?<\/nav>/, header, "the header's tab row")[0];
     expect(nav).not.toContain(REPORT_LINK);
   });
 
   it("the header counts each finding once by its finding id, beside the 9 rows over 3 slices, as static HTML; each slice keeps its own counts", () => {
     const html = built.files.get("index.html")!;
-    const header = /<header>[\s\S]*?<\/header>/.exec(html)![0];
-    const stats = /<ul class="stats" id="stats">[\s\S]*?<\/ul>/.exec(header)![0];
+    const header = matchOf(/<header>[\s\S]*?<\/header>/, html, "the replay page's header")[0];
+    const stats = matchOf(/<ul class="stats" id="stats">[\s\S]*?<\/ul>/, header, "the header's stats list")[0];
     const t = built.index.totals.nemotron;
     expect(stats.split("\n").slice(1, 5)).toEqual([
       "<li><b>8</b>findings, 9 rows over 3 slices</li>",
@@ -312,13 +316,13 @@ describe("the replay page", () => {
     ].join("\n"));
     // in the page: static, in the header after the lede and before the counts, the Report link and the tabs
     const html = built.files.get("index.html")!;
-    const header = /<header>[\s\S]*?<\/header>/.exec(html)![0];
+    const header = matchOf(/<header>[\s\S]*?<\/header>/, html, "the replay page's header")[0];
     const at = header.indexOf(headlineTile(built.nemotron));
     expect(at).toBeGreaterThan(header.indexOf('<p class="lede">'));
     expect(at).toBeLessThan(header.indexOf('<ul class="stats" id="stats">'));
     expect(header.indexOf('<ul class="stats" id="stats">')).toBeLessThan(header.indexOf('<nav class="tabs"'));
     // the tile's colours are the page's tokens
-    const css = /<style>([\s\S]*?)<\/style>/.exec(html)![1].split("\n").filter((l) => l.startsWith(".headline"));
+    const css = matchOf(/<style>([\s\S]*?)<\/style>/, html, "the replay page's style block")[1].split("\n").filter((l) => l.startsWith(".headline"));
     expect(css.length).toBeGreaterThan(0);
     for (const rule of css) expect(rule).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i);
     // the Nemotron tab holds the same counts per run
@@ -336,7 +340,7 @@ describe("the replay page", () => {
     const lines = md.split("\n");
     expect(count(doc, "<tr>")).toBe(lines.filter((l) => /^\|(?!---)/.test(l)).length);
     expect(count(doc, "<li>")).toBe(lines.filter((l) => l.startsWith("- ")).length);
-    const instant = /^Decided at (\S+)\.$/m.exec(md)![1];
+    const instant = matchOf(/^Decided at (\S+)\.$/m, md, "the 'Decided at' line of examples/document.md")[1];
     expect(doc).toContain(`Rendered from SQL over the recorded bundle at the decision instant it states, <code>${instant}</code>.`);
     expect(built.document).toMatchObject({ file: "examples/document.md", bytes: Buffer.byteLength(md), decidedAt: instant });
     expect(doc).toContain(`examples/document.md ${built.document.sha256} (${built.document.bytes} bytes, LF)`);
@@ -596,12 +600,24 @@ describe("the landing page, docs/site.html", () => {
   });
   /** The HTML of one section of the page, by id. */
   const section = (id: string): string => {
-    const m = new RegExp(`<section class="band" id="${id}">[\\s\\S]*?</section>`).exec(site());
-    expect(m, `the page has no #${id} section`).not.toBeNull();
-    return m![0];
+    const whole = matchOf(new RegExp(`<section class="band" id="${id}">[\\s\\S]*?</section>`), site(), `the page's #${id} section`)[0];
+    // the match ends at the first </section>, so a nested <section would cut the text short
+    expect(/<section[\s>]/.test(whole.slice(1)), `#${id} holds a nested <section: the match to the first </section> ends inside it`).toBe(false);
+    return whole;
   };
   const all = (html: string, re: RegExp): string[] => [...html.matchAll(re)].map((m) => m[1]);
   const sha = (s: string): string => `sha256:${createHash("sha256").update(s, "utf8").digest("hex")}`;
+  /** A repository file's text with LF line ends, the text the build hashes. */
+  const lfFile = (file: string): string => readFileSync(path.join(ROOT, file), "utf8").replace(/\r\n/g, "\n");
+
+  it("hashes a file as the build does: sha() over its LF text equals the build's own hash of the sample bundle, the owner's document and an example's two files", () => {
+    // the build's sha is private; the hashes it returns for these files are the reference the provenance test relies on
+    expect(sha(lfFile(built.index.sample!.bundle)), built.index.sample!.bundle).toBe(built.index.sample!.sha256);
+    expect(sha(lfFile(built.document.file)), built.document.file).toBe(built.document.sha256);
+    const { files } = example("proxy-split");
+    expect(files.map((f) => f.path)).toEqual(["examples/proxy-split/bundle.json", "examples/proxy-split/findings.json"]);
+    for (const f of files) expect(sha(lfFile(f.path)), f.path).toBe(f.sha256);
+  });
 
   it("is built with the replay page from scripts/site/landing.html, every token the template holds filled and none left", () => {
     const template = readFileSync(SITE_TEMPLATE, "utf8");
@@ -649,31 +665,32 @@ describe("the landing page, docs/site.html", () => {
 
   it("opens with the README's track and its first three sentences, as written", () => {
     const html = site();
-    expect(readme()).toContain(plain(/<p class="eyebrow">([\s\S]*?)<\/p>/.exec(html)![1]));
-    expect(plain(/<p class="eyebrow">([\s\S]*?)<\/p>/.exec(html)![1])).toMatch(/^GenAI Works Open Agent Hackathon 2026, Track 1 \(Solving Fragmented Intelligence\)$/);
-    const h1 = plain(/<h1>([\s\S]*?)<\/h1>/.exec(html)![1]);
-    const lede = plain(/<p class="lede">([\s\S]*?)<\/p>/.exec(html)![1]);
-    const third = plain(/<p class="sub">([\s\S]*?)<\/p>/.exec(section("sources"))![1]);
+    const eyebrow = plain(matchOf(/<p class="eyebrow">([\s\S]*?)<\/p>/, html, "the landing page's eyebrow")[1]);
+    expect(readme()).toContain(eyebrow);
+    expect(eyebrow).toMatch(/^GenAI Works Open Agent Hackathon 2026, Track 1 \(Solving Fragmented Intelligence\)$/);
+    const h1 = plain(matchOf(/<h1>([\s\S]*?)<\/h1>/, html, "the landing page's heading")[1]);
+    const lede = plain(matchOf(/<p class="lede">([\s\S]*?)<\/p>/, html, "the landing page's lede")[1]);
+    const third = plain(matchOf(/<p class="sub">([\s\S]*?)<\/p>/, section("sources"), "the sources section's lead sentence")[1]);
     const first = readme().split("\n").find((p) => !p.startsWith("#"))!;
     expect(first.startsWith(`${h1} ${lede} ${third}`)).toBe(true);
     expect([h1, lede, third].every((s) => /[^.]\.$/.test(s))).toBe(true);
     expect(h1).toMatch(/^ConfigLeaf, package `drift-agent`, /);
     expect(html).toContain('<h1><span class="grad">ConfigLeaf</span>, package <code>drift-agent</code>, ');
-    expect(/<meta name="description" content="([^"]*)">/.exec(html)![1]).toBe(escapeHtml(`${h1} ${lede}`.replace(/`/g, "")));
+    expect(matchOf(/<meta name="description" content="([^"]*)">/, html, "the landing page's description")[1]).toBe(escapeHtml(`${h1} ${lede}`.replace(/`/g, "")));
   });
 
   it("fills the estate tiles from the owner's document", () => {
     const tiles = [...site().matchAll(/<div class="tile"><b>([^<]*)<\/b><span>([^<]*)<\/span><\/div>/g)].map((m) => [plain(m[1]), plain(m[2])]);
     const md = doc();
-    const runs = /^(\d+) collection runs on record, (\d+) passing the DQ gate\. (\d+ hosts) and (\d+ zones) in the latest passing runs\./m.exec(md)!;
-    const open = /^(\d+) findings are open on the latest passing runs: (.+)\.$/m.exec(md)!;
+    const runs = matchOf(/^(\d+) collection runs on record, (\d+) passing the DQ gate\. (\d+ hosts) and (\d+ zones) in the latest passing runs\./m, md, "the document's collection runs line");
+    const open = matchOf(/^(\d+) findings are open on the latest passing runs: (.+)\.$/m, md, "the document's open findings line");
     expect(tiles).toEqual([
       [`${runs[2]} / ${runs[1]}`, "collection runs pass the DQ gate"],
-      [/^(\d+) settings have an approval of record/m.exec(md)![1], "settings with an approval of record"],
-      [/^(\d+) vault copies at the latest commit of each repository, each with its latest validation/m.exec(md)![1], "vault copies, each with its latest validation"],
+      [matchOf(/^(\d+) settings have an approval of record/m, md, "the document's approvals line")[1], "settings with an approval of record"],
+      [matchOf(/^(\d+) vault copies at the latest commit of each repository, each with its latest validation/m, md, "the document's vault copies line")[1], "vault copies, each with its latest validation"],
       [open[1], `findings open: ${open[2]}`],
     ]);
-    expect(plain(/<p class="cap">([\s\S]*?)<\/p>/.exec(site())![1])).toBe(`From the owner's document, \`examples/document.md\`, tenant \`client-1\`: ${runs[3]} and ${runs[4]} in the latest passing runs, decided at ${built.document.decidedAt}.`);
+    expect(plain(matchOf(/<p class="cap">([\s\S]*?)<\/p>/, site(), "the estate tiles' caption")[1])).toBe(`From the owner's document, \`examples/document.md\`, tenant \`client-1\`: ${runs[3]} and ${runs[4]} in the latest passing runs, decided at ${built.document.decidedAt}.`);
   });
 
   it("sets Ultra alone beside the checks with Ultra as the falsifier, per run, from the Nemotron tab's headline: each figure and each row of dots its run's", () => {
@@ -705,11 +722,11 @@ describe("the landing page, docs/site.html", () => {
     const title = `The ${word(items.length)} places`;
     expect(src).toContain(`<h2>${title}, read as one</h2>`);
     expect(readme().split("\n")).toContain(`${title}: ${items.slice(0, -1).join(", ")}, and ${items.at(-1)}.`);
-    const hub = /<div class="hub-card">([\s\S]*?)<\/div>/.exec(src)![1];
+    const hub = matchOf(/<div class="hub-card">([\s\S]*?)<\/div>/, src, "the sources section's hub card")[1];
     expect(hub).toBe(`<small>Zetaris</small><b>${USL_NAME}</b><span>${DS} · ${FILE_DATASOURCES.lesson} · ${FILE_DATASOURCES.rule} · ${REST_DB}</span><span>${word(USL_TABLES.length)} entities · ${word(DQ_RULES.length)} DQ rules</span>`);
     const out = all(src, /<li class="v-(\w+)">/g);
     expect([...out].sort()).toEqual([...VERBS].sort());
-    const third = plain(/<p class="sub">([\s\S]*?)<\/p>/.exec(src)![1]);
+    const third = plain(matchOf(/<p class="sub">([\s\S]*?)<\/p>/, src, "the sources section's lead sentence")[1]);
     expect(out.map((v) => third.indexOf(v))).toEqual(out.map((v) => third.indexOf(v)).sort((a, b) => a - b));
     expect(src).toContain('<li class="v-HOLD"><b>HOLD</b>with an expiry</li>');
   });
@@ -730,12 +747,12 @@ describe("the landing page, docs/site.html", () => {
   it("lays out the semantic layer as src/zetaris/setup.ts holds it: each entity once, in the lane of its datasource, with its DQ rule", () => {
     const layer = section("layer");
     const lanes = all(layer, /<div class="lane">([\s\S]*?)<\/ul><\/div>/g);
-    expect(lanes.map((l) => /<b>(\w+)<\/b>/.exec(l)![1])).toEqual([DS, FILE_DATASOURCES.lesson, FILE_DATASOURCES.rule, REST_DB]);
+    expect(lanes.map((l) => matchOf(/<b>(\w+)<\/b>/, l, "a datasource lane's name")[1])).toEqual([DS, FILE_DATASOURCES.lesson, FILE_DATASOURCES.rule, REST_DB]);
     const entities = lanes.flatMap((l) => all(l, /<li><code>(\w+)<\/code>/g));
     expect([...entities].sort()).toEqual([...USL_TABLES].sort());
     for (const r of DQ_RULES) expect(layer).toMatch(new RegExp(`<li><code>${r.table}</code>[^<]*<br><em>${r.name}</em></li>`));
     expect(all(layer, /<em>(\w+)<\/em>/g)).toHaveLength(DQ_RULES.length);
-    expect(plain(/<p class="sub">([\s\S]*?)<\/p>/.exec(layer)![1])).toBe(`\`${USL_NAME}\` in \`lightning.metastore.drift\` holds ${word(USL_TABLES.length)} entities over four datasources, each built from the tables its activation SELECT reads, and ${word(DQ_RULES.length)} DQ rules.`);
+    expect(plain(matchOf(/<p class="sub">([\s\S]*?)<\/p>/, layer, "the layer section's lead sentence")[1])).toBe(`\`${USL_NAME}\` in \`lightning.metastore.drift\` holds ${word(USL_TABLES.length)} entities over four datasources, each built from the tables its activation SELECT reads, and ${word(DQ_RULES.length)} DQ rules.`);
   });
 
   it("decides under the README's policy, its bullets as written, beside the findings open by verb in the owner's document", () => {
@@ -748,7 +765,7 @@ describe("the landing page, docs/site.html", () => {
     });
     const cards = [...decide.matchAll(/<article class="vcard v-\w+"><h3>([\s\S]*?)<\/h3><p>([\s\S]*?)<\/p><\/article>/g)].map((m) => [plain(m[1]), plain(m[2])]);
     expect(cards).toEqual(bullets.map(([lead, text]) => [lead, `${text[0].toUpperCase()}${text.slice(1)}`]));
-    const open = /^(\d+) findings are open on the latest passing runs: (.+)\.$/m.exec(doc())!;
+    const open = matchOf(/^(\d+) findings are open on the latest passing runs: (.+)\.$/m, doc(), "the document's open findings line");
     const verbs = [...open[2].matchAll(/([A-Z]+) (\d+)/g)].map((m) => [m[1], m[2]]);
     expect([...decide.matchAll(/<span class="v-(\w+)" style="flex:(\d+)"><\/span>/g)].map((m) => [m[1], m[2]])).toEqual(verbs);
     expect(all(decide, /<li class="v-\w+">([^<]*)<\/li>/g)).toEqual(verbs.map(([v, n]) => `${v} ${n}`));
@@ -812,9 +829,9 @@ describe("the landing page, docs/site.html", () => {
     const r = spawnSync(process.execPath, ["--import", "tsx", "scripts/receipts-verify.ts", dir], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
     expect(r.status, r.stderr).toBe(0);
     const printed = r.stdout.trim().split("\n");
-    const counts = /receipts: [\d,]+ receipt ids, ([\d,]+) in receipts\.json, ([\d,]+) withheld; ([\d,]+) of [\d,]+ signatures verified/.exec(printed.join("\n"))!;
+    const counts = matchOf(/receipts: [\d,]+ receipt ids, ([\d,]+) in receipts\.json, ([\d,]+) withheld; ([\d,]+) of [\d,]+ signatures verified/, printed.join("\n"), "the receipts line that npm run receipts:verify prints");
     expect(all(proof, /<b>([^<]*)<\/b><figcaption>/g)).toEqual([`${t.checksRerun} / ${t.checks}`, `${nm.rerunEqual} / ${nm.judgeSelects}`, `${nm.signatureVerified} / ${nm.calls}`, `${counts[3]} / ${counts[1]}`]);
-    const line = plain(/<p class="evalline">([\s\S]*?)<\/p>/.exec(proof)![1]);
+    const line = plain(matchOf(/<p class="evalline">([\s\S]*?)<\/p>/, proof, "the proof section's eval line")[1]);
     for (const s of [`The \`${nm.set}\` set`, `(\`${dir}\`)`, `${built.nemotron.runs.length} configuration runs`, `${nm.calls} Nemotron calls, ${nm.signatureVerified} with a verified receipt, ${nm.substitutions} substitutions`, `of the ${nm.judgeSelects} judge SELECTs recorded with a row count, ${nm.rerunEqual} re-run at build`]) expect(line).toContain(s);
     const consoles = [...proof.matchAll(/<pre>\$ ([^\n]*)\n<span class="out">([\s\S]*?)<\/span><\/pre>/g)].map((m) => [plain(m[1]), plain(m[2])]);
     expect(consoles.map((c) => c[0])).toEqual([`npm run receipts:verify -- ${dir}`, SAMPLE_COMMAND]);
@@ -832,13 +849,14 @@ describe("the landing page, docs/site.html", () => {
   it("names each file it reads, with the hash of each file it quotes", () => {
     const rows = [...section("provenance").matchAll(/<li><code>([^<]*)<\/code><span>[^<]*<\/span><small>([^<]*)<\/small><\/li>/g)].map((m) => [m[1], plain(m[2])]);
     expect(rows.map((r) => r[0])).toEqual(["README.md", "examples/document.md", "src/zetaris/setup.ts", ...built.site.traces.map((t) => t.file), built.nemotron.dir, "sample/bundle.json", "data/index.json"]);
-    for (const [file, meta] of rows) {
-      const shown = /^(sha256:[0-9a-f]+)…/.exec(meta)?.[1];
-      if (!shown) continue;
-      const full = file === "sample/bundle.json" ? built.index.sample!.sha256 : sha(readFileSync(path.join(ROOT, file), "utf8").replace(/\r\n/g, "\n"));
+    // the rows that show a hash, then each of them holds the start of its file's full hash (sha() is proven equal to the build's above)
+    const hashed = ["examples/document.md", ...built.site.traces.map((t) => t.file), "sample/bundle.json"];
+    expect(rows.filter((r) => r[1].startsWith("sha256:")).map((r) => r[0])).toEqual(hashed);
+    for (const [file, meta] of rows.filter((r) => hashed.includes(r[0]))) {
+      const shown = matchOf(/^(sha256:[0-9a-f]+)…/, meta, `${file}'s shown hash`)[1];
+      const full = file === "sample/bundle.json" ? built.index.sample!.sha256 : sha(lfFile(file));
       expect(full.startsWith(shown), file).toBe(true);
     }
-    expect(rows.filter((r) => r[1].startsWith("sha256:")).map((r) => r[0])).toEqual(["examples/document.md", ...built.site.traces.map((t) => t.file), "sample/bundle.json"]);
   });
 
   it("refuses a results directory whose receipts npm run receipts:verify would fail: a receipt's signature changed in a copy", () => {
@@ -864,7 +882,14 @@ describe("the landing page, docs/site.html", () => {
     expect(bare.html).not.toMatch(/\{\{/);
     // the provenance row of the results directory names receipts.json only when it is there
     expect(bare.html).toContain(`${built.nemotron.runs.length} run files, planted.json</small>`);
-    const strip = (h: string): string => h.replace(/<div class="rings">[\s\S]*?<\/div>\n<p class="evalline">/, "").replace(/<div class="consoles">[\s\S]*?<\/div><\/section>/, "").replace("planted.json, receipts.json</small>", "planted.json</small>");
-    expect(strip(bare.html)).toBe(strip(site()));
+    // `h` with `from` replaced by `to`; a miss fails naming `what`
+    const cut = (h: string, from: string | RegExp, to: string, what: string): string => {
+      expect(typeof from === "string" ? h.includes(from) : from.test(h), `the page lacks ${what}: ${from}`).toBe(true);
+      return h.replace(from, to);
+    };
+    // the three removals are the parts that differ in a build with no sample pass and no receipts.json: the rings block, the consoles block and the receipts.json name in the provenance row
+    const strip = (h: string): string => cut(cut(h, /<div class="rings">[\s\S]*?<\/div>\n<p class="evalline">/, "", "the rings block"), /<div class="consoles">[\s\S]*?<\/div><\/section>/, "", "the consoles block");
+    const named = cut(site(), "planted.json, receipts.json</small>", "planted.json</small>", "the receipts.json name in the provenance row");
+    expect(strip(bare.html)).toBe(strip(named));
   });
 });

@@ -38,9 +38,12 @@ import { renderSample, sampleReport, textSha256 } from "../src/document/sample.t
 import { TechnicianMemory } from "../src/engine/memory.ts";
 import { DriftWorld } from "../src/engine/world.ts";
 import { runPass } from "../src/pipeline.ts";
-import { TENANT } from "../src/policy/schema.ts";
+import { TENANT_ID, TENANT_ID_SHAPE } from "../src/policy/schema.ts";
 import { Redactor, countLabels } from "../src/redactor.ts";
 import { Tracer } from "../src/trace.ts";
+import { exitOnConfigError } from "../src/cli.ts";
+
+exitOnConfigError();
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const USAGE = "usage: npm run document -- --tenant <id> [--bundle <file>] [--out <path>] [--help]";
@@ -57,8 +60,8 @@ if (args.help) {
   console.log("Renders the owner's document for one tenant from SQL, and the owner's report (report.html) beside it from the same rows: sql.js over a bundle in sample mode (SAMPLE_MODE=true or --bundle, default out examples/document.md and examples/report.html), the Zetaris data layer live (default out document.md and report.html).");
   process.exit(0);
 }
-if (!args.tenant || !TENANT.test(args.tenant) || args.tenant === "*") {
-  console.error(`document: --tenant is required: a tenant id ([A-Za-z0-9._-], up to 64)\n${USAGE}`);
+if (!args.tenant || !TENANT_ID.test(args.tenant)) {
+  console.error(`document: --tenant is required: ${TENANT_ID_SHAPE}\n${USAGE}`);
   process.exit(2);
 }
 const tenant = args.tenant;

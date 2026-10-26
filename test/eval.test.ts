@@ -39,7 +39,7 @@ import { loadPolicyFile } from "../src/policy/load.ts";
 import { Redactor, countLabels } from "../src/redactor.ts";
 import recorded from "./fixtures/recorded-bundle.json" with { type: "json" };
 import sampleBundle from "../sample/bundle.json" with { type: "json" };
-import { signed } from "./fixtures/signed-receipt.ts";
+import { TEST_KEY, signed } from "./fixtures/signed-receipt.ts";
 
 const PROTOCOL = readFileSync("eval/PROTOCOL.md", "utf8");
 const LABELS_TEXT = readFileSync("eval/labels.json", "utf8");
@@ -262,7 +262,7 @@ function stubModels(o: { serve?: (requested: string) => string; cache?: string; 
       return { content, modelRequested: opts.models[0], modelRouted: model, receiptId, requestId, tokensIn: 100, tokensOut: 20, latencyMs: 5, retries: 0, raw: {}, hop: 0, ...(opts.scope ? { scope: opts.scope } : {}) };
     },
   };
-  return { models: { nightshift, receipts: () => ({ find: async (id: string) => receipts.get(id) ?? null }) }, sent };
+  return { models: { nightshift, receipts: () => ({ keys: [TEST_KEY], find: async (id: string) => receipts.get(id) ?? null }) }, sent };
 }
 
 const POLICY = "policy/hackathon.json";

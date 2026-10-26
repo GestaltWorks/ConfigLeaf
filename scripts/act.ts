@@ -35,9 +35,12 @@ import { MemoryLedger } from "../src/ledger.ts";
 import { MODE, Table, actView, presentOptions } from "../src/loop/present.ts";
 import { FileTracer } from "../src/loop/trace.ts";
 import { runPass } from "../src/pipeline.ts";
-import { TENANT } from "../src/policy/schema.ts";
+import { TENANT_ID, TENANT_ID_SHAPE } from "../src/policy/schema.ts";
 import { Redactor } from "../src/redactor.ts";
 import { Vault } from "../src/vault/vault.ts";
+import { exitOnConfigError } from "../src/cli.ts";
+
+exitOnConfigError();
 
 const USAGE = `usage: npm run act -- --tenant <id> [--run <pass run id>]... [--apply] [--only ${ONLY_KINDS.join(",")}] [--schema <name>] [--verbose|--quiet] [--help]`;
 
@@ -62,7 +65,7 @@ if (args.help) {
   console.log("Prints the Actor's plan for the pass's dispositions (dry run) or, with --apply, carries it out and records one action row per action.");
   process.exit(0);
 }
-if (!args.tenant || !TENANT.test(args.tenant) || args.tenant === "*") usage("--tenant is required: a tenant id ([A-Za-z0-9._-], up to 64)");
+if (!args.tenant || !TENANT_ID.test(args.tenant)) usage(`--tenant is required: ${TENANT_ID_SHAPE}`);
 if (args.verbose && args.quiet) usage("--verbose and --quiet exclude each other");
 const only = (args.only ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 for (const k of only) if (!(ONLY_KINDS as readonly string[]).includes(k)) usage(`--only takes ${ONLY_KINDS.join(", ")}, got ${k}`);

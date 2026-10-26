@@ -26,7 +26,7 @@
 // Tested by test/concurrency.test.ts: the helpers on their own, sql.js under overlapping runs and interleaved writes and
 // reads, the pass at concurrency 1 and 4 over the bundles, and the queries in flight over an engine that waits before each query.
 
-import { MAX_PASS_CONCURRENCY } from "./config.ts";
+import { checkPassConcurrency } from "./config.ts";
 import { Tracer, type TraceEvent } from "./trace.ts";
 
 type Line = Omit<TraceEvent, "ts" | "trace_id">;
@@ -38,12 +38,9 @@ export type Task = (tracer: HeldTracer | undefined) => Promise<Commit>;
 
 type Settled = { ok: true; commit: Commit } | { ok: false; error: unknown };
 
-/** The limit as PASS_CONCURRENCY states it: a whole number from 1 to MAX_PASS_CONCURRENCY. */
+/** The limit as PASS_CONCURRENCY states it, held to the one check src/config.ts makes (checkPassConcurrency): ConfigError on any other value. */
 export function checkLimit(limit: number): number {
-  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_PASS_CONCURRENCY) {
-    throw new RangeError(`concurrency is a whole number from 1 to ${MAX_PASS_CONCURRENCY}, got ${limit}`);
-  }
-  return limit;
+  return checkPassConcurrency(limit);
 }
 
 /**

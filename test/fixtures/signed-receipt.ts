@@ -1,19 +1,26 @@
-// Receipts signed with a throwaway Ed25519 key, in the runtime's shape, so verifyReceipt passes and the
-// fields under test (request_id, app, prompt_preview, cache) can be set. Shared by the custody and judge
-// tests. The model id is the one the real Ultra fixture carries, so the tier gate reads it as Ultra.
+// Receipts signed with a throwaway Ed25519 key, in the runtime's shape, so the fields under test (request_id, app,
+// prompt_preview, cache) can be set. One key pair signs every receipt of a test process, made when this module loads;
+// TEST_KEY is its fingerprint. The gate and the bundle check trust only pinned keys (RECEIPT_KEY by default), so a
+// receipt signed here verifies only where a test's finder names TEST_KEY in its keys (ReceiptFinder.keys). Shared by
+// the gate, custody, judge, eval and scope tests. The model id is the one the real Ultra fixture carries, so the tier
+// gate reads it as Ultra.
 import { generateKeyPairSync, sign } from "node:crypto";
-import { canonicalReceiptBody, type SignedReceipt } from "../../src/adapters/nightshift.ts";
+import { canonicalReceiptBody, receiptKeyFingerprint, type SignedReceipt } from "../../src/adapters/nightshift.ts";
 import ultraJson from "./receipt-ultra.json" with { type: "json" };
 
 export const ULTRA_MODEL = (ultraJson as unknown as SignedReceipt).body.receipt.routing.winner as string;
 
-/** A receipt signed here: verifyReceipt trusts the key the receipt itself carries, so a fresh key verifies. */
+const PAIR = generateKeyPairSync("ed25519");
+const PUBKEY_B64 = PAIR.publicKey.export({ type: "spki", format: "der" }).subarray(12).toString("base64");
+
+/** The fingerprint of the key every receipt signed here carries; a test's finder names it in keys to trust them. */
+export const TEST_KEY = receiptKeyFingerprint(PUBKEY_B64);
+
+/** A receipt signed here with the test key. */
 export function signed(receipt: Record<string, unknown>): SignedReceipt {
   const body = { llama_cpp_ref: "test", manifest_hash: "test", receipt };
-  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
-  const sig = sign(null, Buffer.from(canonicalReceiptBody(body), "utf8"), privateKey);
-  const raw = publicKey.export({ type: "spki", format: "der" }).subarray(12);
-  return { body, pubkey_b64: raw.toString("base64"), sig_b64: sig.toString("base64") };
+  const sig = sign(null, Buffer.from(canonicalReceiptBody(body), "utf8"), PAIR.privateKey);
+  return { body, pubkey_b64: PUBKEY_B64, sig_b64: sig.toString("base64") };
 }
 
 /**

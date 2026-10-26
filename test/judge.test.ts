@@ -14,7 +14,7 @@ import { tenantAppId } from "../src/gate.ts";
 import { JUDGE_MAX_TOKENS, MAX_EVIDENCE_ROWS, SYSTEM_PROMPT, buildMessages, guardRefutation, judgeClaim, type JudgeModel } from "../src/agents/judge.ts";
 import bundle from "./fixtures/authored-bundle.json" with { type: "json" };
 import { MemTracer } from "./fixtures/mem-tracer.ts";
-import { isolated, ultraReceipt } from "./fixtures/signed-receipt.ts";
+import { TEST_KEY, isolated, ultraReceipt } from "./fixtures/signed-receipt.ts";
 import lightningJson from "./fixtures/receipt-lightning.json" with { type: "json" };
 import ultraJson from "./fixtures/receipt-ultra.json" with { type: "json" };
 
@@ -26,7 +26,7 @@ const ULTRA_MODEL = ultra.body.receipt.routing.winner as string;
 const LIGHTNING_ID = lightning.body.receipt.receipt_id as string;
 const LIGHTNING_MODEL = lightning.body.receipt.routing.winner as string;
 
-const receipts = { find: async (id: string) => [lightning, ultra].find((r) => r.body.receipt.receipt_id === id) ?? null };
+const receipts = { keys: [TEST_KEY], find: async (id: string) => [lightning, ultra].find((r) => r.body.receipt.receipt_id === id) ?? null };
 
 type ChatOpts = Parameters<JudgeModel["chatWithFallback"]>[0];
 
@@ -219,7 +219,7 @@ describe("judgeClaim on the authored fixture", () => {
     const tampered = structuredClone(ultra);
     tampered.body.receipt.prompt_preview = "something else";
     const ns = stub(reply("SELECT asset_id FROM {{t:inventory_asset}} WHERE address = '203.0.113.77'"));
-    const v = await judgeClaim({ claim: HERO_CLAIM, evidenceRows: EVIDENCE, layer, nightshift: ns, receipts: { find: async () => tampered } });
+    const v = await judgeClaim({ claim: HERO_CLAIM, evidenceRows: EVIDENCE, layer, nightshift: ns, receipts: { keys: [TEST_KEY], find: async () => tampered } });
     expect(v.status).toBe("not_judged");
     expect(v.reason).toMatch(/signature does not verify/);
   });
@@ -290,7 +290,7 @@ describe("judgeClaim under a tenant: the call goes out under the tenant's app id
       },
     };
   }
-  const find = (...rs: SignedReceipt[]) => ({ find: async (id: string) => rs.find((r) => r.body.receipt.receipt_id === id) ?? null });
+  const find = (...rs: SignedReceipt[]) => ({ keys: [TEST_KEY], find: async (id: string) => rs.find((r) => r.body.receipt.receipt_id === id) ?? null });
   const nonceOf = (o: ChatOpts): string => o.messages[1].content.match(/^\[request ([0-9a-f]{16})\]\n/)![1];
 
   it("custody holds on the first call: the request went out under drift-agent-<tenant> with a nonce first in the user message, the receipt is ours, the verdict carries the custody check", async () => {
@@ -414,7 +414,7 @@ describe("the failover ladder through a fake fetch: one retry per route after a 
     return seen;
   }
   const nightshift = (): Nightshift => new Nightshift({ token: "test-token", retryDelayMs: 1 });
-  const find = (...rs: SignedReceipt[]) => ({ find: async (id: string) => rs.find((r) => r.body.receipt.receipt_id === id) ?? null });
+  const find = (...rs: SignedReceipt[]) => ({ keys: [TEST_KEY], find: async (id: string) => rs.find((r) => r.body.receipt.receipt_id === id) ?? null });
 
   it("a 502 then a 200 on the same route: the route answers on its second attempt, each model_call line names its attempt, the verdict names the route", async () => {
     const seen = fakeFetch({ "route-a": [down(502, "provider_error"), ok("a", STANDS_REPLY)] });

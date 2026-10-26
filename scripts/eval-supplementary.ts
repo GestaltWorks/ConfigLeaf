@@ -21,6 +21,9 @@ import { loadSupplementary, runSupplementary, supplementaryArgs, type GroupResul
 import { LogTracer } from "../src/eval/tracer.ts";
 import type { RunResult } from "../src/eval/types.ts";
 import { countLabels } from "../src/redactor.ts";
+import { exitOnConfigError } from "../src/cli.ts";
+
+exitOnConfigError();
 
 /** The combined table: per configuration and run, over every cycle. */
 function combined(results: readonly GroupResult[], out: string, started: string): string {
