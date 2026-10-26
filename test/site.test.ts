@@ -567,6 +567,11 @@ describe("the landing page, docs/site.html", () => {
     expect(site()).toContain(`<span class="act-badge">${built.site.tokens.ACT_ONE_BADGE}</span>`);
     expect(built.site.tokens.ACT_ONE_BADGE).toMatch(/^\d{2}:\d{2} UTC, rollback_file$/);
     expect(acts[0]).toContain(built.site.tokens.ACT_ONE_BADGE!.split(",")[0]);
+    // the timeline's title: the days of the README's sentence on act one and of the three traces, no count typed in
+    const traceDays = built.site.traces.flatMap((t) => readTrace(t.file).map((e) => e.ts.slice(0, 10)));
+    expect([...new Set(traceDays)]).toEqual(["2026-10-25"]);
+    expect(text).toContain("all on 25 Oct 2026 in the operator's rehearsal");
+    expect(site()).toContain('<h2 class="section-title">The production estate and the lab chain, 25 Oct 2026</h2>');
   });
 
   it("quotes trace lines the replay page's redactor leaves as they are, each a line of the committed trace its act names", () => {
@@ -615,6 +620,18 @@ describe("the landing page, docs/site.html", () => {
     const verbs = VERBS.filter((v) => s.verbs[v]).map((v) => `${v} ${s.verbs[v]}`).join(", ");
     expect(out).toBe(`…\nSAMPLE: ${s.runs} collection runs, 0 failed the DQ gate (none), ${s.observed} observations in the World Model, ${s.findings} finding(s): …; verbs: ${verbs}; …\n…`);
   });
+
+  it("refuses a results directory whose receipts npm run receipts:verify would fail: a receipt's signature changed in a copy", () => {
+    const dir = path.join(tmp, "receipts-tampered", path.basename(built.nemotron.dir));
+    mkdirSync(dir, { recursive: true });
+    const from = path.join(ROOT, built.nemotron.dir);
+    for (const f of readdirSync(from).filter((x) => /^C\d+-run\d+\.json$|^planted\.json$|^receipts(-withheld)?\.json$/.test(x))) cpSync(path.join(from, f), path.join(dir, f));
+    const file = path.join(dir, "receipts.json");
+    const receipts = JSON.parse(readFileSync(file, "utf8")) as { sig_b64: string }[];
+    receipts[0].sig_b64 = `${receipts[0].sig_b64[0] === "A" ? "B" : "A"}${receipts[0].sig_b64.slice(1)}`;
+    writeFileSync(file, JSON.stringify(receipts));
+    expect(() => renderSiteHtml({ ...input(), resultsDir: dir })).toThrow(/refusing to publish: npm run receipts:verify -- \S+ finds \d+ mismatch(es)?; the landing page states the verdict it prints/);
+  }, 60_000);
 
   it("refuses a template token it does not fill and a token it fills that the template lacks; a token with no source leaves out its line", () => {
     const template = readFileSync(SITE_TEMPLATE, "utf8");

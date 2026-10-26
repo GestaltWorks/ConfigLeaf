@@ -50,8 +50,8 @@
 // every {{TOKEN}} filled from what the build already reads, never from a typed number. The hero is the README's first
 // two sentences and the places its list, as written; the semantic layer box is uslRows() and DQ_RULES; the tiles are
 // the owner's document's lines and the index's totals; each act is the README's own words between two of its phrases,
-// with the lines its selector takes from the committed trace it names, each through the replay page's redactor and the
-// scan; the eval line is the Nemotron tab's results directory, and its receipts lines are what npm run receipts:verify
+// with the lines its selector takes from the committed trace it names, each one the replay page's redactor and the scan
+// leave as it is; the eval line is the Nemotron tab's results directory, and its receipts lines are what npm run receipts:verify
 // prints for it, from the function the command runs; the sample line is this build's own sample pass in the format of
 // npm run sample. A token whose source the repository does not hold (DECK_URL empty, no repository field in
 // package.json, a results directory with no receipts.json, a build with no sample pass) leaves out its template line.
@@ -66,7 +66,8 @@
 // leak test's list and its countLabels scan) or a configured ssh alias, the markdown the two tabs render and the
 // strings the Nemotron tab is built from scanned as written too; when examples/document.md is missing or opens with
 // no heading; when the landing page's template holds a token the build does not fill, or lacks one it fills, or a source
-// it quotes (a README phrase, a document line, a trace's lines for an act) is not there; when any string in the data
+// it quotes (a README phrase, a document line, a trace's lines for an act) is not there; when npm run receipts:verify
+// would find a mismatch in the results directory the landing page states it for; when any string in the data
 // files, the Nemotron tab or the landing page's trace lines
 // changes under the redactor (a name, address, mail address or secret redaction would still replace, which
 // holds with the deny-list blank too); or when the page and its data exceed MAX_BYTES. Every refusal names
@@ -99,6 +100,7 @@ import {
   HERO_SQL, ORPHAN_RECORD_SQL, ORPHAN_VHOST_SQL, PROXIED_WITHOUT_REAL_IP_SQL, PROXY_SPLIT_SQL, RUNS_SQL, WILDCARD_WITHOUT_REAL_IP_SQL, objects,
 } from "../src/data/queries.ts";
 import { sourceRows, sourcesMarkdown } from "../src/document/render.ts";
+import { utc } from "../src/document/report.ts";
 import { TechnicianMemory } from "../src/engine/memory.ts";
 import { DriftWorld } from "../src/engine/world.ts";
 import { isSubstitution } from "../src/eval/models.ts";
@@ -977,13 +979,12 @@ export const DECK_URL = "";
 /** The committed traces the landing page's acts quote, by act. */
 export const ACT_TRACES = { two: "examples/traces/cycle_mvo2bil0.jsonl", three: "examples/traces/cycle_mvo5600q.jsonl", lab: "examples/traces/cycle_mvoa0l1i.jsonl" } as const;
 const TOKEN = /\{\{([A-Z0-9_]+)\}\}/g;
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-/** An ISO instant's day as the README writes a date: 25 Oct 2026. */
-const dayOf = (iso: string): string => `${Number(iso.slice(8, 10))} ${MONTHS[Number(iso.slice(5, 7)) - 1]} ${iso.slice(0, 4)}`;
-/** A results directory's stamp (2026-10-25T23-34-17Z) as the README dates a run: 25 Oct 2026 23:34 UTC; any other name as it is. */
+/** An instant's UTC day as the README writes a date, 25 Oct 2026: the owner's report's utc() without the time. */
+const dayOf = (iso: string): string => utc(iso).replace(/ \d{2}:\d{2} UTC$/, "");
+/** A results directory's stamp (2026-10-25T23-34-17Z) as the README dates a run, 25 Oct 2026 23:34 UTC (utc()); any other name as it is. */
 const stampDate = (stamp: string): string => {
-  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-\d{2}Z$/.exec(stamp);
-  return m ? `${dayOf(m[1])} ${m[2]}:${m[3]} UTC` : stamp;
+  const m = /^(\d{4}-\d{2}-\d{2}T\d{2})-(\d{2})-(\d{2}Z)$/.exec(stamp);
+  return m ? utc(`${m[1]}:${m[2]}:${m[3]}`) : stamp;
 };
 /** A count as npm run receipts:verify prints it: 1,234. */
 const figure = (x: number): string => x.toLocaleString("en-US");
@@ -1111,7 +1112,8 @@ export function repositoryUrl(pkgPath: string = path.join(ROOT, "package.json"))
  * command runs (src/receipts/bundle.ts verify, over the call records, receipts.json and receipts-withheld.json) in the
  * command's format, each "…" a run of the lines it prints between (the tenant, the records, the mismatches by check,
  * the tiers, the previews, the signing key, the runtime's memory); null when the directory holds no receipts.json, and
- * the page leaves the command out.
+ * the page leaves the command out. A mismatch refuses the build: the page beside it counts the calls with a verified
+ * receipt, and a failing verdict under that tile would contradict it.
  */
 function receiptsVerifyLines(dir: string): string | null {
   if (!existsSync(path.join(dir, RECEIPTS_FILE))) return null;
@@ -1121,11 +1123,12 @@ function receiptsVerifyLines(dir: string): string | null {
   } catch (err) {
     throw new SiteError(`refusing to publish: the receipts of ${shownPath(dir)} do not read: ${(err as Error).message}`);
   }
+  if (!r.ok) throw new SiteError(`refusing to publish: npm run receipts:verify -- ${shownPath(dir)} finds ${r.failures.length} mismatch${r.failures.length === 1 ? "" : "es"}; the landing page states the verdict it prints`);
   return [
     "…",
     `receipts: ${figure(r.wanted)} receipt ids, ${figure(r.receipts)} in ${RECEIPTS_FILE}, ${figure(r.withheld)} withheld; ${figure(r.verified)} of ${figure(r.receipts)} signatures verified`,
     "…",
-    r.ok ? `receipts: OK, ${figure(r.verified)} signatures verified, 0 mismatches` : `receipts: FAIL, ${r.failures.length} mismatch${r.failures.length === 1 ? "" : "es"}`,
+    `receipts: OK, ${figure(r.verified)} signatures verified, 0 mismatches`,
   ].join("\n");
 }
 
@@ -1164,7 +1167,8 @@ export interface SitePage {
  * typed number. The hero is the README's first two sentences; the places are the README's list; the semantic layer box
  * is uslRows() and DQ_RULES (src/zetaris/setup.ts, the rows npm run sources -- --usl prints); the tiles are the owner's
  * document's lines and the index's totals; each act is README words between two phrases of one paragraph, quoted as
- * written, with the lines its committed trace holds for it through the replay page's redactor; the eval line and the
+ * written, with the lines its committed trace holds for it, each one the replay page's redactor leaves as it is (a line
+ * it would rewrite refuses the build); the timeline's title dates the acts from the README and the traces; the eval line and the
  * receipts line are the results directory the Nemotron tab is built from; the sample line is the build's own sample
  * pass. Refuses on a template token it does not fill, a token it fills that the template does not hold, or a source that
  * does not say what the page reads from it.
@@ -1181,20 +1185,26 @@ export function renderSiteHtml(input: SiteInput, template: string = readFileSync
   const actOneAt = /\bat (\d{2}:\d{2} UTC)\b/.exec(actOne);
   const actOneKind = /`(\w+)`/.exec(actOne);
   if (!actOneAt || !actOneKind) throw new SiteError("refusing to publish: README.md's sentence on the vhost rollback names no time or no action; act one's badge reads both");
+  const actOneDay = /\b(\d{1,2} [A-Z][a-z]{2} \d{4})\b/.exec(span("On the operator's own estate the Actor ran", "in the operator's rehearsal"))?.[1];
+  if (!actOneDay) throw new SiteError("refusing to publish: README.md's sentence on the Actor's actions on the operator's estate names no day; the timeline's title reads it");
   const traced = [
     { act: "two", file: ACT_TRACES.two, select: selectActTwoSummaries },
     { act: "three", file: ACT_TRACES.three, select: selectActThreeSummaries },
     { act: "lab chain", file: ACT_TRACES.lab, select: selectLabChainSummaries },
   ].map(({ act, file, select }) => {
     const events = readTrace(file);
-    const lines = select(events, (s) => AS_IS.text(s));
+    // the replay page's redactor must leave each line as the tracer wrote it: a line it would rewrite refuses the build, by kind, never the value
+    const asIs = (s: string): string => {
+      const out = AS_IS.text(s);
+      if (out !== s) throw new SiteError(`refusing to publish: a line of ${file} that the landing page's act ${act} quotes changes under the redactor (${Object.entries(describeRedactions(s, out)).map(([k, n]) => `${n} ${k}`).join(", ") || "text"})`);
+      return s;
+    };
+    const lines = select(events, asIs);
     if (!lines.length) throw new SiteError(`refusing to publish: ${file} holds no line the landing page's act ${act} quotes`);
     return { act, file, lines, days: [...new Set(events.map((e) => dayOf(e.ts)))] };
   });
   const [two, three, lab] = traced;
   const block = (t: { lines: string[] }): string => t.lines.map(escapeHtml).join("\n");
-  /** The production estate's acts: act one, two and three; the lab chain follows them. */
-  const productionActs = [actOne, two, three].length;
 
   const t = input.index.totals;
   const nm = input.nemotron.totals;
@@ -1237,7 +1247,7 @@ export function renderSiteHtml(input: SiteInput, template: string = readFileSync
     USL_RULE_COUNT_WORD: word(rules.length),
     USL_ENTITY_NAMES: escapeHtml(usl.map((r) => r.entity).join(", ")),
     USL_RULE_NAMES: escapeHtml(rules.map((r) => `${r.name} on ${r.table}`).join(", ")),
-    TIMELINE_TITLE: escapeHtml(`${capital(word(productionActs))} acts on the production estate and the lab chain, ${[...new Set(traced.flatMap((x) => x.days))].join(" and ")}`),
+    TIMELINE_TITLE: escapeHtml(`The production estate and the lab chain, ${[...new Set([actOneDay, ...traced.flatMap((x) => x.days)])].join(" and ")}`),
     ACT_ONE_BADGE: escapeHtml(`${actOneAt[1]}, ${actOneKind[1]}`),
     ACT_ONE_TEXT: prose(span("A config lock on a setting class", "at the next cycle."), actOne),
     ACT_TWO_BADGE: escapeHtml(two.file),
