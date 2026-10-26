@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 420" width="1000" height="420" role="img" aria-labelledby="t d">
+  <title id="t">ConfigLeaf: eight sources read as one through Zetaris, checked, refuted and decided</title>
+  <desc id="d">Eight places a setting lives feed one Zetaris layer. The pass gates each run, detects findings, runs the SQL checks, has Nemotron Lightning choose checks and Nemotron Ultra write a refuting SELECT, counts a verdict only on a verified receipt, and decides one of five verbs under the MSP's policy and the technician's memory.</desc>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="#475569"/>
+    </marker>
+  </defs>
+  <style>
+    text { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #0f172a; }
+    .h { font-size: 15px; font-weight: 600; }
+    .s { font-size: 13px; }
+    .m { font-size: 12px; fill: #334155; }
+    .src { fill: #f1f5f9; stroke: #cbd5e1; }
+    .zet { fill: #eff6ff; stroke: #2563eb; stroke-width: 1.5; }
+    .sql { fill: #f8fafc; stroke: #94a3b8; }
+    .nv { fill: #f3fbe6; stroke: #76b900; stroke-width: 1.5; }
+    .mt { fill: #f5f3ff; stroke: #7c3aed; stroke-width: 1.5; }
+    .out { fill: #fff7ed; stroke: #ea580c; stroke-width: 1.5; }
+    .ln { stroke: #475569; stroke-width: 1.5; fill: none; }
+  </style>
+  <rect width="1000" height="420" fill="#ffffff"/>
+
+  <text class="h" x="20" y="38">Eight places one setting lives</text>
+  <rect class="src" x="20" y="56" width="200" height="34" rx="6"/><text class="s" x="32" y="78">The live host, over SSH</text>
+  <rect class="src" x="20" y="98" width="200" height="34" rx="6"/><text class="s" x="32" y="120">The nightly export (backup)</text>
+  <rect class="src" x="20" y="140" width="200" height="34" rx="6"/><text class="s" x="32" y="162">The documentation of record</text>
+  <rect class="src" x="20" y="182" width="200" height="34" rx="6"/><text class="s" x="32" y="204">The DNS provider</text>
+  <rect class="src" x="20" y="224" width="200" height="34" rx="6"/><text class="s" x="32" y="246">The audit log and host journal</text>
+  <rect class="src" x="20" y="266" width="200" height="34" rx="6"/><text class="s" x="32" y="288">The asset inventory</text>
+  <rect class="src" x="20" y="308" width="200" height="34" rx="6"/><text class="s" x="32" y="330">The probes, from outside</text>
+  <rect class="src" x="20" y="350" width="200" height="34" rx="6"/><text class="s" x="32" y="372">The PSA (the tickets)</text>
+
+  <path class="ln" d="M226 73 V367 M226 220 H256" marker-end="url(#a)"/>
+
+  <text class="h" x="262" y="38">One Zetaris layer</text>
+  <rect class="zet" x="262" y="56" width="236" height="328" rx="8"/>
+  <text class="h" x="276" y="84">Lightning SQL</text>
+  <text class="s" x="276" y="112">DRIFT: the app Postgres</text>
+  <text class="s" x="276" y="136">drift_usl: the semantic layer,</text>
+  <text class="s" x="276" y="154">25 entities, every read through it</text>
+  <text class="s" x="276" y="182">6 DQ rules, run_complete first</text>
+  <text class="s" x="276" y="210">CLOUDFLARE: the DNS API,</text>
+  <text class="s" x="276" y="228">read live at each query</text>
+  <text class="s" x="276" y="256">LESSONS and RULES: the</text>
+  <text class="s" x="276" y="274">technician's memory and the</text>
+  <text class="s" x="276" y="292">policy file, joined across</text>
+  <text class="m" x="276" y="330">Every query SELECT-only</text>
+  <text class="m" x="276" y="348">through the SQL guard</text>
+
+  <path class="ln" d="M498 220 H534" marker-end="url(#a)"/>
+
+  <text class="h" x="540" y="38">One pass, per tenant</text>
+  <rect class="sql" x="540" y="56" width="210" height="36" rx="6"/><text class="s" x="552" y="79">Gate each run on its population</text>
+  <rect class="sql" x="540" y="103" width="210" height="36" rx="6"/><text class="s" x="552" y="126">Detect: the joins across sources</text>
+  <rect class="sql" x="540" y="150" width="210" height="36" rx="6"/><text class="s" x="552" y="173">Check: the SQL catalogue</text>
+  <rect class="nv" x="540" y="197" width="210" height="36" rx="6"/><text class="s" x="552" y="220">Nemotron Lightning picks checks</text>
+  <rect class="nv" x="540" y="244" width="210" height="36" rx="6"/><text class="s" x="552" y="267">Nemotron Ultra tries to refute</text>
+  <rect class="mt" x="540" y="291" width="210" height="36" rx="6"/><text class="s" x="552" y="314">Count it only on a signed receipt</text>
+  <rect class="mt" x="540" y="338" width="210" height="36" rx="6"/><text class="s" x="552" y="361">Decide: policy, then memory</text>
+  <path class="ln" d="M645 92 V101 M645 139 V148 M645 186 V195 M645 233 V242 M645 280 V289 M645 327 V336"/>
+
+  <path class="ln" d="M750 356 H770 V131 H794" marker-end="url(#a)"/>
+
+  <text class="h" x="800" y="38">One verb per finding</text>
+  <rect class="out" x="800" y="56" width="180" height="150" rx="8"/>
+  <text class="h" x="814" y="84">ROLLBACK</text>
+  <text class="h" x="814" y="108">FIX</text>
+  <text class="h" x="814" y="132">ESCALATE</text>
+  <text class="h" x="814" y="156">HOLD, with an expiry</text>
+  <text class="h" x="814" y="180">ADOPT</text>
+  <text class="s" x="800" y="236">The ledger: one row a finding</text>
+  <text class="s" x="800" y="260">The Actor, behind --apply</text>
+  <text class="s" x="800" y="284">A ticket, by the rule</text>
+  <text class="s" x="800" y="308">The owner's report</text>
+  <text class="s" x="800" y="332">The technician's console</text>
+  <text class="m" x="800" y="372">Why it changed: from the</text>
+  <text class="m" x="800" y="390">vault, journals and audit log</text>
+</svg>

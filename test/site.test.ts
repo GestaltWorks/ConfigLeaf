@@ -29,7 +29,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  buildSite, DECK_URL, escapeHtml, formatTraceLine, headerStats, headlineTile, markdownToHtml, MAX_BYTES, nemotronView, newestResults, readTrace, renderSiteHtml, REPORT_LINK, repositoryUrl, SAMPLE_COMMAND, scanOutput, SITE_TEMPLATE, SiteError, word, type BuildResult, type ExampleView, type JudgeSelectView, type SiteInput,
+  buildSite, DECK_URL, escapeHtml, EXECUTIVE_LINK, formatTraceLine, headerStats, headlineTile, markdownToHtml, MAX_BYTES, nemotronView, newestResults, readTrace, renderSiteHtml, REPORT_LINK, repositoryUrl, SAMPLE_COMMAND, scanOutput, SITE_TEMPLATE, SiteError, word, type BuildResult, type ExampleView, type JudgeSelectView, type SiteInput,
 } from "../scripts/build-site.ts";
 import { templateById } from "../src/catalogue/templates.ts";
 import { config } from "../src/config.ts";
@@ -40,6 +40,7 @@ import { fileSourceRows, sourceRows, sourcesMarkdown } from "../src/document/ren
 import { VERBS } from "../src/pipeline.ts";
 import { Redactor } from "../src/redactor.ts";
 import { DQ_RULES, NAMESPACE, REST_DB, USL, USL_NAME, USL_TABLES, uslRelation } from "../src/zetaris/setup.ts";
+import { MARK } from "../src/design/theme.ts";
 
 /** Zetaris's text with each relation it reads a table as put back as the table's name: the text sql.js runs. */
 function asTables(sql: string): string {
@@ -224,9 +225,9 @@ describe("the replay page", () => {
     // the script and the styles name no host but localhost (the file:// hint); the document's ticket url is text in a list item
     const code = [...html.matchAll(/<(script|style)>([\s\S]*?)<\/\1>/g)].map((m) => m[2]).join("\n");
     expect(code).not.toMatch(/https?:\/\/(?!localhost)/);
-    // the tile's caption and the header's two Nemotron counts link to the tab, then the Report link to the owner's report
-    // in the repository, then the four tabs
-    expect([...html.matchAll(/\b(?:href|src|action)="([^"]*)"/g)].map((m) => m[1])).toEqual(["#nemotron", "#nemotron", "#nemotron", REPORT_LINK, "#findings", "#document", "#sources", "#nemotron"]);
+    // the tile's caption and the header's two Nemotron counts link to the tab, then the Report and Executive report
+    // links to the two reports in the repository, then the four tabs: one link to each report, no second nav
+    expect([...html.matchAll(/\b(?:href|src|action)="([^"]*)"/g)].map((m) => m[1])).toEqual(["#nemotron", "#nemotron", "#nemotron", REPORT_LINK, EXECUTIVE_LINK, "#findings", "#document", "#sources", "#nemotron"]);
     expect([...html.matchAll(/fetch\(([^)]*)\)/g)].map((m) => m[1])).toEqual(['"data/index.json"', "e.file"]);
   });
 
@@ -236,8 +237,26 @@ describe("the replay page", () => {
     expect(REPORT_LINK).toBe("../examples/report.html");
     expect(existsSync(path.join(ROOT, "docs", REPORT_LINK))).toBe(true);
     expect(header).toContain(`<p class="report"><a href="${REPORT_LINK}">Report</a><br><span class="meta">The owner's report, <code>examples/report.html</code>: one HTML file over the same recorded bundle as the Document tab, opened from a clone of the repository.</span></p>`);
+    // the executive report beside it, examples/executive.html, the same way
+    expect(EXECUTIVE_LINK).toBe("../examples/executive.html");
+    expect(existsSync(path.join(ROOT, "docs", EXECUTIVE_LINK))).toBe(true);
+    expect(header).toContain(`<p class="report"><a href="${EXECUTIVE_LINK}">Executive report</a><br><span class="meta">The executive report, <code>examples/executive.html</code>: `);
     const nav = matchOf(/<nav class="tabs"[\s\S]*?<\/nav>/, header, "the header's tab row")[0];
     expect(nav).not.toContain(REPORT_LINK);
+    expect(nav).not.toContain(EXECUTIVE_LINK);
+    // the one design's leaf mark beside the heading; the tabs are the page's one nav
+    expect(header).toContain(`<div class="brand">${MARK}<h1>ConfigLeaf: every finding, with the SQL behind it</h1></div>`);
+    expect(html.match(/<nav\b[^>]*>/g)).toEqual(['<nav class="tabs" aria-label="Page sections">']);
+  });
+
+  it("the page's style block reads one set of tokens, the theme's, and sets no selector twice outside its media blocks", () => {
+    const css = /<style>([\s\S]*?)<\/style>/.exec(built.files.get("index.html")!)![1];
+    expect(css).not.toMatch(/var\(--(?:code|chip|bad|bad-bg|warn|warn-bg|accent)\)/);
+    expect(css).not.toMatch(/--(?:code|chip|bad|warn|accent):/);
+    const top = css.replace(/@media[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, "");
+    const count = new Map<string, number>();
+    for (const m of top.matchAll(/([^{}]+)\{[^{}]*\}/g)) for (const sel of m[1].split(",").map((x) => x.trim()).filter(Boolean)) count.set(sel, (count.get(sel) ?? 0) + 1);
+    expect([...count].filter(([, n]) => n > 1)).toEqual([]);
   });
 
   it("the header counts each finding once by its finding id, beside the 9 rows over 3 slices, as static HTML; each slice keeps its own counts", () => {
@@ -642,8 +661,10 @@ describe("the landing page, docs/site.html", () => {
     const ids = new Set(all(html, /\bid="([^"]+)"/g));
     for (const href of all(html, /\b(?:href|src|action)="([^"]*)"/g).map(plain)) {
       if (href.startsWith("#")) expect(ids.has(href.slice(1)), href).toBe(true);
-      else expect(["index.html", "index.html#sources", REPORT_LINK, ...(DECK_URL ? [DECK_URL] : []), ...(repo ? [repo] : [])], href).toContain(href);
+      else expect(["index.html", "index.html#sources", REPORT_LINK, EXECUTIVE_LINK, ...(DECK_URL ? [DECK_URL] : []), ...(repo ? [repo] : [])], href).toContain(href);
     }
+    // the pages nav links the executive report beside the owner's report
+    expect(/<nav class="pages" aria-label="Pages">[\s\S]*?<\/nav>/.exec(html)![0]).toContain(`<a href="${REPORT_LINK}">Owner's report</a>\n<a href="${EXECUTIVE_LINK}">Executive report</a>`);
     // DECK_URL is empty and package.json names no repository: both links are left out, their template lines with them
     expect(html.includes(">Deck</a>")).toBe(DECK_URL !== "");
     expect(html.includes(">Repository</a>")).toBe(repo !== null);

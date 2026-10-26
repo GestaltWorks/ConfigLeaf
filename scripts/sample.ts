@@ -60,8 +60,8 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { config, redact } from "../src/config.ts";
 import { renderDocument } from "../src/document/render.ts";
-import { policyFileShown, sampleReport, textSha256 } from "../src/document/sample.ts";
-import { countLabels } from "../src/redactor.ts";
+import { exportLabels, labelsIn } from "../src/document/export.ts";
+import { loadSamplePolicy, policyFileShown, sampleReport, textSha256 } from "../src/document/sample.ts";
 import { DataLayer } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { decisionInstantWith } from "../src/data/instant.ts";
@@ -156,6 +156,8 @@ say(table.header({ command: "sample", tenant: reportTenant ?? tenants.join(", ")
 try {
   const engine = await SqlJsEngine.create();
   const counts = engine.loadBundle(bundle);
+  // the shipped policy for the recording's tenants before any pass, as the eval runner loads it (src/document/sample.ts)
+  loadSamplePolicy(engine, bundle as unknown as Record<string, unknown>);
   tracer.emit({ agent: "collector", action: "observe", status: "ok", output_summary: `${BUNDLE} loaded into sql.js: ${Object.entries(counts).map(([t, n]) => `${t} ${n}`).join(", ")}`, detail: "model: none (recorded, redacted rows exported from the app Postgres; see sample/bundle.json _note)" });
   const memory = new TechnicianMemory({ storage: "read" });
   // The file tables Zetaris reads as LESSONS.lesson and RULES.rule, the same rows npm run zetaris:setup writes there.
@@ -223,8 +225,8 @@ try {
   if (reportTenant) {
     const doc = await renderDocument(layer, { tenant: reportTenant, classes: new Map(pass.findings.map((f) => [f.id, f.finding.class])), source: `sql.js over ${BUNDLE}`, tracer, report: true });
     const html = sampleReport(doc, pass.findings, { path: BUNDLE, sha256: textSha256(readFileSync(path.join(ROOT, BUNDLE), "utf8")) });
-    const labels = [...config.redactWords, ...config.exportDenyWords];
-    const hits = { document: Object.keys(countLabels(doc.markdown, labels)).length, report: Object.keys(countLabels(html, labels)).length };
+    const labels = exportLabels();
+    const hits = { document: labelsIn(doc.markdown, labels), report: labelsIn(html, labels) };
     const refused = (["document", "report"] as const).find((k) => hits[k] > 0);
     if (refused) {
       const why = `deny-list probe: ${hits[refused]} of ${count(labels.length, "configured label")} appear in the ${refused === "document" ? "page" : "report"}; ${DOCUMENT} and ${REPORT} not written`;

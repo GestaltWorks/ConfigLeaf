@@ -5,20 +5,34 @@
 // Contract:
 //   - Binds the host given (127.0.0.1) and the port given (0 for an ephemeral one). A request whose Host header names
 //     another host is refused (421), so a page of another origin cannot reach the console through DNS rebinding.
-//   - GET /overview, /settings, /findings, /actions, /traces, /traces/view?f=<dir>/<file>, /sources, /policy,
-//     /document, and /overview/report (the owner's report, src/document/report.ts renderReport over the snapshot's
-//     rows, with its outbound links opening in the top window). / redirects to /overview. Anything else is 404.
+//   - GET /work (the work queue, the landing page), /object?key=<an object's key> (one object on a page of its own),
+//     /overview, /executive?period=7d|30d|all (the executive report, src/document/executive.ts, over the period
+//     ending now: the snapshot's document rows and the report's own reads), /settings, /templates, /findings, /actions,
+//     /traces, /traces/view?f=<dir>/<file>, /sources, /policy, /document, /overview/report (the owner's report,
+//     src/document/report.ts renderReport over the snapshot's rows, with its outbound links opening in the top window)
+//     and /executive/download?period= (the executive report as one standalone file, an attachment named
+//     executive-<tenant>-<period>.html by downloadName, a tenant id only, with filename and an RFC 5987 filename*; its
+//     CSP the file's one style block by hash, fileCsp refusing a file with none or two). / redirects to /work.
+//     Anything else is 404. Every answer's headers come from answerHeaders: no-store, the CSP the server chose and the
+//     two security headers are fixed; a route sets its content type and a download's content-disposition, nothing else.
+//   - A policy whose highest version holds two rules of one family (pages.ts latestRules) is named on Templates, printed
+//     once and traced once (ConsoleOptions.tracer, logs/console_*.jsonl), never tie-broken in silence.
+//   - One tenant at a time: the header's switcher (POST /do/tenant) names one of the tenants the store holds runs of
+//     (src/console/state.ts Backend.tenants) and every page reads that tenant's rows from then on; each tenant keeps
+//     its own pass, snapshot and source counts, and its first pass runs when the switcher first names it (at the
+//     sample's instant in sample mode, in the background live). A request reads the tenant it began with.
 //     Every page is no-store and carries a CSP with no 'unsafe-inline': the console's pages link their stylesheet and
 //     script from /assets/ (src/console/html.ts ASSETS, the path naming the content's hash, served public for a year,
 //     immutable, with an ETag), and the report's one style block and two scripts carry the response's nonce.
 //   - Traces: the *.jsonl files of the trace directories whose lines name the console's tenant in a command's own
 //     place (traceTenants): a cycle's step lines, the live pass's file-table refresh, a receipt's app, the console's
 //     pass. The viewer opens those only, and shows a ticket URL in a line as the ticket's number.
-//   - POST /do/unlock, /do/approve, /do/lock, /do/exception, /do/pass, form-encoded, at most 64 KB. Each carries the
-//     process's CSRF token (refused 403 when it differs, when an Origin header names another origin, or when
-//     Sec-Fetch-Site says cross-site); every action but the pass carries confirm=yes, which the page sets after its
-//     own confirmation. With Accept: application/json the answer is { ok, title, lines }; without, the page named by
-//     `return` rendered with the toast.
+//   - POST /do/unlock, /do/approve, /do/lock, /do/exception, /do/pass, /do/tenant, form-encoded, at most 64 KB. Each
+//     carries the process's CSRF token (refused 403 when it differs, when an Origin header names another origin, or
+//     when Sec-Fetch-Site says cross-site); every action but the pass and the switch carries confirm=yes, which the
+//     page sets after its own confirmation. With Accept: application/json the answer is { ok, title, lines }; without,
+//     the page named by `return` rendered with the toast, and for a switch a 303 to that page (a page of the nav, else
+//     the Overview).
 //       unlock     a change_window row on the object (src/policy/window.ts newWindow: who, 1 to 72 hours, why);
 //                  refused while a window is open on it, while the windows cannot be read (a window the passes cannot
 //                  read holds nothing), and when the row's id is stored already (the same object at the same
@@ -32,11 +46,14 @@
 //                  scoped as npm run answer scopes it), until a date (00:00 UTC that day) or an instant in the
 //                  millisecond form, nothing looser; in sample mode only when the console was started with --write
 //       pass       src/console/state.ts runConsolePass at the clock: recorded in sample mode, a dry pass live; never act
-//     A write invalidates the snapshot, so the next page reads the store again.
+//       tenant     the tenant every page reads from then on, one the store holds runs of; nothing written
+//     A write invalidates every tenant's snapshot, so the next page reads the store again.
 //   - Sample mode starts with the sample's own pass at its decision instant, as npm run sample decides, recorded into
 //     the sql.js ledger; live mode starts its first dry pass in the background and serves the ledger until it ends.
+//   - GET /api/v1 and its three endpoints (src/console/api.ts): the read-only JSON of the pages' own data, answered before the
+//     page routes, after the Host rule, with the same headers; the dispatch is the only API code here.
 
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync, readSync, readdirSync, statSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
@@ -47,16 +64,23 @@ import type { FindingCause } from "../data/rows.ts";
 import { LAYER_TABLES } from "../data/layer.ts";
 import { SCHEMA_TABLES } from "../data/schema.ts";
 import { FILE_DATASOURCES, FILE_TABLES } from "../data/files.ts";
+import { PERIODS, evalReceipts, isPeriod, readExecutive, renderExecutive, type Executive, type ExecutiveContext, type Period } from "../document/executive.ts";
 import { REPORT_MODE, renderReport, repoTip, utc } from "../document/report.ts";
 import { policyFileShown } from "../document/sample.ts";
 import { MemoryError, TechnicianMemory, scopeValuesOf, type ScopeType } from "../engine/memory.ts";
-import { PLAIN, Table, passView } from "../loop/present.ts";
+import { PLAIN, Table, passView, tail } from "../loop/present.ts";
+import { FileTracer, traceIdOf } from "../loop/trace.ts";
+import type { Tracer } from "../trace.ts";
 import { WindowError, freeText, newWindow } from "../policy/window.ts";
 import { DNS_FIELDS, approveRun, ApproveError, type ApprovalSelection } from "../vault/approve.ts";
-import { barCounts, barHtml, actionsPage, decodeKey, documentPage, errorPage, findingsPage, overviewPage, passForm, plainUrls, policyPage, settingsPage, sourcesPage, traceViewPage, tracesPage, type SourceCount, type TraceEventRow, type TraceFile, type View } from "./pages.ts";
+import { apiAnswer } from "./api.ts";
+import {
+  barCounts, barHtml, actionsPage, decodeKey, encodeKey, documentPage, duplicateText, errorPage, executivePage, findingsPage, latestRules, objectPage, overviewPage, passForm, plainUrls, policyPage, settingsPage, sourcesPage,
+  stripHtml, templatesOf, templatesPage, traceViewPage, tracesPage, workPage, type SourceCount, type TraceEventRow, type TraceFile, type View,
+} from "./pages.ts";
 import { ASSETS, escapeHtml, layout, type Asset, type Shell } from "./html.ts";
 import {
-  classesOf, decisionsOfLedger, decisionsOfPass, readSnapshot, runConsolePass, settingObjects, vaultCommitOf,
+  classesOf, decisionsOfLedger, decisionsOfPass, isTenantId, readSnapshot, runConsolePass, settingObjects, vaultCommitOf, withTenant,
   type Backend, type PassRun, type SettingObject, type Snapshot,
 } from "./state.ts";
 
@@ -88,14 +112,20 @@ export interface ConsoleOptions {
   /** The policy file the report's footer names. */
   policyFile?: string;
   print?: (line: string) => void;
+  /** Where the console's own findings go (a duplicate rule family); default a FileTracer in logs/ when tracePasses is on, else none. */
+  tracer?: Tracer;
+  /** The download's renderer: src/document/executive.ts renderExecutive unless a test gives another. */
+  renderFile?: typeof renderExecutive;
 }
 
 export interface ConsoleServer {
   url: string;
   port: number;
   csrf: string;
-  /** The pass the console holds, after any running one ends. */
+  /** The pass the console holds for the tenant the pages read, after any running one ends. */
   settled(): Promise<PassRun | null>;
+  /** The tenant the pages read now. */
+  tenant(): string;
   close(): Promise<void>;
 }
 
@@ -112,72 +142,144 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
   const t = (s: string | number | null | undefined): string => escapeHtml(b.redactor.text(s === null || s === undefined ? "" : String(s)));
   const tip = b.mode === "live" ? repoTip(ROOT) : null;
 
-  let pass: PassRun | null = null;
-  let running: { startedAt: string; done: Promise<void> } | null = null;
-  let snapshot: Promise<Snapshot> | null = null;
-  let sources: Promise<SourceCount[]> | null = null;
-
-  const snap = (): Promise<Snapshot> => {
-    if (!snapshot) {
-      const p = readSnapshot(b, classesOf(pass));
-      snapshot = p;
-      p.catch(() => { if (snapshot === p) snapshot = null; });
-    }
-    return snapshot;
+  // One state per tenant: the console's pass, a pass running, the snapshot and the source counts. The header's switcher
+  // sets `current`; a request reads the tenant it began with.
+  // `first` is the tenant's first pass once one is asked for: set before any await, so two requests that name a tenant
+  // at once share one pass, never two.
+  interface TenantState { pass: PassRun | null; running: { startedAt: string; done: Promise<void> } | null; snapshot: Promise<Snapshot> | null; sources: Promise<SourceCount[]> | null; first: Promise<void> | null }
+  const states = new Map<string, TenantState>();
+  let current = b.tenant;
+  const st = (tenant: string): TenantState => {
+    let s = states.get(tenant);
+    if (!s) states.set(tenant, (s = { pass: null, running: null, snapshot: null, sources: null, first: null }));
+    return s;
   };
-  const invalidate = (): void => { snapshot = null; sources = null; };
+  const be = (tenant: string): Backend => withTenant(b, tenant);
 
-  const doPass = async (decidedAt: string): Promise<PassRun> => {
-    const r = await runConsolePass(b, { decidedAt, trace: o.tracePasses !== false });
-    pass = r;
+  // the console's own trace: a duplicate rule family, once per family and process, beside the line it prints
+  let ownTracer: Tracer | null = o.tracer ?? null;
+  const tracer = (): Tracer | null => (ownTracer ??= o.tracePasses === false ? null : new FileTracer(traceIdOf("console"), { model: "none" }));
+  const reported = new Set<string>();
+  const reportDuplicates = (tenant: string, s: Snapshot): void => {
+    for (const d of latestRules(s.doc.data.rules).duplicates) {
+      const key = `${d.family}\u001f${d.version}\u001f${d.rule_ids.join(",")}`;
+      if (reported.has(key)) continue;
+      reported.add(key);
+      tracer()?.emit({ agent: "console", action: "check", status: "failed", input_summary: `console policy ${tenant}`, output_summary: duplicateText(d) });
+      print(`console: policy: ${b.redactor.text(duplicateText(d))}`);
+    }
+  };
+
+  const snap = (tenant: string): Promise<Snapshot> => {
+    const s = st(tenant);
+    if (!s.snapshot) {
+      const p = readSnapshot(be(tenant), classesOf(s.pass));
+      s.snapshot = p;
+      p.then((x) => reportDuplicates(tenant, x), () => { if (s.snapshot === p) s.snapshot = null; }).catch(() => undefined);
+    }
+    return s.snapshot;
+  };
+  // A write or a pass changes the one store every tenant reads: the "*" policy rows, the lesson store and the file
+  // tables are shared, and Sources counts every row of the shared tables. No write can be shown to touch one tenant's
+  // rows alone, so every tenant reads the store again; a snapshot is re-read lazily, at the next page of that tenant.
+  const invalidate = (): void => { for (const s of states.values()) { s.snapshot = null; s.sources = null; } };
+
+  const doPass = async (tenant: string, decidedAt: string): Promise<PassRun> => {
+    const r = await runConsolePass(be(tenant), { decidedAt, trace: o.tracePasses !== false });
+    st(tenant).pass = r;
     invalidate();
     return r;
   };
-  const startPass = (decidedAt: string): Promise<void> => {
+  const startPass = (tenant: string, decidedAt: string): Promise<void> => {
+    const s = st(tenant);
     const startedAt = clock().toISOString();
-    const done = doPass(decidedAt).then(() => undefined, (e: Error) => { print(`console: the pass failed: ${b.redactor.text(redact(e.message))}`); }).finally(() => { running = null; });
-    running = { startedAt, done };
+    const done = doPass(tenant, decidedAt).then(() => undefined, (e: Error) => { print(`console: the pass of ${tenant} failed: ${b.redactor.text(redact(e.message))}`); }).finally(() => { s.running = null; });
+    s.running = { startedAt, done };
     return done;
   };
+  /**
+   * A tenant's first pass, when the console starts and when the switcher first names it: at the sample's instant in
+   * sample mode, in the background live. The guard (TenantState.first) is set synchronously, before the pass is
+   * awaited, so concurrent switches to one tenant wait for the one pass; a first pass that fails clears it, and the
+   * next switch tries again.
+   */
+  const firstPass = (tenant: string): Promise<void> => {
+    const s = st(tenant);
+    if (s.first) return s.first;
+    const run = async (): Promise<void> => {
+      if (o.firstPass === "sync") {
+        const r = await doPass(tenant, b.sampleInstant ?? clock().toISOString());
+        print(`console: first pass of ${tenant} decided at ${r.decidedAt}`);
+      } else if (o.firstPass === "background") void startPass(tenant, clock().toISOString());
+    };
+    const p = run().catch((e: unknown) => { if (s.first === p) s.first = null; throw e; });
+    s.first = p;
+    return p;
+  };
 
-  if (o.firstPass === "sync") await doPass(b.sampleInstant ?? clock().toISOString());
+  // the console's own tenant: in sample mode its pass before listening, live a dry pass once it listens
+  if (o.firstPass === "sync") await firstPass(current);
 
-  const view = async (): Promise<View> => {
-    const s = await snap();
+  const view = async (tenant: string): Promise<View> => {
+    const s = await snap(tenant);
+    const state = st(tenant);
+    const pass = state.pass;
     const now = clock().toISOString();
     const decisions = pass ? decisionsOfPass(pass) : decisionsOfLedger(s.doc.data.open, s.windowHolds);
     const causes = new Map<string, FindingCause>((s.doc.data.causes ?? []).map((c) => [c.disposition_id, c]));
     for (const c of pass?.explained.causes ?? []) causes.set(c.disposition_id, c.cause);
-    const traces = listTraces(traceDirs, b.tenant);
+    const traces = listTraces(traceDirs, tenant);
     return {
-      tenant: b.tenant, mode: b.mode, now, csrf, t, snapshot: s, pass, passRunning: running?.startedAt ?? null, decisions, source: pass ? "pass" : "ledger", causes,
-      objects: settingObjects(s, decisions, causes, b.tenant, now), memoryWritable: b.memoryWritable, dataSource: b.source, traces,
+      tenant, mode: b.mode, now, csrf, t, snapshot: s, pass, passRunning: state.running?.startedAt ?? null, decisions, source: pass ? "pass" : "ledger", causes,
+      objects: settingObjects(s, decisions, causes, tenant, now), memoryWritable: b.memoryWritable, dataSource: b.source, traces,
       lastCycle: traces.find((f) => f.id.startsWith("cycle_")) ?? null, datasource: datasourceOf(b),
     };
   };
 
   const modeLine = b.mode === "sample" ? `sample mode, ${b.source}; changes live for this process` : `live, ${b.source}; passes are dry`;
 
-  const page = async (name: Shell["page"], title: string, render: (v: View) => { body: string; extra?: string }, extra: { toast?: Toast | null; open?: string | null; bar?: boolean } = {}): Promise<string> => {
-    const v = await view();
+  /** `strip` replaces the summary bar with the work queue's strip, which holds Run a pass itself: the navigation's is left out. `wide` gives a table page the room of a wide screen. */
+  const page = async (tenant: string, name: Shell["page"], title: string, render: (v: View) => { body: string; extra?: string }, extra: { toast?: Toast | null; open?: string | null; bar?: boolean; strip?: boolean; wide?: boolean; returnTo?: string } = {}): Promise<string> => {
+    const v = await view(tenant);
     const r = render(v);
     const c = barCounts(v);
     return layout({
-      title, page: name, tenant: b.tenant, modeLine, bar: extra.bar === false ? null : barHtml(v), csrf,
-      nav: { settings: v.objects.length, findings: v.decisions.length, needs: c.needs, actions: (v.snapshot.doc.data.actions ?? []).length, traces: v.traces.length },
-      passForm: passForm(v, "side"), body: r.body, extra: r.extra, toast: extra.toast ? { ok: extra.toast.ok, title: extra.toast.title, lines: extra.toast.lines } : null, open: extra.open ?? null,
+      title, page: name, tenant, tenants: b.tenants, tenantsError: b.tenantsError ?? null, returnTo: extra.returnTo ?? PAGE_PATH[name], modeLine, bar: extra.strip ? stripHtml(v) : extra.bar === false ? null : barHtml(v), csrf,
+      nav: { settings: v.objects.length, findings: v.decisions.length, needs: c.needs, actions: (v.snapshot.doc.data.actions ?? []).length, traces: v.traces.length, templates: templatesOf(v).length },
+      passForm: extra.strip ? "" : passForm(v, "side"), body: r.body, extra: r.extra, toast: extra.toast ? { ok: extra.toast.ok, title: extra.toast.title, lines: extra.toast.lines } : null, open: extra.open ?? null, wide: extra.wide === true,
     });
   };
 
-  const render = async (route: string, query: URLSearchParams, toast: Toast | null = null, nonce = ""): Promise<{ status: number; type: string; body: string } | null> => {
+  /** The executive report of a tenant over a period ending now, from the snapshot's document rows and the report's own reads. */
+  const executive = async (tenant: string, period: Period): Promise<{ v: View; x: Executive; ctx: ExecutiveContext }> => {
+    const v = await view(tenant);
+    const x = await readExecutive(b.layer, v.snapshot.doc.data, { tenant, period, at: v.now, classes: classesOf(v.pass), receipts: evalReceipts(ROOT) });
+    const ids = new Set(v.decisions.map((d) => d.finding_id));
+    const ctx: ExecutiveContext = { redactor: b.redactor, policyFile: o.policyFile ?? policyFileShown(), bundle: b.bundle, tip, findingHref: (id) => (ids.has(id) ? `/findings#f-${id}` : null) };
+    return { v, x, ctx };
+  };
+
+  /** A route's answer: its status, its type and its body, and for a download the file name; the server sets every other header (answerHeaders). */
+  const render = async (tenant: string, route: string, query: URLSearchParams, toast: Toast | null = null, nonce = ""): Promise<{ status: number; type: string; body: string; attachment?: string } | null> => {
     const html = (body: string, status = 200) => ({ status, type: "text/html; charset=utf-8", body });
     switch (route) {
-      case "/overview": return html(await page("overview", "Overview", (v) => ({ body: overviewPage(v) }), { toast, bar: false }));
+      case "/work": return html(await page(tenant, "work", "Work queue", (v) => workPage(v), { toast, strip: true, wide: true }));
+      case "/object": {
+        // the key a page's link names: the object of the latest passing runs, or a page that says it is not there
+        let key = "";
+        try { key = query.get("key") ?? ""; decodeKey(key); } catch { key = ""; }
+        const v = await view(tenant);
+        const obj = key ? v.objects.find((x) => encodeKey(x.key) === key) : undefined;
+        if (!obj) return html(await page(tenant, "settings", "Object not found", () => ({ body: errorPage(`No such object in the latest passing runs of ${tenant}.`) })), 404);
+        // the title is data like any other: through the redactor (layout escapes it)
+        return html(await page(tenant, "settings", b.redactor.text(obj.kind === "file" ? tail(obj.object_id) : obj.name), (x) => objectPage(x, obj), { toast, wide: true }));
+      }
+      case "/overview": return html(await page(tenant, "overview", "Overview", (v) => ({ body: overviewPage(v) }), { toast, bar: false }));
       case "/overview/report": {
-        const v = await view();
+        const v = await view(tenant);
         const report = renderReport(v.snapshot.doc.data, {
           redactor: b.redactor, mode: REPORT_MODE.dryRun, trace: b.mode === "live" && v.lastCycle ? { id: v.lastCycle.id, path: `${v.lastCycle.dir}/${v.lastCycle.name}` } : null,
-          tip, policyFile: o.policyFile ?? policyFileShown(), findings: pass?.step.findings ?? [], bundle: b.bundle,
+          tip, policyFile: o.policyFile ?? policyFileShown(), findings: v.pass?.step.findings ?? [], bundle: b.bundle,
           links: {
             replay: null, replayAnchors: {}, document: "/document", trace: v.lastCycle ? `/traces/view?f=${encodeURIComponent(v.lastCycle.ref)}` : null,
             policy: "/policy", traces: "/traces", eval: null, readme: null, lessons: null, receipts: null,
@@ -185,43 +287,68 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
         });
         return html(nonceReport(report, nonce));
       }
+      case "/executive": {
+        const period = periodOf(query);
+        const { x, ctx } = await executive(tenant, period);
+        return html(await page(tenant, "executive", "Executive report", () => ({ body: executivePage(x, ctx) }), { toast, returnTo: `/executive?period=${period}` }));
+      }
+      case "/executive/download": {
+        const period = periodOf(query);
+        // the file is named for the tenant: an id src/policy/schema.ts TENANT reads, or no file (state.ts tenantIds lists no other)
+        let attachment: string;
+        try { attachment = downloadName(tenant, period); } catch (e) {
+          return html(await page(tenant, "executive", "Executive report", () => ({ body: errorPage(b.redactor.text(redact((e as Error).message))) })), 400);
+        }
+        const { x, ctx } = await executive(tenant, period);
+        // the file and its CSP before anything is sent: a renderer that fails, or a file fileCsp refuses, is a 500 page
+        try {
+          const file = (o.renderFile ?? renderExecutive)(x, ctx);
+          fileCsp(file);
+          return { status: 200, type: "text/html; charset=utf-8", body: file, attachment };
+        } catch (e) {
+          print(`console: the executive report of ${tenant} was not written as a file: ${b.redactor.text(redact((e as Error)?.message ?? String(e)))}`);
+          return html(await page(tenant, "executive", "Executive report", () => ({ body: errorPage(`The executive report could not be written as one file: ${b.redactor.text(redact((e as Error)?.message ?? String(e))).split("\n")[0].slice(0, 200)}. The page itself still reads it.`) })), 500);
+        }
+      }
+      case "/templates": return html(await page(tenant, "templates", "Templates", (v) => ({ body: templatesPage(v) }), { toast }));
       case "/settings": {
         const open = query.get("open");
         let key: string | null = null;
         if (open) try { key = open; decodeKey(open); } catch { key = null; }
-        return html(await page("settings", "Settings", (v) => {
+        return html(await page(tenant, "settings", "Settings", (v) => {
           const r = settingsPage(v, { group: query.get("group") ?? undefined, lock: query.get("lock") ?? undefined, status: query.get("status") ?? undefined, q: query.get("q") ?? undefined });
           return { body: r.body, extra: r.templates };
-        }, { toast, open: key }));
+        }, { toast, open: key, wide: true }));
       }
-      case "/findings": return html(await page("findings", "Findings", (v) => ({ body: findingsPage(v) }), { toast }));
-      case "/actions": return html(await page("actions", "Actions and tickets", (v) => ({ body: actionsPage(v) }), { toast }));
-      case "/traces": return html(await page("traces", "Traces", (v) => ({ body: tracesPage(v) }), { toast }));
+      case "/findings": return html(await page(tenant, "findings", "Findings", (v) => ({ body: findingsPage(v) }), { toast }));
+      case "/actions": return html(await page(tenant, "actions", "Actions and tickets", (v) => ({ body: actionsPage(v) }), { toast }));
+      case "/traces": return html(await page(tenant, "traces", "Traces", (v) => ({ body: tracesPage(v) }), { toast }));
       case "/traces/view": {
         const ref = query.get("f") ?? "";
-        const f = listTraces(traceDirs, b.tenant).find((x) => x.ref === ref);
-        if (!f) return html(await page("traces", "Trace not found", () => ({ body: errorPage(`No trace ${ref} of ${b.tenant} in ${traceDirs.map((d) => d.label).join(" or ")}.`) })), 404);
+        const f = listTraces(traceDirs, tenant).find((x) => x.ref === ref);
+        if (!f) return html(await page(tenant, "traces", "Trace not found", () => ({ body: errorPage(`No trace ${ref} of ${tenant} in ${traceDirs.map((d) => d.label).join(" or ")}.`) })), 404);
         const dir = traceDirs.find((d) => d.label === f.dir)!;
         const { events, skipped } = readTrace(path.join(dir.dir, f.name), (s) => plainUrls(b.redactor.text(redact(s))));
-        return html(await page("traces", `Trace ${f.id}`, (v) => ({ body: traceViewPage(v, f, events, skipped) })));
+        return html(await page(tenant, "traces", `Trace ${f.id}`, (v) => ({ body: traceViewPage(v, f, events, skipped) })));
       }
       case "/sources": {
-        sources ??= countSources(b);
-        const counts = await sources;
-        return html(await page("sources", "Sources", (v) => ({ body: sourcesPage(v, counts) }), { toast }));
+        const s = st(tenant);
+        s.sources ??= countSources(be(tenant));
+        const counts = await s.sources;
+        return html(await page(tenant, "sources", "Sources", (v) => ({ body: sourcesPage(v, counts) }), { toast }));
       }
-      case "/policy": return html(await page("policy", "Policy", (v) => ({ body: policyPage(v) })));
-      case "/document": return html(await page("document", "The owner's document", (v) => ({ body: documentPage(v) })));
+      case "/policy": return html(await page(tenant, "policy", "Policy", (v) => ({ body: policyPage(v) })));
+      case "/document": return html(await page(tenant, "document", "The owner's document", (v) => ({ body: documentPage(v) })));
       default: return null;
     }
   };
 
   // ---- the actions ----
 
-  const objectOf = async (keyParam: string): Promise<SettingObject> => {
+  const objectOf = async (tenant: string, keyParam: string): Promise<SettingObject> => {
     let key: string;
     try { key = decodeKey(keyParam); } catch { throw new ActionError("the form names no object"); }
-    const v = await view();
+    const v = await view(tenant);
     const obj = v.objects.find((x) => x.key === key);
     if (!obj) throw new ActionError("the object is not in the latest passing runs of this tenant");
     return obj;
@@ -229,14 +356,14 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
   const sampleLine = (): string[] => (b.mode === "sample" ? [SAMPLE_NOTE] : []);
   const objectName = (obj: SettingObject): string => (obj.kind === "file" ? `${obj.object_id} on ${obj.host}` : `record ${obj.name}`);
 
-  const actions: Record<string, (f: URLSearchParams) => Promise<Toast>> = {
-    unlock: async (f) => {
-      const obj = await objectOf(f.get("key") ?? "");
+  const actions: Record<string, (f: URLSearchParams, tenant: string) => Promise<Toast>> = {
+    unlock: async (f, tenant) => {
+      const obj = await objectOf(tenant, f.get("key") ?? "");
       if (obj.window) throw new ActionError(`a change window is open on ${objectName(obj)} until ${obj.window.until}; Lock or Approve closes it first`);
-      const unread = (await snap()).windowsError;
+      const unread = (await snap(tenant)).windowsError;
       if (unread) throw new ActionError(`the change windows are not read (${unread.split("\n")[0].slice(0, 200)}), so the passes would not read this one either; npm run zetaris:setup registers change_window`);
       const hours = Number(f.get("hours") ?? "");
-      const row = newWindow({ tenant: b.tenant, surface: obj.surface, host: obj.host, object_id: obj.object_id, who: f.get("who") ?? "", why: f.get("why") ?? "", hours, now: clock(), redact: (s) => b.redactor.text(redact(s)) });
+      const row = newWindow({ tenant, surface: obj.surface, host: obj.host, object_id: obj.object_id, who: f.get("who") ?? "", why: f.get("why") ?? "", hours, now: clock(), redact: (s) => b.redactor.text(redact(s)) });
       const n = await b.windows.open(row);
       invalidate();
       if (n === 0) throw new ActionError(`a change window is already open on ${objectName(obj)}, or was just opened at ${row.opened_at}: change_window ${row.window_id} is stored already, nothing written`);
@@ -245,11 +372,11 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
         lines: [`change_window ${row.window_id}: ${n} row written`, `opened by ${row.opened_by} at ${row.opened_at} until ${row.until}: ${row.reason}`, "the next pass holds a drift on this object that a rule would roll back, fix or hold, until the window ends", ...sampleLine()],
       };
     },
-    approve: async (f) => {
-      const obj = await objectOf(f.get("key") ?? "");
+    approve: async (f, tenant) => {
+      const obj = await objectOf(tenant, f.get("key") ?? "");
       const host = obj.surface === "cloudflare.dns" ? null : obj.host;
-      const run = await b.approvals.latestPassingRun(b.tenant, obj.surface, host);
-      if (!run) throw new ActionError(`no passing ${obj.surface} run for ${b.tenant}${host ? ` on ${host}` : ""}`);
+      const run = await b.approvals.latestPassingRun(tenant, obj.surface, host);
+      if (!run) throw new ActionError(`no passing ${obj.surface} run for ${tenant}${host ? ` on ${host}` : ""}`);
       const observations = await b.approvals.observationsOf(run.run_id);
       let selection: ApprovalSelection;
       if (obj.kind === "file") selection = { kind: "object", host: host!, object_id: obj.object_id };
@@ -261,14 +388,14 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
       const noteRaw = freeText("note", f.get("note") ?? "", 500, "an optional note", true);
       let r;
       try {
-        r = await approve(b.approvals, { tenant: b.tenant, run, observations, selection, by, note: noteRaw ? b.redactor.text(redact(noteRaw)) : null, now: clock(), dryRun: false });
+        r = await approve(b.approvals, { tenant, run, observations, selection, by, note: noteRaw ? b.redactor.text(redact(noteRaw)) : null, now: clock(), dryRun: false });
       } catch (e) {
         if (e instanceof ApproveError) throw new ActionError(e.message);
         throw e;
       }
       let vault: string;
       try {
-        const commit = await vaultCommitOf(b.layer, b.tenant, run.run_id, obj.object_id);
+        const commit = await vaultCommitOf(b.layer, tenant, run.run_id, obj.object_id);
         vault = commit ? `approve: the approved bytes are run ${run.run_id}'s, vault commit ${commit.slice(0, 8)}` : `approve: the vault holds no copy from run ${run.run_id}`;
       } catch (e) {
         vault = `approve: the vault copy of run ${run.run_id} was not read (${b.redactor.text(redact((e as Error)?.message ?? String(e))).split("\n")[0].slice(0, 200)}); the approval stands, its vault commit unnamed`;
@@ -281,16 +408,17 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
       invalidate();
       return { ok: true, title: `Approved: ${obj.kind === "file" ? obj.object_id : obj.name}`, lines: [...lines, ...sampleLine()] };
     },
-    lock: async (f) => {
-      const obj = await objectOf(f.get("key") ?? "");
+    lock: async (f, tenant) => {
+      const obj = await objectOf(tenant, f.get("key") ?? "");
       if (!obj.window) throw new ActionError(`no change window is open on ${objectName(obj)}`);
       const at = clock().toISOString();
       const n = await b.windows.close(obj.window.window_id, at);
       invalidate();
       return { ok: true, title: `Locked: ${obj.kind === "file" ? obj.object_id : obj.name}`, lines: [`change_window ${obj.window.window_id} closed at ${at} (${n} row); nothing approved`, "the next pass treats a drift on this object as before", ...sampleLine()] };
     },
-    exception: async (f) => {
+    exception: async (f, tenant) => {
       if (!b.memoryWritable) throw new ActionError(`the store is read-only in sample mode (${path.relative(ROOT, b.memoryDir).replace(/\\/g, "/") || b.memoryDir}); start the console with --write to record into it`);
+      const pass = st(tenant).pass;
       if (!pass) throw new ActionError("run a pass first: an exception is scoped on the finding as the pass raises it");
       const finding = pass.step.findings.find((x) => x.id === f.get("finding"));
       if (!finding) throw new ActionError(`no finding ${f.get("finding") ?? ""} in the console's pass`);
@@ -322,20 +450,29 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
         ],
       };
     },
-    pass: async () => {
-      if (running) throw new ActionError(`a pass is running since ${running.startedAt}`);
+    pass: async (_f, tenant) => {
+      const s = st(tenant);
+      if (s.running) throw new ActionError(`a pass is running since ${s.running.startedAt}`);
       const decidedAt = clock().toISOString();
       const t0 = Date.now();
       let r: PassRun | null = null;
-      const done = doPass(decidedAt).then((x) => { r = x; });
-      running = { startedAt: decidedAt, done };
-      try { await done; } finally { running = null; }
+      const done = doPass(tenant, decidedAt).then((x) => { r = x; });
+      s.running = { startedAt: decidedAt, done };
+      try { await done; } finally { s.running = null; }
       const p = r!;
-      const lines = new Table(PLAIN, (s) => b.redactor.text(redact(s))).row("pass", passView(p.step, b.mode === "live" ? { datasource: config.zetaris.datasource, ...p.queries } : undefined), Date.now() - t0);
+      const lines = new Table(PLAIN, (x) => b.redactor.text(redact(x))).row("pass", passView(p.step, b.mode === "live" ? { datasource: config.zetaris.datasource, ...p.queries } : undefined), Date.now() - t0);
       return {
         ok: true, title: `${p.recorded ? "Pass" : "Dry pass"} decided at ${utc(p.decidedAt)}: ${p.step.findings.length} finding(s)`,
         lines: [...lines, `${p.queries.queries} queries through ${datasourceOf(b)}, ${p.queries.failed} failed; ${p.recorded ? "dispositions recorded in the sql.js ledger" : "nothing recorded"}; act not run`, ...(p.trace ? [`trace ${p.trace.file}`] : []), ...sampleLine()],
       };
+    },
+    tenant: async (f) => {
+      const want = f.get("tenant") ?? "";
+      if (!b.tenants.includes(want)) throw new ActionError(`the store holds no run of tenant ${want.slice(0, 64) || "(none named)"}; the switcher lists ${b.tenants.join(", ")}`);
+      const first = st(want).first === null;
+      await firstPass(want);
+      current = want;
+      return { ok: true, title: `Switched to ${want}`, lines: [`every page now reads ${want}'s rows${first && st(want).pass ? `; its first pass decided at ${utc(st(want).pass!.decidedAt)}` : ""}`] };
     },
   };
 
@@ -357,34 +494,54 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
   async function handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     if (!hosts.has((req.headers.host ?? "").toLowerCase())) return send(res, 421, "text/plain; charset=utf-8", "the console answers on 127.0.0.1 only\n");
     const url = new URL(req.url ?? "/", origin);
+    if (url.pathname === "/api" || url.pathname.startsWith("/api/")) {
+      const a = await apiAnswer(req.method ?? "GET", url, { tenants: b.tenants, tenant: () => current, text: (s) => b.redactor.text(s), print, view: async (tenant) => { if (st(tenant).first === null) await firstPass(tenant); return view(tenant); } });
+      return send(res, a.status, "application/json; charset=utf-8", req.method === "HEAD" ? "" : a.body);
+    }
     if (req.method === "GET" || req.method === "HEAD") {
-      if (url.pathname === "/") { res.writeHead(303, { location: "/overview" }); res.end(); return; }
+      // the page's tenant: the one its URL names (every link a page renders carries it), else the default the switcher set
+      const asked = url.searchParams.get("tenant");
+      if (asked !== null && !b.tenants.includes(asked)) return send(res, 400, "text/html; charset=utf-8", layoutError(`No tenant ${asked.slice(0, 64)}: the store holds runs of ${b.tenants.join(", ")}.`));
+      const tenant = asked ?? current;
+      if (st(tenant).first === null) await firstPass(tenant);
+      if (url.pathname === "/") { res.writeHead(303, { ...answerHeaders("text/plain; charset=utf-8", csp("")), location: "/work" }); res.end(); return; }
       const a = STATIC.get(url.pathname);
       if (a) return sendAsset(req, res, a);
       const nonce = randomBytes(16).toString("base64");
-      const r = await render(url.pathname, url.searchParams, null, nonce);
-      if (!r) return send(res, 404, "text/html; charset=utf-8", layoutError(`No page ${url.pathname}.`), nonce);
-      return send(res, r.status, r.type, req.method === "HEAD" ? "" : r.body, nonce);
+      const rendered = await render(tenant, url.pathname, url.searchParams, null, nonce);
+      const r = rendered && !rendered.attachment ? { ...rendered, body: tenantLinks(rendered.body, tenant) } : rendered;
+      if (!r) return send(res, 404, "text/html; charset=utf-8", layoutError(`No page ${url.pathname}.`), { policy: csp(nonce) });
+      // a download is the executive report as one file: its style block by hash, no nonce; every other page the nonce
+      const policy = r.attachment ? fileCsp(r.body) : csp(nonce);
+      return send(res, r.status, r.type, req.method === "HEAD" ? "" : r.body, { policy, route: r.attachment ? { "content-disposition": contentDisposition(r.attachment) } : {} });
     }
     if (req.method !== "POST") return send(res, 405, "text/plain; charset=utf-8", "GET and POST only\n");
-    const m = url.pathname.match(/^\/do\/(unlock|approve|lock|exception|pass)$/);
+    const m = url.pathname.match(/^\/do\/(unlock|approve|lock|exception|pass|tenant)$/);
     if (!m) return send(res, 404, "text/plain; charset=utf-8", "no such action\n");
     const wantsJson = (req.headers.accept ?? "").includes("application/json");
     const body = await readBody(req);
     const form = new URLSearchParams(body ?? "");
+    // the tenant the action acts on: the one its form was rendered for (page_tenant), never the switcher's default; a switch names its own
+    const named = form.get("page_tenant");
+    const tenant = named !== null && b.tenants.includes(named) ? named : null;
     const reply = async (toast: Toast): Promise<void> => {
       const status = toast.status ?? (toast.ok ? 200 : 400);
       if (wantsJson) return send(res, status, "application/json; charset=utf-8", JSON.stringify({ ok: toast.ok, title: toast.title, lines: toast.lines }));
       const back = form.get("return") ?? "/overview";
-      const r = await render(["/settings", "/findings", "/overview"].includes(back) ? back : "/overview", new URLSearchParams(), toast);
-      return send(res, status, "text/html; charset=utf-8", r!.body);
+      // a switch answers with the page it came from, read again for the new tenant: a reload then asks for nothing twice
+      if (m[1] === "tenant" && toast.ok) { res.writeHead(303, { ...answerHeaders("text/plain; charset=utf-8", csp("")), location: tenantLinks(`href="${returnPathOf(back)}"`, current).slice(6, -1).replaceAll("&amp;", "&") }); res.end(); return; }
+      // every action returns to the same pages a switch does (RETURN_PATHS), read again with the toast, for the tenant it acted on
+      const to = new URL(returnPathOf(back), origin);
+      const r = await render(tenant ?? current, to.pathname, to.searchParams, toast);
+      return send(res, status, "text/html; charset=utf-8", tenantLinks(r!.body, tenant ?? current));
     };
     if (body === null) return reply({ ok: false, status: 413, title: "Refused: the form is larger than 64 KB", lines: [] });
     const refusal = csrfRefusal(req, form);
     if (refusal) return reply({ ok: false, status: 403, title: `Refused: ${refusal}`, lines: ["reload the page for a fresh form"] });
-    if (m[1] !== "pass" && form.get("confirm") !== "yes") return reply({ ok: false, title: "Confirm on the page first: the action carries its confirmation", lines: [] });
+    if (m[1] !== "pass" && m[1] !== "tenant" && form.get("confirm") !== "yes") return reply({ ok: false, title: "Confirm on the page first: the action carries its confirmation", lines: [] });
+    if (m[1] !== "tenant" && !tenant) return reply({ ok: false, title: `Refused: the form names ${named === null ? "no tenant" : `tenant ${named.slice(0, 64)}, which the store holds no run of`}; reload the page`, lines: [] });
     try {
-      const toast = await actions[m[1]](form);
+      const toast = await actions[m[1]](form, tenant ?? current);
       print(`console: ${m[1]}: ${toast.title}`);
       return reply(toast);
     } catch (e) {
@@ -411,13 +568,14 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
   const port = (server.address() as AddressInfo).port;
   origin = `http://${o.host ?? "127.0.0.1"}:${port}`;
   hosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`]);
-  if (o.firstPass === "background") void startPass(clock().toISOString());
+  if (o.firstPass === "background") await firstPass(current);
 
   return {
     url: origin, port, csrf,
-    settled: async () => { if (running) await running.done; return pass; },
+    settled: async () => { const s = st(current); if (s.running) await s.running.done; return s.pass; },
+    tenant: () => current,
     close: async () => {
-      if (running) await running.done.catch(() => undefined);
+      for (const s of states.values()) if (s.running) await s.running.done.catch(() => undefined);
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await b.close();
     },
@@ -450,14 +608,78 @@ export const csp = (nonce: string): string =>
 
 const SECURITY = { "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" } as const;
 
-function send(res: http.ServerResponse, status: number, type: string, body: string, nonce = ""): void {
-  res.writeHead(status, { "content-type": type, "cache-control": "no-store", ...SECURITY, "content-security-policy": csp(nonce) });
+/**
+ * A page's links carry its tenant: every href, action and src to a console path (not an asset) gains tenant=<id>, so a
+ * tab keeps reading the tenant it rendered for whatever another tab switches to; a tenant id needs no escaping.
+ */
+export function tenantLinks(html: string, tenant: string): string {
+  return html.replace(/\b(href|action|src)="(\/(?!assets\/)[^"#]*)(#[^"]*)?"/g, (_m, attr: string, p: string, hash: string | undefined) =>
+    `${attr}="${p}${p.includes("?") ? "&amp;" : "?"}tenant=${encodeURIComponent(tenant)}${hash ?? ""}"`);
+}
+
+/** The headers a route may set on its answer besides its type: the attachment of a download, and nothing else. */
+export type RouteHeaders = { "content-disposition"?: string };
+const ROUTE_HEADERS: ReadonlySet<string> = new Set(["content-disposition"]);
+
+/**
+ * The headers of one answer. The server sets the fixed ones: no-store, the CSP it chose for the answer, and the two
+ * security headers. A route sets its content type (an argument of its own) and, for a download, content-disposition;
+ * any other name it gives is refused with an error, so no route can set, replace or drop a fixed header.
+ */
+export function answerHeaders(type: string, policy: string, route: Readonly<Record<string, string>> = {}, server: { cache?: string; etag?: string } = {}): Record<string, string> {
+  const other = Object.keys(route).filter((k) => !ROUTE_HEADERS.has(k.toLowerCase()));
+  if (other.length) throw new Error(`a route sets its content type and content-disposition only, not ${other.join(", ")}`);
+  // `server` is the server's own: the assets' year-long cache and their ETag (sendAsset); a route never passes it
+  return { ...route, "content-type": type, "cache-control": server.cache ?? "no-store", ...(server.etag ? { etag: server.etag } : {}), "content-security-policy": policy, ...SECURITY };
+}
+
+/** One answer, its headers from answerHeaders: the CSP the server chose (csp("") unless given) and a route's own content-disposition. */
+function send(res: http.ServerResponse, status: number, type: string, body: string, o: { policy?: string; route?: RouteHeaders } = {}): void {
+  res.writeHead(status, answerHeaders(type, o.policy ?? csp(""), o.route ?? {}));
   res.end(body);
+}
+
+/** Where each page's switch returns. */
+export const PAGE_PATH: Readonly<Record<Shell["page"], string>> = {
+  work: "/work", overview: "/overview", executive: "/executive", settings: "/settings", templates: "/templates", findings: "/findings", actions: "/actions",
+  traces: "/traces", sources: "/sources", policy: "/policy", document: "/document",
+};
+/** The paths a switch may return to, read off PAGE_PATH and the periods: a page of the nav, the executive report with its period; nothing else. */
+export const RETURN_PATHS: ReadonlySet<string> = new Set([...Object.values(PAGE_PATH), ...PERIODS.map((p) => `/executive?period=${p}`)]);
+/** Where a switch answers: the page it came from when RETURN_PATHS holds it, else the Overview. */
+export const returnPathOf = (back: string | null): string => (back !== null && RETURN_PATHS.has(back) ? back : "/overview");
+/** The period a request names; the last 7 days for none or another. */
+const periodOf = (q: URLSearchParams): Period => { const p = q.get("period"); return isPeriod(p) ? p : "7d"; };
+
+/** The downloaded executive report's file name, executive-<tenant>-<period>.html; an error when the tenant is not an id TENANT reads. */
+export function downloadName(tenant: string, period: Period): string {
+  if (!isTenantId(tenant)) throw new Error(`No download: the tenant ${JSON.stringify(tenant.slice(0, 64))} is not a tenant id ([A-Za-z0-9._-], up to 64), so no file is named for it.`);
+  return `executive-${tenant}-${period}.html`;
+}
+
+/** RFC 5987 ext-value characters: what encodeURIComponent leaves, less ' ( ) *. */
+const rfc5987 = (s: string): string => encodeURIComponent(s).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+
+/** An attachment's header: filename for every client, and filename* (RFC 6266 and 5987, UTF-8) beside it; the name is a downloadName. */
+export function contentDisposition(name: string): string {
+  if (!/^[A-Za-z0-9._-]+$/.test(name)) throw new Error("an attachment is named by downloadName: [A-Za-z0-9._-] only");
+  return `attachment; filename="${name}"; filename*=UTF-8''${rfc5987(name)}`;
+}
+
+/**
+ * The CSP of the downloaded executive report: its one style block by hash, nothing else; no script runs in it. A file
+ * with no style block or more than one is not the report renderExecutive writes: an error, never a guessed policy.
+ */
+export function fileCsp(file: string): string {
+  const opened = (file.match(/<style\b/gi) ?? []).length;
+  const blocks = [...file.matchAll(/<style>([\s\S]*?)<\/style>/g)];
+  if (opened !== 1 || blocks.length !== 1) throw new Error(`fileCsp: the executive report holds one style block, this file opens ${opened} and closes ${blocks.length}`);
+  return `default-src 'none'; style-src 'sha256-${createHash("sha256").update(blocks[0][1]).digest("base64")}'; img-src data:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'`;
 }
 
 /** A static part of the shell: its path names its hash, so it is cached for a year and never revalidated; an If-None-Match on its ETag is 304. */
 function sendAsset(req: http.IncomingMessage, res: http.ServerResponse, a: Asset): void {
-  const head = { "content-type": a.type, "cache-control": "public, max-age=31536000, immutable", etag: a.etag, ...SECURITY, "content-security-policy": csp("") };
+  const head = answerHeaders(a.type, csp(""), {}, { cache: "public, max-age=31536000, immutable", etag: a.etag });
   if (req.headers["if-none-match"] === a.etag) { res.writeHead(304, head); res.end(); return; }
   res.writeHead(200, { ...head, "content-length": Buffer.byteLength(a.body) });
   res.end(req.method === "HEAD" ? "" : a.body);

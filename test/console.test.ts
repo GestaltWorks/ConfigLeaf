@@ -1,25 +1,37 @@
 // The technician's console (src/console/) and the change-window step of the Decider (src/policy/decide.ts). The
 // server boots in sample mode on an ephemeral port: over sample/bundle.json for client-1 with the committed lessons
 // (every page, its CSP and its static parts, the Settings objects and their locks in attention order, Unlock, Lock,
-// the CSRF refusals, the tenant's traces only, no external URL), and over test/fixtures/policy-bundle.json for
+// the CSRF refusals, the tenant's traces only, no external URL; Executive with its period switch, Export PDF and
+// Download HTML, the download one standalone file with its style by hash; Templates, every setting under its rule,
+// each object a link to its drawer), the tenant switcher over the same bundle (client-1 and lab-1: a switch answers
+// 303 and every page and action reads the other tenant; a tenant the store lacks, a bad token and a return path off
+// the console refused or sent to the Overview), and over test/fixtures/policy-bundle.json for
 // client-a, the loop's fixture world, whose app.conf drifts under the locked conf.d rule with a valid copy (Unlock then
 // a pass holds it instead of rolling it back, Lock and a pass roll it back again, Approve, a fake and the real module,
 // closes the window; a window that ran out or sits on another host is left alone; a window read that fails refuses
 // Unlock and escalates). The pass itself over the fixture: a failing window read escalates every drift a rule would
 // roll back or fix, a datasource that lists no change_window reads none. Offline: no host, no Zetaris, no Postgres;
 // the passes write no trace file.
+import { createHash } from "node:crypto";
 import http from "node:http";
-import { cpSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { QueryResult } from "../src/adapters/zetaris.ts";
-import { SAMPLE_MEMORY_DIR } from "../src/config.ts";
-import { ASSETS, CSS, SCRIPT } from "../src/console/html.ts";
-import { encodeKey, plainUrls, timesIn } from "../src/console/pages.ts";
-import { nonceReport, startConsole, type ConsoleServer } from "../src/console/server.ts";
-import { objectKey, sampleBackend, zetarisGaps, type Backend } from "../src/console/state.ts";
+import { SAMPLE_MEMORY_DIR, config } from "../src/config.ts";
+import { ASSETS, CSS, SCRIPT, tenantSwitcher } from "../src/console/html.ts";
+import { duplicateText, encodeKey, latestRules, passDq, plainUrls, templatesOf, timesIn, type View } from "../src/console/pages.ts";
+import {
+  PAGE_PATH, RETURN_PATHS, answerHeaders, contentDisposition, csp, downloadName, fileCsp, nonceReport, returnPathOf, startConsole, type ConsoleServer,
+} from "../src/console/server.ts";
+import { isTenantId, objectKey, readTenants, sampleBackend, tenantIds, withTenant, zetarisGaps, type Backend } from "../src/console/state.ts";
+import { PERIODS, renderExecutive, type Executive, type ExecutiveContext } from "../src/document/executive.ts";
+import { defaultTenant } from "../src/document/sample.ts";
+import { BUNDLE_REDACTOR } from "../src/explain/explain.ts";
+import { FileTracer, traceIdOf } from "../src/loop/trace.ts";
+import { TENANT } from "../src/policy/schema.ts";
 import { DataLayer, type Engine } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { objects, priorHolds } from "../src/data/queries.ts";
@@ -39,8 +51,9 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const SAMPLE = JSON.parse(readFileSync(path.join(ROOT, "sample", "bundle.json"), "utf8")) as Record<string, unknown>;
 const POLICY = JSON.parse(readFileSync(path.join(ROOT, "test", "fixtures", "policy-bundle.json"), "utf8")) as Record<string, unknown>;
 const PAGES: readonly [string, string][] = [
-  ["/overview", "<h1>Overview</h1>"], ["/settings", "<h1>Settings</h1>"], ["/findings", "<h1>Findings</h1>"], ["/actions", "<h1>Actions and tickets</h1>"],
-  ["/traces", "<h1>Traces</h1>"], ["/sources", "<h1>Sources</h1>"], ["/policy", "<h1>Policy</h1>"], ["/document", "<h1>The owner's document</h1>"],
+  ["/work", "<h1>Work queue</h1>"], ["/overview", "<h1>Overview</h1>"], ["/executive", "<h1>client-1 · executive report</h1>"], ["/settings", "<h1>Settings</h1>"], ["/templates", "<h1>Templates</h1>"],
+  ["/findings", "<h1>Findings</h1>"], ["/actions", "<h1>Actions and tickets</h1>"], ["/traces", "<h1>Traces</h1>"], ["/sources", "<h1>Sources</h1>"],
+  ["/policy", "<h1>Policy</h1>"], ["/document", "<h1>The owner's document</h1>"],
 ];
 /** A server test boots a console and runs a sql.js pass over a bundle: 1 to 4 s alone, past vitest's 5 s in the full parallel run. */
 const SERVER = { timeout: 30_000 };
@@ -56,25 +69,31 @@ function ticking(iso: string): (() => Date) & { advance: (ms: number) => void } 
 type Row = Record<string, unknown>;
 const rowsOf = (b: Record<string, unknown>, t: string): Row[] => (b[t] ?? []) as Row[];
 
-interface Boot { bundle: Record<string, unknown>; bundlePath: string; tenant: string; at?: string; clock?: () => Date; approve?: typeof approveRun; memoryDir?: string; write?: boolean; before?: (b: Backend) => void }
+interface Boot { bundle: Record<string, unknown>; bundlePath: string; tenant: string; at?: string; clock?: () => Date; approve?: typeof approveRun; memoryDir?: string; write?: boolean; before?: (b: Backend) => void; print?: (line: string) => void; renderFile?: typeof renderExecutive }
 
 async function boot(o: Boot): Promise<{ server: ConsoleServer; backend: Backend }> {
   const backend = await sampleBackend({ tenant: o.tenant, bundle: o.bundle, bundlePath: o.bundlePath, memoryDir: o.memoryDir ?? SAMPLE_MEMORY_DIR, write: o.write === true });
   o.before?.(backend);
   const server = await startConsole({
-    backend, port: 0, clock: o.clock ?? ticking(o.at!), firstPass: "sync", tracePasses: false, print: () => undefined, approve: o.approve,
+    backend, port: 0, clock: o.clock ?? ticking(o.at!), firstPass: "sync", tracePasses: false, print: o.print ?? (() => undefined), approve: o.approve, renderFile: o.renderFile,
     traceDirs: [{ label: "examples/traces", dir: path.join(ROOT, "examples", "traces") }],
   });
   return { server, backend };
 }
 
-const get = async (s: ConsoleServer, p: string, headers: Record<string, string> = {}): Promise<{ status: number; body: string; headers: Headers }> => {
+/**
+ * A GET. `raw` is the page as served; `body` is the page without the tenant every console link carries (tenantLinks),
+ * which the per-tab test reads raw, so the other tests read the page's own structure.
+ */
+const get = async (s: ConsoleServer, p: string, headers: Record<string, string> = {}): Promise<{ status: number; body: string; raw: string; headers: Headers }> => {
   const r = await fetch(`${s.url}${p}`, { headers });
-  return { status: r.status, body: await r.text(), headers: r.headers };
+  const raw = await r.text();
+  return { status: r.status, body: raw.replace(/(?:\?|&amp;)tenant=[A-Za-z0-9._-]+(?=["#])/g, ""), raw, headers: r.headers };
 };
 
 const post = async (s: ConsoleServer, action: string, fields: Record<string, string>, headers: Record<string, string> = {}): Promise<{ status: number; json: { ok: boolean; title: string; lines: string[] } }> => {
-  const r = await fetch(`${s.url}/do/${action}`, { method: "POST", body: new URLSearchParams({ csrf: s.csrf, confirm: "yes", ...fields }), headers: { accept: "application/json", ...headers } });
+  // a form carries the tenant its page was rendered for: the default one unless the test names another
+  const r = await fetch(`${s.url}/do/${action}`, { method: "POST", body: new URLSearchParams({ csrf: s.csrf, confirm: "yes", page_tenant: s.tenant(), ...fields }), headers: { accept: "application/json", ...headers } });
   return { status: r.status, json: await r.json() as { ok: boolean; title: string; lines: string[] } };
 };
 
@@ -99,10 +118,12 @@ describe("the console over sample/bundle.json, client-1", SERVER, () => {
   beforeAll(async () => { ({ server } = await boot({ bundle: SAMPLE, bundlePath: "sample/bundle.json", tenant: "client-1", at: "2026-10-25T15:00:00.000Z" })); }, BOOT_MS);
   afterAll(async () => { await server?.close(); });
 
-  it("binds 127.0.0.1 on the port it was given, 0 for an ephemeral one, and redirects / to the Overview", async () => {
+  it("binds 127.0.0.1 on the port it was given, 0 for an ephemeral one, and redirects / to the work queue", async () => {
     expect(server.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
     const r = await fetch(`${server.url}/`, { redirect: "manual" });
-    expect([r.status, r.headers.get("location")]).toEqual([303, "/overview"]);
+    expect([r.status, r.headers.get("location")]).toEqual([303, "/work"]);
+    // the redirect carries the fixed headers every answer does
+    expect([r.headers.get("content-security-policy"), r.headers.get("x-content-type-options"), r.headers.get("referrer-policy"), r.headers.get("cache-control")]).toEqual([csp(""), "nosniff", "no-referrer", "no-store"]);
   });
 
   it("every page answers 200 with its heading, the nav and the summary bar; the report renders inside the Overview", async () => {
@@ -111,7 +132,8 @@ describe("the console over sample/bundle.json, client-1", SERVER, () => {
       expect(r.status, p).toBe(200);
       expect(r.body, p).toContain(h);
       expect(r.body, p).toContain('<nav class="side" aria-label="Sections">');
-      if (p !== "/overview") expect(r.body, p).toMatch(/<a href="\/findings#needs" class="need"><b>1<\/b> needs you<\/a>/);
+      // the work queue holds its own strip in the bar's place; every other page but the Overview the summary bar
+      if (p !== "/overview" && p !== "/work") expect(r.body, p).toMatch(/<a href="\/findings#needs" class="need"><b>1<\/b> needs you<\/a>/);
     }
     const report = await get(server, "/overview/report");
     expect(report.status).toBe(200);
@@ -162,7 +184,10 @@ describe("the console over sample/bundle.json, client-1", SERVER, () => {
       const r = await get(server, asset.path);
       expect([r.status, r.headers.get("content-type"), r.headers.get("cache-control"), r.headers.get("etag")]).toEqual([200, type, "public, max-age=31536000, immutable", asset.etag]);
       expect(r.body).toBe(body);
-      expect((await get(server, asset.path, { "if-none-match": asset.etag })).status).toBe(304);
+      // the assets' headers come from answerHeaders too: the CSP and the two security headers on the asset and its 304
+      expect([r.headers.get("content-security-policy"), r.headers.get("x-content-type-options"), r.headers.get("referrer-policy")]).toEqual([csp(""), "nosniff", "no-referrer"]);
+      const again = await get(server, asset.path, { "if-none-match": asset.etag });
+      expect([again.status, again.headers.get("x-content-type-options"), again.headers.get("etag")]).toEqual([304, "nosniff", asset.etag]);
     }
     expect((await get(server, "/assets/console.0000000000000000.css")).status).toBe(404);
   });
@@ -192,7 +217,7 @@ describe("the console over sample/bundle.json, client-1", SERVER, () => {
     expect(new Set(rows.map((r) => r.status))).toEqual(new Set(["in order", "adopted", "held", "with a technician"]));
   });
 
-  it("Settings: one line an object, its name and its host or zone, the full path in the drawer; attention first: with a technician, drifted, held, an open window, then the rest", async () => {
+  it("Settings: one line an object, its name and its host or zone, the full path in the drawer; attention first: needs you (with a technician), drifted, held, an open window, then the rest", async () => {
     const html = (await get(server, "/settings")).body;
     const rows = settingRows(html);
     const rank = (r: { status: string; lock: string }): number => Math.min(...[["with a technician", "drifted", "held"].indexOf(r.status)].filter((i) => i >= 0), r.lock === "window" ? 3 : 4);
@@ -200,9 +225,9 @@ describe("the console over sample/bundle.json, client-1", SERVER, () => {
     expect(ranks).toEqual([...ranks].sort((a, b) => a - b));
     expect(rows[0].status).toBe("with a technician");
     expect(rows.filter((r) => r.tier === "0").map((r) => r.status).every((s) => ["with a technician", "drifted", "held"].includes(s))).toBe(true);
-    expect(html.match(/<tr class="grp" data-tier="\d"><td colspan="7">[^<]+<\/td><\/tr>/g)).toEqual([
-      `<tr class="grp" data-tier="0"><td colspan="7">Needs attention: with a technician, drifted, held or in an open window · ${rows.filter((r) => r.tier === "0").length} objects</td></tr>`,
-      `<tr class="grp" data-tier="1"><td colspan="7">Everything else · ${rows.filter((r) => r.tier === "1").length} objects</td></tr>`,
+    expect(html.match(/<tr class="grp" data-tier="\d"><td colspan="8">[^<]+<\/td><\/tr>/g)).toEqual([
+      `<tr class="grp" data-tier="0"><td colspan="8">Needs attention: needs you, drifted, held or in an open window · ${rows.filter((r) => r.tier === "0").length} objects</td></tr>`,
+      `<tr class="grp" data-tier="1"><td colspan="8">Everything else · ${rows.filter((r) => r.tier === "1").length} objects</td></tr>`,
     ]);
     // no second line in any cell: the date, the criticality and the path live in the drawer and the titles
     for (const r of rows) expect(r.text, r.key).not.toMatch(/class="q"|class="p"/);
@@ -211,8 +236,9 @@ describe("the console over sample/bundle.json, client-1", SERVER, () => {
     expect(conf.text).toContain(`<span class="on">nginx/nginx.conf</span> <span class="oh">${host}</span>`);
     expect(conf.text).toContain(`title="/etc/nginx/nginx.conf on ${host}"`);
     expect(html).toContain('<h2 id="dr-title">/etc/nginx/nginx.conf</h2>');
-    // one line between 6 px paddings and a 1 px rule, no wrapping: Chromium measures 36 px a row
-    expect(CSS).toContain("table.set td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:21px;vertical-align:middle;padding-top:6px;padding-bottom:6px}");
+    // one line between 5 px paddings and a 1 px rule, no wrapping; the row's buttons stay on that line on a wide screen
+    expect(CSS).toContain("table.set td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:20px;vertical-align:middle;padding-top:5px;padding-bottom:5px}");
+    expect(CSS).toContain("table.set .acts{flex-wrap:nowrap}");
   });
 
   it("the summary bar shows 0 windows open in the muted colour, 1 window open in the window's", async () => {
@@ -318,6 +344,81 @@ describe("the console over sample/bundle.json, client-1", SERVER, () => {
       .toBe("issue #7 opened; see (a pseudonymised URL) and https://example.org/docs");
   });
 
+  it("the nav names the work queue first, the Dashboard (the executive report) second, and the owner's report last", async () => {
+    const html = (await get(server, "/templates")).body;
+    const nav = [...html.matchAll(/<li><a href="(\/[a-z]+)"(?: aria-current="page")?>([^<]+)/g)].map((m) => [m[1], m[2]]);
+    expect(nav).toEqual([["/work", "Work queue"], ["/executive", "Dashboard"], ["/settings", "Settings"], ["/findings", "Findings"], ["/templates", "Templates"], ["/actions", "Actions and tickets"], ["/traces", "Traces"], ["/sources", "Sources"], ["/overview", "Owner's report"]]);
+    expect(html).toContain('<li><a href="/templates" aria-current="page">Templates');
+  });
+
+  it("Executive: the period switch, Export PDF (shown by the script, which prints) and Download HTML over the report's sections, the tenant, the period and the time UTC in its header", async () => {
+    const html = (await get(server, "/executive?period=30d")).body;
+    expect(html).toContain('<nav class="seg" aria-label="Period"><a href="/executive?period=7d">7 days</a><a href="/executive?period=30d" aria-current="page">30 days</a><a href="/executive?period=all">All</a></nav>');
+    expect(html).toContain('<button type="button" class="btn" data-print hidden>Export PDF</button><a class="btn" href="/executive/download?period=30d" download>Download HTML</a>');
+    expect(SCRIPT).toContain("window.print()");
+    expect(html).toMatch(/<p class="ex-when"><span>the last 30 days<\/span> <span>26 Sep 2026 to 25 Oct 2026 15:0\d UTC<\/span><\/p>/);
+    expect([...html.matchAll(/<div class="tile"><span class="k">([^<]+)<\/span>/g)].map((m) => m[1])).toEqual(["Settings watched", "Coverage", "Copies with a valid restore", "Drift events", "Change to detection", "Actions", "Receipts verified"]);
+    expect([...html.matchAll(/<figure class="ex-chart" id="([a-z-]+)">/g)].map((m) => m[1])).toEqual(["ex-findings", "ex-actions", "ex-probes", "ex-approvals"]);
+    // the incident links its entry on Findings: the proxy_split ESCALATE, ticket #2
+    expect(html).toMatch(/<a href="\/findings#f-fnd-b4a40091cdb4f906" class="mono">fnd-b4a40091cdb4f906<\/a>/);
+    // a period the switch does not name reads as the last 7 days
+    expect((await get(server, "/executive?period=1y")).body).toContain('<a href="/executive?period=7d" aria-current="page">7 days</a>');
+    // print: the shell left out, the light tokens, A4 with a page break between sections
+    expect(CSS).toContain(".side,.bar,.skip,.toasts,.drawer,.scrim,.ex-tools{display:none!important}");
+    expect(CSS).toContain("@page{size:A4;margin:14mm 12mm}");
+    expect(CSS).toContain(".ex-sec{break-before:page}");
+  });
+
+  it("Download HTML is the executive report as one file: an attachment named for the tenant and the period, its one style block by hash in the CSP, no script, nothing from outside", async () => {
+    const r = await get(server, "/executive/download?period=all");
+    expect(r.status).toBe(200);
+    // filename for every client and the RFC 5987 filename* beside it
+    expect(r.headers.get("content-disposition")).toBe(`attachment; filename="executive-client-1-all.html"; filename*=UTF-8''executive-client-1-all.html`);
+    const style = /<style>([\s\S]*?)<\/style>/.exec(r.body)![1];
+    expect(r.headers.get("content-security-policy")).toBe(`default-src 'none'; style-src 'sha256-${createHash("sha256").update(style).digest("base64")}'; img-src data:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'`);
+    expect(fileCsp(r.body)).toBe(r.headers.get("content-security-policy"));
+    // the fixed headers stand on the download too: no route's own headers set or replace them
+    expect([r.headers.get("x-content-type-options"), r.headers.get("referrer-policy"), r.headers.get("cache-control"), r.headers.get("content-type")]).toEqual(["nosniff", "no-referrer", "no-store", "text/html; charset=utf-8"]);
+    // a HEAD carries the same CSP, read off the file it would send
+    const head = await fetch(`${server.url}/executive/download?period=all`, { method: "HEAD" });
+    expect(head.headers.get("content-security-policy")).toBe(r.headers.get("content-security-policy"));
+    expect(r.body.match(/<script|<link\b|<img\b|<iframe\b|@import|url\(\s*["']?https?:/gi)).toBeNull();
+    expect(r.body.split("<style>").length - 1).toBe(1);
+    expect(r.body).toContain("<h1>client-1 · executive report</h1>");
+    expect(r.body).toContain("<span>every day on record</span>");
+  });
+
+  it("Sources names dns_inventory_current beside exception_in_force under the DQ results, each as the console's last pass read it", async () => {
+    const html = (await get(server, "/sources")).body;
+    const dq = /<h2>DQ results<\/h2>\n<ul>([\s\S]*?)<\/ul>\n<p class="muted">/.exec(html)![1];
+    expect([...dq.matchAll(/<li><b>([a-z_ ]+)<\/b>/g)].map((m) => m[1])).toEqual(["run_complete", "copy validation", "exception_in_force", "dns_inventory_current"]);
+    expect(dq).toContain(`<li><b>dns_inventory_current</b> on <code>drift_usl.dns_live</code>, read by the console's last pass: <span class="muted">not read: the pass reads it on Zetaris, and sample mode reads sql.js</span>.</li>`);
+  });
+
+  it("Templates: every setting of the latest passing runs under the rule that governs it, the deviations the objects with findings open under the rule, each object a link to its Settings drawer", async () => {
+    const html = (await get(server, "/templates")).body;
+    const cards = [...html.matchAll(/<details class="card tpl" id="tpl-([^"]+)"[^>]*>\n<summary><span class="tpl-name">([^<]+)<\/span> <span class="b (?:locked|open)">[^<]+<\/span> <span class="tpl-n">([\d,]+) settings? in (\d+) objects? · <span[^>]*>(\d+) deviations?<\/span><\/span><\/summary>([\s\S]*?)<\/details>/g)]
+      .map((m) => ({ id: m[1], name: m[2], settings: Number(m[3].replace(/,/g, "")), objects: Number(m[4]), deviations: Number(m[5]), body: m[6] }));
+    // the rules in force, the 17 of version 2 of policy/hackathon.json (the sample loads the shipped file before its passes), each once: the settings no rule governs would be a card of their own
+    expect(cards).toHaveLength(17);
+    expect(cards.reduce((n, c) => n + c.settings, 0)).toBe(1352);
+    // zetaris.control and m365.dns, the rules main added since the recording, govern no setting of the sample's runs: their cards say so
+    expect(cards.find((c) => c.name === "every m365.dns setting")).toMatchObject({ settings: 0, objects: 0, deviations: 0 });
+    expect(cards.find((c) => c.id === "rule-8bcb3a03ffcee62e")).toMatchObject({ name: "every zetaris.control setting", settings: 0, objects: 0, deviations: 0 });
+    expect(html).not.toContain('class="alert" role="alert"');
+    expect(cards[0]).toMatchObject({ name: "everything else (catch-all)", deviations: 3 });
+    const proxied = cards.find((c) => c.name === "* · proxied")!;
+    expect(proxied).toMatchObject({ id: "rule-8e75e1d767980665", settings: 58, objects: 58, deviations: 1 });
+    expect(proxied.body).toContain('<span class="b locked">locked by rule</span>');
+    // every row's object opens its drawer on Settings
+    const settings = settingRows((await get(server, "/settings")).body).map((r) => r.key);
+    const links = [...html.matchAll(/<a href="\/settings\?open=([^"]+)">/g)].map((m) => Buffer.from(decodeURIComponent(m[1]), "base64url").toString("utf8"));
+    expect(links.length).toBeGreaterThan(112);
+    for (const k of links) expect(settings, k).toContain(k);
+    const open = (await get(server, `/settings?open=${encodeURIComponent(encodeKey(settings[0]))}`)).body;
+    expect(open).toContain(`<body data-open="${encodeKey(settings[0])}">`);
+  });
+
   it("no page names an external URL: no script, style, font, frame or form outside the console, and no absolute URL in the page text", async () => {
     for (const p of [...PAGES.map(([x]) => x), "/overview/report", "/traces/view?f=examples%2Ftraces%2Fcycle_mvo2bil0.jsonl"]) {
       const body = (await get(server, p)).body;
@@ -327,6 +428,478 @@ describe("the console over sample/bundle.json, client-1", SERVER, () => {
       expect(body.match(/@import|url\(\s*["']?https?:/gi), p).toBeNull();
       expect(body.match(/https?:\/\/[^\s"'<]+/g), p).toBeNull();
     }
+  });
+});
+
+/** A popover form of a page as a browser posts it: its hidden fields and its submit's confirm=yes, which the form carries itself. */
+function popoverForm(html: string, id: string): { action: string; fields: Record<string, string> } {
+  const m = new RegExp(`<div id="${id}" popover class="pop" role="dialog" aria-labelledby="${id}-h"><form method="post" action="([^"]+)" data-action="[a-z]+">([\\s\\S]*?)</form></div>`).exec(html);
+  if (!m) throw new Error(`no popover form ${id}`);
+  expect(m[2]).toMatch(/<button type="submit" name="confirm" value="yes" class="btn [a-z]+"/);
+  const fields = Object.fromEntries([...m[2].matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)">/g)].map((x) => [x[1], x[2]]));
+  return { action: m[1], fields: { ...fields, confirm: "yes" } };
+}
+
+/** A POST as a browser without the script sends it: no Accept: application/json, so the answer is the page its return names, with the toast. */
+async function formPost(s: ConsoleServer, action: string, fields: Record<string, string>): Promise<{ status: number; body: string }> {
+  const r = await fetch(`${s.url}${action}`, { method: "POST", body: new URLSearchParams(fields) });
+  return { status: r.status, body: (await r.text()).replace(/(?:\?|&amp;)tenant=[A-Za-z0-9._-]+(?=["#])/g, "") };
+}
+
+/** One row of the work queue, by its finding. */
+const workRow = (html: string, finding: string): string => new RegExp(`<tr id="w-${finding}">([\\s\\S]*?)</tr>`).exec(html)?.[1] ?? "";
+
+describe("the work queue, the row actions and an object's page over sample/bundle.json, client-1", SERVER, () => {
+  let server: ConsoleServer;
+  beforeAll(async () => { ({ server } = await boot({ bundle: SAMPLE, bundlePath: "sample/bundle.json", tenant: "client-1", at: "2026-10-25T15:00:00.000Z" })); }, BOOT_MS);
+  afterAll(async () => { await server?.close(); });
+  const ESCALATED = "fnd-b4a40091cdb4f906";
+  const HELD = ["fnd-58b251b5fce8fbff", "fnd-8fc67ccb1e4eebfa", "fnd-d62857e241af66e2"];
+
+  it("/ lands on the work queue: the strip (tenant, pass, counts, Run a pass), what needs a person as rows with live, approved, why, age, status and the actions, the held with their expiry, the adopted folded", async () => {
+    expect((await fetch(`${server.url}/`)).url).toBe(`${server.url}/work`);
+    const html = (await get(server, "/work")).body;
+    expect(html).toContain('<li><a href="/work" aria-current="page">Work queue<span class="cnt need">1</span></a></li>');
+    // the strip in the bar's place, with its own Run a pass, which returns to the queue; the navigation's is left out
+    expect(html).toContain('<header class="bar strip">');
+    expect(html).toContain("<div class=\"strip-id\"><b>client-1</b><span>sample mode · pass decided 25 Oct 2026 14:17 UTC</span></div>");
+    expect([...html.matchAll(/<a href="([^"]+)" class="stat [a-z]+"><b>([\d,]+)<\/b><span>([^<]+)<\/span><\/a>/g)].map((m) => [m[1], m[2], m[3]])).toEqual([
+      ["#needs", "1", "needs you"], ["#held", "3", "held"], ["#adopted", "23", "adopted"], ["/settings?lock=locked", "79", "locked"],
+    ]);
+    expect(html).toContain('<form method="post" action="/do/pass" data-action="pass" class="strip-pass">');
+    expect(html).toContain('<input type="hidden" name="return" value="/work">\n<button type="submit" class="btn primary">Run a pass</button>');
+    expect(html).not.toContain('class="side-pass"');
+    // needs you: the one escalation, as one table row
+    const needs = /<section id="needs">([\s\S]*?)<\/section>/.exec(html)![1];
+    expect([...needs.matchAll(/<tr id="w-(fnd-[0-9a-f]{16})">/g)].map((m) => m[1])).toEqual([ESCALATED]);
+    const row = workRow(html, ESCALATED);
+    expect([...row.matchAll(/<td data-label="([^"]+)"/g)].map((m) => m[1])).toEqual(["Object", "Live", "Approved", "Why", "Age", "Status", "Actions"]);
+    expect(row).toContain('<span class="on">host-524b42.quest (CNAME)</span> <span class="oh">host-4c795e.quest</span><span class="q">proxied</span>');
+    expect(row).toContain('<td data-label="Live"><code>CNAME host-4c795e.quest proxied</code></td>');
+    expect(row).toContain('<td data-label="Approved"><span class="muted">same as live</span></td>');
+    // why: the class, the Decider's own reason with its instants as the page shows a time, the rule
+    expect(row).toContain("hold under rule rule-8e75e1d767980665 expired 25 Oct 2026 03:21 UTC; the finding stands");
+    expect(row).toContain('rule <a href="/policy#rule-8e75e1d767980665">rule-8e75e1d767980665</a>');
+    // raised by every pass since the first that held it, 24 Oct 23:21, then escalated: 15 h before the clock's 25 Oct 15:00
+    expect(row).toContain('<td data-label="Age"><span class="nw" title="raised by every pass since 24 Oct 2026 23:21 UTC">15 h</span><span class="q">since 24 Oct 23:21 UTC</span></td>');
+    expect(row).toContain('<td data-label="Status" class="st"><span class="b need">needs you</span><span class="b locked">locked by rule</span></td>');
+    // the actions: Approve and Unlock open their forms; Lock is disabled with its reason, no window being open; Open goes to the object's page
+    expect(row).toContain('popovertarget="p-approve-q0" title="Approve the live value of host-524b42.quest (CNAME)">Approve</button>');
+    expect(row).toContain('popovertarget="p-unlock-q0" title="Open a change window on host-524b42.quest (CNAME)">Unlock</button>');
+    expect(row).toMatch(/<button type="button" class="btn sm" disabled title="Lock: no change window is open on this object[^"]*">Lock<\/button>/);
+    expect(row).toMatch(/<a class="btn sm" href="\/object\?key=[A-Za-z0-9_-]+" title="Open the object's page">Open<\/a>/);
+    // held: the three orphan records, soonest expiry first, each with its expiry and how far it is
+    const held = /<section id="held">([\s\S]*?)<\/section>/.exec(html)![1];
+    expect([...held.matchAll(/<tr id="w-(fnd-[0-9a-f]{16})">/g)].map((m) => m[1])).toEqual(HELD);
+    for (const f of HELD) expect(workRow(html, f)).toContain('<td data-label="Expires"><span>27 Oct 23:21 UTC</span><span class="q">in 56 h</span></td>');
+    // adopted: folded, 23 rows, Open alone: no form
+    const adopted = /<section id="adopted">([\s\S]*?)<\/section>/.exec(html)![1];
+    expect(adopted).toContain("<details class=\"fold\"><summary>23 findings adopted under exceptions</summary>");
+    expect(adopted.match(/<tr id="w-/g)).toHaveLength(23);
+    expect(adopted).not.toContain("popover");
+    // a form for each action an object can take, in the needs and the held rows: Approve and Unlock on four rows
+    expect(html.match(/ popover class="pop"/g)).toHaveLength(8);
+  });
+
+  it("a row's Unlock, Lock and Approve post as a browser without the script posts them, each answering the queue with its toast; the queue then reads the change", async () => {
+    let html = (await get(server, "/work")).body;
+    const uid = /popovertarget="p-unlock-(q\d+)"/.exec(workRow(html, HELD[0]))![1];
+    const unlock = popoverForm(html, `p-unlock-${uid}`);
+    expect([unlock.action, unlock.fields.return, unlock.fields.page_tenant, unlock.fields.csrf]).toEqual(["/do/unlock", "/work", "client-1", server.csrf]);
+    const u = await formPost(server, unlock.action, { ...unlock.fields, who: "tech-a", hours: "2", why: "a planned change" });
+    expect(u.status).toBe(200);
+    expect(u.body).toContain("<h1>Work queue</h1>");
+    expect(u.body).toMatch(/<div class="toast" role="status"><b>Change window open on host-50b116\.com \(A\) until 25 Oct 2026 17:0\d UTC<\/b>/);
+    html = (await get(server, "/work")).body;
+    let row = workRow(html, HELD[0]);
+    expect(row).toMatch(/<span class="b window" title="[^"]+">open until 25 Oct 17:0\d UTC<\/span>/);
+    expect(row).toMatch(/<button type="button" class="btn sm" disabled title="Unlock: a change window is open until 25 Oct 2026 17:0\d UTC; Lock or Approve closes it first">Unlock<\/button>/);
+    // the strip counts the open window
+    expect(html).toContain('<a href="/settings?lock=window" class="stat window"><b>1</b><span>window open</span></a>');
+    const lock = popoverForm(html, `p-lock-${/popovertarget="p-lock-(q\d+)"/.exec(row)![1]}`);
+    const l = await formPost(server, lock.action, lock.fields);
+    expect([l.status, l.body.includes("<b>Locked: host-50b116.com (A)</b>")]).toEqual([200, true]);
+    row = workRow((await get(server, "/work")).body, HELD[0]);
+    expect(row).toContain('<span class="b locked">locked by rule</span>');
+    expect(row).toMatch(/disabled title="Lock: no change window is open/);
+    // Approve on the escalated record, then the same form without its confirmation: refused, as every action is
+    html = (await get(server, "/work")).body;
+    const approve = popoverForm(html, `p-approve-${/popovertarget="p-approve-(q\d+)"/.exec(workRow(html, ESCALATED))![1]}`);
+    const a = await formPost(server, approve.action, { ...approve.fields, by: "tech-a", note: "checked" });
+    expect([a.status, a.body.includes("<b>Approved: host-524b42.quest (CNAME)</b>")]).toEqual([200, true]);
+    const { confirm: _confirm, ...unconfirmed } = approve.fields;
+    const refused = await formPost(server, approve.action, unconfirmed);
+    expect([refused.status, refused.body.includes("<b>Confirm on the page first: the action carries its confirmation</b>")]).toEqual([400, true]);
+  });
+
+  it("an object's page: live, approved and the template's recommendation, lock and rule, last change and who changed it, and the actions; a key the latest runs do not hold is a 404", async () => {
+    const key = settingRows((await get(server, "/settings")).body).find((r) => r.key.endsWith("\u001f/etc/nginx/nginx.conf"))!.key;
+    const r = await get(server, `/object?key=${encodeURIComponent(encodeKey(key))}`);
+    expect(r.status).toBe(200);
+    expect(r.headers.get("content-security-policy")).toMatch(/^default-src 'none'; style-src 'self' 'nonce-[A-Za-z0-9+/=]+'; script-src 'self' 'nonce-[A-Za-z0-9+/=]+';/);
+    expect(r.body.match(/<style\b|<script(?![^>]*\bsrc=)|\sstyle=|\son[a-z]+=/gi)).toBeNull();
+    expect(r.body).toContain("<title>nginx/nginx.conf · ConfigLeaf console</title>");
+    expect(r.body).toContain('<li><a href="/settings" aria-current="page">Settings');
+    expect(r.body).toContain('<h1 class="oname">/etc/nginx/nginx.conf</h1>');
+    const glance = /<dl class="kv glance">([\s\S]*?)<\/dl>/.exec(r.body)![1];
+    expect([...glance.matchAll(/<dt>([^<]+)<\/dt>/g)].map((m) => m[1])).toEqual(["Live", "Approved", "Recommended (template)", "Lock", "Verdict", "Last change", "Changed by"]);
+    expect(glance).toMatch(/<dt>Live<\/dt><dd><code>[0-9a-f]{12}<\/code><\/dd>/);
+    expect(glance).toMatch(/<dt>Approved<\/dt><dd><code>[0-9a-f]{12}<\/code> <span class="b ok">matches live<\/span><span class="rc">approved \d+ [A-Z][a-z]{2} \d{4} \d\d:\d\d UTC/);
+    expect(glance).toMatch(/<dt>Recommended \(template\)<\/dt><dd><a href="\/policy#rule-[0-9a-f]{16}">[^<]+<\/a><span class="rc">on drift [a-z_]+; no copy [a-z_]+; hold up to \d+ h; alert [a-z_]+, P\d<\/span><\/dd>/);
+    expect(glance).toMatch(/<dt>Lock<\/dt><dd><span class="b locked">locked by rule<\/span> <a class="pill" href="\/policy#rule-[0-9a-f]{16}">rule-[0-9a-f]{16}<\/a>/);
+    expect(glance).toContain('<dt>Changed by</dt><dd><span class="muted">no record</span></dd>');
+    for (const act of ["approve", "unlock"]) expect(r.body).toContain(`<div id="p-${act}-obj" popover class="pop" role="dialog" aria-labelledby="p-${act}-obj-h">`);
+    expect(r.body).toMatch(/disabled title="Lock: no change window is open/);
+    for (const h of ["Live against approved", "Restore proof", "What a restore would regress", "References", "Decisions", "Action history", "Change window"]) expect(r.body).toContain(`<h3>${h}</h3>`);
+    const missing = await get(server, "/object?key=bm9uZQ");
+    expect([missing.status, missing.body.includes("No such object in the latest passing runs of client-1.")]).toEqual([404, true]);
+    expect((await get(server, "/object")).status).toBe(404);
+  });
+
+  it("Settings: every row carries Approve, Unlock and Lock inline and Open; the drawer's buttons open the row's own forms; the header sorts", async () => {
+    const html = (await get(server, "/settings")).body;
+    const rows = settingRows(html);
+    expect(rows).toHaveLength(112);
+    for (const [i, r] of rows.entries()) {
+      for (const label of ["Approve", "Unlock", "Lock"]) expect(r.text, `${r.key} ${label}`).toMatch(new RegExp(`(?:popovertarget="p-${label.toLowerCase()}-o${i}"|disabled) title="[^"]+">${label}</button>`));
+      expect(r.text).toMatch(/<a class="btn sm" href="\/object\?key=[A-Za-z0-9_-]+" title="Open [^"]+ on a page of its own">Open<\/a>/);
+    }
+    // one form per action and row in the page; the drawer holds buttons aimed at them, no form of its own
+    expect(html.match(/<div id="p-approve-o0" popover/g)).toHaveLength(1);
+    const drawer = /<template id="t-o0"[^>]*>([\s\S]*?)<\/template>/.exec(html)![1];
+    expect(drawer).toContain('popovertarget="p-approve-o0"');
+    expect(drawer).not.toContain("popover class=");
+    expect(drawer).toMatch(/<a class="btn" href="\/object\?key=[A-Za-z0-9_-]+">Open page<\/a>/);
+    expect(html).toContain('<thead><tr><th scope="col" data-sort>Object</th><th scope="col" data-sort>Live</th><th scope="col" data-sort>Approved</th><th scope="col" data-sort>Lock</th><th scope="col" data-sort class="hide-m">Template</th><th scope="col" data-sort class="hide-m">Last change</th><th scope="col" data-sort>Status</th><th scope="col">Actions</th></tr></thead>');
+    expect(SCRIPT).toContain('$$("th[data-sort]")');
+    // the status a row shows reads "needs you"; the filter's value, and the row's data-status, keep the status's name
+    expect(html).toContain('<option value="with a technician">needs you</option>');
+  });
+});
+
+describe("the tenant switcher over sample/bundle.json: client-1 and lab-1", SERVER, () => {
+  let server: ConsoleServer;
+  let backend: Backend;
+  beforeAll(async () => { ({ server, backend } = await boot({ bundle: SAMPLE, bundlePath: "sample/bundle.json", tenant: "client-1", at: "2026-10-25T15:00:00.000Z" })); }, BOOT_MS);
+  afterAll(async () => { await server?.close(); });
+  const tenantPost = (fields: Record<string, string>, headers: Record<string, string> = {}) =>
+    fetch(`${server.url}/do/tenant`, { method: "POST", redirect: "manual", body: new URLSearchParams({ csrf: server.csrf, ...fields }), headers });
+
+  it("lists tenant ids only, once each and sorted: never \"*\", nothing a header or a file name could not carry", () => {
+    expect(tenantIds(["lab-1", "client-1", "lab-1", "*", "bad\"id", "two words", "x\r\ny", "", "a".repeat(65)])).toEqual(["client-1", "lab-1"]);
+  });
+
+  it("lists the bundle's tenants on every page; a switch answers 303 to the page it came from, and every page reads lab-1 from then on, its first pass run at the sample's instant", async () => {
+    expect(backend.tenants).toEqual(["client-1", "lab-1"]);
+    for (const [p] of PAGES) expect((await get(server, p)).body, p).toContain('<select id="tenant-pick" name="tenant" data-autosubmit><option value="client-1" selected>client-1</option><option value="lab-1">lab-1</option></select>');
+    expect((await get(server, "/executive?period=all")).body).toContain('<input type="hidden" name="return" value="/executive?period=all">');
+    const r = await tenantPost({ tenant: "lab-1", return: "/executive?period=all" });
+    // the page it came from, for the tenant it switched to
+    expect([r.status, r.headers.get("location")]).toEqual([303, "/executive?period=all&tenant=lab-1"]);
+    expect(server.tenant()).toBe("lab-1");
+    for (const [p] of PAGES) expect((await get(server, p)).body, p).toContain('<option value="lab-1" selected>lab-1</option>');
+    expect((await get(server, "/settings")).body).toContain("5 objects for lab-1: 5 files on 1 host, 0 records in 0 zones.");
+    expect((await get(server, "/overview/report")).body).toContain("lab-1 · configuration assurance");
+    const ex = (await get(server, "/executive")).body;
+    expect(ex).toContain("<h1>lab-1 · executive report</h1>");
+    expect(ex).toContain('<h2>Incidents of the period<span class="cnt">2</span></h2>');
+    expect(ex).toMatch(/#3 <span class="muted">incident, P1, open<\/span>/);
+    expect(ex).toMatch(/#4 <span class="muted">change, P1, closed<\/span>/);
+    expect((await server.settled())!.decidedAt).toBe("2026-10-25T14:17:53.416Z");
+    expect((await get(server, "/traces")).body).toContain("cycle_mvoa0l1i");
+  });
+
+  it("an action after the switch is the new tenant's: Unlock on lab-1 writes a change_window row of lab-1", async () => {
+    const row = settingRows((await get(server, "/settings")).body).find((x) => x.key.endsWith("\u001f/etc/nginx/sites-available/lab.example"))!;
+    const u = await post(server, "unlock", { key: encodeKey(row.key), who: "tech-l", hours: "1", why: "the lab's change" });
+    expect(u.json.ok).toBe(true);
+    const rows = objects(await backend.layer.run("SELECT tenant_id, host FROM {{t:change_window}} WHERE object_id = {{p:o}}", { o: "/etc/nginx/sites-available/lab.example" }));
+    expect(rows).toEqual([{ tenant_id: "lab-1", host: "host-951abf" }]);
+    expect((await post(server, "lock", { key: encodeKey(row.key) })).json.ok).toBe(true);
+  });
+
+  it("refuses a tenant the store holds no run of and a form without the console's token; a return path off the console's pages goes to the Overview", async () => {
+    const nope = await tenantPost({ tenant: "nope" }, { accept: "application/json" });
+    expect(nope.status).toBe(400);
+    expect(((await nope.json()) as { title: string }).title).toBe("Tenant refused: the store holds no run of tenant nope; the switcher lists client-1, lab-1");
+    const bad = await fetch(`${server.url}/do/tenant`, { method: "POST", body: new URLSearchParams({ csrf: "x", tenant: "client-1" }), headers: { accept: "application/json" } });
+    expect(bad.status).toBe(403);
+    expect(server.tenant()).toBe("lab-1");
+    for (const back of ["https://elsewhere.example/", "//elsewhere.example", "/traces/view?f=..%2F..%2Fpackage.json", "/executive?period=1y"]) {
+      const r = await tenantPost({ tenant: "lab-1", return: back });
+      expect([r.status, r.headers.get("location")], back).toEqual([303, "/overview?tenant=lab-1"]);
+    }
+  });
+
+  it("switching back reads client-1 again with the pass it had", async () => {
+    const r = await tenantPost({ tenant: "client-1", return: "/findings" }, { accept: "application/json" });
+    expect(((await r.json()) as { ok: boolean; title: string })).toMatchObject({ ok: true, title: "Switched to client-1" });
+    expect(server.tenant()).toBe("client-1");
+    const findings = (await get(server, "/findings")).body;
+    expect(findings).toMatch(/<a href="\/findings#needs" class="need"><b>1<\/b> needs you<\/a>/);
+    expect(findings).toContain('<option value="client-1" selected>client-1</option>');
+  });
+});
+
+describe("the download's name, an answer's headers, the switch's return paths and the tenant ids", () => {
+  it("names the file for a tenant id only, with filename and an RFC 5987 filename*: a tenant with a quote and CRLF names no file and no header", () => {
+    expect(downloadName("client-1", "7d")).toBe("executive-client-1-7d.html");
+    expect(contentDisposition(downloadName("lab-1", "all"))).toBe(`attachment; filename="executive-lab-1-all.html"; filename*=UTF-8''executive-lab-1-all.html`);
+    const evil = 'client-1"\r\nSet-Cookie: x=1';
+    expect(() => downloadName(evil, "7d")).toThrow('No download: the tenant "client-1\\"\\r\\nSet-Cookie: x=1" is not a tenant id');
+    for (const t of ["*", "", "a b", "x\ny", "-lead", "a".repeat(65)]) expect(() => downloadName(t, "all"), JSON.stringify(t)).toThrow(/is not a tenant id/);
+    // the header builder takes only a name downloadName gives
+    for (const n of ['a"b.html', "a\r\nb.html", "a b.html", "ü.html"]) expect(() => contentDisposition(n), JSON.stringify(n)).toThrow(/downloadName/);
+  });
+
+  it("the tenant pattern is anchored at both ends, with no multiline flag: a newline, a quote or a space before or after an id refuses it", () => {
+    expect(TENANT.source.startsWith("^")).toBe(true);
+    expect(TENANT.source.endsWith("$")).toBe(true);
+    expect(TENANT.flags).not.toMatch(/[mgy]/);
+    for (const ok of ["client-1", "lab-1", "a", "A.b_c-9", "a".repeat(64)]) expect(isTenantId(ok), ok).toBe(true);
+    for (const bad of ["client-1\n", "\nclient-1", "x client-1", "client-1 x", 'client-1"', "client-1\r\nX: 1", "*", "a".repeat(65), "-x", ".x", 7, null]) expect(isTenantId(bad), JSON.stringify(bad)).toBe(false);
+  });
+
+  it("a route sets its content type and content-disposition only: any other header is refused, and the fixed ones are always the server's", () => {
+    expect(answerHeaders("text/html; charset=utf-8", "default-src 'none'", { "content-disposition": "attachment" })).toEqual({
+      "content-disposition": "attachment", "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": "default-src 'none'",
+      "x-content-type-options": "nosniff", "referrer-policy": "no-referrer",
+    });
+    for (const k of ["content-security-policy", "x-content-type-options", "referrer-policy", "cache-control", "Content-Type", "set-cookie", "location"]) {
+      expect(() => answerHeaders("text/plain", "p", { [k]: "x" }), k).toThrow(`a route sets its content type and content-disposition only, not ${k}`);
+    }
+  });
+
+  it("fileCsp hashes the file's one style block, and throws on a file with none, two, or one left open", () => {
+    const one = "<style>a{}</style><p></p>";
+    expect(fileCsp(one)).toBe(`default-src 'none'; style-src 'sha256-${createHash("sha256").update("a{}").digest("base64")}'; img-src data:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'`);
+    expect(() => fileCsp("<p>no style</p>")).toThrow("fileCsp: the executive report holds one style block, this file opens 0 and closes 0");
+    expect(() => fileCsp("<style>a{}</style><p></p><style>b{}</style>")).toThrow("this file opens 2 and closes 2");
+    expect(() => fileCsp('<style>a{}</style><style media="print">b{}</style>')).toThrow("this file opens 2 and closes 1");
+    expect(() => fileCsp("<style>a{}")).toThrow("this file opens 1 and closes 0");
+  });
+
+  it("the switch's return paths are read off PAGE_PATH and the periods: every page of the nav and the executive report's three, nothing else", () => {
+    expect([...RETURN_PATHS]).toEqual([...Object.values(PAGE_PATH), ...PERIODS.map((p) => `/executive?period=${p}`)]);
+    expect(Object.keys(PAGE_PATH).sort()).toEqual(["actions", "document", "executive", "findings", "overview", "policy", "settings", "sources", "templates", "traces", "work"]);
+    for (const p of RETURN_PATHS) expect(returnPathOf(p)).toBe(p);
+    for (const p of [null, "", "/executive?period=1y", "//elsewhere.example", "/overview/", "/traces/view?f=x", "https://elsewhere.example/", "/Overview"]) expect(returnPathOf(p), String(p)).toBe("/overview");
+  });
+
+  it("a live tenants read that fails is not swallowed: the started tenant alone, the reason redacted to one line, one failed trace line", async () => {
+    const failing = { run: async () => { throw new Error("connection refused to host-0f1e2d\nat Socket.connect"); } } as unknown as DataLayer;
+    const tracer = new MemTracer("tenants_test", { model: "none" });
+    const r = await readTenants(failing, "client-1", { text: (s) => s.replace("host-0f1e2d", "a host") }, tracer);
+    expect(r).toEqual({ tenants: ["client-1"], error: "connection refused to a host" });
+    expect(tracer.events.map((e) => [e.agent, e.action, e.status, e.input_summary, e.output_summary])).toEqual([["console", "detect", "failed", "console tenants client-1", "the store's tenants were not read; the switcher lists client-1 alone"]]);
+    // a read that answers: tenant ids only, the started one among them, once each
+    const answering = { run: async () => result(["tenant_id"], [["lab-1"], ["*"], ['x"y'], ["client-1"], ["lab-1"]]) } as unknown as DataLayer;
+    expect(await readTenants(answering, "client-2", { text: (s) => s }, tracer)).toEqual({ tenants: ["client-1", "client-2", "lab-1"], error: null });
+    expect(tracer.events).toHaveLength(1);
+  });
+
+  it("the degraded switcher says the list was not read, why, and that it lists the started tenant alone", () => {
+    const shell = { tenant: "client-1", csrf: "c", returnTo: "/overview" };
+    expect(tenantSwitcher({ ...shell, tenants: ["client-1"], tenantsError: "connection <refused>" })).toBe(`<b>client-1</b><span class="tsw-err" role="status">The store's tenants were not read: connection &lt;refused&gt;. The switcher lists client-1 alone.</span>`);
+    expect(tenantSwitcher({ ...shell, tenants: ["client-1"], tenantsError: null })).toBe("<b>client-1</b>");
+    expect(CSS).toContain(".tsw-err{");
+  });
+
+  it("the rules in force: a family with two rules at its highest version is a duplicate, named, never tie-broken in silence", () => {
+    const rules = (SAMPLE.policy_rule as PolicyRule[]).map((r) => ({ ...r }));
+    expect(latestRules(rules).duplicates).toEqual([]);
+    const v2 = rules.find((r) => Number(r.version) === 2 && r.surface === "cloudflare.dns" && r.setting_glob === "proxied")!;
+    const twin = { ...v2, rule_id: "rule-00000000000000d0" };
+    const { rules: inForce, duplicates } = latestRules([...rules, twin]);
+    expect(duplicates).toEqual([{ family: "* · cloudflare.dns · * · proxied", version: 2, rule_ids: ["rule-00000000000000d0", v2.rule_id] }]);
+    expect(inForce.map((r) => r.rule_id)).not.toContain(v2.rule_id);
+    expect(duplicateText(duplicates[0])).toBe(`rule family * · cloudflare.dns · * · proxied has 2 rules at version 2 (rule-00000000000000d0, ${v2.rule_id}): the policy names no one rule in force, and the resolver picks by rule id`);
+    // a later version of the family settles it
+    expect(latestRules([...rules, twin, { ...v2, rule_id: "rule-000000000000000v3", version: 3 }]).duplicates).toEqual([]);
+  });
+
+  it("templatesOf resolves the policy once per scope: each distinct surface, object and setting once, the candidates once per object, whatever the rows", () => {
+    const rules = (SAMPLE.policy_rule as PolicyRule[]).map((r) => ({ ...r }));
+    const obs = (host: string, object_id: string, setting_path: string) => ({ surface: "linux.nginx", host, object_id, setting_path });
+    // two hosts hold the same file and settings: six rows, three scopes
+    const observations = ["host-a", "host-b"].flatMap((h) => [obs(h, "/etc/nginx/nginx.conf", "file"), obs(h, "/etc/nginx/nginx.conf", "http.real_ip"), obs(h, "/etc/nginx/conf.d/app.conf", "file")]);
+    const v = { tenant: "client-1", objects: [], decisions: [], snapshot: { observations, doc: { data: { rules } } } } as unknown as View;
+    const calls: string[] = [];
+    const counting = (rs: readonly PolicyRule[], s: Parameters<typeof resolvePolicy>[1]): PolicyRule | null => { calls.push(`${s.object_id} ${s.setting_path}`); return resolvePolicy(rs, s); };
+    const counted = templatesOf(v, counting);
+    expect(calls).toEqual(["/etc/nginx/nginx.conf file", "/etc/nginx/nginx.conf http.real_ip", "/etc/nginx/conf.d/app.conf file"]);
+    // the same templates as resolving every row over every rule
+    const each = (rs: readonly PolicyRule[], s: Parameters<typeof resolvePolicy>[1]): PolicyRule | null => resolvePolicy(rules, s);
+    expect(counted).toEqual(templatesOf(v, each));
+    expect(counted.filter((t) => t.settings).map((t) => [t.rule?.object_glob, t.settings])).toEqual([["/etc/nginx/nginx.conf", 2], ["/etc/nginx/conf.d/*.conf", 2], ["**", 2]]);
+  });
+
+  it("the two DQ rules a pass reads on Zetaris, side by side: exception_in_force and dns_inventory_current, each read, failed or not read and why", () => {
+    expect(passDq(null, "sample", "client-1").map((x) => [x.rule, x.entity, x.text, x.holds])).toEqual([
+      ["exception_in_force", "drift_usl.adoption", "no pass from this console yet", null], ["dns_inventory_current", "drift_usl.dns_live", "no pass from this console yet", null],
+    ]);
+    expect(passDq({}, "sample", "client-1").map((x) => x.text)).toEqual(["not read: the pass reads it on Zetaris, and sample mode reads sql.js", "not read: the pass reads it on Zetaris, and sample mode reads sql.js"]);
+    expect(passDq({}, "live", "lab-1").map((x) => x.text)).toEqual(["not read: the pass did not read it", "not read: lab-1 has no cloudflare.dns run to hold the provider to"]);
+    const live = passDq({ adoptions: { rule: "exception_in_force", of: "pass", decidedAt: "2026-10-26T00:00:00.000Z", adoptions: 23, inForce: 23 }, dns: { rule: "dns_inventory_current", live: 58, current: 57, runId: "run-1" } }, "live", "client-1");
+    expect(live.map((x) => [x.text, x.holds])).toEqual([["23 of 23 adoptions in force", true], ["57 of 58 live records at the provider match the last complete DNS run: the provider changed since that run", false]]);
+    expect(passDq({ dns: { rule: "dns_inventory_current", error: "zone_x is not there" } }, "live", "client-1")[1]).toMatchObject({ text: "not read: zone_x is not there", holds: null });
+  });
+});
+
+describe("the review of 67cd782: one first pass, a download that fails cleanly, every action's return, the tenants error end to end", SERVER, () => {
+  let server: ConsoleServer;
+  const lines: string[] = [];
+  // the file of the last 30 days has two style blocks, every day on record's renderer throws: the 7 days' is the real one
+  const renderFile = ((x: Executive, ctx: ExecutiveContext): string => {
+    if (x.period === "30d") return renderExecutive(x, ctx).replace("</style>", "</style><style>p{}</style>");
+    if (x.period === "all") throw new Error("the renderer broke\n    at renderExecutive (executive.ts:1:1)");
+    return renderExecutive(x, ctx);
+  }) as typeof renderExecutive;
+  beforeAll(async () => { ({ server } = await boot({ bundle: SAMPLE, bundlePath: "sample/bundle.json", tenant: "client-1", at: "2026-10-25T15:00:00.000Z", print: (l) => lines.push(l), renderFile })); }, BOOT_MS);
+  afterAll(async () => { await server?.close(); });
+  const tenantPost = (tenant: string) => fetch(`${server.url}/do/tenant`, { method: "POST", body: new URLSearchParams({ csrf: server.csrf, tenant }), headers: { accept: "application/json" } });
+
+  it("two switches to a tenant not yet seen, at once, run one first pass, and both answer once it ends", async () => {
+    expect(lines.filter((l) => l.startsWith("console: first pass of "))).toEqual(["console: first pass of client-1 decided at 2026-10-25T14:17:53.416Z"]);
+    const [a, b] = await Promise.all([tenantPost("lab-1"), tenantPost("lab-1")]);
+    expect([a.status, b.status]).toEqual([200, 200]);
+    expect(lines.filter((l) => l.startsWith("console: first pass of lab-1"))).toHaveLength(1);
+    // a third switch, after it, runs none
+    await tenantPost("client-1");
+    await tenantPost("lab-1");
+    expect(lines.filter((l) => l.startsWith("console: first pass of "))).toHaveLength(2);
+    await tenantPost("client-1");
+  });
+
+  it("a tab keeps its tenant: A renders client-1, B switches to lab-1, and A's Approve acts on client-1; a form that names no tenant, or one the store lacks, is refused", async () => {
+    await tenantPost("client-1");
+    const a = (await get(server, "/settings")).raw;
+    // every form carries the page's tenant, every link names it
+    expect(a).toContain('<input type="hidden" name="page_tenant" value="client-1">');
+    expect(a).toContain('<li><a href="/findings?tenant=client-1">Findings');
+    expect(a).not.toMatch(/\b(?:href|action)="\/(?!assets\/)(?![^"]*tenant=client-1)[^"#]*(?:#[^"]*)?"/);
+    const key = settingRows(a).find((r) => r.key.startsWith("linux.nginx"))!.key;
+    // tab B switches: the default moves, tab A's page and form do not
+    await tenantPost("lab-1");
+    expect(server.tenant()).toBe("lab-1");
+    expect((await get(server, "/settings?tenant=client-1")).raw).toContain('<option value="client-1" selected>client-1</option>');
+    const approved = await post(server, "approve", { key: encodeKey(key), by: "tech-a", note: "", page_tenant: "client-1" });
+    expect([approved.status, approved.json.ok], approved.json.title).toEqual([200, true]);
+    expect(approved.json.title).toMatch(/^Approved: /);
+    // the same form against the default tenant would not find the object: the action read client-1, not the global
+    const onDefault = await post(server, "approve", { key: encodeKey(key), by: "tech-a", note: "", page_tenant: "lab-1" });
+    expect(onDefault.json.title).toBe("Approve refused: the object is not in the latest passing runs of this tenant");
+    for (const named of ["nope", ""]) {
+      const r = await post(server, "approve", { key: encodeKey(key), by: "tech-a", page_tenant: named });
+      expect([r.status, r.json.title.startsWith("Refused: the form names ")], named).toEqual([400, true]);
+    }
+    const none = await fetch(`${server.url}/do/lock`, { method: "POST", body: new URLSearchParams({ csrf: server.csrf, confirm: "yes", key: encodeKey(key) }), headers: { accept: "application/json" } });
+    expect([none.status, ((await none.json()) as { title: string }).title]).toEqual([400, "Refused: the form names no tenant; reload the page"]);
+    // a page that names a tenant the store lacks is refused, not read for the default
+    expect((await get(server, "/settings?tenant=nope")).status).toBe(400);
+    expect(() => withTenant({ tenant: "client-1", tenants: ["client-1"] } as unknown as Backend, "nope")).toThrow('no backend for tenant "nope"');
+    await tenantPost("client-1");
+  });
+
+  it("a download whose file fails: a renderer that throws, or a file with two style blocks, is the console's 500 page with the fixed headers, and the console answers on", async () => {
+    for (const period of ["30d", "all"]) {
+      const r = await get(server, `/executive/download?period=${period}`);
+      expect(r.status, period).toBe(500);
+      expect(r.headers.get("content-disposition"), period).toBeNull();
+      expect([r.headers.get("x-content-type-options"), r.headers.get("referrer-policy"), r.headers.get("cache-control")], period).toEqual(["nosniff", "no-referrer", "no-store"]);
+      expect(r.headers.get("content-security-policy"), period).toMatch(/^default-src 'none'; style-src 'self' 'nonce-/);
+      expect(r.body, period).toContain("<h1>The console could not render this page</h1>");
+      expect(r.body, period).toContain("The executive report could not be written as one file: ");
+      expect(r.body, period).not.toContain("executive.ts:1:1");
+    }
+    expect((await get(server, "/executive/download?period=30d")).body).toContain("fileCsp: the executive report holds one style block, this file opens 2 and closes 2");
+    expect(lines.filter((l) => l.startsWith("console: the executive report of client-1 was not written as a file"))).toHaveLength(3);
+    // the page and the good file still answer
+    expect((await get(server, "/executive/download?period=7d")).status).toBe(200);
+    expect((await get(server, "/executive?period=all")).status).toBe(200);
+  });
+
+  it("every action returns to the pages a switch returns to: a refused action from Templates or the executive report answers that page with its toast", async () => {
+    const form = (ret: string) => fetch(`${server.url}/do/lock`, { method: "POST", body: new URLSearchParams({ csrf: server.csrf, confirm: "yes", key: "", return: ret, page_tenant: "client-1" }) });
+    const templates = await (await form("/templates")).text();
+    expect(templates).toContain("<h1>Templates</h1>");
+    expect(templates).toContain("Lock refused: the object is not in the latest passing runs of this tenant");
+    expect(await (await form("/executive?period=30d")).text()).toContain('<a href="/executive?period=30d&amp;tenant=client-1" aria-current="page">30 days</a>');
+    for (const back of ["https://elsewhere.example/", "/traces/view?f=..%2F..%2Fpackage.json", "/executive?period=1y"]) expect(await (await form(back)).text(), back).toContain("<h1>Overview</h1>");
+  });
+
+  it("a tenants read that fails reaches the page as plain text escaped once: no stack, no connection string, no password", async () => {
+    const failing = { run: async () => { throw new Error('connect ECONNREFUSED postgres://drift:s3cret-pass@db.internal:5432/drift?password=hunter2 <b>"x"</b> & more\n    at TCPConnectWrap.afterConnect (net.js:1:1)'); } } as unknown as DataLayer;
+    const { error } = await readTenants(failing, "client-1", BUNDLE_REDACTOR);
+    expect(error).not.toMatch(/s3cret-pass|hunter2|TCPConnectWrap|net\.js/);
+    expect(error).toContain("<redacted>");
+    const html = tenantSwitcher({ tenant: "client-1", tenants: ["client-1"], csrf: "c", returnTo: "/overview", tenantsError: error });
+    // escaped once: the markup is text, and no entity is escaped twice
+    expect(html).toContain("&lt;b&gt;&quot;x&quot;&lt;/b&gt; &amp; more");
+    expect(html).not.toMatch(/&amp;(?:lt|gt|quot|amp);/);
+    expect(html).not.toContain('<b>"x"</b>');
+  });
+
+  it("the live start's tracer is the caller's: a FileTracer writes logs/<id>.jsonl at its first line only, so a start that reads the tenants leaves no file", async () => {
+    const id = traceIdOf("console_start_test");
+    const fileOf = path.join(config.logDir, `${id}.jsonl`);
+    const answering = { run: async () => result(["tenant_id"], [["client-1"]]) } as unknown as DataLayer;
+    await readTenants(answering, "client-1", BUNDLE_REDACTOR, new FileTracer(id, { model: "none" }));
+    expect(existsSync(fileOf)).toBe(false);
+    const failing = { run: async () => { throw new Error("timeout"); } } as unknown as DataLayer;
+    try {
+      await readTenants(failing, "client-1", BUNDLE_REDACTOR, new FileTracer(id, { model: "none" }));
+      const lines = readFileSync(fileOf, "utf8").trim().split("\n").map((l) => JSON.parse(l) as { status: string; input_summary: string });
+      expect(lines.map((l) => [l.status, l.input_summary])).toEqual([["failed", "console tenants client-1"]]);
+    } finally {
+      rmSync(fileOf, { force: true });
+    }
+    expect(readFileSync(path.join(ROOT, "src", "console", "state.ts"), "utf8")).toMatch(/export async function liveBackend\(o: \{ tenant: string; tracer: Tracer \}\)/);
+  });
+});
+
+describe("the sample's default tenant", () => {
+  it("is the tenant of the latest cloudflare.dns run whose tenant id and instant are well formed; null when none is", () => {
+    const run = (tenant_id: unknown, started_at: unknown, surface = "cloudflare.dns") => ({ tenant_id, surface, started_at });
+    expect(defaultTenant(SAMPLE.collection_run as Row[])).toBe("client-1");
+    expect(defaultTenant([run("a-1", "2026-10-25T10:00:00.000Z"), run("b-1", "2026-10-25T11:00:00.000Z"), run("c-1", "2026-10-25T12:00:00.000Z", "linux.nginx")])).toBe("b-1");
+    // a malformed instant or tenant id does not count, whatever it sorts as
+    expect(defaultTenant([run("a-1", "2026-10-25T10:00:00.000Z"), run("z-1", "9999"), run("z-2", "2026-10-25T23:00:00Z"), run('x"y', "2026-10-25T23:00:00.000Z"), run("*", "2026-10-25T23:00:00.000Z"), run(7, "2026-10-25T23:00:00.000Z")])).toBe("a-1");
+    expect(defaultTenant([run("a-1", "2026-02-30T10:00:00.000Z")])).toBeNull();
+    expect(defaultTenant([])).toBeNull();
+  });
+});
+
+describe("the console over a policy with a duplicate rule family and a tenants read that failed", SERVER, () => {
+  let server: ConsoleServer;
+  const lines: string[] = [];
+  const tracer = new MemTracer("console_dup_test", { model: "none" });
+  // a second zetaris.control rule at version 2 beside the shipped file's: no setting of the sample falls under it, so no finding moves
+  const twin = { ...(SAMPLE.policy_rule as Row[])[0], rule_id: "rule-00000000000000d0", surface: "zetaris.control", object_glob: "**", setting_glob: "**", version: 2 };
+  beforeAll(async () => {
+    const bundle = { ...SAMPLE, policy_rule: [...(SAMPLE.policy_rule as Row[]), twin] };
+    const backend = await sampleBackend({ tenant: "client-1", bundle, bundlePath: "sample/bundle.json", memoryDir: SAMPLE_MEMORY_DIR, write: false });
+    server = await startConsole({
+      backend: { ...backend, tenantsError: "the tenants read timed out" }, port: 0, clock: ticking("2026-10-25T15:00:00.000Z"), firstPass: "sync", tracePasses: false, tracer,
+      print: (l) => lines.push(l), traceDirs: [{ label: "examples/traces", dir: path.join(ROOT, "examples", "traces") }],
+    });
+  }, BOOT_MS);
+  afterAll(async () => { await server?.close(); });
+
+  it("Templates names the duplicate as an alert, the console prints it and traces it once, however many pages are read", async () => {
+    const html = (await get(server, "/templates")).body;
+    expect(html).toContain('<div class="alert" role="alert"><b>1 rule family of the policy has more than one rule at the highest version</b><ul><li>rule family * · zetaris.control · ** · ** has 2 rules at version 2 (rule-00000000000000d0, rule-8bcb3a03ffcee62e): the policy names no one rule in force, and the resolver picks by rule id</li></ul></div>');
+    await get(server, "/settings");
+    await post(server, "pass", {});
+    await get(server, "/templates");
+    const traced = tracer.events.filter((e) => e.input_summary === "console policy client-1");
+    expect(traced.map((e) => [e.agent, e.action, e.status])).toEqual([["console", "check", "failed"]]);
+    expect(traced[0].output_summary).toContain("rule family * · zetaris.control · ** · ** has 2 rules at version 2");
+    expect(lines.filter((l) => l.startsWith("console: policy: "))).toHaveLength(1);
+  });
+
+  it("every page shows the degraded switcher: the tenant read failed, the reason, the started tenant alone", async () => {
+    for (const [p] of PAGES) expect((await get(server, p)).body, p).toContain(`<span class="tsw-err" role="status">The store's tenants were not read: the tenants read timed out. The switcher lists client-1 alone.</span>`);
   });
 });
 

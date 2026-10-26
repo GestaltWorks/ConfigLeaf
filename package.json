@@ -19,6 +19,7 @@
     "conformance": "tsx scripts/conformance.ts",
     "conformance:hmem": "tsx scripts/conformance-hmem.ts",
     "sample": "tsx scripts/sample.ts",
+    "judge": "tsx scripts/judge.ts",
     "preflight": "tsx scripts/preflight.ts",
     "answer": "tsx scripts/answer.ts",
     "why": "tsx scripts/why.ts",
@@ -49,6 +50,7 @@
     "cycle": "tsx scripts/cycle.ts",
     "watch": "tsx scripts/watch.ts",
     "console": "tsx scripts/console.ts",
+    "report:executive": "tsx scripts/executive.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

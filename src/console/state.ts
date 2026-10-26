@@ -1,8 +1,9 @@
 // The console's state: what it reads through the DataLayer the agent uses (Zetaris live, sql.js in sample mode) and
-// what it holds between requests. One Console per process, one tenant.
+// what it holds between requests. One Console per process, one tenant at a time (withTenant).
 //
 // Contract:
-//   - Backend: the layer the pages read through (inside a CountingEngine, so a pass's query count is known), the store
+//   - Backend: the tenant and the tenants the store holds runs of (withTenant gives the same backend for another), the
+//     layer the pages read through (inside a CountingEngine, so a pass's query count is known), the store
 //     the actions write through (change_window rows, approved_setting rows), the redactor every page string passes, the
 //     lessons, and the ledger a pass records into: a MemoryLedger over the sql.js engine in sample mode (the actions and
 //     the passes live for the process), none live, where the console's pass is a dry pass that records nothing.
@@ -26,7 +27,7 @@ import path from "node:path";
 import { actionOf } from "../actions/plan.ts";
 import { runCheck } from "../catalogue/templates.ts";
 import type { FindingClass } from "../catalogue/templates.ts";
-import { config } from "../config.ts";
+import { config, redact } from "../config.ts";
 import { CountingEngine, NO_QUERIES, type QueryTally } from "../data/engines/counting.ts";
 import { SqlJsEngine } from "../data/engines/sqljs.ts";
 import { ZetarisEngine } from "../data/engines/zetaris.ts";
@@ -37,15 +38,17 @@ import { APPROVED_COPIES_SQL, CHANGE_WINDOWS_SQL, DISPOSITIONS_SQL, LATEST_APPRO
 import type { Action, ApprovedSetting, ChangeWindow, CollectionRun, FindingCause, Observation, PolicyRule } from "../data/rows.ts";
 import { Store } from "../data/store.ts";
 import { renderDocument, type DocumentResult, type OpenDisposition } from "../document/render.ts";
+import { loadSamplePolicy } from "../document/sample.ts";
 import { TechnicianMemory } from "../engine/memory.ts";
 import { DriftWorld } from "../engine/world.ts";
 import { BUNDLE_REDACTOR, MemoryCauseSink, explainPass, type ExplainResult } from "../explain/explain.ts";
 import { MemoryLedger, type Ledger } from "../ledger.ts";
 import { dispositionIdOf, passStep, type PassStep } from "../loop/pass.ts";
-import { FileTracer } from "../loop/trace.ts";
+import { FileTracer, traceIdOf } from "../loop/trace.ts";
 import type { Finding, Verb } from "../pipeline.ts";
 import { openWindow } from "../policy/decide.ts";
 import { resolvePolicy } from "../policy/resolve.ts";
+import { TENANT } from "../policy/schema.ts";
 import { MemoryWindows, PgWindows, WINDOW_SURFACES, type WindowStore } from "../policy/window.ts";
 import { Redactor } from "../redactor.ts";
 import type { Tracer } from "../trace.ts";
@@ -65,7 +68,12 @@ export interface ApprovalSource extends ApprovalStore {
 
 export interface Backend {
   mode: ConsoleMode;
+  /** The tenant the pages and the actions are of; withTenant gives the same backend for another. */
   tenant: string;
+  /** The tenants the store holds runs of, in code-unit order, each a tenant id as src/policy/schema.ts TENANT reads one: the header's switcher lists them. */
+  tenants: readonly string[];
+  /** Why the store's tenants were not read (live); the switcher then lists the tenant the console started with. */
+  tenantsError?: string | null;
   layer: DataLayer;
   counting: CountingEngine;
   /** The sql.js engine in sample mode; null live. */
@@ -146,20 +154,40 @@ const textSha256 = (text: string): string => `sha256:${createHash("sha256").upda
 export async function sampleBackend(o: { tenant: string; bundle: Record<string, unknown>; bundlePath: string; memoryDir: string; write: boolean; policyFile?: string }): Promise<Backend> {
   const engine = await SqlJsEngine.create();
   engine.loadBundle(o.bundle);
+  // the shipped policy for the recording's tenants before any pass, as the eval runner and npm run sample load it
+  loadSamplePolicy(engine, o.bundle, o.policyFile);
   engine.loadFileTables(fileRows({ memoryDir: o.memoryDir, policyFile: o.policyFile ?? config.policyFile, redactor: BUNDLE_REDACTOR }));
   const counting = new CountingEngine(engine);
   const layer = new DataLayer(counting);
   const lessons = new TechnicianMemory({ storage: "read", directory: o.memoryDir }).lessons().map((l) => l.recordedAt);
   let sha = "";
   try { sha = textSha256(readFileSync(o.bundlePath, "utf8")); } catch { sha = textSha256(JSON.stringify(o.bundle)); }
+  const tenants = tenantIds(((o.bundle.collection_run ?? []) as { tenant_id: string }[]).map((r) => r.tenant_id));
   return {
-    mode: "sample", tenant: o.tenant, layer, counting, engine, redactor: BUNDLE_REDACTOR, windows: new MemoryWindows(engine), approvals: new LayerApprovals(layer, engine),
+    mode: "sample", tenant: o.tenant, tenants: tenants.includes(o.tenant) ? tenants : [...tenants, o.tenant].sort(cmp), layer, counting, engine, redactor: BUNDLE_REDACTOR, windows: new MemoryWindows(engine), approvals: new LayerApprovals(layer, engine),
     ledger: new MemoryLedger(engine), vault: null, memoryDir: o.memoryDir, memoryWritable: o.write,
     source: `sql.js over ${o.bundlePath.replace(/\\/g, "/")}`, bundle: { path: o.bundlePath.replace(/\\/g, "/"), sha256: sha },
     sampleInstant: new Date(decisionInstantWith(o.bundle, lessons) ?? Date.now()).toISOString(),
     close: async () => engine.close(),
   };
 }
+
+const TENANTS_SQL = `SELECT DISTINCT tenant_id
+FROM {{t:collection_run}}
+ORDER BY tenant_id`;
+
+/** A tenant id as src/policy/schema.ts TENANT reads one (anchored: [A-Za-z0-9][A-Za-z0-9._-]{0,63}), never "*". */
+export const isTenantId = (x: unknown): boolean => typeof x === "string" && x !== "*" && TENANT.test(x);
+
+/** The tenant ids among `ids`, once each and in code-unit order: an id TENANT reads, never "*", so a page, a header and a file name can carry it as it is. */
+export const tenantIds = (ids: readonly string[]): string[] => [...new Set(ids.filter(isTenantId))].sort(cmp);
+
+/** The same backend for another of its tenants: one store, one engine, one redactor; the pages, the passes and the actions read and write that tenant's rows. */
+export const withTenant = (b: Backend, tenant: string): Backend => {
+  // the primitive refuses on its own: a tenant the store holds no run of is no backend, whoever forgot to check
+  if (!b.tenants.includes(tenant)) throw new Error(`no backend for tenant ${JSON.stringify(tenant.slice(0, 64))}: the store holds runs of ${b.tenants.join(", ")}`);
+  return b.tenant === tenant ? b : { ...b, tenant };
+};
 
 /** Why live mode cannot start, as one sentence; null when it can. */
 export function liveRefusal(env: NodeJS.ProcessEnv = process.env): string | null {
@@ -186,16 +214,41 @@ export async function zetarisGaps(b: Pick<Backend, "counting" | "layer">, dataso
   return gaps;
 }
 
-/** Live mode: the Store on DATABASE_URL (the schema applied, so change_window exists), the layer over Zetaris, the tenant's redactor, the vault at DRIFT_VAULT_DIR. */
-export async function liveBackend(o: { tenant: string }): Promise<Backend> {
+/**
+ * The tenants the store holds runs of, as tenant ids (tenantIds), with the one the console started for. A read that
+ * fails is not swallowed: the switcher lists the started tenant alone, `error` says why for the page and the start
+ * line, and the tracer gets one failed line naming it. `error` is plain text, escaped once where a page shows it: the
+ * message's first line only (no stack), secrets and a URL's user and password scrubbed (config.ts redact), then the
+ * tenant's redactor, at most 200 characters.
+ */
+export async function readTenants(layer: DataLayer, started: string, redactor: { text(s: string): string }, tracer?: Tracer): Promise<{ tenants: string[]; error: string | null }> {
+  try {
+    const r = await layer.run(TENANTS_SQL, {}, { agent: "console", limit: 1000 });
+    return { tenants: tenantIds([...objects(r).map((x) => x.tenant_id), started]), error: null };
+  } catch (e) {
+    const error = redactor.text(redact(String((e as Error)?.message ?? e).split("\n")[0])).slice(0, 200);
+    tracer?.emit({ agent: "console", action: "detect", status: "failed", input_summary: `console tenants ${started}`, output_summary: `the store's tenants were not read; the switcher lists ${started} alone`, detail: error });
+    return { tenants: tenantIds([started]), error };
+  }
+}
+
+/**
+ * Live mode: the Store on DATABASE_URL (the schema applied, so change_window exists), the layer over Zetaris, the
+ * tenant's redactor, the vault at DRIFT_VAULT_DIR. The caller names the tracer the start's own findings go to (a
+ * tenants read that failed): scripts/console.ts gives a FileTracer, whose file in logs/ is written at its first line
+ * only, so a start that finds nothing leaves no file.
+ */
+export async function liveBackend(o: { tenant: string; tracer: Tracer }): Promise<Backend> {
   const refused = liveRefusal();
   if (refused) throw new Error(refused);
   const store = Store.fromEnv();
   await store.applySchema();
   const redactor = new Redactor(config.redactSalt, config.redactWords);
   const counting = new CountingEngine(new ZetarisEngine());
+  const layer = new DataLayer(counting);
+  const { tenants, error: tenantsError } = await readTenants(layer, o.tenant, redactor, o.tracer);
   return {
-    mode: "live", tenant: o.tenant, layer: new DataLayer(counting), counting, engine: null, redactor, windows: new PgWindows(store), approvals: store,
+    mode: "live", tenant: o.tenant, tenants, tenantsError, layer, counting, engine: null, redactor, windows: new PgWindows(store), approvals: store,
     ledger: null, vault: Vault.fromEnv({ redactor }), memoryDir: config.memoryDir, memoryWritable: true,
     source: `Zetaris over the ${config.zetaris.datasource} datasource`, bundle: null, sampleInstant: null,
     refreshFiles: () => refreshFileTables(), close: () => store.close(),
@@ -377,7 +430,7 @@ export function decisionsOfLedger(open: readonly OpenDisposition[], windowHolds:
 
 export type Status = "in order" | "drifted" | "held" | "with a technician" | "adopted";
 export const STATUSES: readonly Status[] = ["with a technician", "drifted", "held", "adopted", "in order"];
-const STATUS_OF: Readonly<Record<Verb, Status>> = { ESCALATE: "with a technician", FIX: "with a technician", ROLLBACK: "drifted", HOLD: "held", ADOPT: "adopted" };
+export const STATUS_OF: Readonly<Record<Verb, Status>> = { ESCALATE: "with a technician", FIX: "with a technician", ROLLBACK: "drifted", HOLD: "held", ADOPT: "adopted" };
 export type Lock = "locked" | "open" | "window";
 
 export interface SettingObject {
