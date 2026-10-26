@@ -661,6 +661,39 @@ describe("validateCopies (what npm run validate:copies runs)", () => {
     const empty = await validateCopies({ vaultDir: vault, tenant: "client-none", dryRun: true, store: null, redactor: RED });
     expect(empty.lines).toEqual(["no vault repository for tenant client-none"]);
   });
+
+  it("an earlier commit no validation reached is validated beside the head, nginx-t once per tree; a validated one is left alone", async () => {
+    const { vault, hostSha, cfSha, copies } = estate();
+    // two later runs of the host: the first adds a file, the second (the head) changes nothing, so both hold one tree
+    const repo = path.join(vault, T, "web-01");
+    const added = commit(repo, new Map([["etc/nginx/conf.d/host-dddddd.tld.conf", "server {\n    listen 80;\n    server_name host-dddddd.tld;\n}\n"]]), "run run-nginx-2 linux.nginx 2026-10-24T08:10:00.000Z");
+    const head = commit(repo, new Map(), "run run-nginx-3 linux.nginx 2026-10-24T08:20:00.000Z");
+    const objects = [...copies.filter((c) => c.surface === "linux.nginx").map((c) => c.object_id), "/etc/nginx/conf.d/host-dddddd.tld.conf"];
+    const later = [...objects.map((o) => copy("run-nginx-2", o, added)), ...objects.map((o) => copy("run-nginx-3", o, head))];
+    const { store, written } = fakeStore([...copies, ...later], ["192.0.2.10"]);
+    // the first host commit and the DNS commit carry a validation already; the two later commits none
+    const withEarlier: CopyStore = { ...store, unvalidatedCommits: async () => [added, head].sort() };
+    const { runner, seen } = scripted([OK]);
+    const res = await validateCopies({ vaultDir: vault, tenant: T, host: "web-01", dryRun: false, store: withEarlier, redactor: RED, runner, pair: counted().pair, validatedAt: at });
+    expect(res.errors).toBe(0);
+    // one tree, one nginx-t call of one round; its result goes to both commits' copies
+    expect(seen.map((s) => s.round)).toEqual([1]);
+    expect(res.lines).toHaveLength(2);
+    expect(res.lines[0]).toMatch(new RegExp(`^host web-01 @${head.slice(0, 8)} \\(run run-nginx-3, 5 files, 0 links\\): nginx-t ok_with_gaps, 1 round, .*; 5 vault copies of 5 matched$`));
+    expect(res.lines[1]).toBe("host web-01: 1 earlier commit whose copies no validation reached, 1 tree; nginx-t by commit: ok 0, ok_with_gaps 1, fail 0; 5 vault copies of 5 matched");
+    expect(res.rows.map((r) => r.copy_id).sort()).toEqual(later.map((c) => c.copy_id).sort());
+    expect(res.rows.every((r) => r.validator === "nginx-t" && r.result === "ok_with_gaps")).toBe(true);
+    expect(written).toHaveLength(1);
+    expect(res.lines.join("\n")).not.toContain(hostSha.slice(0, 8));
+    // a commit given: that commit alone, no earlier one
+    const one = await validateCopies({ vaultDir: vault, tenant: T, host: "web-01", commit: added, dryRun: true, store: withEarlier, redactor: RED, runner: scripted([OK]).runner, pair: counted().pair, validatedAt: at });
+    expect(one.lines).toHaveLength(1);
+    expect(one.rows.map((r) => r.copy_id).sort()).toEqual(later.filter((c) => c.git_commit === added).map((c) => c.copy_id).sort());
+    // the Cloudflare head's copies stand validated: a store that lists no earlier commit leaves its line as before
+    const dns = await validateCopies({ vaultDir: vault, tenant: T, zone: "host-aaaaaa.tld", dryRun: true, store: withEarlier, redactor: RED, validatedAt: at });
+    expect(dns.lines).toHaveLength(1);
+    expect(dns.lines[0]).toContain(`cloudflare @${cfSha.slice(0, 8)}`);
+  });
 });
 
 /** The sites-enabled fixture's three enabled TLS vhosts: a certificate and a key each, outside the tree. */

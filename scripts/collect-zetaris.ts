@@ -5,23 +5,26 @@
 // LIGHTNING DATABASES and SHOW SERVER VERSION, read only, each object one observation of its canonical JSON, redacted.
 // Without --dry-run the run goes into the app Postgres through the Store as a host's run does (beginRun with the
 // population asserted, the observations, finishRun), then the vault hook commits a complete run to
-// <DRIFT_VAULT_DIR>/<tenant>/zetaris. Prints the run's line, one line per object kind and the vault's summary; the trace
-// goes to stdout as the collect scripts write it. npm run zetaris:setup runs the same collection at its end.
-// Exit 0 when the run is complete, 1 when it is not or a write failed, 2 on a usage error, a blank ZETARIS_API_KEY or,
-// for a write, a blank REDACT_SALT.
+// <DRIFT_VAULT_DIR>/<tenant>/zetaris and zetaris-json validates that commit's copies (src/validate/run.ts, what
+// npm run validate:copies -- --zetaris runs), so the run's copies carry a validation as soon as they exist. Prints the
+// run's line, one line per object kind, the vault's summary and the validation's line; the trace goes to stdout as the
+// collect scripts write it. npm run zetaris:setup runs the same collection at its end.
+// Exit 0 when the run is complete, 1 when it is not, a write failed or the validation stopped, 2 on a usage error, a
+// blank ZETARIS_API_KEY or, for a write, a blank REDACT_SALT.
 
 import { randomBytes } from "node:crypto";
 import { parseArgs } from "node:util";
 import { Zetaris } from "../src/adapters/zetaris.ts";
 import { config, redact } from "../src/config.ts";
 import { Store } from "../src/data/store.ts";
+import { TENANT_ID, TENANT_ID_SHAPE } from "../src/policy/schema.ts";
 import { Redactor } from "../src/redactor.ts";
 import { Tracer } from "../src/trace.ts";
+import { storeCopies, validateCopies } from "../src/validate/run.ts";
 import { hookSummary } from "../src/vault/hook.ts";
 import { Vault } from "../src/vault/vault.ts";
 import { collectControl, controlText, storeControl } from "../src/zetaris/control.ts";
 
-const TENANT = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const USAGE = "usage: npm run collect:zetaris -- --tenant <id> [--dry-run] [--help]";
 
 function die(msg: string): never {
@@ -41,7 +44,7 @@ if (args.help) {
   process.exit(0);
 }
 const tenant = args.tenant ?? die("--tenant is required");
-if (!TENANT.test(tenant)) die(`--tenant must be lowercase letters, digits and dashes, got ${tenant}`);
+if (!TENANT_ID.test(tenant)) die(`--tenant must be ${TENANT_ID_SHAPE}, got ${tenant}`);
 const dry = args["dry-run"] === true;
 if (!config.zetaris.apiKey) die("ZETARIS_API_KEY is blank: the control plane is read through Zetaris");
 if (!dry && !config.redactSalt) die("REDACT_SALT is blank: the write path needs the tenant's salt so pseudonyms join across runs (set it in .env)");
@@ -69,6 +72,12 @@ try {
       console.log(`wrote zetaris.control ${c.run.run_id}: ${r.written} new observation row(s) of ${c.observations.length}, status ${c.run.status}`);
       console.log(`vault: ${JSON.stringify(hookSummary(r.hook))}`);
       if (r.hook.status === "failed") ok = false;
+      if (r.hook.status === "committed" && vault) {
+        const v = await validateCopies({ vaultDir: vault.root, tenant, zetaris: true, commit: r.hook.commit.commit, dryRun: false, store: storeCopies(store), redactor });
+        for (const l of v.lines) console.log(`validate: ${l}`);
+        console.log(`validate: copy_validation ${v.written ?? 0} row(s) written of ${v.rows.length}`);
+        if (v.errors) ok = false;
+      }
     } finally {
       await store.close();
     }

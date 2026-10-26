@@ -396,6 +396,12 @@ Absent, with the one line each maps:
   ok_with_gaps, and the Decider reads a copy's latest validation. A copy that no validation reached reads invalid: in
   `sample/bundle.json` (exported after the 13:53 UTC cycle of 25 Oct 2026) 1,183 of 1,366 copies are valid, and the
   183 invalid are those 54 fail rows and 129 copies with no validation row (54 of `client-1`, 75 of `lab-1`).
+  Since 26 Oct 2026 `npm run validate:copies` validates, beside each head, every earlier commit whose copies no
+  validation reached (nginx-t once per tree), and the Zetaris repository's copies through zetaris-json, which
+  `npm run collect:zetaris` and `npm run zetaris:setup` also run on the commit they make. That morning the live store
+  held 398 invalid of 2,701 at 05:59 UTC: 284 nginx copies of 31 commits no validation reached, the 54 fail rows of
+  19:59 UTC and 60 Zetaris copies; validate:copies over both tenants and the two 19:59 UTC commits validated again
+  (each ok_with_gaps) left RUN DQ `copy_validated` at 2,731 of 2,731 at 06:00 UTC.
 - ok_with_gaps is nginx accepting the restored tree with placeholders in place: 16 and 13 of them on 24 Oct 2026,
   the certbot certificates and keys, its `options-ssl-nginx.conf` and `ssl-dhparams.pem`, an origin pair and the
   credential-shaped snippet. A file the collector leaves unread because its name is credential-shaped is absent from

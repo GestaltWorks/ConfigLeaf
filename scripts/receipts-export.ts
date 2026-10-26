@@ -22,6 +22,7 @@ import { parseArgs } from "node:util";
 import type { SignedReceipt } from "../src/adapters/nightshift.ts";
 import { config, redact } from "../src/config.ts";
 import { tenantAppId } from "../src/gate.ts";
+import { TENANT_ID, TENANT_ID_SHAPE } from "../src/policy/schema.ts";
 import { idsFrom, JOB_FILE, probe, readReceipts, RECEIPTS_FILE, receiptsText, select, WITHHELD_FILE, type WithheldFile } from "../src/receipts/bundle.ts";
 
 /** The widest window the GET serves: measured 25 Oct 2026, ?limit=1000 and ?limit=500 each returned 200 receipts, no limit 100. */
@@ -75,6 +76,7 @@ try {
     console.log(`receipts: ${args.results}: ${calls.records.length - calls.planted} call records in ${calls.runFiles} run files and ${calls.planted} in planted.json, ${wanted.length} receipt ids, tenant ${tenant}`);
   } else {
     if (!args.tenant || !args.out) throw new Error("--ids needs --tenant <id> and --out <dir>/receipts.json");
+    if (!TENANT_ID.test(args.tenant)) throw new Error(`--tenant must be ${TENANT_ID_SHAPE}, got ${args.tenant}`);
     if (args.out.endsWith(".json") && path.basename(args.out) !== RECEIPTS_FILE) throw new Error(`--out names a directory or a file called ${RECEIPTS_FILE}`);
     outDir = args.out.endsWith(".json") ? path.dirname(args.out) : args.out;
     tenant = args.tenant;

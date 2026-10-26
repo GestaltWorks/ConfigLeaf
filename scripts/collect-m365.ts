@@ -18,10 +18,10 @@ import { parseArgs } from "node:util";
 import { config, redact } from "../src/config.ts";
 import { Graph, MAIL_FIELDS, collectM365 } from "../src/collectors/m365.ts";
 import { Store } from "../src/data/store.ts";
+import { TENANT_ID, TENANT_ID_SHAPE } from "../src/policy/schema.ts";
 import { Redactor } from "../src/redactor.ts";
 import { Tracer } from "../src/trace.ts";
 
-const TENANT = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const USAGE = "usage: npm run collect:m365 -- --tenant <id> [--dry-run]";
 
 function die(msg: string): never {
@@ -43,7 +43,7 @@ try {
   die((e as Error).message);
 }
 const tenant = args.tenant ?? die("--tenant is required");
-if (!TENANT.test(tenant)) die(`--tenant must be lowercase letters, digits and dashes, got ${tenant}`);
+if (!TENANT_ID.test(tenant)) die(`--tenant must be ${TENANT_ID_SHAPE}, got ${tenant}`);
 const dry = args["dry-run"] === true;
 if (!dry && !config.redactSalt) die("REDACT_SALT is blank: the write path needs the tenant's salt so pseudonyms join the Cloudflare records (set it in .env)");
 

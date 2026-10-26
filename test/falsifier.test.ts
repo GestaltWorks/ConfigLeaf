@@ -39,7 +39,7 @@ import authored from "./fixtures/authored-bundle.json" with { type: "json" };
 import policyBundle from "./fixtures/policy-bundle.json" with { type: "json" };
 import recorded from "./fixtures/recorded-bundle.json" with { type: "json" };
 import { MemTracer } from "./fixtures/mem-tracer.ts";
-import { ULTRA_MODEL, signed } from "./fixtures/signed-receipt.ts";
+import { TEST_KEY, ULTRA_MODEL, signed } from "./fixtures/signed-receipt.ts";
 
 const AT = "2026-10-23T03:00:00.000Z";
 const REFUTE = "SELECT run_id FROM {{t:collection_run}}";
@@ -112,7 +112,7 @@ function stubNightshift(answer: (claim: string) => Answer = () => ({})) {
       return { content, modelRequested: o.models[0], modelRouted: model, receiptId, requestId, tokensIn: 100, tokensOut: 20, latencyMs: 5, retries: 0, raw: {}, hop: 0 };
     },
   };
-  const judge: PassJudge & { nightshift: JudgeModel; receipts: ReceiptFinder } = { nightshift, receipts: { find: async (id) => receipts.get(id) ?? null }, models: ultraLadder() };
+  const judge: PassJudge & { nightshift: JudgeModel; receipts: ReceiptFinder } = { nightshift, receipts: { keys: [TEST_KEY], find: async (id) => receipts.get(id) ?? null }, models: ultraLadder() };
   return { judge, sent, judgeCalls: () => sent.filter((o) => o.messages[0].content === SYSTEM_PROMPT) };
 }
 

@@ -14,7 +14,7 @@ import { Redactor } from "./redactor.ts";
  * a run and cannot be linked across runs. The agent's own dotted vocabulary (surfaces, setting
  * paths, SQL aliases) survives the pass; see redactor.ts, pass d.
  */
-const redactor = new Redactor(config.redactSalt || randomBytes(16).toString("hex"), config.redactWords);
+export const TRACE_REDACTOR = new Redactor(config.redactSalt || randomBytes(16).toString("hex"), config.redactWords);
 
 export type TraceAction =
   | "observe" | "detect" | "triage" | "hypothesise" | "check" | "judge" | "decide"
@@ -71,7 +71,7 @@ export class Tracer {
   protected build(e: Omit<TraceEvent, "ts" | "trace_id">): TraceEvent {
     const full: TraceEvent = { ts: new Date().toISOString(), trace_id: this.traceId, ...e };
     if (this.model !== undefined && full.model_requested === undefined) full.model_requested = this.model;
-    for (const k of ["input_summary", "output_summary", "detail"] as const) if (full[k]) full[k] = redactor.text(redact(full[k]));
+    for (const k of ["input_summary", "output_summary", "detail"] as const) if (full[k]) full[k] = TRACE_REDACTOR.text(redact(full[k]));
     return full;
   }
 

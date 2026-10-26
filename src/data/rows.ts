@@ -145,7 +145,7 @@ export interface VaultCopy {
   source: string; // collector
 }
 
-export type Validator = "nginx-t" | "cf-schema";
+export type Validator = "nginx-t" | "cf-schema" | "zetaris-json";
 export type ValidationResult = "ok" | "ok_with_gaps" | "fail";
 
 export interface CopyValidation {

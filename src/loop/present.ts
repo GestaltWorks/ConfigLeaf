@@ -400,7 +400,7 @@ export function probeView(o: { names: number; rows: readonly { kind: string; sta
 const RESULT_TEXT: Readonly<Record<string, string>> = { ok: "ok", ok_with_gaps: "ok with gaps", fail: "fail" };
 const resultSeg = (r: string): Seg => (r === "fail" ? { text: "fail", tone: "red" } : RESULT_TEXT[r] ?? r);
 
-/** validate: the repository heads; nginx-t once per host repository, cf-schema once per record. */
+/** validate: the repository heads; nginx-t once per host repository, cf-schema once per record, zetaris-json once per object. */
 export function validateView(o: { heads: number; nginx: readonly string[]; rows: readonly { validator: string; result: string }[]; errors: number } | null): StepView {
   if (!o) return { parts: ["no new vault commit", "nothing validated"] };
   const groups = (xs: readonly string[]): [string, number][] =>
@@ -408,8 +408,10 @@ export function validateView(o: { heads: number; nginx: readonly string[]; rows:
   const parts: Phrase[] = [];
   const nginx = groups(o.nginx);
   if (nginx.length) parts.push(["nginx-t ", ...nginx.flatMap(([r, k], i) => [...(i ? [", "] : []), resultSeg(r), k > 1 ? ` ×${k}` : ""])]);
-  const cf = groups(o.rows.filter((r) => r.validator === "cf-schema").map((r) => r.result));
-  if (cf.length) parts.push(["cf-schema ", ...cf.flatMap(([r, k], i) => [...(i ? [", "] : []), `${thousands(k)} `, r === "ok_with_gaps" ? "with gaps" : resultSeg(r)])]);
+  for (const validator of ["cf-schema", "zetaris-json"]) {
+    const by = groups(o.rows.filter((r) => r.validator === validator).map((r) => r.result));
+    if (by.length) parts.push([`${validator} `, ...by.flatMap(([r, k], i) => [...(i ? [", "] : []), `${thousands(k)} `, r === "ok_with_gaps" ? "with gaps" : resultSeg(r)])]);
+  }
   if (o.errors) parts.push([{ text: `${count(o.errors, "repository", "repositories")} not validated`, tone: "red" }]);
   return { subject: count(o.heads, "copy", "copies"), parts: parts.length ? parts : ["no copy validated"] };
 }

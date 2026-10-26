@@ -40,11 +40,13 @@
 //     DESCRIBE DATASOURCE TABLE per DRIFT table the pass reads and per CLOUDFLARE REST table, one trace line, and the
 //     pass row's "schema" line: "<n> tables as expected", or "<ds>.<table> changed: <column>" in red. A DRIFT column the
 //     pass reads that is missing or has changed type fails the pass closed on the surfaces that read it
-//     (affectedSurfaces): their dispositions go to no ledger, each of their findings is one NOT CHECKED line and one
-//     trace line with the reason, and the step returns them as notChecked beside the findings it decided; on every
-//     surface ("*") the adoption read is not made either. When the pass's own SQL fails over the changed table, the
-//     step refuses (LoopError, the schema reason first) and decides nothing. A CLOUDFLARE change leaves the findings as
-//     they are and the dns_inventory_current read not made, its reason the schema line.
+//     (guardGate, every fail-closed decision on the guard's read in one place): their dispositions go to no ledger,
+//     each of their findings is one NOT CHECKED line and one trace line with the reason, and the step returns them as
+//     notChecked beside the findings it decided; on every surface ("*") the adoption read is not made either. When the
+//     pass's own SQL fails over the changed table, the step refuses (LoopError, the schema reason first) and decides
+//     nothing. A CLOUDFLARE change, or a DRIFT change that reaches cloudflare.dns, leaves the dns_inventory_current read
+//     not made, its reason a schema line naming exactly those changes; a CLOUDFLARE change alone leaves the findings as
+//     they are.
 //   - Live, last: EXPLAIN QUERY AS of the hero join over the tenant's latest nginx and DNS runs and of the dns_live
 //     read (src/zetaris/explain.ts), each traced once (agent zetaris, action explain, the plan redacted and cut to 4,000
 //     characters; not_checked when the key may not run it), each one EXPLAIN line under --verbose with the plan's first
@@ -66,8 +68,8 @@ import { VERBS, runPass, type Finding, type PassResult } from "../pipeline.ts";
 import type { Tracer } from "../trace.ts";
 import { explainQuery, planLine, type PlanRead } from "../zetaris/explain.ts";
 import { refreshText, type Refresh } from "../zetaris/filestore.ts";
-import { affectedSurfaces, readSchemaGuard, schemaText, type SchemaGuard } from "../zetaris/schema-guard.ts";
-import { DNS_INVENTORY_CURRENT, REST_DB, USL, datasourceLists } from "../zetaris/setup.ts";
+import { guardGate, readSchemaGuard, schemaText, type SchemaGuard } from "../zetaris/schema-guard.ts";
+import { DNS_INVENTORY_CURRENT, USL, datasourceLists } from "../zetaris/setup.ts";
 
 export class LoopError extends Error {}
 
@@ -232,11 +234,9 @@ export async function passStep(layer: DataLayer, opts: PassStepOptions): Promise
   if (schema) {
     tracer?.emit({ agent: "loop", action: "check", status: schema.changes.length ? "not_checked" : "ok", input_summary: `schema ${tenant}`, output_summary: `schema: ${schemaText(schema)}` });
   }
-  const affected = schema ? affectedSurfaces(schema) : new Set<string>();
+  const gate = guardGate(schema);
+  const { affected, isAffected, driftWhy } = gate;
   const failsClosed = affected === "*" || affected.size > 0;
-  const isAffected = (surface: string): boolean => affected === "*" || affected.has(surface);
-  const driftWhy = schema ? `schema: ${schemaText(schema, (c) => c.datasource !== REST_DB)}` : "";
-  const restWhy = schema?.changes.some((c) => c.datasource === REST_DB) ? `schema: ${schemaText(schema, (c) => c.datasource === REST_DB)}` : null;
   const refuse = (e: unknown): never => {
     throw new LoopError(`decided nothing: ${driftWhy}; the pass's SQL failed over it: ${((e as Error).message ?? String(e)).slice(0, 300)}`);
   };
@@ -296,13 +296,12 @@ export async function passStep(layer: DataLayer, opts: PassStepOptions): Promise
   // DRIFT and LESSONS; with no ledger the pass recorded none, so the latest recorded pass's. Not read when the guard
   // failed every surface closed.
   const adoptions: AdoptionCheck | undefined = !live ? undefined
-    : affected === "*" ? { rule: "exception_in_force", error: driftWhy }
+    : gate.adoptionWhy ? { rule: "exception_in_force", error: gate.adoptionWhy }
     : await readAdoptionCheck(layer, tenant, ledger ? decidedAt : null, tracer);
   // Read only, beside it: the records the DNS API returns now against the last complete DNS run, joined in Zetaris; not
-  // read when the guard found a REST table or the DNS tables changed.
+  // read when the guard found a REST table changed or a DRIFT change that reaches the DNS surface (guardGate).
   const dns: DnsInventoryCheck | undefined = !live || !dnsRuns.size ? undefined
-    : restWhy ? { rule: "dns_inventory_current", error: restWhy }
-    : isAffected("cloudflare.dns") ? { rule: "dns_inventory_current", error: driftWhy }
+    : gate.dnsWhy ? { rule: "dns_inventory_current", error: gate.dnsWhy }
     : await readDnsInventory(layer, tracer);
 
   // Live, last: Zetaris's plan of the cross-source queries, traced once each.

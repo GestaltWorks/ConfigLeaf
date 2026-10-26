@@ -10,7 +10,9 @@
 //     constraints), SHOW GRANT ON ALL, SHOW DATASOURCES, SHOW LIGHTNING DATABASES, SHOW SERVER VERSION. SHOW GRANT needs
 //     an administrator or Access Control Read: when it fails, the grants are not_checked with the error as the reason,
 //     left out of the population, and the run goes on. Any other statement that fails makes the run failed, with no
-//     population asserted, so the DQ gate refuses it and the pass decides nothing on the surface.
+//     population asserted, so the DQ gate refuses it and the pass decides nothing on the surface. A stored run keeps no
+//     reason; notCheckedIn reads a not_checked statement back from the run's observations (its index object, grants,
+//     is absent), and npm run approve -- --surface zetaris.control warns with notCheckedWarnings.
 //   - Objects (controlObjects), each { id, value } with the raw id:
 //       usl/<usl>             the USL's name, namespace and entity names, sorted
 //       usl/<usl>/<entity>    one entity as LOAD USL reports it (columns with types and keys, unique, foreign keys,
@@ -76,6 +78,44 @@ export type ControlStatement = keyof typeof CONTROL_STATEMENTS;
 export const CONTROL_ORDER = Object.keys(CONTROL_STATEMENTS) as ControlStatement[];
 /** The statement whose failure is not_checked; any other failing fails the run. */
 export const OPTIONAL_STATEMENTS: readonly ControlStatement[] = ["grants"];
+/**
+ * The object each optional statement gives whenever it runs, its listing (grants, even with no principal): a complete
+ * run whose observations lack it did not check the statement, the one record of a not_checked statement the Store keeps.
+ */
+export const STATEMENT_INDEX: Readonly<Partial<Record<ControlStatement, string>>> = { grants: "grants" };
+
+/**
+ * The optional statements a stored zetaris.control run did not check: those whose index object, as the rows carry it, its
+ * observations lack. The index ids name nothing of the estate, so the redactor leaves them as written; `redactor` is the
+ * collector's, for a tenant whose REDACT_WORDS would reach one.
+ */
+export function notCheckedIn(objectIds: Iterable<string>, redactor: Pick<Redactor, "text"> = { text: (s) => s }): ControlStatement[] {
+  const ids = new Set(objectIds);
+  return OPTIONAL_STATEMENTS.filter((s) => !ids.has(redactor.text(STATEMENT_INDEX[s] ?? s)));
+}
+
+/** The objects each optional statement gives: the listing and one object per entry (grants, grant/<principal>). */
+const STATEMENT_OBJECTS: Readonly<Partial<Record<ControlStatement, (objectId: string) => boolean>>> = {
+  grants: (id) => id === "grants" || id.startsWith("grant/"),
+};
+/** What the reason of an object a statement did not give says. */
+export const NOT_CHECKED_REASON: Readonly<Partial<Record<ControlStatement, string>>> = { grants: "SHOW GRANT refused" };
+
+/**
+ * Why a run of `surface` lacks the approved object `objectId`, when the collector knows: on zetaris.control, an object a
+ * statement the run did not check would have given ("SHOW GRANT refused" for the grants listing and each principal's
+ * grants); null otherwise, an object the run read and found gone. `runObjectIds` are the run's observations' object ids.
+ */
+export function absentBecause(surface: string, objectId: string, runObjectIds: Iterable<string>): string | null {
+  if (surface !== CONTROL_SURFACE) return null;
+  const s = notCheckedIn(runObjectIds).find((x) => STATEMENT_OBJECTS[x]?.(objectId));
+  return s ? NOT_CHECKED_REASON[s] ?? null : null;
+}
+
+/** What npm run approve -- --surface zetaris.control prints for each statement its source run did not check. */
+export function notCheckedWarnings(runId: string, statements: readonly ControlStatement[]): string[] {
+  return statements.map((s) => `approve: warning: ${runId} did not check ${CONTROL_STATEMENTS[s]} (refused or not run): this sign-off approves no ${s}, the ${s} approved before stay the latest approvals, and the pass escalates each of them as approved_missing`);
+}
 /** The rows a statement may return in one call; a listing the server counts beyond it leaves the run partial. */
 export const CONTROL_LIMIT = 1000;
 

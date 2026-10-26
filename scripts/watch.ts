@@ -17,7 +17,10 @@ import { SKIPPABLE, parseSkip, type Skippable } from "../src/loop/cycle.ts";
 import { liveCycle, liveRefusal, liveShared, type LiveShared } from "../src/loop/live.ts";
 import { presentOptions } from "../src/loop/present.ts";
 import { watch } from "../src/loop/watch.ts";
-import { TENANT } from "../src/policy/schema.ts";
+import { TENANT_ID, TENANT_ID_SHAPE } from "../src/policy/schema.ts";
+import { exitOnConfigError } from "../src/cli.ts";
+
+exitOnConfigError();
 
 const USAGE = `usage: npm run watch -- --tenant <id> --every <minutes> [--apply] [--skip ${SKIPPABLE.join("|")}]... [--tickets-dry-run] [--verbose|--quiet] [--help]`;
 
@@ -42,7 +45,7 @@ if (args.help) {
   console.log("Runs the cycle every <minutes> until SIGINT, each cycle's table under its own numbered header.");
   process.exit(0);
 }
-if (!args.tenant || !TENANT.test(args.tenant) || args.tenant === "*") usage("--tenant is required: a tenant id ([A-Za-z0-9._-], up to 64)");
+if (!args.tenant || !TENANT_ID.test(args.tenant)) usage(`--tenant is required: ${TENANT_ID_SHAPE}`);
 const every = Number(args.every);
 if (!/^\d+$/.test(args.every ?? "") || every < 1 || every > 1440) usage("--every takes a whole number of minutes from 1 to 1440");
 if (args.verbose && args.quiet) usage("--verbose and --quiet exclude each other");

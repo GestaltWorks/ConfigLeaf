@@ -8,12 +8,12 @@
 // injected memory included. The real receipts carry hmem.injected 3, which the gate refuses before custody; where
 // the gate must pass on them, their bodies run with hmem null, signed again here (fixtures/signed-receipt.ts isolated).
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Nightshift, type ChatResult, type SignedReceipt } from "../src/adapters/nightshift.ts";
+import { Nightshift, RECEIPT_KEY, type ChatResult, type SignedReceipt } from "../src/adapters/nightshift.ts";
 import { SYSTEM_PROMPT } from "../src/agents/judge.ts";
 import { config } from "../src/config.ts";
 import { checkCustody, gateChatResult, gateWithCustody, newNonce, tenantAppId, type CustodyAttempt } from "../src/gate.ts";
 import { MemTracer } from "./fixtures/mem-tracer.ts";
-import { isolated, signed, ultraReceipt } from "./fixtures/signed-receipt.ts";
+import { TEST_KEY, isolated, signed, ultraReceipt } from "./fixtures/signed-receipt.ts";
 import lightningJson from "./fixtures/receipt-lightning.json" with { type: "json" };
 import ultraJson from "./fixtures/receipt-ultra.json" with { type: "json" };
 
@@ -30,7 +30,8 @@ const LIGHTNING_REQ = lightning.body.receipt.request_id as string;
 const APP = "drift-agent";
 const CLIENT_APP = "drift-agent:client-a";
 
-const store = (...rs: SignedReceipt[]) => ({ find: async (id: string) => rs.find((r) => r.body.receipt.receipt_id === id) ?? null });
+/** The real receipts' key and the fixture's, both trusted. */
+const store = (...rs: SignedReceipt[]) => ({ keys: [RECEIPT_KEY, TEST_KEY], find: async (id: string) => rs.find((r) => r.body.receipt.receipt_id === id) ?? null });
 
 function chat(over: Partial<ChatResult> = {}): ChatResult {
   return { content: "{}", modelRequested: "requested", modelRouted: null, receiptId: null, requestId: null, tokensIn: 0, tokensOut: 0, latencyMs: 0, retries: 0, raw: {}, ...over };

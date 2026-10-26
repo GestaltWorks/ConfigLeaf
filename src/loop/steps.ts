@@ -18,8 +18,9 @@
 //                       aid: src/probe/run.ts probePopulation) into the Store, with the names the vault's host heads
 //                       serve under a wildcard record (vaultServedNames; the account's records alone when the vault is
 //                       off); ok when the run is complete.
-//   validate            validateCopies over every repository's head when the collect steps made a new commit, else
-//                       nothing; ok when every repository validated, whatever each result.
+//   validate            validateCopies over every repository's head and every earlier commit no validation reached
+//                       when the collect steps made a new commit, else nothing; ok when every repository validated,
+//                       whatever each result.
 //   pass                passStep with the PgLedger, the Zetaris copy of the lessons and the rules refreshed first when
 //                       stale (refreshFileTables), and the context's judge (the eval's C3 judge, src/agents/falsifier.ts)
 //                       when it has one; its row names the queries the pass sent through Zetaris, the
@@ -71,7 +72,7 @@ import type { TicketAdapter } from "../psa/index.ts";
 import { storeTicketRows, ticketStep, type TicketRows } from "../psa/step.ts";
 import { Redactor, countLabels } from "../redactor.ts";
 import type { Tracer } from "../trace.ts";
-import { CLOUDFLARE_REPO, latestCommit, repositoryDir, vaultRepositories } from "../validate/vault.ts";
+import { CLOUDFLARE_REPO, ZETARIS_REPO, latestCommit, repositoryDir, vaultRepositories } from "../validate/vault.ts";
 import { storeCopies, validateCopies, type CopyStore } from "../validate/run.ts";
 import type { NginxRunner } from "../validate/nginx.ts";
 import { vaultCloudflareRun, vaultLinuxRun, type HookResult } from "../vault/hook.ts";
@@ -160,12 +161,12 @@ export async function probeStep(o: { tenant: string; redactor: Redactor; sink: P
   return { ok, summary, reason: ok ? undefined : o.redactor.text(`probe run ${r.run.run_id} is ${r.run.status}${r.errors.length ? `: ${r.errors.slice(0, 5).join("; ")}` : ""}`), detail: r.errors, view: probeView({ names: r.names, rows: r.rows }) };
 }
 
-/** validate: nginx-t and cf-schema over every repository's head, when this cycle committed. */
+/** validate: nginx-t, cf-schema and zetaris-json over every repository's head and its unvalidated earlier commits, when this cycle committed. */
 export async function validateStep(commits: readonly NewCommit[], o: { tenant: string; vaultDir: string; store: CopyStore | null; redactor: Redactor; runner?: NginxRunner; validatedAt?: string }): Promise<StepReport> {
   if (!commits.length || !o.vaultDir) return { ok: true, summary: "validate:copies: no new vault commit this cycle; nothing validated", view: validateView(null) };
   const res = await validateCopies({ vaultDir: o.vaultDir, tenant: o.tenant, dryRun: false, store: o.store, redactor: o.redactor, runner: o.runner, validatedAt: o.validatedAt });
   const repos = vaultRepositories(o.vaultDir, o.tenant);
-  const heads = [...repos.hosts, ...(repos.cloudflare ? [CLOUDFLARE_REPO] : [])].map((n) => latestCommit(repositoryDir(o.vaultDir, o.tenant, n)));
+  const heads = [...repos.hosts, ...(repos.cloudflare ? [CLOUDFLARE_REPO] : []), ...(repos.zetaris ? [ZETARIS_REPO] : [])].map((n) => latestCommit(repositoryDir(o.vaultDir, o.tenant, n)));
   const fresh = new Set(commits.map((c) => c.commit));
   const results = [...res.rows.reduce((m, r) => m.set(`${r.validator} ${r.result}`, (m.get(`${r.validator} ${r.result}`) ?? 0) + 1), new Map<string, number>())]
     .sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, n]) => `${k} ${n}`).join(", ") || "no rows";
