@@ -15,6 +15,7 @@ import type { FindingSummary } from "../catalogue/select.ts";
 import type { FindingClass } from "../catalogue/templates.ts";
 import type { DataLayer, RunOptions } from "../data/layer.ts";
 import { objects } from "../data/queries.ts";
+import type { Tracer } from "../trace.ts";
 
 export const SYSTEM = "drift";
 
@@ -268,16 +269,21 @@ export interface ExposureLine { since: string; days: number; bound: ExposureBoun
 
 type ExposureFinding = Pick<FindingSummary, "class" | "tenant_id" | "resource_id" | "dns_run_id">;
 
+/**
+ * One measurement per key (tenant, DNS run, record and field): `measure` takes the tracer its queries' lines go to and runs on a
+ * miss. The pass's is a shared read (src/concurrency.ts SharedReads), so two findings on one record measure it once.
+ */
+export type ExposureCache = (key: string, measure: (tracer: Tracer | undefined) => Promise<ExposureMeasure>) => Promise<ExposureMeasure>;
+
 /** Date one finding's exposure with SQL; null when its class has none or it names no record. `cache` keys on tenant, DNS run, record and field. */
-export async function measureExposure(layer: DataLayer, f: ExposureFinding, opts: RunOptions & { cache?: Map<string, ExposureMeasure> } = {}): Promise<ExposureMeasure | null> {
+export async function measureExposure(layer: DataLayer, f: ExposureFinding, opts: RunOptions & { cache?: ExposureCache } = {}): Promise<ExposureMeasure | null> {
   const field = EXPOSURE_FIELD[f.class];
   if (!field || !f.resource_id || !f.dns_run_id) return null;
-  const { cache, ...run } = opts;
+  const { cache, ...options } = opts;
   const key = [f.tenant_id, f.dns_run_id, f.resource_id, field].join("|");
-  const hit = cache?.get(key);
-  if (hit) return hit;
   const base = { record_id: f.resource_id, field, dns_run_id: f.dns_run_id };
-  const m = await (async (): Promise<ExposureMeasure> => {
+  const measure = async (tracer: Tracer | undefined): Promise<ExposureMeasure> => {
+    const run = { ...options, tracer };
     const rec = objects(await layer.run(EXPOSURE_RECORD_SQL, { tenant_id: f.tenant_id, dns_run_id: f.dns_run_id!, record_id: f.resource_id! }, run))[0];
     if (!rec) return { dated: false, ...base, reason: `record ${f.resource_id} is not in DNS run ${f.dns_run_id}` };
     const st = exposureState(field, rec);
@@ -295,9 +301,8 @@ export async function measureExposure(layer: DataLayer, f: ExposureFinding, opts
       if (Number(before?.n ?? 0) > 0) bound = "exact";
     }
     return { dated: true, ...base, state: st.label, since: first.occurred_at, until, days: exposureDays(first.occurred_at, until), bound, event_id: first.event_id, action: first.action };
-  })();
-  cache?.set(key, m);
-  return m;
+  };
+  return cache ? cache(key, measure) : measure(options.tracer);
 }
 
 export function exposureLine(m: Extract<ExposureMeasure, { dated: true }>): ExposureLine {
@@ -306,20 +311,37 @@ export function exposureLine(m: Extract<ExposureMeasure, { dated: true }>): Expo
 
 /**
  * The decide step's exposure: measure, store the edge, trace one line (agent decider, action triage: ok
- * when dated, not_checked when the log cannot date it), return the line for the finding or undefined.
+ * when dated and stored, not_checked when the log cannot date it, failed when the store throws, which it then rethrows),
+ * return the line for the finding or undefined.
+ * `defer` takes the edge's store instead of running it, for a caller that writes the World Model in an order of its own:
+ * the concurrent pass stores each finding's edge in finding order (src/pipeline.ts). The store traces the line once the
+ * edge is stored, so no ok line stands for an edge that was never written.
  */
-export async function recordExposure(layer: DataLayer, world: DriftWorld, finding: FindingSummary, opts: RunOptions & { cache?: Map<string, ExposureMeasure> } = {}): Promise<ExposureLine | undefined> {
-  const m = await measureExposure(layer, finding, { ...opts, agent: opts.agent ?? "decider" });
+export async function recordExposure(
+  layer: DataLayer, world: DriftWorld, finding: FindingSummary, opts: RunOptions & { cache?: ExposureCache; defer?: (store: () => Promise<void>) => void } = {},
+): Promise<ExposureLine | undefined> {
+  const { defer, ...measured } = opts;
+  const m = await measureExposure(layer, finding, { ...measured, agent: opts.agent ?? "decider" });
   if (!m) return undefined;
   if (!m.dated) {
     opts.tracer?.emit({ agent: "decider", action: "triage", status: "not_checked", input_summary: `exposure ${m.record_id}`, output_summary: `exposure not dated: ${m.reason}`, detail: "model: none" });
     return undefined;
   }
-  await world.exposure(world.findingId(finding), world.recordId(finding.tenant_id, m.record_id), m.since, m.until, { eventId: m.event_id, dnsRunId: m.dns_run_id, bound: m.bound });
-  opts.tracer?.emit({
-    agent: "decider", action: "triage", status: "ok", input_summary: `exposure ${m.record_id}`,
-    output_summary: `${m.state} since ${m.since}: ${m.bound === "exact" ? "" : "at least "}${m.days} day(s) to ${m.until}, still so in DNS run ${m.dns_run_id}`,
-    detail: `first event of the current state: ${m.event_id} (${m.action}); ${m.bound === "exact" ? "a change into this state is on record" : `no earlier body on record sets another ${m.field} state, so the state may predate the log`}; model: none`,
-  });
+  const store = async (): Promise<void> => {
+    try {
+      await world.exposure(world.findingId(finding), world.recordId(finding.tenant_id, m.record_id), m.since, m.until, { eventId: m.event_id, dnsRunId: m.dns_run_id, bound: m.bound });
+    } catch (e) {
+      const why = ((e as Error).message ?? String(e)).slice(0, 300);
+      opts.tracer?.emit({ agent: "decider", action: "triage", status: "failed", input_summary: `exposure ${m.record_id}`, output_summary: `exposure edge not stored: ${why}`, detail: "model: none" });
+      throw e;
+    }
+    opts.tracer?.emit({
+      agent: "decider", action: "triage", status: "ok", input_summary: `exposure ${m.record_id}`,
+      output_summary: `${m.state} since ${m.since}: ${m.bound === "exact" ? "" : "at least "}${m.days} day(s) to ${m.until}, still so in DNS run ${m.dns_run_id}`,
+      detail: `first event of the current state: ${m.event_id} (${m.action}); ${m.bound === "exact" ? "a change into this state is on record" : `no earlier body on record sets another ${m.field} state, so the state may predate the log`}; model: none`,
+    });
+  };
+  if (defer) defer(store);
+  else await store();
   return exposureLine(m);
 }
