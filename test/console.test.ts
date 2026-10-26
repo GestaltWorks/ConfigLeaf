@@ -344,10 +344,10 @@ describe("the console over sample/bundle.json, client-1", SERVER, () => {
       .toBe("issue #7 opened; see (a pseudonymised URL) and https://example.org/docs");
   });
 
-  it("the nav names the work queue first, then Executive and Templates beside the other pages, Executive right after the Overview", async () => {
+  it("the nav names the work queue first, the Dashboard (the executive report) second, and the owner's report last", async () => {
     const html = (await get(server, "/templates")).body;
     const nav = [...html.matchAll(/<li><a href="(\/[a-z]+)"(?: aria-current="page")?>([^<]+)/g)].map((m) => [m[1], m[2]]);
-    expect(nav).toEqual([["/work", "Work queue"], ["/overview", "Overview"], ["/executive", "Executive"], ["/settings", "Settings"], ["/templates", "Templates"], ["/findings", "Findings"], ["/actions", "Actions and tickets"], ["/traces", "Traces"], ["/sources", "Sources"]]);
+    expect(nav).toEqual([["/work", "Work queue"], ["/executive", "Dashboard"], ["/settings", "Settings"], ["/findings", "Findings"], ["/templates", "Templates"], ["/actions", "Actions and tickets"], ["/traces", "Traces"], ["/sources", "Sources"], ["/overview", "Owner's report"]]);
     expect(html).toContain('<li><a href="/templates" aria-current="page">Templates');
   });
 

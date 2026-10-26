@@ -64,6 +64,17 @@ h3{margin:0 0 4px}
 .side form{margin:0 2px}
 .side .tsw{margin:0}
 .side-foot{margin-top:auto;padding:0 8px;font-size:12px;color:var(--muted)}
+.tour-btn{align-self:flex-start;margin:0 8px 10px}
+.tour-block{position:fixed;inset:0;z-index:90;background:transparent}
+.tour-block.dim{background:rgba(10,14,20,.55)}
+.tour-spot{position:fixed;z-index:91;border-radius:10px;box-shadow:0 0 0 9999px rgba(10,14,20,.55);outline:2px solid var(--accent);pointer-events:none;transition:left .2s,top .2s,width .2s,height .2s}
+.tour-card{position:fixed;z-index:92;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;box-shadow:0 12px 32px rgba(0,0,0,.3)}
+.tour-card h2{margin:2px 0 6px;font-size:18px}
+.tour-card .tour-body{margin:0 0 14px;line-height:1.45}
+.tour-step{margin:0;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.tour-act{display:flex;gap:8px;align-items:center}
+.tour-act span{flex:1}
+@media (prefers-reduced-motion:reduce){.tour-spot{transition:none}}
 .content{min-width:0;display:flex;flex-direction:column}
 .bar-in{justify-content:space-between;align-items:baseline;gap:2px 20px}
 .sum .adopted{color:var(--adopted)}
@@ -389,6 +400,44 @@ $$("[data-print]").forEach(function(b){b.hidden=false;b.addEventListener("click"
 addEventListener("beforeprint",function(){$$("details:not([open])").forEach(function(d){d.open=true;d.dataset.printed="1"})});
 addEventListener("afterprint",function(){$$("details[data-printed]").forEach(function(d){d.open=false;delete d.dataset.printed})});
 var af=$("#agent");if(af){var trs=$$("tbody tr[data-agent]"),tc=$("#tcount");af.addEventListener("change",function(){var n=0;trs.forEach(function(r){r.hidden=af.value!==""&&r.dataset.agent!==af.value;if(!r.hidden)n++});if(tc)tc.textContent=n+" of "+trs.length+" events"})}
+// The tour: a first visit to the work queue walks through it in six cards, each highlighting the part it explains. Skip
+// or Done remembers it in localStorage; "Take the tour" or /work?tour=1 starts it again; a browser under automation
+// (navigator.webdriver, the demo video's capture) never starts it on its own. A step whose part the page lacks is skipped.
+var TOUR=[
+["","Welcome to the ConfigLeaf console","The technician's working screen. This demo runs on a recorded, redacted copy of a real MSP estate, so nothing you do here touches production. Five quick steps."],
+[".strip .stats","The day at a glance","What needs you, what is held until an expiry, what is adopted under an accepted exception, and how many settings policy has locked. Each count jumps to its rows."],
+["#needs","Needs you","Findings the policy cannot settle on its own: the object, its live value against the approved one, and why it is here."],
+["#needs button[popovertarget^='p-approve'],#held button[popovertarget^='p-approve']","Act on a row","Approve accepts the live value as the new record. Unlock opens a change window, so planned work is not rolled back. Lock closes it. Open shows the detail."],
+["form[data-action='pass'] button","Run a pass","Runs the whole pass again: read every source, check, decide. Try it after an Unlock: the drift is held, not rolled back."],
+[".side .nav","Everything else","Dashboard shows the estate at a glance in charts. Settings lists every object and its lock, Findings shows each finding's evidence and SQL, and the Owner's report is the printable version. The same data is JSON at /api/v1."]
+];
+var tourKey="configleaf-tour-v1",tourAt=-1,tourEls=null;
+function tourSeen(){try{return localStorage.getItem(tourKey)==="done"}catch(e){return false}}
+function tourTarget(i){var s=TOUR[i][0];if(!s)return null;var el=document.querySelector(s);if(!el)return null;return i===3?(el.closest("td")||el):el}
+function tourEnd(){if(!tourEls)return;tourEls.block.remove();tourEls.spot.remove();tourEls.card.remove();tourEls=null;tourAt=-1;try{localStorage.setItem(tourKey,"done")}catch(e){}removeEventListener("resize",tourPlace);removeEventListener("scroll",tourPlace,true)}
+function tourPlace(){if(!tourEls)return;var el=tourTarget(tourAt),sp=tourEls.spot,c=tourEls.card,vw=innerWidth,vh=innerHeight,cw=Math.min(380,vw-32);c.style.width=cw+"px";
+if(!el){sp.hidden=true;tourEls.block.classList.add("dim");c.style.left=Math.round((vw-cw)/2)+"px";c.style.top=Math.round(vh*0.25)+"px";return}
+tourEls.block.classList.remove("dim");sp.hidden=false;var r=el.getBoundingClientRect(),p=6;
+sp.style.left=(r.left-p)+"px";sp.style.top=(r.top-p)+"px";sp.style.width=(r.width+2*p)+"px";sp.style.height=(r.height+2*p)+"px";
+var ch=c.offsetHeight,top=r.bottom+14;if(top+ch>vh-12)top=Math.max(12,r.top-ch-14);c.style.left=Math.min(Math.max(12,r.left),vw-cw-12)+"px";c.style.top=top+"px"}
+function tourShow(i,dir){dir=dir||1;if(i<0||i>=TOUR.length){tourEnd();return}if(TOUR[i][0]&&!tourTarget(i)){tourShow(i+dir,dir);return}
+tourAt=i;var c=tourEls.card,last=i===TOUR.length-1;
+$(".tour-step",c).textContent="Step "+(i+1)+" of "+TOUR.length;$("h2",c).textContent=TOUR[i][1];$(".tour-body",c).textContent=TOUR[i][2];
+$("[data-tour-back]",c).hidden=i===0;$("[data-tour-skip]",c).hidden=last;$("[data-tour-next]",c).textContent=last?"Done":(i===0?"Start the tour":"Next");
+var el=tourTarget(i);if(el)el.scrollIntoView({block:"center",inline:"nearest"});
+requestAnimationFrame(function(){tourPlace();$("[data-tour-next]",c).focus()})}
+function tourStart(){if(tourEls)return;if(location.pathname!=="/work"){location.href="/work?tour=1";return}
+var block=document.createElement("div"),spot=document.createElement("div"),card=document.createElement("div");
+block.className="tour-block";spot.className="tour-spot";card.className="tour-card";
+card.setAttribute("role","dialog");card.setAttribute("aria-modal","true");card.setAttribute("aria-labelledby","tour-h");
+card.innerHTML='<p class="tour-step"></p><h2 id="tour-h"></h2><p class="tour-body"></p><div class="tour-act"><button type="button" class="btn" data-tour-skip>Skip tour</button><span></span><button type="button" class="btn" data-tour-back>Back</button><button type="button" class="btn primary" data-tour-next>Next</button></div>';
+card.addEventListener("click",function(e){if(e.target.closest("[data-tour-skip]"))tourEnd();else if(e.target.closest("[data-tour-back]"))tourShow(tourAt-1,-1);else if(e.target.closest("[data-tour-next]"))tourShow(tourAt+1,1)});
+card.addEventListener("keydown",function(e){if(e.key==="Escape"){e.stopPropagation();tourEnd()}});
+document.body.append(block,spot,card);tourEls={block:block,spot:spot,card:card};
+addEventListener("resize",tourPlace);addEventListener("scroll",tourPlace,true);tourShow(0,1)}
+$$("[data-tour]").forEach(function(b){b.hidden=false});
+document.addEventListener("click",function(e){if(e.target.closest("[data-tour]")){e.preventDefault();tourStart()}});
+if(location.pathname==="/work"&&(/[?&]tour=1/.test(location.search)||(!tourSeen()&&!navigator.webdriver)))setTimeout(tourStart,300);
 })();`;
 
 /** One static part of the shell: its path, which names the hash of its bytes, its type and its bytes. */
@@ -433,8 +482,8 @@ export interface Shell {
 }
 
 const NAV: readonly [Shell["page"], string, string][] = [
-  ["work", "/work", "Work queue"], ["overview", "/overview", "Overview"], ["executive", "/executive", "Executive"], ["settings", "/settings", "Settings"], ["templates", "/templates", "Templates"],
-  ["findings", "/findings", "Findings"], ["actions", "/actions", "Actions and tickets"], ["traces", "/traces", "Traces"], ["sources", "/sources", "Sources"],
+  ["work", "/work", "Work queue"], ["executive", "/executive", "Dashboard"], ["settings", "/settings", "Settings"], ["findings", "/findings", "Findings"], ["templates", "/templates", "Templates"],
+  ["actions", "/actions", "Actions and tickets"], ["traces", "/traces", "Traces"], ["sources", "/sources", "Sources"], ["overview", "/overview", "Owner's report"],
 ];
 
 const navCount = (s: Shell, page: Shell["page"]): string => {
@@ -485,6 +534,7 @@ export function layout(s: Shell): string {
 ${nav}
 </ul>
 ${s.passForm}
+<button type="button" class="btn sm tour-btn" data-tour hidden>Take the tour</button>
 <div class="side-foot">Local to this machine on 127.0.0.1. The console never runs act with <span class="nw">--apply</span>.</div>
 </nav>
 <div class="content">
