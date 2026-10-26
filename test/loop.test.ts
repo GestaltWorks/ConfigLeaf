@@ -440,6 +440,7 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
   let engine: SqlJsEngine;
   let layer: DataLayer;
   let dir: string;
+  // buildBase and buildWorld write the fixture vault's git repositories on disk: seconds in the full parallel run
   beforeAll(async () => {
     base = buildBase();
     world = await buildWorld(base);
@@ -447,7 +448,7 @@ describe("the pass, act, tickets and document steps over the policy fixture", ()
     engine.loadBundle(structuredClone(base.bundle));
     layer = new DataLayer(engine);
     dir = mkdtempSync(path.join(tmpdir(), "drift-loop-"));
-  });
+  }, 30_000);
   afterAll(() => {
     world.cleanup();
     engine.close();

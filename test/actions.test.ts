@@ -120,7 +120,8 @@ describe("the write script", () => {
     expect(shQuote("it's")).toBe(`'it'\\''s'`);
   });
 
-  it.skipIf(!bashOk)("bash -n accepts the script, with and without previous bytes", () => {
+  // spawns bash once a script: well under a second alone, past vitest's 5 s in the full parallel run
+  it.skipIf(!bashOk)("bash -n accepts the script, with and without previous bytes", { timeout: 20_000 }, () => {
     for (const s of [writeScript(input), writeScript({ ...input, previous: null })]) {
       const r = spawnSync("bash", ["-n"], { input: s, encoding: "utf8" });
       expect(r.stderr).toBe("");
@@ -128,7 +129,8 @@ describe("the write script", () => {
     }
   });
 
-  describe.skipIf(!bashOk)("run under bash against a temp file, sudo stubbed (it runs tee and rm itself, and answers nginx and systemctl from env)", () => {
+  // each case spawns bash over the write script: well under a second alone, past vitest's 5 s in the full parallel run
+  describe.skipIf(!bashOk)("run under bash against a temp file, sudo stubbed (it runs tee and rm itself, and answers nginx and systemctl from env)", { timeout: 20_000 }, () => {
     const STUB = `sudo() {
   [ "$1" = "-n" ] && shift
   if [ "\${FAKE_SUDO:-ok}" = password ]; then echo "sudo: a password is required" >&2; return 1; fi
