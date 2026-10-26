@@ -6,11 +6,16 @@
 // DRIFT_MEMORY_DIR names (read only), the trace to logs/pass_<base36 ms>.jsonl. Prints the cycle's pass section
 // (src/loop/present.ts): the header (mode "recorded", or "dry run, nothing changed" with --no-ledger), the pass row
 // with its findings by verb, the Lightning SQL it sent and the DQ rule exception_in_force over its adoptions (with
-// --no-ledger, the latest recorded pass's), the classes in plain words and one line per ROLLBACK, FIX and ESCALATE, and the done
-// line naming the trace. --verbose
+// --no-ledger, the latest recorded pass's), then the DQ rule dns_inventory_current over the records the Cloudflare DNS
+// API returns now through Zetaris's REST datasource CLOUDFLARE (for a tenant with a DNS run), the classes in plain
+// words and one line per ROLLBACK, FIX and ESCALATE, and the done
+// line naming the trace. Before anything else the pass runs the source-schema guard (src/zetaris/schema-guard.ts):
+// its row's "schema" line reads "<n> tables as expected", or names each DRIFT or CLOUDFLARE table whose columns the pass
+// reads changed, and the findings on a surface it failed closed (not checked, nothing recorded). --verbose
 // adds the full output: one JSON object per finding of the tenant, one DISPOSITION line per finding as the ledger
-// holds it (read back through Zetaris), the PASS summary line and the trace file; --quiet prints the header and the
-// done line. --decided-at dates every disposition and starts every HOLD expiry (default: the system clock).
+// holds it (read back through Zetaris), one NOT CHECKED line per finding the guard held back, one EXPLAIN line per
+// cross-source query (the hero join, the dns_live read) with the first line of Zetaris's plan, the PASS summary line
+// and the trace file; --quiet prints the header and the done line. --decided-at dates every disposition and starts every HOLD expiry (default: the system clock).
 // --no-ledger records nothing and prints the pass's own decisions.
 // Exit 0 when the pass ran; 1 when a read or the ledger write failed; 2 on a usage error, SAMPLE_MODE, a blank
 // ZETARIS_API_KEY, or for the ledger a blank REDACT_SALT or DATABASE_URL.
@@ -19,7 +24,12 @@
 // 0 failed the DQ gate, 3,186 observations, 27 findings (orphan_record 3, orphan_vhost 3, proxied_without_real_ip 20,
 // proxy_split 1), HOLD 27 by policy, 443 trace lines, 34.9 s; at 23:21 UTC, the first pass with the PgLedger, the same
 // findings and verbs, 27 dispositions and 315 referent fingerprints written to the app Postgres, all 27 read back
-// through Zetaris, decided at 2026-10-24T23:21:06.870Z, 444 trace lines, 34.2 s.
+// through Zetaris, decided at 2026-10-24T23:21:06.870Z, 444 trace lines, 34.2 s. On 26 Oct 2026 at 03:49 UTC with
+// --no-ledger: 27 findings (ADOPT 23, HOLD 3, ESCALATE 1), 458 queries, 29,640 rows, 0 failed, "DQ exception_in_force
+// 23 of 23 adoptions of the pass recorded at 2026-10-26 01:14 UTC", "DQ dns_inventory_current 58 of 58 live records",
+// 97.8 s. At 04:55 UTC the same day, with the guard, the zetaris.control run approved and --verbose: "schema 20 tables
+// as expected", the same 27 findings and verbs and 0 on zetaris.control, 491 queries, 29,933 rows, 0 failed, two
+// EXPLAIN lines opening "== Parsed Logical Plan ==", 994 trace lines, 97.9 s.
 
 import { randomBytes } from "node:crypto";
 import { parseArgs } from "node:util";

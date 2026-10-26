@@ -1,5 +1,5 @@
-// npm run approve -- --tenant <id> (--host <alias> [--object <real path | redacted object id>] | --zone <zone> | --record <id> | --all)
-//                    [--by <name>] [--note <text>] [--schema <name>] [--dry-run] [--help]
+// npm run approve -- --tenant <id> (--host <alias> [--object <real path | redacted object id>] | --zone <zone> | --record <id>
+//                    | --surface zetaris.control | --all) [--by <name>] [--note <text>] [--schema <name>] [--dry-run] [--help]
 //
 // The technician's sign-off, written as approved_setting rows (src/vault/approve.ts) from the tenant's latest
 // passing run (Store.latestPassingRun, the DQ gate's definition):
@@ -11,6 +11,9 @@
 //   --record <id>              every field of one record, by its Cloudflare record id
 //   --all                      every record of the account in that DNS run; with --host or --zone it names the
 //                              default (every object of the scope)
+//   --surface zetaris.control  the definition of every object of the tenant's latest passing zetaris.control run
+//                              (src/zetaris/control.ts): Zetaris's semantic layer, DQ rules, grants, datasources and
+//                              server version, approved as one state
 // approved_by is --by (default "operator") and note --note, both through the redactor; approved_at is now.
 // Every row is printed (redacted) with its state against the approvals already stored: new, replaces, current
 // or superseded. --dry-run prints and writes nothing; otherwise the new, replaces and superseded rows go through
@@ -28,8 +31,9 @@ import type { CollectionRun } from "../src/data/rows.ts";
 import { Store } from "../src/data/store.ts";
 import { Redactor } from "../src/redactor.ts";
 import { ApproveError, DNS_FIELDS, DNS_SURFACE, NGINX_SURFACE, approveRun, resolveObject, resolveZone, runLine, type ApprovalSelection } from "../src/vault/approve.ts";
+import { CONTROL_HOST, CONTROL_SURFACE } from "../src/zetaris/control.ts";
 
-const USAGE = "usage: npm run approve -- --tenant <id> (--host <alias> [--object <real path | redacted object id>] | --zone <zone> | --record <id> | --all) [--by <name>] [--note <text>] [--schema <name>] [--dry-run] [--help]";
+const USAGE = "usage: npm run approve -- --tenant <id> (--host <alias> [--object <real path | redacted object id>] | --zone <zone> | --record <id> | --surface zetaris.control | --all) [--by <name>] [--note <text>] [--schema <name>] [--dry-run] [--help]";
 const TENANT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 function usage(msg: string): never {
@@ -37,11 +41,11 @@ function usage(msg: string): never {
   process.exit(2);
 }
 
-let args: { tenant?: string; host?: string; object?: string; zone?: string; record?: string; all?: boolean; by?: string; note?: string; schema?: string; "dry-run"?: boolean; help?: boolean };
+let args: { tenant?: string; host?: string; object?: string; zone?: string; record?: string; surface?: string; all?: boolean; by?: string; note?: string; schema?: string; "dry-run"?: boolean; help?: boolean };
 try {
   args = parseArgs({
     options: {
-      tenant: { type: "string" }, host: { type: "string" }, object: { type: "string" }, zone: { type: "string" }, record: { type: "string" },
+      tenant: { type: "string" }, host: { type: "string" }, object: { type: "string" }, zone: { type: "string" }, record: { type: "string" }, surface: { type: "string" },
       all: { type: "boolean" }, by: { type: "string" }, note: { type: "string" }, schema: { type: "string" }, "dry-run": { type: "boolean" }, help: { type: "boolean" },
     },
   }).values;
@@ -51,13 +55,15 @@ try {
 
 if (args.help) {
   console.log(USAGE);
-  console.log("Writes approved_setting rows from the tenant's latest passing run: a host's nginx files (or one), a zone's records, one record, or with --all alone the account's records. --dry-run prints the rows (redacted) and writes nothing.");
+  console.log("Writes approved_setting rows from the tenant's latest passing run: a host's nginx files (or one), a zone's records, one record, Zetaris's control plane with --surface zetaris.control, or with --all alone the account's records. --dry-run prints the rows (redacted) and writes nothing.");
   process.exit(0);
 }
 if (!args.tenant || !TENANT.test(args.tenant)) usage("--tenant is required: a tenant id ([A-Za-z0-9._-], up to 64)");
-const scopes = [args.host !== undefined, args.zone !== undefined, args.record !== undefined].filter(Boolean).length;
-if (scopes > 1) usage("name one scope: --host, --zone or --record");
-if (scopes === 0 && !args.all) usage("name a scope: --host, --zone, --record, or --all for the account's records");
+const scopes = [args.host !== undefined, args.zone !== undefined, args.record !== undefined, args.surface !== undefined].filter(Boolean).length;
+if (scopes > 1) usage("name one scope: --host, --zone, --record or --surface");
+if (scopes === 0 && !args.all) usage("name a scope: --host, --zone, --record, --surface, or --all for the account's records");
+if (args.surface !== undefined && args.surface !== CONTROL_SURFACE) usage(`--surface names ${CONTROL_SURFACE}, the surface approved whole; got ${args.surface}`);
+if (args.surface !== undefined && args.all) usage("--surface selects every object of the surface; it takes no --all");
 if (args.object !== undefined && args.host === undefined) usage("--object needs --host");
 if (args.all && (args.object !== undefined || args.record !== undefined)) usage("--all selects every object of the scope; it takes no --object or --record");
 const dryRun = args["dry-run"] === true;
@@ -81,7 +87,11 @@ try {
   store = Store.fromEnv({ schema: args.schema });
   let selection: ApprovalSelection;
   let run: CollectionRun | null;
-  if (args.host !== undefined) {
+  if (args.surface !== undefined) {
+    run = await store.latestPassingRun(tenant, CONTROL_SURFACE, CONTROL_HOST);
+    if (!run) fail(`no passing ${CONTROL_SURFACE} run for ${tenant}: npm run collect:zetaris -- --tenant ${tenant} collects one`);
+    await finish(run, await store.observationsOf(run.run_id), { kind: "surface", surface: CONTROL_SURFACE, host: CONTROL_HOST });
+  } else if (args.host !== undefined) {
     const host = pseudonymHost(redactor, args.host);
     run = await store.latestPassingRun(tenant, NGINX_SURFACE, host);
     if (!run) fail(`no passing ${NGINX_SURFACE} run for ${tenant} on ${host}`);

@@ -23,8 +23,10 @@
 // The trace goes to logs/sample_<base36 ms>.jsonl; its last event carries the SAMPLE summary line (every finding with
 // its verb and preconditions, the memory, the verbs, the policy rules, the ledger and the explain step). --verbose
 // prints the trace lines on stdout as they are written and, after the rows they belong to, one JSON object per
-// finding, one DISPOSITION line per finding as the ledger holds it, the ADOPTIONS, CAUSE and REPORT lines; --quiet
-// prints the header and the done line; --json prints the SAMPLE summary line alone, for a script that reads it.
+// finding, one DISPOSITION line per finding as the ledger holds it, the ADOPTIONS, DNS INVENTORY, CAUSE and REPORT
+// lines (DNS INVENTORY: the DQ rule dns_inventory_current is not read, since it reads the DNS API live through Zetaris
+// and the bundle holds no live source); --quiet prints the header and the done line; --json prints the SAMPLE summary
+// line alone, for a script that reads it.
 // Exit 0 when the pass ran and both files passed the probe; 1 when the probe refused or a step threw; 2 on a usage
 // error or without SAMPLE_MODE=true.
 //
@@ -78,6 +80,7 @@ import {
 import { FileTracer } from "../src/loop/trace.ts";
 import { VERBS, runPass } from "../src/pipeline.ts";
 import { Tracer } from "../src/trace.ts";
+import { REST_DB } from "../src/zetaris/setup.ts";
 import bundle from "../sample/bundle.json" with { type: "json" };
 
 const USAGE = "usage: SAMPLE_MODE=true npm run sample [-- --verbose|--quiet|--json] [--help]";
@@ -185,6 +188,8 @@ try {
   for (const f of pass.findings) full(JSON.stringify(f));
   for (const l of dispositionLines) full(l);
   if (adoption) full(`ADOPTIONS: ${adoption.adoptions} ADOPT decided under an accepted exception, ${adoption.in_force} joined to a lesson in force at the decision instant (exception_in_force over the disposition and lesson tables)`);
+  // dns_inventory_current reads the DNS API now, through Zetaris's REST datasource; the bundle is a recording, with no live source.
+  full(`DNS INVENTORY: DQ dns_inventory_current not read in sample mode: drift_usl.dns_live reads the Cloudflare DNS API live through the Zetaris REST datasource ${REST_DB}, and sample/bundle.json holds no live source`);
 
   // The explain step over the pass (see the header): one cause per explained finding, in the pass's order per tenant.
   const explained = await explainTenants({ decidedAt, findings: pass.findings }, { layer, vault: null, redactor: BUNDLE_REDACTOR, sink: new MemoryCauseSink(engine), tracer });

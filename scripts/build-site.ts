@@ -123,7 +123,7 @@ import { VERBS, runPass, type Finding } from "../src/pipeline.ts";
 import { loadPolicyFile } from "../src/policy/load.ts";
 import { RECEIPTS_FILE, verify } from "../src/receipts/bundle.ts";
 import { Redactor, countLabels, describeRedactions } from "../src/redactor.ts";
-import { DQ_RULES, NAMESPACE, USL_NAME, USL_TABLES, uslMarkdown, uslRows } from "../src/zetaris/setup.ts";
+import { DQ_RULES, NAMESPACE, REST_DB, USL_NAME, USL_TABLES, uslMarkdown, uslRows } from "../src/zetaris/setup.ts";
 import { FILE_DATASOURCES } from "../src/data/files.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -139,8 +139,8 @@ export const word = (n: number): string => NUMBER_WORDS[n] ?? String(n);
 /**
  * The page and every data file together. 300,000 from 24 Oct 2026; 350,000 from 25 Oct 2026, when the Nemotron tab over
  * eval/results/2026-10-25T23-34-17Z, whose Ultra judge SELECTs run longer, took the build to 314,907 bytes; 400,000 from
- * 26 Oct 2026, when the replay page in the one design (src/design/theme.ts) beside the redesigned landing page took the
- * build to 352,762 bytes.
+ * 26 Oct 2026, when the landing page (docs/site.html, the ConfigLeaf mark inline in it) took the build to 356,981 bytes;
+ * the replay page in the one design (src/design/theme.ts) takes the build with the CLOUDFLARE lane to 364,343 bytes.
  */
 export const MAX_BYTES = 400_000;
 /** The header's Report link: the owner's report (npm run examples writes it), relative to docs/ in a clone of the repository. */
@@ -1068,7 +1068,7 @@ ${markdownToHtml(usl, 1)}</div></section>`;
 function zetarisParagraph(): string {
   const code = (s: string): string => `<code>${escapeHtml(s)}</code>`;
   const rules = DQ_RULES.map((r) => `${code(r.name)} on ${code(r.table)}`).join(", ");
-  return `<p>In a live pass every detector and check query runs as Zetaris Lightning SQL over the ${code(DATASOURCE)} datasource, the app Postgres registered in Zetaris, each table named ${code(`${DATASOURCE}.<table>`)}. Beside it Zetaris reads the technician's memory store as ${code(FILE_DATASOURCES.lesson)} and the policy file as ${code(FILE_DATASOURCES.rule)}, both files in its filestore. Over the three, the ${code(USL_NAME)} semantic layer holds ${word(USL_TABLES.length)} entities (${USL_TABLES.map(code).join(", ")}) and ${word(DQ_RULES.length)} DQ rules (${rules}). On this page the same SQL runs on sql.js over the recorded rows, and each query on the Findings tab carries the text the live pass sends to Zetaris, rendered at build time. <code>test/parity.test.ts</code> holds the two engines to the same columns, rows and totals; the README's "What it proves" table gives its last measured count.</p>`;
+  return `<p>In a live pass every detector and check query runs as Zetaris Lightning SQL over the ${code(DATASOURCE)} datasource, the app Postgres registered in Zetaris, each table named ${code(`${DATASOURCE}.<table>`)}. Beside it Zetaris reads the technician's memory store as ${code(FILE_DATASOURCES.lesson)} and the policy file as ${code(FILE_DATASOURCES.rule)}, both files in its filestore, and the Cloudflare DNS API as ${code(REST_DB)}, a REST datasource it fetches at each query. Over the four, the ${code(USL_NAME)} semantic layer holds ${word(USL_TABLES.length)} entities (${USL_TABLES.map(code).join(", ")}) and ${word(DQ_RULES.length)} DQ rules (${rules}). On this page the same SQL runs on sql.js over the recorded rows, and each query on the Findings tab carries the text the live pass sends to Zetaris, rendered at build time. <code>test/parity.test.ts</code> holds the two engines to the same columns, rows and totals; the README's "What it proves" table gives its last measured count.</p>`;
 }
 
 // ---- the landing page: docs/site.html, scripts/site/landing.html with every token filled from the repository ------------
@@ -1760,7 +1760,7 @@ ${MARK}
 </div></div>
 <header><div class="wrap">
 <h1>ConfigLeaf: every finding, with the SQL behind it</h1>
-<p class="lede">A config-drift assurance pass for MSP technicians, replayed from recorded collections. Open a finding to see the detector query that raised it, each precondition check with the SQL that ran, the rows it returned and the hashes, and the judge step. The Document tab holds the owner's document over the full recorded bundle, the Sources tab names the tables and the source behind each finding class, and the Nemotron tab holds the eval's Nemotron calls with every SELECT its judges wrote, re-run at build. In a live pass the same detector and check SQL runs as Zetaris Lightning SQL over the <code>${escapeHtml(DATASOURCE)}</code> datasource, beside the technician's memory store and the policy file, with the <code>${escapeHtml(USL_NAME)}</code> semantic layer and its ${word(DQ_RULES.length)} DQ rules over the three; on this page it runs on sql.js over the recorded rows, and <code>test/parity.test.ts</code> holds the two engines to the same columns, rows and totals.</p>
+<p class="lede">A config-drift assurance pass for MSP technicians, replayed from recorded collections. Open a finding to see the detector query that raised it, each precondition check with the SQL that ran, the rows it returned and the hashes, and the judge step. The Document tab holds the owner's document over the full recorded bundle, the Sources tab names the tables and the source behind each finding class, and the Nemotron tab holds the eval's Nemotron calls with every SELECT its judges wrote, re-run at build. In a live pass the same detector and check SQL runs as Zetaris Lightning SQL over the <code>${escapeHtml(DATASOURCE)}</code> datasource, beside the technician's memory store, the policy file and the Cloudflare DNS API, which it reads live, with the <code>${escapeHtml(USL_NAME)}</code> semantic layer and its ${word(DQ_RULES.length)} DQ rules over the four; on this page it runs on sql.js over the recorded rows, and <code>test/parity.test.ts</code> holds the two engines to the same columns, rows and totals.</p>
 ${headline}
 ${stats}
 <div class="reports">

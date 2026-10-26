@@ -12,8 +12,9 @@
 //                  data table under each).
 //   incidents      every finding the period decided ESCALATE, FIX or ROLLBACK, or that an action or a ticket names, as a
 //                  card: what, where, the cause's sentence, what the agent did, the ticket; the newest INCIDENTS_SHOWN.
-//   sources        each source's runs in the period and how many pass the DQ gate, its last read; then the five DQ rules
-//                  of the semantic layer (src/zetaris/setup.ts DQ_RULES) counted over the tenant's rows of the period.
+//   sources        each source's runs in the period and how many pass the DQ gate, its last read; then five of the six
+//                  DQ rules of the semantic layer (src/zetaris/setup.ts DQ_RULES) counted over the tenant's rows of the
+//                  period. The sixth, dns_inventory_current on dns_live, reads the provider live and is not counted here.
 //   receipts       from the newest eval results: the receipts whose Ed25519 signature verifies (src/receipts/bundle.ts
 //                  verify, what npm run receipts:verify prints), and Ultra alone beside the checks with Ultra as the
 //                  falsifier, per run; the receipt ids the tenant's actions of the period name.
@@ -467,7 +468,7 @@ export function executiveOf(doc: DocumentData, rows: ExecutiveRows, o: Executive
     };
   }).sort((a, b) => srank(a.surface) - srank(b.surface) || cmp(a.surface, b.surface) || cmp(a.host, b.host)).map(({ surface: _s, host: _h, ...rest }) => rest);
 
-  // the five DQ rules over the tenant's rows of the period
+  // five of the six DQ rules over the tenant's rows of the period; dns_inventory_current is a live read, not counted
   const runs = doc.runs.filter((r) => inPeriod(r.started_at));
   const c = tiles.copies;
   const verified = actions.filter((a) => !WRITES.includes(a.kind) || ["failed", "refused", "not_judged"].includes(a.status) || a.verification !== "");

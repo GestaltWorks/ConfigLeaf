@@ -39,7 +39,7 @@ import { ZetarisEngine } from "../src/data/engines/zetaris.ts";
 import { fileSourceRows, sourceRows, sourcesMarkdown } from "../src/document/render.ts";
 import { VERBS } from "../src/pipeline.ts";
 import { Redactor } from "../src/redactor.ts";
-import { DQ_RULES, USL_NAME, USL_TABLES } from "../src/zetaris/setup.ts";
+import { DQ_RULES, REST_DB, USL_NAME, USL_TABLES } from "../src/zetaris/setup.ts";
 import { MARK } from "../src/design/theme.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -171,12 +171,12 @@ describe("the replay page", () => {
   it("names Zetaris where the page opens, in the Sources tab and in the footer: the datasource, the semantic layer and its DQ rules, the parity test", () => {
     const html = built.files.get("index.html")!;
     const lede = /<p class="lede">([\s\S]*?)<\/p>/.exec(html)![1];
-    for (const s of ["Zetaris Lightning SQL", `<code>${DS}</code> datasource`, "beside the technician's memory store and the policy file", `<code>${USL_NAME}</code> semantic layer`, "five DQ rules over the three", "<code>test/parity.test.ts</code>"]) expect(lede).toContain(s);
+    for (const s of ["Zetaris Lightning SQL", `<code>${DS}</code> datasource`, "beside the technician's memory store, the policy file and the Cloudflare DNS API, which it reads live", `<code>${USL_NAME}</code> semantic layer`, "six DQ rules over the four", "<code>test/parity.test.ts</code>"]) expect(lede).toContain(s);
     const src = panel("sources");
     expect(src).toContain(`Zetaris Lightning SQL over the <code>${DS}</code> datasource`);
-    expect(src).toContain("Beside it Zetaris reads the technician's memory store as <code>LESSONS</code> and the policy file as <code>RULES</code>, both files in its filestore.");
-    expect(src).toContain(`holds fourteen entities (${USL_TABLES.map((t) => `<code>${t}</code>`).join(", ")})`);
-    expect(src).toContain(`five DQ rules (${DQ_RULES.map((r) => `<code>${r.name}</code> on <code>${r.table}</code>`).join(", ")})`);
+    expect(src).toContain(`Beside it Zetaris reads the technician's memory store as <code>LESSONS</code> and the policy file as <code>RULES</code>, both files in its filestore, and the Cloudflare DNS API as <code>${REST_DB}</code>, a REST datasource it fetches at each query.`);
+    expect(src).toContain(`holds fifteen entities (${USL_TABLES.map((t) => `<code>${t}</code>`).join(", ")})`);
+    expect(src).toContain(`six DQ rules (${DQ_RULES.map((r) => `<code>${r.name}</code> on <code>${r.table}</code>`).join(", ")})`);
     expect(/<footer>[\s\S]*?<\/footer>/.exec(html)![0]).toContain(`<code>${DS}.&lt;table&gt;</code>`);
     expect(html).toContain('"as the live pass sends it to Zetaris"');
   });
@@ -702,7 +702,7 @@ describe("the landing page, docs/site.html", () => {
     expect(src).toContain(`<h2>${title}, read as one</h2>`);
     expect(readme().split("\n")).toContain(`${title}: ${items.slice(0, -1).join(", ")}, and ${items.at(-1)}.`);
     const hub = /<div class="hub-card">([\s\S]*?)<\/div>/.exec(src)![1];
-    expect(hub).toBe(`<small>Zetaris</small><b>${USL_NAME}</b><span>${DS} · ${FILE_DATASOURCES.lesson} · ${FILE_DATASOURCES.rule}</span><span>${word(USL_TABLES.length)} entities · ${word(DQ_RULES.length)} DQ rules</span>`);
+    expect(hub).toBe(`<small>Zetaris</small><b>${USL_NAME}</b><span>${DS} · ${FILE_DATASOURCES.lesson} · ${FILE_DATASOURCES.rule} · ${REST_DB}</span><span>${word(USL_TABLES.length)} entities · ${word(DQ_RULES.length)} DQ rules</span>`);
     const out = all(src, /<li class="v-(\w+)">/g);
     expect([...out].sort()).toEqual([...VERBS].sort());
     const third = plain(/<p class="sub">([\s\S]*?)<\/p>/.exec(src)![1]);
@@ -726,12 +726,12 @@ describe("the landing page, docs/site.html", () => {
   it("lays out the semantic layer as src/zetaris/setup.ts holds it: each entity once, in the lane of its datasource, with its DQ rule", () => {
     const layer = section("layer");
     const lanes = all(layer, /<div class="lane">([\s\S]*?)<\/ul><\/div>/g);
-    expect(lanes.map((l) => /<b>(\w+)<\/b>/.exec(l)![1])).toEqual([DS, FILE_DATASOURCES.lesson, FILE_DATASOURCES.rule]);
+    expect(lanes.map((l) => /<b>(\w+)<\/b>/.exec(l)![1])).toEqual([DS, FILE_DATASOURCES.lesson, FILE_DATASOURCES.rule, REST_DB]);
     const entities = lanes.flatMap((l) => all(l, /<li><code>(\w+)<\/code>/g));
     expect([...entities].sort()).toEqual([...USL_TABLES].sort());
     for (const r of DQ_RULES) expect(layer).toMatch(new RegExp(`<li><code>${r.table}</code>[^<]*<br><em>${r.name}</em></li>`));
     expect(all(layer, /<em>(\w+)<\/em>/g)).toHaveLength(DQ_RULES.length);
-    expect(plain(/<p class="sub">([\s\S]*?)<\/p>/.exec(layer)![1])).toBe(`\`${USL_NAME}\` in \`lightning.metastore.drift\` holds ${word(USL_TABLES.length)} entities over three datasources, each built from the tables its activation SELECT reads, and ${word(DQ_RULES.length)} DQ rules.`);
+    expect(plain(/<p class="sub">([\s\S]*?)<\/p>/.exec(layer)![1])).toBe(`\`${USL_NAME}\` in \`lightning.metastore.drift\` holds ${word(USL_TABLES.length)} entities over four datasources, each built from the tables its activation SELECT reads, and ${word(DQ_RULES.length)} DQ rules.`);
   });
 
   it("decides under the README's policy, its bullets as written, beside the findings open by verb in the owner's document", () => {

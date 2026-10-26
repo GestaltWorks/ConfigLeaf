@@ -38,6 +38,7 @@ import { MemoryWindows, WINDOW_SURFACES, WindowError, freeText, newWindow } from
 import { runLine, type approveRun } from "../src/vault/approve.ts";
 import { datasourceLists } from "../src/zetaris/setup.ts";
 import { MemTracer } from "./fixtures/mem-tracer.ts";
+import { zetarisMeta } from "./fixtures/zetaris-meta.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const SAMPLE = JSON.parse(readFileSync(path.join(ROOT, "sample", "bundle.json"), "utf8")) as Record<string, unknown>;
@@ -677,6 +678,9 @@ describe("the pass and the change windows, over test/fixtures/policy-bundle.json
     return {
       name, sent, qualify: (t) => engine.qualify(t),
       run: (sql, o) => {
+        // the live pass's schema guard and EXPLAIN reads, answered as Zetaris answers them (test/fixtures/zetaris-meta.ts)
+        const meta = name === "zetaris" ? zetarisMeta(sql) : undefined;
+        if (meta) return Promise.resolve(meta);
         sent.push(sql);
         if (sql.startsWith("SHOW DATASOURCE TABLES")) return show ? show() : Promise.reject(new Error("not a statement sql.js runs"));
         return /\bchange_window\b/.test(sql) ? Promise.reject(new Error(message)) : engine.run(sql, o);
