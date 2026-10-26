@@ -32,6 +32,11 @@ function arg(name: string): string | undefined {
 const flag = (name: string): boolean => process.argv.includes(`--${name}`);
 const list = (s: string | undefined): string[] | undefined => (s ? s.split(",").map((x) => x.trim()).filter(Boolean) : undefined);
 
+// supplementary:begin. Added 26 Oct 2026: --set supplementary (eval/supplementary/README.md, post hoc, not pre-registered)
+// goes to scripts/eval-supplementary.ts before the parsing below; every line outside this block is the runner as committed
+// at 40751d8 (test/supplementary.test.ts holds it to that commit's sha256).
+if (arg("set") === "supplementary") process.exit(await (await import("./eval-supplementary.ts")).main(process.argv));
+// supplementary:end
 const set = (arg("set") ?? "all") as SetChoice;
 if (!["dev", "heldout", "all"].includes(set)) {
   console.error(`--set takes dev, heldout or all, got ${set}`);

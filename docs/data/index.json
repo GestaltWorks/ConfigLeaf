@@ -25,22 +25,23 @@
   ],
   "totals": {
     "examples": 3,
-    "findings": 9,
+    "findings": 8,
+    "rows": 9,
     "checks": 33,
     "checksRerun": 33,
     "verbs": {
-      "ESCALATE": 2,
+      "ESCALATE": 1,
       "ADOPT": 4,
       "HOLD": 3
     },
     "classes": {
-      "proxy_split": 2,
+      "proxy_split": 1,
       "proxied_without_real_ip": 1,
       "orphan_record": 3,
       "orphan_vhost": 3
     },
     "judgeModels": {
-      "none": 9
+      "none": 8
     },
     "nemotron": {
       "stamp": "2026-10-25T23-34-17Z",

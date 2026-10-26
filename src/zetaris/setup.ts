@@ -149,6 +149,7 @@ import { Zetaris, type QueryResult } from "../adapters/zetaris.ts";
 import { API, Cloudflare, RECORDS_PER_PAGE } from "../collectors/cloudflare.ts";
 import { config, redact } from "../config.ts";
 import { ADOPTION_SQL, EXCEPTION_IN_FORCE, FILE_DATASOURCES, fileTableDef } from "../data/files.ts";
+import type { Engine, RunOptions } from "../data/layer.ts";
 import { TABLE_NAMES } from "../data/schema.ts";
 import type { Tracer, TraceEvent } from "../trace.ts";
 import { COPY_STATE_FILE, FILESTORE_DIR, filesHash, putFiles, recordCopy, refreshFiles, type PutResult, type Refresh, type RefreshDeps } from "./filestore.ts";
@@ -859,6 +860,26 @@ export function refreshFileTables(deps: Partial<RefreshDeps> = {}): Promise<Refr
 
 const col = (r: QueryResult, name: string): number => r.columns.findIndex((c) => c.toLowerCase() === name);
 const squash = (s: string): string => s.replace(/\s+/g, " ").trim();
+
+/**
+ * Whether SHOW DATASOURCE TABLES <datasource> lists `table`, read as the setup's own probe reads the listing (the name
+ * column, else the first cell, any case): true or false, or null when the statement fails (a key without the right to
+ * list, an instance that does not answer), so a caller that must not skip the table reads it and meets the failure
+ * there. One statement through the engine given (a CountingEngine counts it, the tracer traces it). The live pass asks
+ * before it reads change_window (src/loop/pass.ts), the console at start (src/console/state.ts zetarisGaps).
+ */
+export async function datasourceLists(engine: Pick<Engine, "run">, table: string, opts: RunOptions & { datasource?: string } = {}): Promise<boolean | null> {
+  const { datasource = config.zetaris.datasource, ...run } = opts;
+  if (!IDENT.test(datasource)) return null;
+  let r: QueryResult;
+  try {
+    r = await engine.run(`SHOW DATASOURCE TABLES ${datasource}`, run);
+  } catch {
+    return null;
+  }
+  const i = col(r, "name");
+  return r.rows.some((row) => (i >= 0 ? row[i] : row[0])?.toLowerCase() === table.toLowerCase());
+}
 
 /** Does SHOW NAMESPACES OR TABLES IN the namespace list the USL? Matches the name column when there is one, else any cell. */
 function listsUsl(r: QueryResult): boolean {

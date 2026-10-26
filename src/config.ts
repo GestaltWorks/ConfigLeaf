@@ -24,9 +24,9 @@ const Schema = z.object({
   // the primary; on failure the adapter walks the fallback list. A local lane
   // (local-runtime/nemotron-3.5-lightning-30b-a3b) joins the list when its weights are installed: on
   // 25 Oct it answered 503 local_runtime_not_ready on this machine, which holds none.
-  METERLESS_MODEL_FAST: z.string().default("openrouter/nvidia/nemotron-3.5-lightning"),
+  METERLESS_MODEL_FAST: z.string().default("nvidia/nemotron-3.5-lightning-30b-a3b"),
   METERLESS_MODEL_JUDGE: z.string().default("openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"),
-  METERLESS_FALLBACK_FAST: z.string().default("nvidia/nemotron-3.5-lightning-30b-a3b"),
+  METERLESS_FALLBACK_FAST: z.string().default("openrouter/nvidia/nemotron-3.5-lightning"),
   METERLESS_FALLBACK_JUDGE: z.string().default("nvidia/nemotron-3-ultra-550b-a55b"),
   ZETARIS_REST_URL: z.string().default("http://localhost:8888/api/v1.0"),
   ZETARIS_ORG_ID: z.string().default("1"),

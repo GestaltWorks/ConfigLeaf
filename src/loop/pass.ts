@@ -28,6 +28,10 @@
 //     never thrown. A record that fails means the provider changed since that run, so the pass's picture of the zone is
 //     stale. The summary and the pass row's Zetaris line carry it. On sql.js nothing is read (sample mode has no live
 //     source).
+//   - On Zetaris the change windows are read only when SHOW DATASOURCE TABLES lists change_window (src/zetaris/setup.ts
+//     datasourceLists, one statement through the layer's engine): a listing without it means no window can be open,
+//     and the pass reads none (runPass windowTable false); a listing that fails reads the table anyway, and a read
+//     that fails escalates every drift a rule would roll back or fix. On sql.js the table is always there.
 //
 // Measured 25 Oct 2026: over the Actor's fixture world (test/loop.test.ts) 12 findings, each read back under its
 // disposition_id; a second pass at a later instant writes 12 rows of its own, and one at the same instant writes 0
@@ -43,7 +47,7 @@ import type { Ledger } from "../ledger.ts";
 import { VERBS, runPass, type Finding, type PassResult } from "../pipeline.ts";
 import type { Tracer } from "../trace.ts";
 import { refreshText, type Refresh } from "../zetaris/filestore.ts";
-import { DNS_INVENTORY_CURRENT, USL } from "../zetaris/setup.ts";
+import { DNS_INVENTORY_CURRENT, USL, datasourceLists } from "../zetaris/setup.ts";
 
 export class LoopError extends Error {}
 
@@ -196,7 +200,8 @@ export async function passStep(layer: DataLayer, opts: PassStepOptions): Promise
   const dnsRuns = new Set(runs.filter((r) => r.surface === "cloudflare.dns").map((r) => r.run_id));
   const decidedAt = new Date(opts.decidedAt ?? Date.now()).toISOString();
   const ledger = opts.ledger ? new TenantLedger(opts.ledger, tenant, dnsRuns) : undefined;
-  const pass = await runPass(layer, { tracer, world: opts.world ?? new DriftWorld("pass"), memory: opts.memory, ledger, decidedAt });
+  const windowTable = layer.engine.name === "zetaris" ? (await datasourceLists(layer.engine, "change_window", { tracer, agent: "loop" })) !== false : true;
+  const pass = await runPass(layer, { tracer, world: opts.world ?? new DriftWorld("pass"), memory: opts.memory, ledger, decidedAt, windowTable });
   const findings = pass.findings.filter((f) => f.finding.tenant_id === tenant);
 
   const stored = ledger ? new Map(objects(await layer.run(DISPOSITIONS_SQL, {}, { tracer, agent: "loop", limit: 100_000 })).map((d) => [d.disposition_id, d])) : null;

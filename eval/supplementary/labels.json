@@ -1,0 +1,66 @@
+{
+ "labelled_on": "2026-10-26",
+ "labelled_by": "derived, post hoc, from the verb the live pass gave each finding on 25 Oct 2026, read by the verb reading of eval/PROTOCOL.md \"What is counted\" item 4; not the operator's blind label",
+ "label_field": "needs_human",
+ "rule": "ESCALATE or FIX reads yes; ADOPT, HOLD or ROLLBACK reads no. A ROLLBACK is real drift the agent restored from a validated copy without waking anyone, so the protocol reads it no; those items stay in the set to measure the configurations' agreement on real drift.",
+ "scale": {
+  "yes": "the live pass escalated it or chose to fix it: a technician sees it",
+  "no": "the live pass held it, adopted it or rolled it back: nobody is woken"
+ },
+ "labels": [
+  {
+   "id": "S01",
+   "needs_human": "no",
+   "reason": "ROLLBACK at 2026-10-25T15:54:01.957Z (disp-ad79e295fe0ccf74, rule rule-e186e9d5790a7e6b): the protocol reads ROLLBACK as no.",
+   "operator_note": "Staged on production on 25 Oct 2026 at 15:53 UTC: a locked vhost edited on the host. The agent rolled it back to the approved copy."
+  },
+  {
+   "id": "S02",
+   "needs_human": "no",
+   "reason": "HOLD at 2026-10-25T15:54:01.957Z (disp-c2dd4dcfec3fe2d8, rule rule-e186e9d5790a7e6b): the protocol reads HOLD as no.",
+   "operator_note": "The same staged edit as S01, read against the newest backup."
+  },
+  {
+   "id": "S03",
+   "needs_human": "no",
+   "reason": "ROLLBACK at 2026-10-25T16:49:30.637Z (disp-0596963e0c81ae00, rule rule-a3f26f34efab2ebb): the protocol reads ROLLBACK as no.",
+   "operator_note": "Staged on production on 25 Oct 2026 at 16:49 UTC: a DNS record changed in the dashboard. The agent reverted the record to the approved copy."
+  },
+  {
+   "id": "S04",
+   "needs_human": "no",
+   "reason": "HOLD at 2026-10-25T16:49:30.637Z (disp-76034f3fee0e6720, rule rule-b8d9962485c3ced4): the protocol reads HOLD as no.",
+   "operator_note": "The same staged DNS change as S03, seen from the vhost that serves the name (port 443)."
+  },
+  {
+   "id": "S05",
+   "needs_human": "no",
+   "reason": "HOLD at 2026-10-25T16:49:30.637Z (disp-85072bfaaa4100fc, rule rule-b8d9962485c3ced4): the protocol reads HOLD as no.",
+   "operator_note": "The same staged DNS change as S03, seen from the vhost that serves the name (port 80)."
+  },
+  {
+   "id": "S06",
+   "needs_human": "yes",
+   "reason": "FIX at 2026-10-25T18:09:14.465Z (disp-dfc1d83e369e469b, rule rule-6c41a25a00c404c8): the protocol reads FIX as yes.",
+   "operator_note": "Staged on production on 25 Oct 2026 at 18:08 UTC: a signed-off vhost broken with no valid copy in the vault; a probe of the site failed."
+  },
+  {
+   "id": "S07",
+   "needs_human": "no",
+   "reason": "HOLD at 2026-10-25T18:09:14.465Z (disp-25fb4c16ee5c5aa1, rule rule-6c41a25a00c404c8): the protocol reads HOLD as no.",
+   "operator_note": "The same staged break as S06, read against the newest backup."
+  },
+  {
+   "id": "S08",
+   "needs_human": "no",
+   "reason": "ROLLBACK at 2026-10-25T20:24:34.402Z (disp-a6f2ea62f8c8acb3, rule rule-6c41a25a00c404c8): the protocol reads ROLLBACK as no.",
+   "operator_note": "The lab: the vhost edited over ssh at 20:22 UTC. The agent rolled it back to the approved copy."
+  },
+  {
+   "id": "S09",
+   "needs_human": "no",
+   "reason": "HOLD at 2026-10-25T20:24:34.402Z (disp-2830bf2e6c52d31e, rule rule-6c41a25a00c404c8): the protocol reads HOLD as no.",
+   "operator_note": "The same lab edit as S08, read against the newest backup."
+  }
+ ]
+}

@@ -243,7 +243,8 @@ describe("the diff", () => {
 
 // ---- over sql.js: the policy fixture with the Actor's vault ------------------------------------------------------
 
-describe("explainPass over the policy fixture", () => {
+// the Actor's fixture vault is git repositories built on disk, and each case reads them through git: 1 to 3 s alone
+describe("explainPass over the policy fixture", { timeout: 20_000 }, () => {
   let base: Base;
   let engine: SqlJsEngine;
   let layer: DataLayer;
@@ -254,7 +255,7 @@ describe("explainPass over the policy fixture", () => {
     engine.loadBundle(structuredClone(base.bundle));
     layer = new DataLayer(engine);
     pass = await passStep(layer, { tenant: TENANT, ledger: new MemoryLedger(engine), decidedAt: AT, world: new DriftWorld("explain_test") });
-  });
+  }, 30_000);
   afterAll(() => {
     engine.close();
     base.cleanup();
@@ -336,7 +337,8 @@ describe("explainPass over the policy fixture", () => {
   });
 });
 
-describe("the approval's own copy in the diff header", () => {
+// the second case builds the fixture vault with git and commits a later run into it
+describe("the approval's own copy in the diff header", { timeout: 20_000 }, () => {
   it("is the latest copy taken at or before the approval, the earliest when every copy is later", () => {
     const copies = [{ taken_at: "2026-10-20T02:01:00.000Z", c: "a" }, { taken_at: "2026-10-21T02:01:00.000Z", c: "b" }, { taken_at: "2026-10-23T02:30:00.000Z", c: "c" }];
     expect(approvalCopy(copies, "2026-10-22T09:00:00.000Z")?.c).toBe("b");

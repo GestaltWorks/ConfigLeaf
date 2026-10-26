@@ -161,7 +161,8 @@ CREATE TABLE IF NOT EXISTS disposition (
   rule_id        TEXT,               -- the policy_rule that decided, when one did
   finding_id     TEXT NOT NULL,
   run_id         TEXT NOT NULL,
-  decided_at     TEXT NOT NULL
+  decided_at     TEXT NOT NULL,
+  window_id      TEXT                -- the change_window whose HOLD this is (src/policy/decide.ts step 3); null on every other row
 );
 -- What the agent did about a disposition (filled by the write paths behind --apply).
 CREATE TABLE IF NOT EXISTS action (
@@ -224,3 +225,24 @@ CREATE TABLE IF NOT EXISTS finding_cause (
   window_to      TEXT NOT NULL,      -- the pass's decided_at
   decided_at     TEXT NOT NULL       -- the pass's decided_at
 );
+-- A change window a technician declared on one object (the console's Unlock, src/console/): while it is open,
+-- opened_at <= the pass's instant < until and closed_at NULL, a drift on the object that a rule would roll back, fix or
+-- hold is held until the window ends (src/policy/decide.ts). Approve and Lock close it early; nothing deletes a row.
+CREATE TABLE IF NOT EXISTS change_window (
+  window_id      TEXT PRIMARY KEY,   -- stableId("win", tenant_id, surface, host, object_id, setting_path, opened_at)
+  tenant_id      TEXT NOT NULL,
+  surface        TEXT NOT NULL,      -- linux.nginx | linux.etc | cloudflare.dns (src/policy/window.ts WINDOW_SURFACES)
+  host           TEXT,               -- null for cloudflare.dns
+  object_id      TEXT NOT NULL,      -- the redacted object id the observation rows carry
+  setting_path   TEXT NOT NULL,      -- * for every setting of the object, or one setting path
+  opened_by      TEXT NOT NULL,      -- who declared it, free text through the redactor
+  opened_at      TEXT NOT NULL,
+  until          TEXT NOT NULL,      -- ISO 8601 UTC, the millisecond form: where the window ends
+  reason         TEXT NOT NULL,      -- why, free text through the redactor
+  closed_at      TEXT,               -- set when Approve or Lock closes it before until; null otherwise
+  CONSTRAINT change_window_span CHECK (until > opened_at),
+  CONSTRAINT change_window_closed CHECK (closed_at IS NULL OR closed_at >= opened_at),
+  CONSTRAINT change_window_surface CHECK (surface IN ('linux.nginx', 'linux.etc', 'cloudflare.dns'))
+);
+-- The console reads an object's windows on every Settings render, the Decider the tenant's on every pass.
+CREATE INDEX IF NOT EXISTS change_window_object ON change_window (tenant_id, surface, host, object_id);

@@ -1,0 +1,10 @@
+{
+ "exported_at": "2026-10-26T03:30:08.482Z",
+ "id": "job_mvmzl7cz03",
+ "kind": "app_stream",
+ "app": "drift-agent-client-1",
+ "turns": 1064,
+ "failed": 153,
+ "created_at": "2026-10-24T22:44:54.274Z",
+ "last_turn_at": "2026-10-26T02:35:43.768Z"
+}

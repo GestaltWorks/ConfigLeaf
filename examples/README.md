@@ -31,8 +31,8 @@ store, applied, the expiry 2026-11-30T00:00:00.000Z, the scope key, the operator
 The directories are named for the case: the bundle pseudonymises the zone, and a folder named after the zone would
 undo that for every row of the zone and every trace line that names it. `proposals/` holds the four
 pre-flight proposals and the verdicts the simulator returned for them; its own README explains them.
-[document.md](document.md) is the owner's document over the full bundle (`npm run document` in sample mode, 196
-lines): the estate, the copies with their gaps, the approvals, the 27 findings open (ADOPT 23, HOLD 3, ESCALATE 1),
+[document.md](document.md) is the owner's document over the full bundle (`npm run sample` and `npm run document` in
+sample mode write it alike, 196 lines): the estate, the copies with their gaps, the approvals, the 27 findings open (ADOPT 23, HOLD 3, ESCALATE 1),
 the Why of its one cause, where each answer comes from, the work and tickets, the probes counted ok, fail and
 skipped, and the 16 named queries it ran, 83 runs in all. [report.html](report.html) is the owner's report over the same bundle and lessons, one HTML
 file rendered from the document's rows (`npm run sample`, `npm run document` in sample mode and `npm run examples`

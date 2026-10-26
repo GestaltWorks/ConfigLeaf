@@ -1,35 +1,58 @@
-// The terminal view of npm run cycle, pass, act, tickets and watch: what a reader takes in at a glance. One header,
-// one row per step with its time, an indented line under the pass for each finding the agent moves on (ROLLBACK, FIX,
-// ESCALATE) and under act for each action, a cycle's "what happened" block, then one done line. The trace keeps every
-// other fact, run ids included.
+// The terminal view of npm run cycle, pass, act, tickets, watch and sample: what a reader takes in at a glance. One header,
+// one row per step with its time, under a row its facts one to a line (under the pass a block for each finding the
+// agent moves on, ROLLBACK, FIX and ESCALATE; under act a block for each action), a cycle's "what happened" block, then
+// one done line. The trace keeps every other fact, run ids included.
 //
 // Contract:
 //   - Header: "ConfigLeaf · <command> · tenant <id> · <YYYY-MM-DD HH:MM> UTC · <mode>", the mode one of MODE's
 //     "dry run, nothing changed" and "applying changes", "recorded" (a pass that writes the ledger) or "watch every
-//     <n> min".
-//   - Finding classes read in plain words (CLASS_LABEL, one map for the screen, the document and the replay page): the
-//     pass's tally line, wrapped onto further indented lines at the width, and each finding line, the verb first, then
-//     the class's words, then the object. An action line names its kind as the ledger does (rollback_file,
-//     revert_record), then the object in plain words ("DNS record <name>", "<dir>/<file> on <host>").
-//   - An investigation that is done names both Nemotron calls from its record (nemotronOf): the checks Lightning picked,
-//     or the default checks when Lightning's selection held none, then Ultra's refuting SELECT with its row count and
-//     verdict, each call's served model (its last path segment) and receipt id, wrapped at the width. A record without
-//     the judge's line gives the count form: "<n> checks, judge <verdict> · <n> receipts". Its what-happened sentence
-//     names Lightning and Ultra, each on a verified receipt, when Lightning picked the checks and Ultra ruled.
-//   - What happened (whatHappened, a cycle's screen only): between the last row and the done line, at most STORY_MAX
-//     sentences of one line each, built from the pass's findings, the explain step's causes, the act step's outcomes
-//     or plan and the tickets step's operations: one per action, one for the tickets closed as resolved, one for the
-//     findings with a technician, one for the findings adopted and held; "Nothing changed on the estate" when act ran
-//     or was skipped and nothing moved. An action's sentence, and the technician's for an escalation no action
-//     sentence names, carries its finding's cause on the same line, joined by a space (src/explain/ withRestore: the
-//     stored sentence, with ", N minutes before the agent restored it" once the agent's rollback or revert wrote), so a
-//     cause counts as part of its sentence under STORY_MAX. Omitted under --quiet.
+//     <n> min". It is the one line that never wraps.
+//   - Width: the terminal's columns, from COLUMNS when it is a positive integer, else stdout's columns on a TTY, less
+//     one on a TTY (a console that wraps at its last column then never wraps a full line early); DEFAULT_WIDTH (120)
+//     otherwise. No line passes it: a line's phrases go to it whole, joined by " · ", as many as fit; the next starts
+//     a line of its own in the same column; a phrase longer than a line breaks at its spaces, a word longer than one
+//     is cut. Each line under a row is one fact (SubLine lines), wrapped the same way.
 //   - Row: two spaces, the step name in 9 columns, a space, the subject in 13 columns (wider when a subject the table
-//     is given up front is longer: a redacted host alias), a space, the detail as phrases joined by " · ", and the
-//     duration to one decimal, right-aligned to the width: the terminal's columns less one, up to 120, when stdout is
-//     a TTY; 90 otherwise. A view with no subject starts its detail in the subject's column. The lines under a row
-//     start in the subject's column; a label is padded to the longest label of its group, or the longest verb
-//     (ROLLBACK) under the pass and the longest kind (rollback_file) under act, plus two spaces.
+//     is given up front is longer: a redacted host alias), a space, the detail, and on the row's first line only the
+//     duration to one decimal, right-aligned to the width; the detail wraps in its own column. A view with no subject
+//     starts its detail in the subject's column. The lines under a row start in the subject's column; a label is
+//     padded to the longest label of its group, or the longest verb (ROLLBACK) under the pass and the longest kind
+//     (rollback_file) under act, plus two spaces, and a fact's further lines start where its first line's text does.
+//   - Finding classes read in plain words (CLASS_LABEL, one map for the screen, the document and the replay page).
+//   - Under the pass, given the queries it sent through Zetaris (passView's second argument): "Zetaris <n> queries ·
+//     <n> rows · <n> failed", the failures red above 0; "files lessons and rules refreshed in Zetaris" when the pass
+//     put them again (yellow "... not refreshed" when the put failed, no line when the copy was current); "DQ
+//     exception_in_force holds for <n> of <n> adoptions" when the pass read it (src/loop/pass.ts AdoptionCheck; red when
+//     fewer hold than were read, " of the pass recorded at <YYYY-MM-DD HH:MM> UTC" after a pass with no ledger, yellow
+//     "exception_in_force not read" when the read failed); "dns_inventory_current holds for <n> of <n> live records"
+//     when the pass read it (src/loop/pass.ts DnsInventoryCheck), under the same label, red when fewer hold than the
+//     DNS API returns (the provider changed since the last complete DNS run), yellow "dns_inventory_current not read"
+//     when the read failed. Then "classes", one class a line, its count right-aligned
+//     in the counts' width, two spaces, its words, the most first. Then one block per ROLLBACK, FIX and ESCALATE, in
+//     that order, at most FINDING_LINES: the verb, coloured, and the class's words; the object on the next line; the
+//     copy a ROLLBACK restores, or why a FIX or an ESCALATE goes as it does, on the third.
+//   - Under act, one block per action: the kind and its object ("DNS record <name>", "<dir>/<file> on <host>"; an
+//     investigation's verb before it) on the first line, then the status (with the action's time when done), what
+//     the write did ("<before> → <after> · nginx -t ok · reloaded"), the verification or the reason, each on a line.
+//     An investigation that is done names both Nemotron calls from its record (nemotronOf): the checks Lightning
+//     picked, or the default checks when Lightning's selection held none, then Ultra's refuting SELECT with its row
+//     count and verdict, each call's served model (its last path segment) and receipt id on a line of its own. A
+//     record without the judge's line gives the count form: "<n> checks, judge <verdict>", "<n> receipts". A dry run's
+//     block names the object, the vault commit and what follows, or "refused on --apply" and why. outcomeLine's parts
+//     stay one phrase list for a reader that joins them on one line (src/document/report.ts).
+//   - Under tickets, one line per operation, "#7 incident · opened", and an opened issue's title on the next line, two
+//     columns in; one operation goes on the row itself.
+//   - Under explain (explainedView in the cycle, causesView in the sample), one block per cause: the verb, the object
+//     and the cause's class, then the cause's sentence on lines of its own; the errors after them.
+//   - What happened (whatHappened, a cycle's screen only): after a blank line, the heading, then at most STORY_MAX
+//     sentences, each wrapped at the width, two spaces in and its further lines four, built from the pass's findings,
+//     the explain step's causes, the act step's outcomes or plan and the tickets step's operations: one per action,
+//     one for the tickets closed as resolved, one for the findings with a technician, one for the findings adopted and
+//     held; "Nothing changed on the estate" when act ran or was skipped and nothing moved. An action's sentence, and
+//     the technician's for an escalation no action sentence names, carries its finding's cause after it, joined by a
+//     space (src/explain/ withRestore: the stored sentence, with ", N minutes before the agent restored it" once the
+//     agent's rollback or revert wrote), so a cause counts as part of its sentence under STORY_MAX. Omitted under
+//     --quiet.
 //   - Numbers carry thousands separators, durations one decimal, hashes and commits 8 hex; run ids stay in the trace
 //     (the table rewrites one that a reason carries as "the run").
 //   - Colour only when stdout is a TTY and NO_COLOR is unset or empty: ROLLBACK and FIX bold white, ESCALATE red, HOLD
@@ -37,21 +60,21 @@
 //   - Every text passes `scrub` (the tenant's redactor live) before it is measured and coloured. A collect row's
 //     subject is the host's ssh alias as LINUX_HOSTS names it, shown as typed: the operator's own configuration, the
 //     name the step carries ("collect:linux <alias>") and the one carrier test/leak.test.ts allows.
-//   - A failing step is one red row, "<step> failed <reason, one line>"; the done line then reads "stopped at <step> ·
-//     <i> of <n>".
-//   - Zetaris: given the queries the pass sent (passView's second argument), the first line under the pass row reads
-//     "Zetaris Lightning SQL over <datasource> · <n> queries · <n> rows · <n> failed", the failures red above 0, then
-//     "file tables refreshed" when the pass put the lessons and the rules again (yellow "file tables not refreshed"
-//     when the put failed, nothing when the copy was current), then, when the pass read it (src/loop/pass.ts AdoptionCheck), "DQ exception_in_force <n> of <n> adoptions" (red when
-//     fewer hold than were read; " of the pass recorded at <YYYY-MM-DD HH:MM> UTC" after a pass with no ledger; yellow
-//     "not read" when the read failed), then, when the pass read it (src/loop/pass.ts DnsInventoryCheck), "DQ
-//     dns_inventory_current <n> of <n> live records" (red when fewer hold than the DNS API returns: the provider changed
-//     since the last complete DNS run; yellow "not read" when the read failed); given the cycle's tally, the done line
-//     names "<n> Zetaris queries, <n> failed" before the trace.
+//   - A failing step is one red row, "<step> failed <reason, one line>", cut to the width; the done line then reads
+//     "stopped at <step> · <i> of <n>".
+//   - Done line: "done · <n> steps · <n> skipped · <s> s · <n> Zetaris queries, <n> failed · trace <file>", the
+//     queries when the cycle's tally is given; past the width its phrases go on to a further line, two columns in.
 //   - The callers print the old full line after a step's rows under --verbose (the old formatters stay) and only the
 //     header and the done line under --quiet.
+//   - Sample (npm run sample): the header's mode SAMPLE_HEADER_MODE, then one row per stage with no subject and no
+//     time: load (under it the file tables), gate, observe, detect (one line per class, its count first), decide (the
+//     verbs and the decision instant; under it memory, policy, DQ and ledger, then the ROLLBACK, FIX and ESCALATE
+//     blocks as the pass row gives them), explain (one block per cause), document and report (the file, its bytes,
+//     "written" or "same bytes as on disk"), judge ("skipped, no model in sample mode"); then what happened and the
+//     done line.
 //
-// Measured 25 Oct 2026: test/present.test.ts over fixed step results; the live screen is in scripts/cycle.ts.
+// Measured 26 Oct 2026: test/present.test.ts over fixed step results, a whole cycle among them at 100 and 160 columns;
+// the live screen is in scripts/cycle.ts.
 
 import type { ActResult } from "../actions/act.ts";
 import type { ActionOutcome, PlanItem } from "../actions/plan.ts";
@@ -70,8 +93,13 @@ export interface Span { text: string; tone: Tone }
 export type Seg = string | Span;
 /** One phrase of a detail: plain text, or text with coloured spans in it. */
 export type Phrase = Seg | readonly Seg[];
-/** One line under a row; `wrap` carries its parts onto further lines at the width, each starting where the first does. */
-export interface SubLine { label?: Phrase; parts: readonly Phrase[]; wrap?: boolean }
+/**
+ * One line under a row, or one block of lines. `parts` are its phrases in order, joined by " · " where they fit (a
+ * reader that wants one line, the owner's report, joins them). `lines`, when given, is how the screen breaks them: one
+ * fact a line, each group starting a line of its own in the column the first starts in. `indent`: columns further in
+ * than the other lines under the row.
+ */
+export interface SubLine { label?: Phrase; parts: readonly Phrase[]; lines?: readonly (readonly Phrase[])[]; indent?: number }
 export interface StepView {
   /** The subject column; absent, the detail starts there. */
   subject?: string;
@@ -89,12 +117,13 @@ export interface PresentOptions { color: boolean; width: number; verbose: boolea
 export const STEP_WIDTH = 9;
 export const SUBJECT_WIDTH = 13;
 export const PLAIN_WIDTH = 90;
-export const MAX_WIDTH = 120;
-/** Finding lines under the pass row; the rest are counted in one line. */
+/** The width when neither COLUMNS nor a terminal gives one. */
+export const DEFAULT_WIDTH = 120;
+/** Finding blocks under the pass row, and cause blocks under the explain row; the rest are counted in one line. */
 export const FINDING_LINES = 12;
 const INDENT = " ".repeat(2 + STEP_WIDTH + 1);
 
-/** Plain text at 90 columns, the rows and the done line. */
+/** Plain text at 90 columns, the rows and the done line: the tests' fixed screen. */
 export const PLAIN: PresentOptions = { color: false, width: PLAIN_WIDTH, verbose: false, quiet: false };
 
 /** The header's mode for a run that writes to the hosts and the zones, and for one that plans only. */
@@ -115,12 +144,14 @@ export const CLASS_LABEL: Readonly<Record<FindingClass, string>> = {
 /** A class in plain words; any other class as it is. */
 export const classLabel = (c: string): string => (CLASS_LABEL as Readonly<Record<string, string>>)[c] ?? c;
 
-/** The options for this process's stdout: colour and width from the terminal, verbose and quiet from the flags. */
+/** The options for this process's stdout: colour from the terminal, width from COLUMNS or the terminal, verbose and quiet from the flags. */
 export function presentOptions(flags: { verbose?: boolean; quiet?: boolean } = {}, out: { isTTY?: boolean; columns?: number } = process.stdout, env: NodeJS.ProcessEnv = process.env): PresentOptions {
   const tty = out.isTTY === true;
+  const set = Number(env.COLUMNS);
+  const columns = Number.isInteger(set) && set > 0 ? set : tty && out.columns ? out.columns : 0;
   return {
     color: tty && !env.NO_COLOR,
-    width: tty && out.columns ? Math.min(out.columns - 1, MAX_WIDTH) : PLAIN_WIDTH,
+    width: columns ? columns - (tty ? 1 : 0) : DEFAULT_WIDTH,
     verbose: flags.verbose === true,
     quiet: flags.quiet === true,
   };
@@ -170,6 +201,12 @@ const segsOf = (p: Phrase): readonly Seg[] => (isSegs(p) ? p : [p as Seg]);
 const padTo = (s: string, w: number): string => (s.length >= w ? s : s.padEnd(w));
 const oneLine = (s: string): string => s.replace(/\s*\n\s*/g, " ").trim();
 
+/** A run of text on one screen line, in one tone or none. */
+interface Piece { text: string; tone?: Tone }
+type Line = Piece[];
+const widthOf = (l: Line): number => l.reduce((n, p) => n + p.text.length, 0);
+const SEP: Piece = { text: " · " };
+
 export interface HeaderInfo { command: string; tenant: string; at: Date; mode: string }
 export interface DoneInfo {
   ms: number;
@@ -182,7 +219,7 @@ export interface DoneInfo {
   queries?: Pick<QueryTally, "queries" | "failed">;
 }
 
-/** The queries a step sent through Zetaris, with the datasource they read. */
+/** The queries a step sent through Zetaris, with the datasource they read (the summary names it; the pass row gives the counts). */
 export type ZetarisFacts = Pick<QueryTally, "queries" | "rows" | "failed"> & { datasource: string };
 
 /** "<n> failed", red above 0. */
@@ -198,58 +235,103 @@ export class Table {
     this.subjectWidth = Math.max(SUBJECT_WIDTH, ...subjects.map((s) => s.length));
   }
 
-  private join(parts: readonly Phrase[]): { plain: string; ansi: string } {
-    let plain = "";
-    let ansi = "";
-    parts.forEach((p, i) => {
-      if (i > 0) { plain += " · "; ansi += " · "; }
-      for (const s of segsOf(p)) {
-        const text = this.clean(typeof s === "string" ? s : s.text);
-        plain += text;
-        ansi += typeof s === "string" ? text : paint(text, s.tone, this.o.color);
-      }
-    });
-    return { plain, ansi };
+  /** A phrase as pieces: each segment's text through the redactor, on one line, with its tone. */
+  private pieces(p: Phrase): Piece[] {
+    return segsOf(p).map((s) => (typeof s === "string" ? { text: this.clean(s) } : { text: this.clean(s.text), tone: s.tone }))
+      .map((x) => ({ ...x, text: x.text.replace(/\s*\n\s*/g, " ") })).filter((x) => x.text !== "");
   }
 
-  private timed(lead: string, body: { plain: string; ansi: string }, ms: number | null): string {
-    if (ms === null) return `${lead}${body.ansi}`.replace(/ +$/, "");
-    const t = seconds(ms);
-    return `${lead}${body.ansi}${" ".repeat(Math.max(2, this.o.width - lead.length - body.plain.length - t.length))}${t}`;
+  /**
+   * The phrases as lines, the first at most `first` columns and the rest at most `rest`: whole phrases joined by " · "
+   * while they fit, the next on a line of its own; a phrase longer than a line breaks at its spaces (its leading
+   * spaces kept, a count's alignment), a word longer than a line is cut.
+   */
+  private fit(phrases: readonly Phrase[], first: number, rest: number): Line[] {
+    const lines: Line[] = [[]];
+    let used = 0;
+    const room = (): number => Math.max(8, lines.length === 1 ? first : rest);
+    const put = (p: Piece): void => { lines.at(-1)!.push(p); used += p.text.length; };
+    const newline = (): void => { lines.push([]); used = 0; };
+    for (const phrase of phrases) {
+      const ps = this.pieces(phrase);
+      const len = widthOf(ps);
+      if (!len) continue;
+      if (used && used + SEP.text.length + len <= room()) { put(SEP); ps.forEach(put); continue; }
+      if (used) newline();
+      if (len <= room()) { ps.forEach(put); continue; }
+      let start = true;
+      let gap: Piece | null = null;
+      for (const p of ps) {
+        for (const tok of p.text.split(/( +)/).filter(Boolean)) {
+          const piece = { text: tok, tone: p.tone };
+          if (tok.startsWith(" ")) {
+            if (start) put(piece);
+            else gap = piece;
+            continue;
+          }
+          start = false;
+          if (used + (gap?.text.length ?? 0) + tok.length <= room()) {
+            if (gap && used) put(gap);
+            put(piece);
+          } else {
+            // a line that holds only the phrase's leading spaces is dropped, not left blank
+            if (lines.at(-1)!.every((x) => !x.text.trim())) { lines[lines.length - 1] = []; used = 0; } else newline();
+            let w = tok;
+            for (let r = room(); w.length > r; r = room()) { put({ text: w.slice(0, r), tone: p.tone }); w = w.slice(r); newline(); }
+            put({ text: w, tone: p.tone });
+          }
+          gap = null;
+        }
+      }
+    }
+    return lines;
+  }
+
+  /** A line painted: the pieces of one tone together. */
+  private render(line: Line): string {
+    const runs: Piece[] = [];
+    for (const p of line) {
+      const last = runs.at(-1);
+      if (last && last.tone === p.tone) last.text += p.text;
+      else runs.push({ ...p });
+    }
+    return runs.map((r) => paint(r.text, r.tone, this.o.color)).join("");
   }
 
   header(h: HeaderInfo): string {
     return paint(["ConfigLeaf", h.command, `tenant ${h.tenant}`, utcMinute(h.at), h.mode].map(this.clean).join(" · "), "bold", this.o.color);
   }
 
-  /** The step's row and the lines under it. */
+  /** The step's row, its time on the first line, and the lines under it, none past the width. */
   row(step: string, view: StepView, ms: number | null): string[] {
     const subject = view.subject === undefined ? "" : `${padTo(view.alias ? view.subject : this.clean(view.subject), this.subjectWidth)} `;
-    const out = [this.timed(`  ${padTo(step, STEP_WIDTH)} ${subject}`, this.join(view.parts), ms)];
+    const lead = `  ${padTo(step, STEP_WIDTH)} ${subject}`;
+    const t = ms === null ? "" : seconds(ms);
+    const room = this.o.width - lead.length;
+    const [head, ...more] = this.fit(view.parts, t ? room - t.length - 2 : room, room);
+    const out = [
+      t ? `${lead}${this.render(head)}${" ".repeat(Math.max(2, room - widthOf(head) - t.length))}${t}` : `${lead}${this.render(head)}`.replace(/ +$/, ""),
+      ...more.map((l) => `${" ".repeat(lead.length)}${this.render(l)}`),
+    ];
     const sub = view.sub ?? [];
-    const labels = sub.map((s) => (s.label === undefined ? null : this.join([s.label])));
-    const w = Math.max(view.labelWidth ?? 0, ...labels.map((l) => l?.plain.length ?? 0));
+    const labels = sub.map((s) => (s.label === undefined ? null : this.fit([s.label], Infinity, Infinity)[0]));
+    const w = Math.max(view.labelWidth ?? 0, ...labels.map((l) => (l ? widthOf(l) : 0)));
     sub.forEach((s, i) => {
       const l = labels[i];
-      const lead = `${INDENT}${l ? `${l.ansi}${" ".repeat(w - l.plain.length + 2)}` : ""}`;
-      if (!s.wrap) { out.push(`${lead}${this.join(s.parts).ansi}`); return; }
-      // the parts in order, as many to a line as the width holds, at least one
-      const at = INDENT.length + (l ? w + 2 : 0);
-      const lines: Phrase[][] = [];
-      for (const p of s.parts) {
-        const last = lines.at(-1);
-        if (last && at + this.join([...last, p]).plain.length <= this.o.width) last.push(p);
-        else lines.push([p]);
-      }
-      lines.forEach((ps, k) => out.push(`${k ? " ".repeat(at) : lead}${this.join(ps).ansi}`));
+      const lead = `${INDENT}${" ".repeat(s.indent ?? 0)}${l ? `${this.render(l)}${" ".repeat(w - widthOf(l) + 2)}` : ""}`;
+      const at = INDENT.length + (s.indent ?? 0) + (l ? w + 2 : 0);
+      // one fact a group, each group from a line of its own; a group with nothing in it prints no line
+      const lines = (s.lines ?? [s.parts]).flatMap((g) => this.fit(g, this.o.width - at, this.o.width - at)).filter((x) => x.length);
+      (lines.length ? lines : [[]]).forEach((x, k) => out.push(`${k ? " ".repeat(at) : lead}${this.render(x)}`.replace(/ +$/, "")));
     });
     return out;
   }
 
-  /** The cycle's "what happened" block: a heading and one sentence a line; an empty list for an empty block. */
+  /** The cycle's "what happened" block: a blank line, the heading, each sentence wrapped at the width, two columns in and four after its first line; an empty list for an empty block. */
   story(sentences: readonly string[]): string[] {
     if (!sentences.length) return [];
-    return [paint("what happened", "bold", this.o.color), ...sentences.map((s) => `  ${oneLine(this.clean(s))}`)];
+    const w = this.o.width;
+    return ["", paint("what happened", "bold", this.o.color), ...sentences.flatMap((s) => this.fit([oneLine(s)], w - 2, w - 4).map((l, k) => `${k ? "    " : "  "}${this.render(l)}`))];
   }
 
   skipped(step: string, subject?: string, alias = false): string {
@@ -267,12 +349,14 @@ export class Table {
     return paint(plain, "red", this.o.color);
   }
 
+  /** The done line; past the width its phrases go on to further lines, two columns in, joined by newlines. */
   done(d: DoneInfo): string {
-    const lead = d.stopped
-      ? `${paint(`stopped at ${this.clean(d.stopped.step)}`, "red", this.o.color)} · ${d.stopped.at} of ${d.stopped.of}`
-      : [paint("done", "green", this.o.color), ...(d.steps === undefined ? [] : [count(d.steps, "step")]), ...(d.skipped ? [`${d.skipped} skipped`] : [])].join(" · ");
-    const q = d.queries ? [`${count(d.queries.queries, "Zetaris query", "Zetaris queries")}, ${paint(`${thousands(d.queries.failed)} failed`, d.queries.failed > 0 ? "red" : undefined, this.o.color)}`] : [];
-    return [lead, seconds(d.ms), ...q, ...(d.trace ? [`trace ${this.clean(d.trace)}`] : [])].join(" · ");
+    const lead: Phrase[] = d.stopped
+      ? [[{ text: `stopped at ${d.stopped.step}`, tone: "red" }], `${d.stopped.at} of ${d.stopped.of}`]
+      : [[{ text: "done", tone: "green" }], ...(d.steps === undefined ? [] : [count(d.steps, "step")]), ...(d.skipped ? [`${d.skipped} skipped`] : [])];
+    const q: Phrase[] = d.queries ? [[`${count(d.queries.queries, "Zetaris query", "Zetaris queries")}, `, d.queries.failed > 0 ? { text: `${thousands(d.queries.failed)} failed`, tone: "red" } : `${thousands(d.queries.failed)} failed`]] : [];
+    const lines = this.fit([...lead, seconds(d.ms), ...q, ...(d.trace ? [`trace ${d.trace}`] : [])], this.o.width, this.o.width - 2);
+    return lines.map((l, k) => `${k ? "  " : ""}${this.render(l)}`).join("\n");
   }
 }
 
@@ -356,58 +440,69 @@ export function reasonClauses(reason: string): string[] {
   return out.length ? out : [clause(reason)];
 }
 
-/** One line under the pass row, the verb first, then the class in plain words, then the object: ROLLBACK with the copy it restores; FIX and ESCALATE with why. */
+/** A block of lines under a row: one group of phrases a line, the parts the groups in order. */
+const block = (label: Phrase | undefined, lines: readonly (readonly Phrase[])[]): SubLine => ({ ...(label === undefined ? {} : { label }), parts: lines.flat(), lines });
+
+/** One block under the pass row: the verb, then the class in plain words; the object; then the copy a ROLLBACK restores, or why a FIX or an ESCALATE goes as it does. */
 export function findingLine(f: Finding): SubLine {
   const s = f.finding;
   const r = f.disposition.reason;
-  if (f.verb !== "ROLLBACK") return { label: [verbSpan(f.verb)], parts: [classLabel(s.class), findingWhere(s, false), ...reasonClauses(r)] };
+  const label: Phrase = [verbSpan(f.verb)];
+  if (f.verb !== "ROLLBACK") return block(label, [[classLabel(s.class)], [findingWhere(s, false)], reasonClauses(r)]);
   const copy = r.match(/vault commit ([0-9a-f]{8}) holds the approved copy, validated (\w+) with (\d+) gaps?/);
-  return {
-    label: [verbSpan(f.verb)],
-    parts: [
-      classLabel(s.class),
-      findingObject(s, true),
-      ...(copy ? [`copy ${copy[1]} validated ${copy[2] === "ok_with_gaps" ? `ok with ${count(Number(copy[3]), "gap")}` : copy[2]}`] : []),
-    ],
-  };
+  return block(label, [
+    [classLabel(s.class)],
+    [findingObject(s, true)],
+    ...(copy ? [[`copy ${copy[1]} validated ${copy[2] === "ok_with_gaps" ? `ok with ${count(Number(copy[3]), "gap")}` : copy[2]}`]] : []),
+  ]);
 }
 
-/** The pass's read of exception_in_force as one phrase: "DQ exception_in_force 23 of 23 adoptions", red when one fails, yellow when not read. */
+/** The pass's read of exception_in_force: "exception_in_force holds for 23 of 23 adoptions", red when one fails, yellow when not read. */
 function adoptionSeg(a: AdoptionCheck): Seg {
-  if ("error" in a) return { text: `DQ ${a.rule} not read`, tone: "yellow" };
+  if ("error" in a) return { text: `${a.rule} not read`, tone: "yellow" };
   const of = a.of === "recorded" ? (a.decidedAt ? ` of the pass recorded at ${a.decidedAt.slice(0, 16).replace("T", " ")} UTC` : ", no pass recorded one") : "";
-  const text = `DQ ${a.rule} ${thousands(a.inForce)} of ${count(a.adoptions, "adoption")}${of}`;
+  const text = `${a.rule} holds for ${thousands(a.inForce)} of ${count(a.adoptions, "adoption")}${of}`;
   return a.inForce < a.adoptions ? { text, tone: "red" } : text;
 }
 
-/** The pass's read of dns_inventory_current: "DQ dns_inventory_current 58 of 58 live records", red when one fails, yellow when not read. */
+/** The pass's read of dns_inventory_current: "dns_inventory_current holds for 58 of 58 live records", red when one fails, yellow when not read. */
 function dnsSeg(d: DnsInventoryCheck): Seg {
-  if ("error" in d) return { text: `DQ ${d.rule} not read`, tone: "yellow" };
-  const text = `DQ ${d.rule} ${thousands(d.current)} of ${count(d.live, "live record")}`;
+  if ("error" in d) return { text: `${d.rule} not read`, tone: "yellow" };
+  const text = `${d.rule} holds for ${thousands(d.current)} of ${count(d.live, "live record")}`;
   return d.current < d.live ? { text, tone: "red" } : text;
 }
 
-/** The file tables' refresh when it put the files or failed: "file tables refreshed", yellow "file tables not refreshed"; null when the copy was current. */
+/** The file tables' refresh when it put the files or failed: "lessons and rules refreshed in Zetaris", yellow when not; null when the copy was current. */
 function filesSeg(r: NonNullable<PassStep["files"]>): Seg | null {
   if (r.status === "current") return null;
-  return r.status === "failed" ? { text: "file tables not refreshed", tone: "yellow" } : "file tables refreshed";
+  return r.status === "failed" ? { text: "lessons and rules not refreshed in Zetaris", tone: "yellow" } : "lessons and rules refreshed in Zetaris";
+}
+
+/** The classes of the findings, one a line under the label "classes", the most first, each count right-aligned in the counts' width. */
+function classLines(fs: readonly Pick<Finding, "finding">[]): SubLine[] {
+  const classes = tallyDesc(fs.map((f) => f.finding.class));
+  const w = Math.max(0, ...classes.map(([, n]) => thousands(n).length));
+  return classes.map(([c, n], i) => ({ label: i ? "" : "classes", parts: [`${thousands(n).padStart(w)}  ${classLabel(c)}`] }));
 }
 
 /**
- * pass: the findings by verb; under it, given `zetaris`, the queries the pass sent through Zetaris (and, when the pass
- * read them, the DQ rule exception_in_force over its adoptions and dns_inventory_current over the live records), then
- * the classes in plain words, then one line per ROLLBACK, FIX and ESCALATE.
+ * pass: the findings by verb; under it, given `zetaris`, the queries the pass sent through Zetaris, the file tables'
+ * refresh and, when the pass read them, the DQ rule exception_in_force over its adoptions and dns_inventory_current
+ * over the live records, each on a line; then the classes in plain words, one a line; then one block per ROLLBACK, FIX
+ * and ESCALATE.
  */
 export function passView(p: Pick<PassStep, "findings"> & Partial<Pick<PassStep, "adoptions" | "dns" | "files">>, zetaris?: ZetarisFacts): StepView {
   const fs = p.findings;
   const parts: Phrase[] = VERB_ORDER.map((v) => [v, fs.filter((f) => f.verb === v).length] as const).filter(([, n]) => n > 0).map(([v, n]) => [verbSpan(v), ` ${thousands(n)}`]);
   const sub: SubLine[] = [];
   if (zetaris) {
+    sub.push({ label: "Zetaris", parts: [count(zetaris.queries, "query", "queries"), count(zetaris.rows, "row"), [failedSeg(zetaris.failed)]] });
     const files = p.files ? filesSeg(p.files) : null;
-    sub.push({ parts: [`Zetaris Lightning SQL over ${zetaris.datasource}`, count(zetaris.queries, "query", "queries"), count(zetaris.rows, "row"), [failedSeg(zetaris.failed)], ...(files ? [[files]] : []), ...(p.adoptions ? [[adoptionSeg(p.adoptions)]] : []), ...(p.dns ? [[dnsSeg(p.dns)]] : [])], wrap: true });
+    if (files) sub.push({ label: "files", parts: [[files]] });
+    if (p.adoptions) sub.push({ label: "DQ", parts: [[adoptionSeg(p.adoptions)]] });
+    if (p.dns) sub.push({ label: p.adoptions ? "" : "DQ", parts: [[dnsSeg(p.dns)]] });
   }
-  const classes = tallyDesc(fs.map((f) => f.finding.class));
-  if (classes.length) sub.push({ parts: classes.map(([c, n]) => `${classLabel(c)} ${thousands(n)}`), wrap: true });
+  sub.push(...classLines(fs));
   const moving = MOVING.flatMap((v) => fs.filter((f) => f.verb === v));
   for (const f of moving.slice(0, FINDING_LINES)) sub.push(findingLine(f));
   if (moving.length > FINDING_LINES) sub.push({ parts: [`${thousands(moving.length - FINDING_LINES)} more in the trace`] });
@@ -517,18 +612,28 @@ export function nemotronOf(record: readonly string[]): NemotronFacts {
 const lightningPicked = (n: NemotronFacts): NemotronFacts["lightning"] => (n.lightning && n.lightning.checks > 0 ? n.lightning : null);
 
 /**
- * One line under the act row for an applied action. `all` gives an investigation its verb: FIX when a fix follows it
- * on the same disposition. A rollback_file or revert_record names its object, from `pass` when given. An investigation
- * that is done names its Nemotron calls when its record holds the judge's line, its parts wrapped at the width.
+ * One block under the act row for an applied action: the kind, and the object (an investigation's verb before it),
+ * then the status, what the write did, the verification or the reason, one a line. `all` gives an investigation its
+ * verb: FIX when a fix follows it on the same disposition. The object comes from `pass` when given, else from the
+ * action's target. An investigation that is done names its Nemotron calls when its record holds the judge's line, each
+ * served model with its receipt id on a line of its own. `parts`, the facts as one list, leave out an investigation's
+ * and a fix's object (the owner's report joins them on one line under its finding).
  */
 export function outcomeLine(o: ActionOutcome, all: readonly ActionOutcome[] = [o], pass?: PassFindings): SubLine {
   const a = o.action;
   const took = seconds(Date.parse(a.finished_at ?? a.started_at) - Date.parse(a.started_at));
   const st = statusSpan(a.status);
   const label: Phrase = a.kind;
+  const object = actionObject(a, pass);
+  /** The block: `parts` for one line, `lines` for the screen. */
+  const lines = (parts: readonly Phrase[], screen: readonly (readonly Phrase[])[]): SubLine => ({ label, parts, lines: screen });
   if (a.kind === "investigate") {
     const v: Verb = all.some((x) => x.action.kind === "fix" && x.action.disposition_id === a.disposition_id) ? "FIX" : "ESCALATE";
-    if (a.status !== "done") return { label, parts: [[verbSpan(v)], [st], a.status === "refused" ? refuseClause(o.reason) : clause(o.reason)] };
+    const head: Phrase[] = [[verbSpan(v)], object];
+    if (a.status !== "done") {
+      const why = a.status === "refused" ? refuseClause(o.reason) : clause(o.reason);
+      return lines([[verbSpan(v)], [st], why], [head, [[st]], [why]]);
+    }
     const m = o.reason.match(/(\d+) checks? ran \(\d+ hold, \d+ fail\); the judge's verdict counted: (\w+)/);
     const n = nemotronOf(o.record);
     const picked = lightningPicked(n);
@@ -536,21 +641,26 @@ export function outcomeLine(o: ActionOutcome, all: readonly ActionOutcome[] = [o
       const j = n.judge;
       const checks: Phrase[] = picked ? [`Lightning picked ${count(picked.checks, "check")}`, `${picked.model} on ${picked.receipt}`] : [`default checks: ${thousands(Number(m![1]))}`];
       const verdict = `${j.rows === null ? "" : `${count(j.rows, "row")}, `}${j.status.replace(/_/g, " ")}`;
-      return {
-        label,
-        parts: [[verbSpan(v)], ...checks, `Ultra's refuting SELECT: ${verdict}`, `${j.model} on ${j.receipt}`, picked ? "both receipts verified" : "receipt verified", [st, ` ${took}`]],
-        wrap: true,
-      };
+      const ultra: Phrase[] = [`Ultra's refuting SELECT: ${verdict}`, `${j.model} on ${j.receipt}`, picked ? "both receipts verified" : "receipt verified"];
+      return lines([[verbSpan(v)], ...checks, ...ultra, [st, ` ${took}`]], [head, [[st, ` ${took}`]], ...[...checks, ...ultra].map((p) => [p])]);
     }
-    return { label, parts: [[verbSpan(v)], m ? `${count(Number(m[1]), "check")}, judge ${m[2]}` : clause(o.reason), count(a.receipts.split(",").filter(Boolean).length, "receipt"), [st, ` ${took}`]] };
+    const tally = m ? `${count(Number(m[1]), "check")}, judge ${m[2]}` : clause(o.reason);
+    const receipts = count(a.receipts.split(",").filter(Boolean).length, "receipt");
+    return lines([[verbSpan(v)], tally, receipts, [st, ` ${took}`]], [head, [[st, ` ${took}`]], [tally], [receipts]]);
   }
-  if (a.kind === "fix") return { label, parts: [[st], a.status === "refused" ? refuseClause(o.reason) : clause(o.reason)] };
-  const object = actionObject(a, pass);
-  if (a.status === "failed") return { label, parts: [object, [st], failClause(o.reason)] };
-  if (a.status === "refused") return { label, parts: [object, [st], refuseClause(o.reason)] };
-  const steps = a.kind === "rollback_file" ? ["nginx -t ok", "reloaded"] : [/^re-created/.test(o.reason) ? "re-created, provider confirms" : "provider confirms"];
-  const end: Phrase[] = a.status === "done" ? [probeTally(o.record, a.verification), [st, ` ${took}`]] : [[st], a.status === "unverified" ? unverifiedWhy(o.reason) : clause(o.reason)];
-  return { label, parts: [object, hashes(a.before_hash, a.after_hash), ...steps, ...end] };
+  if (a.kind === "fix") {
+    const why = a.status === "refused" ? refuseClause(o.reason) : clause(o.reason);
+    return lines([[st], why], [[object], [[st]], [why]]);
+  }
+  if (a.status === "failed") return lines([object, [st], failClause(o.reason)], [[object], [[st]], [failClause(o.reason)]]);
+  if (a.status === "refused") return lines([object, [st], refuseClause(o.reason)], [[object], [[st]], [refuseClause(o.reason)]]);
+  const wrote: Phrase[] = [hashes(a.before_hash, a.after_hash), ...(a.kind === "rollback_file" ? ["nginx -t ok", "reloaded"] : [/^re-created/.test(o.reason) ? "re-created, provider confirms" : "provider confirms"])];
+  if (a.status === "done") {
+    const probes = probeTally(o.record, a.verification);
+    return lines([object, ...wrote, probes, [st, ` ${took}`]], [[object], [[st, ` ${took}`]], wrote, [probes]]);
+  }
+  const why = a.status === "unverified" ? unverifiedWhy(o.reason) : clause(o.reason);
+  return lines([object, ...wrote, [st], why], [[object], [[st]], wrote, [why]]);
 }
 
 /** What a plan item is about, from its first line. */
@@ -570,25 +680,31 @@ function planTarget(p: PlanItem): string {
   return clause(first);
 }
 
-/** One line under the act row for a planned action (a dry run). */
+/**
+ * One block under the act row for a planned action (a dry run): the kind and the object (an investigation's verb
+ * before it; a fix names its investigation's object), then the vault commit and what follows, or "refused on --apply"
+ * and why, one a line.
+ */
 export function planLine(p: PlanItem, all: readonly PlanItem[] = [p]): SubLine {
   const text = p.lines.join("\n");
-  const refused: Phrase[] = p.refused ? [[{ text: "refused on --apply", tone: "dim" }], refuseClause(p.refused)] : [];
+  const refused: Phrase[][] = p.refused ? [[[{ text: "refused on --apply", tone: "dim" }]], [refuseClause(p.refused)]] : [];
   const from = text.match(/(?:from|at) vault commit ([0-9a-f]{8})/);
-  const commit = from ? `from vault ${from[1]}` : null;
-  if (p.kind === "fix") return { label: p.kind, parts: refused.length ? refused : [clause(p.lines[0] ?? "")] };
+  if (p.kind === "fix") {
+    const inv = all.find((x) => x.kind === "investigate" && x.disposition_id === p.disposition_id);
+    return block(p.kind, [...(inv ? [[planTarget(inv)]] : []), ...(refused.length ? refused : [[clause(p.lines[0] ?? "")]])]);
+  }
   if (p.kind === "investigate") {
     const named = (p.lines[0] ?? "").match(/, (FIX|ESCALATE) under /)?.[1] as Verb | undefined;
     const v: Verb = named ?? (all.some((x) => x.kind === "fix" && x.disposition_id === p.disposition_id) ? "FIX" : "ESCALATE");
-    return { label: p.kind, parts: [[verbSpan(v)], planTarget(p), ...(refused.length ? refused : ["checks, then the judge"])] };
+    return block(p.kind, [[[verbSpan(v)], planTarget(p)], ...(refused.length ? refused : [["checks, then the judge"]])]);
   }
-  if (refused.length) return { label: p.kind, parts: [planTarget(p), ...refused] };
+  if (refused.length) return block(p.kind, [[planTarget(p)], ...refused]);
   const probes = text.match(/then probes http and tls of (.+)$/m);
   const then = p.kind === "rollback_file" ? `then nginx -t, reload, ${probes ? count(probes[1].split(", ").length, "probe") : "no probe"}` : "then read back, dns probe";
-  return { label: p.kind, parts: [planTarget(p), ...(commit ? [commit] : []), then] };
+  return block(p.kind, [[planTarget(p)], ...(from ? [[`from vault ${from[1]}`]] : []), [then]]);
 }
 
-/** act: the actions done (applied) or planned (dry run), one line each; `pass` names the objects of the applied ones. */
+/** act: the actions done (applied) or planned (dry run), one block each; `pass` names the objects of the applied ones. */
 export function actView(res: Pick<ActResult, "apply" | "plan" | "outcomes" | "acted">, pass?: PassFindings): StepView {
   const items = res.apply ? res.outcomes.length : res.plan.length;
   const already: Phrase[] = res.acted.length ? [`${count(res.acted.length, "action")} already recorded`] : [];
@@ -612,7 +728,13 @@ export function ticketPhrases(op: Exclude<TicketOp, { op: "skip" }>, o: TicketOu
   return [ref, o.status];
 }
 
-/** tickets: what was sent, or what a dry run would send; "nothing to send" with the open count when the plan is all skips. */
+/** An opened issue's title as the line under its operation, two columns in; none for a comment or a close. */
+const titleLine = (op: Exclude<TicketOp, { op: "skip" }>): SubLine[] => (op.op === "create" && op.draft.title ? [{ parts: [op.draft.title], indent: 2 }] : []);
+
+/**
+ * tickets: what was sent, or what a dry run would send, one line per operation and an opened issue's title under it;
+ * one operation goes on the row itself. "nothing to send" with the open count when the plan is all skips.
+ */
 export function ticketsView(r: { ops: readonly TicketOp[]; outcomes: readonly TicketOutcome[]; open: number }, dryRun: boolean): StepView {
   const pairs = r.ops.flatMap((op, i) => (op.op === "skip" || !r.outcomes[i] ? [] : [[op, r.outcomes[i]] as const]));
   if (!pairs.length) return { parts: ["nothing to send", `${thousands(r.open)} open`] };
@@ -622,12 +744,15 @@ export function ticketsView(r: { ops: readonly TicketOp[]; outcomes: readonly Ti
     const why = (reason: string): string => (/ is resolved in the pass/.test(reason) ? "resolved" : clause(reason, 48));
     return {
       parts,
-      sub: pairs.map(([op]) => ({ parts: [`${op.ticket.external_id ? `#${op.ticket.external_id}` : "new"} ${op.ticket.type} ${op.ticket.priority}`, would[op.op], `${op.ticket.finding_id} ${why(op.reason)}`] })),
+      sub: pairs.flatMap(([op]) => [{ parts: [`${op.ticket.external_id ? `#${op.ticket.external_id}` : "new"} ${op.ticket.type} ${op.ticket.priority}`, would[op.op], `${op.ticket.finding_id} ${why(op.reason)}`] }, ...titleLine(op)]),
     };
   }
   const lines = pairs.map(([op, o]) => ticketPhrases(op, o));
-  if (lines.length === 1) return { parts: lines[0] };
-  return { parts: [count(lines.length, "ticket")], sub: lines.map((parts) => ({ parts })) };
+  if (lines.length === 1) {
+    const title = titleLine(pairs[0][0]);
+    return title.length ? { parts: lines[0], sub: title } : { parts: lines[0] };
+  }
+  return { parts: [count(lines.length, "ticket")], sub: pairs.flatMap(([op], i) => [{ parts: lines[i] }, ...titleLine(op)]) };
 }
 
 /** document: the page and its lines, then the owner's report beside it when one is written ("document.md · 181 lines · report.html"). */
@@ -642,6 +767,23 @@ export function explainView(o: { causes: readonly { class: string }[]; stopped?:
   if (!o.causes.length) return { subject: count(0, "cause"), parts: ["nothing to explain"] };
   const parts = Object.keys(CAUSE_WORD).map((k) => [CAUSE_WORD[k], o.causes.filter((c) => c.class === k).length] as const).filter(([, n]) => n > 0).map(([w, n]) => `${w} ${thousands(n)}`);
   return { subject: count(o.causes.length, "cause"), parts };
+}
+
+/** One block per cause, at most FINDING_LINES: the finding's verb, its object (its class when the finding is not given) and the cause's class, then the cause's sentence on lines of its own; then the errors, one a line. */
+function causeLines(causes: readonly SampleCause[], findings: readonly Finding[], errors: readonly string[]): SubLine[] {
+  const sub: SubLine[] = causes.slice(0, FINDING_LINES).map((c) => {
+    const f = findings.find((x) => x.id === c.finding_id);
+    return block([verbSpan(c.verb)], [[f ? findingObject(f.finding) : classLabel(c.finding_class), CAUSE_WORD[c.cause.class] ?? c.cause.class], [c.cause.summary]]);
+  });
+  if (causes.length > FINDING_LINES) sub.push({ parts: [`${thousands(causes.length - FINDING_LINES)} more in the trace`] });
+  for (const e of errors) sub.push({ parts: [clause(e)] });
+  return sub;
+}
+
+/** The cycle's explain row: the step's row (explainView), its errors counted in yellow, and under it one block per cause, as the sample's explain row gives them. */
+export function explainedView(view: StepView, r: { causes: readonly SampleCause[]; errors?: readonly string[] }, findings: readonly Finding[]): StepView {
+  const errors = r.errors ?? [];
+  return { ...view, parts: [...view.parts, ...(errors.length ? [[{ text: count(errors.length, "error"), tone: "yellow" }] as Phrase] : [])], sub: causeLines(r.causes, findings, errors), labelWidth: "ROLLBACK".length };
 }
 
 /** A step's row when it gives no view: its summary less its "<step>: " lead ("collect:linux <alias>: ", "PASS: ", "validate:copies: "). */
@@ -864,3 +1006,102 @@ export function whatHappened(i: StoryInput): string[] {
   const more = lead.length - room + 1;
   return [...(lead.length > room ? [...lead.slice(0, room - 1), `${count(more, "more action")} ${isAre(more)} listed under act.`] : lead), ...rest];
 }
+
+// ---- the sample's stages ----------------------------------------------------------------------------------------
+//
+// npm run sample (scripts/sample.ts) prints the same table over the recorded bundle: the header with SAMPLE_HEADER_MODE,
+// then one row per stage with no subject and no time (one call runs gate to decide; the done line carries the time):
+// load, gate, observe, detect, decide, explain, document, report, judge; then the cycle's "what happened" block and
+// the done line.
+
+/** The sample header's mode: the pass reads the recorded bundle and holds no credential. */
+export const SAMPLE_HEADER_MODE = "recorded estate, no credentials";
+
+/** load: the bundle, its runs and tenants, its rows and tables; under it, the file tables and where their rows come from. */
+export function loadView(o: { file: string; counts: Readonly<Record<string, number>>; tenants: number; lessons: { rows: number; from: string }; rules: { rows: number; from: string } }): StepView {
+  const tables = Object.values(o.counts);
+  const rows = tables.reduce((n, k) => n + k, 0);
+  return {
+    parts: [o.file, `${count(o.counts.collection_run ?? 0, "run")} of ${count(o.tenants, "tenant")}`, `${count(rows, "row")} in ${count(tables.length, "table")}`],
+    sub: [{ label: "files", parts: [`${count(o.lessons.rows, "lesson")} from ${o.lessons.from}`, `${count(o.rules.rows, "rule")} from ${o.rules.from}`] }],
+  };
+}
+
+/** gate: the runs that pass the DQ gate of all the pass read; the ones that fail it in red. */
+export function gateView(o: { runs: number; gatedOut: readonly string[] }): StepView {
+  const out = o.gatedOut.length;
+  return { parts: [`${thousands(o.runs - out)} of ${count(o.runs, "run")} pass the DQ gate`, ...(out ? [[{ text: `${count(out, "run")} fail it`, tone: "red" }] as Phrase] : [])] };
+}
+
+/** observe: the observations the pass put in the World Model. */
+export const observeView = (observed: number): StepView => ({ parts: [`${count(observed, "observation")} in the World Model`] });
+
+/** detect: the findings and their classes; under it, one line per class in plain words, the most first, its count right-aligned. */
+export function detectView(fs: readonly Pick<Finding, "finding">[]): StepView {
+  const classes = tallyDesc(fs.map((f) => f.finding.class));
+  const w = Math.max(0, ...classes.map(([, n]) => thousands(n).length));
+  return {
+    parts: [`${count(fs.length, "finding")}${classes.length ? ` in ${count(classes.length, "class", "classes")}` : ""}`],
+    sub: classes.map(([c, n]) => ({ label: thousands(n).padStart(w), parts: [classLabel(c)] })),
+  };
+}
+
+export interface DecideFacts {
+  findings: readonly Finding[];
+  decidedAt: string;
+  /** What the Decider recalled from the technician's memory; null when the pass was given none. */
+  memory: { lessons: number; applied: number; lapsed: number } | null;
+  /** exception_in_force over the pass's ADOPTs: those under an accepted exception, and those joined to a lesson in force at the decision instant. */
+  adoptions: { adoptions: number; inForce: number } | null;
+  /** The dispositions the ledger wrote, and the findings whose disposition reads back from it; null with no ledger. */
+  ledger: { dispositions: number; readBack: number } | null;
+}
+
+/**
+ * decide: the findings by verb and the decision instant; under it the technician's memory ("23 exceptions applied"),
+ * the findings decided under policy rules and the default checks, the DQ rule exception_in_force over the adoptions,
+ * the ledger, then one block per ROLLBACK, FIX and ESCALATE as the pass row gives it.
+ */
+export function decideView(d: DecideFacts): StepView {
+  const fs = d.findings;
+  const verbs: Phrase[] = VERB_ORDER.map((v) => [v, fs.filter((f) => f.verb === v).length] as const).filter(([, n]) => n > 0).map(([v, n]) => [verbSpan(v), ` ${thousands(n)}`]);
+  const by = (who: string): number => fs.filter((f) => f.disposition.decided_by === who).length;
+  const sub: SubLine[] = [];
+  if (d.memory) sub.push({ label: "memory", parts: [count(d.memory.lessons, "lesson"), `${count(d.memory.applied, "exception")} applied`, `${thousands(d.memory.lapsed)} lapsed`] });
+  const ruled: Phrase[] = [
+    ...(by("policy") ? [`${count(by("policy"), "finding")} decided under policy rules`] : []),
+    ...(by("default") ? [`${count(by("default"), "finding")} under the default checks`] : []),
+  ];
+  if (ruled.length) sub.push({ label: "policy", parts: ruled });
+  if (d.adoptions) {
+    const text = `exception_in_force holds for ${thousands(d.adoptions.inForce)} of ${thousands(d.adoptions.adoptions)} ADOPT under an exception`;
+    sub.push({ label: "DQ", parts: [d.adoptions.inForce < d.adoptions.adoptions ? [{ text, tone: "red" }] : text] });
+  }
+  if (d.ledger) {
+    const back = `${thousands(d.ledger.readBack)} of ${thousands(fs.length)} read back`;
+    sub.push({ label: "ledger", parts: [`${count(d.ledger.dispositions, "disposition")} written`, d.ledger.readBack < fs.length ? [{ text: back, tone: "red" }] : back] });
+  }
+  const moving = MOVING.flatMap((v) => fs.filter((f) => f.verb === v));
+  for (const f of moving.slice(0, FINDING_LINES)) sub.push(findingLine(f));
+  if (moving.length > FINDING_LINES) sub.push({ parts: [`${thousands(moving.length - FINDING_LINES)} more in the trace`] });
+  return { parts: [...verbs, `decided at ${utcMinute(new Date(d.decidedAt))}`], sub, labelWidth: "ROLLBACK".length };
+}
+
+/** One cause the explain step found, as the sample's explain row reads it: the finding's verb and class, the cause's class and sentence. */
+export interface SampleCause { finding_id: string; verb: Verb; finding_class: string; cause: { class: string; summary: string } }
+
+/** explain: the causes by class as explainView counts them ("1 cause · unknown 1"), the errors in yellow; under it one block per cause: the verb, the object and the cause's class, then its sentence. */
+export function causesView(causes: readonly SampleCause[], findings: readonly Finding[], errors: readonly string[] = []): StepView {
+  const head = explainView({ causes: causes.map((c) => c.cause) });
+  const parts: Phrase[] = [head.subject ?? count(causes.length, "cause"), ...head.parts, ...(errors.length ? [[{ text: count(errors.length, "error"), tone: "yellow" }] as Phrase] : [])];
+  return { parts, sub: causeLines(causes, findings, errors), labelWidth: "ROLLBACK".length };
+}
+
+/** document and report: the file, its size, its facts, and whether this run wrote it or found the same bytes on disk. */
+export const fileView = (o: { file: string; bytes: number; facts?: readonly Phrase[]; written: boolean; sub?: readonly SubLine[] }): StepView => ({
+  parts: [o.file, count(o.bytes, "byte"), ...(o.facts ?? []), o.written ? "written" : "same bytes as on disk"],
+  ...(o.sub ? { sub: o.sub } : {}),
+});
+
+/** judge: no model runs in sample mode. */
+export const judgeSkippedView = (): StepView => ({ parts: [[statusSpan("skipped"), ", no model in sample mode"]] });

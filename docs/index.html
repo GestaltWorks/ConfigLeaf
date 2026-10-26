@@ -27,6 +27,10 @@ pre{background:var(--code);border-radius:6px;padding:10px 12px;margin:6px 0;over
 .stats b{font-size:1.25rem;display:block;line-height:1.2}
 .stats li{color:var(--muted);font-size:.85rem}
 .stats li b{color:var(--fg)}
+.headline{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px 8px;margin:16px 0 4px;max-width:86ch}
+.headline h2{font-size:1rem;margin:0}
+.headline .stats{margin:8px 0 6px;gap:10px 22px}
+.headline .stats li{flex:1 1 13rem;max-width:21rem}
 .controls{position:sticky;top:0;z-index:2;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 0;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
 .controls label{font-size:.85rem;color:var(--muted)}
 select,button{font:inherit;font-size:.85rem;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:6px;padding:5px 9px}
@@ -96,7 +100,23 @@ td pre{white-space:pre-wrap;word-break:break-word;margin:4px 0 0;min-width:36ch;
 <header><div class="wrap">
 <h1>ConfigLeaf: every finding, with the SQL behind it</h1>
 <p class="lede">A config-drift assurance pass for MSP technicians, replayed from recorded collections. Open a finding to see the detector query that raised it, each precondition check with the SQL that ran, the rows it returned and the hashes, and the judge step. The Document tab holds the owner's document over the full recorded bundle, the Sources tab names the tables and the source behind each finding class, and the Nemotron tab holds the eval's Nemotron calls with every SELECT its judges wrote, re-run at build. In a live pass the same detector and check SQL runs as Zetaris Lightning SQL over the <code>DRIFT</code> datasource, beside the technician's memory store, the policy file and the Cloudflare DNS API, which it reads live, with the <code>drift_usl</code> semantic layer and its six DQ rules over the four; on this page it runs on sql.js over the recorded rows, and <code>test/parity.test.ts</code> holds the two engines to the same columns, rows and totals.</p>
-<ul class="stats" id="stats"></ul>
+<div class="headline">
+<h2>Ultra alone vs the checks with Ultra as the falsifier</h2>
+<ul class="stats">
+<li><b>6, 5, 6 of 9</b>items labelled no that Ultra alone (C4) reads as yes, runs 1, 2 and 3</li>
+<li><b>0, 0, 0 of 9</b>items labelled no that the checks with Ultra as the falsifier (C3) read as yes, runs 1, 2 and 3</li>
+<li><b>9, 8, 8 of 10</b>planted false claims struck by C3, runs 1, 2 and 3</li>
+</ul>
+<p class="meta">From <a href="#nemotron"><code>eval/results/2026-10-25T23-34-17Z</code></a>, the dev set, 25 Oct 2026 23:34 UTC to 26 Oct 2026 00:18 UTC.</p>
+</div>
+<ul class="stats" id="stats">
+<li><b>8</b>findings, 9 rows over 3 slices</li>
+<li><b>1 ESCALATE, 4 ADOPT, 3 HOLD</b>verbs</li>
+<li><b>33 / 33</b>checks re-run over the slices at build, counts equal</li>
+<li><b>4</b>finding classes</li>
+<li><b><a href="#nemotron">390</a></b>Nemotron calls in eval 2026-10-25T23-34-17Z, 390 receipts verified</li>
+<li><b><a href="#nemotron">130 / 134</a></b>Nemotron judge SELECTs re-run at build, counts equal; 4 recorded text does not run</li>
+</ul>
 <p class="report"><a href="../examples/report.html">Report</a><br><span class="meta">The owner's report, <code>examples/report.html</code>: one HTML file over the same recorded bundle as the Document tab, opened from a clone of the repository.</span></p>
 <nav class="tabs" aria-label="Page sections"><a href="#findings">Findings</a><a href="#document">Document</a><a href="#sources">Sources</a><a href="#nemotron">Nemotron</a></nav>
 </div></header>
@@ -801,8 +821,9 @@ td pre{white-space:pre-wrap;word-break:break-word;margin:4px 0 0;min-width:36ch;
       const show = (!cls || el.dataset.class === cls) && (!verb || el.dataset.verb === verb);
       el.hidden = !show; all++; if (show) n++;
     }
-    for (const s of document.querySelectorAll("#app > section")) s.hidden = !s.querySelector("details.finding:not([hidden])");
-    document.getElementById("shown").textContent = n + " of " + all + " findings shown";
+    const slices = document.querySelectorAll("#app > section");
+    for (const s of slices) s.hidden = !s.querySelector("details.finding:not([hidden])");
+    document.getElementById("shown").textContent = n + " of " + plural(all, "row") + " over " + plural(slices.length, "slice") + " shown";
   }
   function options(sel, values) { for (const v of values) sel.append(h("option", { value: v }, v)); sel.addEventListener("change", filter); }
 
@@ -819,14 +840,6 @@ td pre{white-space:pre-wrap;word-break:break-word;margin:4px 0 0;min-width:36ch;
     LIMITS = index.limits;
     RULE = index.decisionRule;
     const t = index.totals;
-    document.getElementById("stats").replaceChildren(
-      h("li", null, h("b", null, String(t.findings)), "findings in " + plural(t.examples, "example")),
-      h("li", null, h("b", null, count(t.verbs)), "verbs"),
-      h("li", null, h("b", null, t.checksRerun + " / " + t.checks), "checks re-run at build, counts equal"),
-      h("li", null, h("b", null, Object.keys(t.classes).length), "finding classes"),
-      h("li", null, h("b", null, h("a", { href: "#nemotron" }, String(t.nemotron.calls))), "Nemotron calls in eval " + t.nemotron.stamp + ", " + t.nemotron.signatureVerified + " receipts verified"),
-      h("li", null, h("b", null, h("a", { href: "#nemotron" }, t.nemotron.rerunEqual + " / " + t.nemotron.judgeSelects)),
-        "Nemotron judge SELECTs re-run at build, counts equal" + (t.nemotron.notRunnable ? "; " + t.nemotron.notRunnable + " recorded text does not run" : "")));
     options(document.getElementById("f-class"), Object.keys(t.classes));
     options(document.getElementById("f-verb"), Object.keys(t.verbs));
     app.replaceChildren(...examples.map(example));

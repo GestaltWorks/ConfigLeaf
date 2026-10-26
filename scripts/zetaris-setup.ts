@@ -7,9 +7,13 @@
 // sees are read from the DNS API first (GETs only).
 // Against an instance already set up every statement is ok or skipped. Exits 1 on the first step that fails
 // with anything but "already exist".
+// Before the first statement it applies sql/schema.sql and the Store's migrations to the app Postgres on DATABASE_URL
+// (src/data/store.ts applySchema, idempotent), so DRIFT registers every table and column the schema holds: a store
+// created before change_window or disposition.window_id gains them here, as the console's start line asks.
 // --plan prints the ordered statements without running them (the zones are still read); the password and the token
 // read "<redacted>".
 import { redact } from "../src/config.ts";
+import { Store } from "../src/data/store.ts";
 import { apply, envFromProcess, formatPlan, liveZones, plan } from "../src/zetaris/setup.ts";
 import { Tracer } from "../src/trace.ts";
 
@@ -19,6 +23,13 @@ try {
     for (const line of formatPlan(plan({ ...env, zones: await liveZones(env.cloudflareToken) }), env.datasource)) console.log(line);
     process.exit(0);
   }
+  const store = Store.fromEnv();
+  try {
+    await store.applySchema();
+  } finally {
+    await store.close();
+  }
+  console.log("ZETARIS SETUP: sql/schema.sql and the Store's migrations applied to the app Postgres");
   const tracer = new Tracer(`zetaris_setup_${Date.now().toString(36)}`, { model: "none" });
   const r = await apply({ tracer });
   process.exit(r.ok ? 0 : 1);
