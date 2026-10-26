@@ -45,6 +45,7 @@ Node 22 or later, no `.env`:
 ```bash
 npm ci
 SAMPLE_MODE=true npm run sample
+npm run judge                        # six checks of the main claims on your machine, about 20 seconds
 ```
 
 The real pass over `sample/bundle.json`, the redacted recording of the live estate, in about five seconds:
