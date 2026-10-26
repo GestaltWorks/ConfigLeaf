@@ -192,18 +192,32 @@ npm run tickets -- --tenant lab-1 --dry-run --verbose
 Measured 25 Oct 2026, 20:24 to 20:29 UTC, after `lab/up.sh` rebuilt the image. The break to 8098 (file a5b94717c6fe);
 its collection, run run-ea6025e231e361d0, complete at 2 of 2 files, vault commit 46c5ef5e, the journal read through
 sudo -n: 5 lines kept, 5 `audit_event` rows written. The cycle, 20:24:34 to 20:26:12 UTC, its trace committed as
-[examples/traces/cycle_mvoa0l1i.jsonl](../examples/traces/cycle_mvoa0l1i.jsonl):
+[examples/traces/cycle_mvoa0l1i.jsonl](../examples/traces/cycle_mvoa0l1i.jsonl), restored the file: `rollback_file`
+a5b94717 → a811a0a5, nginx -t ok, reloaded, 1 probe ok and 1 skipped, done in 2.3 s. The screen below is the dry
+cycle over the same run, `COLUMNS=120 npm run cycle -- --tenant lab-1 --skip collect,validate,tickets` under the
+exports above, 26 Oct 2026, 02:13 to 02:15 UTC, trace `logs/cycle_mvomgocp.jsonl`; it plans the rollback that cycle
+performed:
 
 ```text
-  pass      2 findings    ROLLBACK 1 · HOLD 1                                       82.9 s
-            Zetaris Lightning SQL over DRIFT · 427 queries · 26,352 rows · 0 failed
-            changed since the last backup 1 · drifted from the approved value 1
-            ROLLBACK  drifted from the approved value · sites-available/lab.example on host-951abf · copy 5dde7698 validated ok
-  explain   1 cause       operator 1                                                 1.3 s
-  act       1 action                                                                 3.7 s
-            rollback_file  sites-available/lab.example on host-951abf · a5b94717 → a811a0a5 · nginx -t ok · reloaded · 1 probe ok, 1 skipped · done 2.3 s
+  pass      2 findings    ROLLBACK 1 · HOLD 1                                                                    140.8 s
+            Zetaris   468 queries · 30,229 rows · 0 failed
+            DQ        exception_in_force holds for 0 of 0 adoptions
+            classes   1  changed since the last backup
+                      1  drifted from the approved value
+            ROLLBACK  drifted from the approved value
+                      sites-available/lab.example on host-951abf
+                      copy 5dde7698 validated ok
+  explain   1 cause       operator 1                                                                               1.8 s
+            ROLLBACK  sites-available/lab.example on host-951abf · operator
+                      The file was changed at 20:22 UTC on 25 Oct by user-212a17 over ssh from ip-391349 (sudo tee).
+  act       1 action planned                                                                                       1.7 s
+            rollback_file  sites-available/lab.example on host-951abf
+                           from vault 5dde7698
+                           then nginx -t, reload, 1 probe
+
 what happened
-  A vhost file drifted from its approved copy; the agent restored it, nginx reloaded, 1 probe passed, and a new ticket is drafted (tickets dry run). The file was changed at 20:22 UTC by user-212a17 over ssh from ip-391349 (sudo tee), 4 minutes before the agent restored it.
+  A vhost file drifted from its approved copy; a run with --apply restores it from vault copy 5dde7698 and reloads
+    nginx. The file was changed at 20:22 UTC on 25 Oct by user-212a17 over ssh from ip-391349 (sudo tee).
   1 finding is held with an expiry.
 ```
 

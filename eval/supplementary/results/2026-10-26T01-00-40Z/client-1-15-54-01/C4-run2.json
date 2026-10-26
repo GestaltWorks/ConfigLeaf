@@ -1,0 +1,214 @@
+{
+ "config": {
+  "id": "C4",
+  "text": "Nemotron 3 Ultra alone: the verdict from the rows, no SQL checks, no catalogue (baseline)",
+  "select": {
+   "kind": "none"
+  },
+  "judge": null,
+  "direct": "ultra"
+ },
+ "run": 2,
+ "valid": true,
+ "invalid_reason": null,
+ "started_at": "2026-10-26T01:09:17.329Z",
+ "finished_at": "2026-10-26T01:09:30.825Z",
+ "recording": "eval/supplementary/bundle.json",
+ "slice": {
+  "tenant": "client-1",
+  "at": "2026-10-25T15:54:01.957Z",
+  "rows": {
+   "collection_run": 71,
+   "observation": 19700,
+   "approved_setting": 333,
+   "backup_snapshot": 20,
+   "backup_item": 331,
+   "dns_record": 812,
+   "audit_event": 1275,
+   "inventory_asset": 10,
+   "policy_rule": 26,
+   "vault_copy": 1510,
+   "copy_validation": 1456,
+   "probe": 1443,
+   "disposition": 351,
+   "action": 0,
+   "ticket": 1,
+   "referent_fingerprint": 1575,
+   "finding_cause": 0
+  }
+ },
+ "tenant": "client-1",
+ "decided_at": "2026-10-25T15:53:58.661Z",
+ "policy": {
+  "file": "policy/hackathon.json",
+  "version": 2,
+  "rows": 15,
+  "inserted": 0,
+  "rules": 26
+ },
+ "split_seed": null,
+ "set": "supplementary",
+ "counts": {
+  "items": 2,
+  "scored": 2,
+  "not_raised": 0,
+  "with_verdict": 2,
+  "not_judged": 0,
+  "agree": 0,
+  "disagree": 2,
+  "unsure": 0,
+  "false_positives": 2,
+  "labelled_no": 2,
+  "checks_selected": 0,
+  "checks_valid": 0,
+  "checks_invalid": 0,
+  "checks_ran_unmodified": 0,
+  "checks_run": 0,
+  "falsifier_ran": 0,
+  "falsifier_struck": 0,
+  "agreed_strikes": 0,
+  "wrong_strikes": 0,
+  "early_stops": 0,
+  "judge_withheld": 0,
+  "findings_assessed": 2,
+  "findings_with_disposition": 2,
+  "calls": 2,
+  "cache_hits": 0,
+  "substitutions": 0,
+  "memory_injected": 0,
+  "tokens_in": 1468,
+  "tokens_out": 1249,
+  "latency_ms_median": 6580.5
+ },
+ "items": [
+  {
+   "id": "S01",
+   "class": "drift_vs_approved",
+   "set": "supplementary",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-d2e1aa9697e6fab7"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "ESCALATE",
+   "reading": "yes",
+   "agree": false,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-d2e1aa9697e6fab7",
+     "class": "drift_vs_approved",
+     "summary": "file in /etc/nginx/conf.d/host-a00d2f.ai.conf on host-aa516a is 4de292773ac4, and its latest approval, 2026-10-24T19:57:38.206Z by operator, is 3f565467a831: the live value drifted from the approved one",
+     "decided_by": null,
+     "rule_id": null,
+     "checks": [],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "ESCALATE",
+     "reason": "Live nginx config hash (4de292773ac4) differs from operator-approved hash (3f565467a831) as of 2026-10-25, indicating unauthorized or untracked configuration change.",
+     "not_judged": null
+    }
+   ],
+   "direct": {
+    "verb": "ESCALATE",
+    "reason": "Live nginx config hash (4de292773ac4) differs from operator-approved hash (3f565467a831) as of 2026-10-25, indicating unauthorized or untracked configuration change."
+   },
+   "strikes": 0
+  },
+  {
+   "id": "S02",
+   "class": "changed_since_backup",
+   "set": "supplementary",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-16c204edb6e2b93b"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "ESCALATE",
+   "reading": "yes",
+   "agree": false,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-16c204edb6e2b93b",
+     "class": "changed_since_backup",
+     "summary": "/etc/nginx/conf.d/host-a00d2f.ai.conf on host-aa516a is 4de292773ac4 and its copy in the host's newest backup (snap-0b816e741ae1dea6, taken 2026-10-25T03:40:31.444Z) is 3f565467a831: the live file and the backup copy differ",
+     "decided_by": null,
+     "rule_id": null,
+     "checks": [],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "ESCALATE",
+     "reason": "The live nginx configuration file differs from the most recent backup, indicating a change that has not been captured in backups and requires technician review.",
+     "not_judged": null
+    }
+   ],
+   "direct": {
+    "verb": "ESCALATE",
+    "reason": "The live nginx configuration file differs from the most recent backup, indicating a change that has not been captured in backups and requires technician review."
+   },
+   "strikes": 0
+  }
+ ],
+ "calls": [
+  {
+   "kind": "direct",
+   "item": "S01",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_g8q1mk25",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 5183,
+   "tokens_in": 725,
+   "tokens_out": 593,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_g8q1mk25 openrouter/nvidia/nemotron-3-ultra-550b-a55b:free (ultra), signature verified, no memory injected, custody holds",
+   "scope": "supplementary-2026-10-26T01-00-40Z-g1-33",
+   "memory_injected": 0
+  },
+  {
+   "kind": "direct",
+   "item": "S02",
+   "finding": null,
+   "attempt": 1,
+   "requested_tier": "ultra",
+   "model_requested": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+   "served_tier": "ultra",
+   "receipt_id": "rcpt_req_6g2khyu1",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 7978,
+   "tokens_in": 743,
+   "tokens_out": 656,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_6g2khyu1 openrouter/nvidia/nemotron-3-ultra-550b-a55b:free (ultra), signature verified, no memory injected, custody holds",
+   "scope": "supplementary-2026-10-26T01-00-40Z-g1-34",
+   "memory_injected": 0
+  }
+ ],
+ "pass": null
+}

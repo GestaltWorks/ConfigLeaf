@@ -6,11 +6,15 @@
 // the Cloudflare audit log and the action ledger, src/explain/; a dry run explains too), act (dry run unless --apply),
 // tickets, document (document.md at the repository root, gitignored). Each step runs the module its own command runs,
 // in this process; the first failing step stops the cycle with its reason, and explain never fails it. The screen is
-// one table (src/loop/present.ts): a header, a row per step as it ends with its time (the explain row counts the
-// causes by class: "explain   4 causes   operator 1 · agent 1 · unknown 2"), a line under the pass for each ROLLBACK,
-// FIX and ESCALATE and under act for each action, the "what happened" block in a few plain sentences, each action's
-// sentence followed on its line by who or what changed the setting, and a done line naming the trace. --verbose adds
-// each step's full line after its row; --quiet prints the header and the done line.
+// one table (src/loop/present.ts) at the terminal's width (COLUMNS, else the terminal's columns less one, else 120),
+// no line past it: a header, a row per step as it ends with its time on the row's first line, and under a row its
+// facts one a line. Under the pass: the Zetaris queries, the DQ read, the classes, and a block for each ROLLBACK, FIX
+// and ESCALATE (the verb and the class, the object, why). Under explain, whose row counts the causes by class
+// ("explain   4 causes   operator 1 · agent 1 · unknown 2"): a block per cause with its sentence. Under act: a block
+// per action. Under tickets: a line per operation, an opened issue's title under it. Then, after a blank line, the
+// "what happened" block in a few plain sentences, each wrapped, each action's sentence followed by who or what changed
+// the setting; and a done line naming the trace. --verbose adds each step's full line after its row; --quiet prints
+// the header and the done line.
 // The cycle's trace, every step's lines included, goes to logs/cycle_<base36 ms>.jsonl. --skip takes a comma list or
 // repeats. --tickets-dry-run plans the tickets and sends nothing. --apply carries out the Actor's plan on the hosts
 // and the zones.
@@ -31,6 +35,11 @@
 // probe passed, and a new ticket is drafted (tickets dry run). The file was changed at 20:22 UTC by user-212a17 over
 // ssh from ip-391349 (sudo tee), 4 minutes before the agent restored it."; done in 98.1 s, 495 Zetaris queries, 0
 // failed, the trace examples/traces/cycle_mvoa0l1i.jsonl.
+// Measured 26 Oct 2026 at 01:36 and 01:38 UTC on the lab (tenant lab-1, --skip collect,validate,tickets, a dry run,
+// the probe population from PROBE_TARGETS_OVERRIDE), off a TTY at COLUMNS 120 and 100: 29 and 32 lines, none past the
+// width, each time at the width on its row's first line; pass 2 findings (ROLLBACK 1, HOLD 1) in 91.0 and 92.9 s, its
+// ROLLBACK in three lines; explain 1 cause, operator 1, its sentence on a line of its own (two at 100); act 1 action
+// planned; done in 102.7 and 104.8 s, 522 and 524 Zetaris queries, 0 failed, at 100 the trace on a second line.
 
 import { parseArgs } from "node:util";
 import { redact } from "../src/config.ts";

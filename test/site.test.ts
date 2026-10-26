@@ -8,7 +8,10 @@
 // eval results' calls, whose total is the run files' and summary.md's, and every judge SELECT recorded with a row count,
 // re-run equal or counted apart as recorded text that does not run, and a results copy with one recorded count moved
 // by one makes the build throw and write nothing; the header links the owner's report (../examples/report.html), a
-// fixed relative link outside the tab row; a second build is byte-identical;
+// fixed relative link outside the tab row; the header counts each finding once by its finding id, beside the rows the
+// slices list (a fixture holds one finding in two slices), and each slice keeps its own counts; above the counts a tile
+// sets Ultra alone (C4) beside the checks with Ultra as the falsifier (C3), per run, from the run files and planted.json,
+// under a caption naming the results directory and the runs' span; a second build is byte-identical;
 // and the committed docs/ is exactly this build (rerun `npm run site` when not).
 //
 // The landing page, docs/site.html, comes out of the same build from scripts/site/landing.html: every token filled and
@@ -24,8 +27,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  DECK_URL, MAX_BYTES, REPORT_LINK, SITE_TEMPLATE, SiteError, buildSite, escapeHtml, formatTraceLine, markdownToHtml, nemotronView, newestResults, readTrace, renderSiteHtml,
-  repositoryUrl, scanOutput, word, type BuildResult, type ExampleView, type JudgeSelectView, type SiteInput,
+  buildSite, DECK_URL, escapeHtml, formatTraceLine, headerStats, headlineTile, markdownToHtml, MAX_BYTES, nemotronView, newestResults, readTrace, renderSiteHtml, REPORT_LINK, repositoryUrl, scanOutput, SITE_TEMPLATE, SiteError, word, type BuildResult, type ExampleView, type JudgeSelectView, type SiteInput,
 } from "../scripts/build-site.ts";
 import { templateById } from "../src/catalogue/templates.ts";
 import { config } from "../src/config.ts";
@@ -97,8 +99,12 @@ describe("the replay page", () => {
     for (const name of built.files.keys()) expect(existsSync(path.join(tmp, "out", name))).toBe(true);
     expect(built.index.examples.map((e) => [e.dir, e.findings])).toEqual([["proxy-split", 1], ["wildcard-no-real-ip", 1], ["orphans", 7]]);
     // an exception in force gives ADOPT until its expiry: the wildcard and the three orphan vhosts the operator's lessons
-    // scope are ADOPT; the three orphan records stay HOLD and the proxy_split, in two slices, ESCALATE, by policy
-    expect(built.index.totals).toMatchObject({ examples: 3, findings: 9, verbs: { ADOPT: 4, HOLD: 3, ESCALATE: 2 } });
+    // scope are ADOPT; the three orphan records stay HOLD and the proxy_split ESCALATE, by policy. The proxy_split sits in
+    // two slices: 8 findings by finding id, 9 rows over the 3 slices
+    expect(built.index.totals).toMatchObject({
+      examples: 3, findings: 8, rows: 9, verbs: { ADOPT: 4, HOLD: 3, ESCALATE: 1 },
+      classes: { proxy_split: 1, proxied_without_real_ip: 1, orphan_record: 3, orphan_vhost: 3 }, judgeModels: { none: 8 },
+    });
     expect(built.index.sample?.verbs).toEqual({ ADOPT: 23, HOLD: 3, ESCALATE: 1 });
     expect(built.index.examples.every((e) => e.reproduced)).toBe(true);
   });
@@ -198,8 +204,9 @@ describe("the replay page", () => {
     // the script and the styles name no host but localhost (the file:// hint); the document's ticket url is text in a list item
     const code = [...html.matchAll(/<(script|style)>([\s\S]*?)<\/\1>/g)].map((m) => m[2]).join("\n");
     expect(code).not.toMatch(/https?:\/\/(?!localhost)/);
-    // the header's Report link to the owner's report in the repository, then the four tabs
-    expect([...html.matchAll(/\b(?:href|src|action)="([^"]*)"/g)].map((m) => m[1])).toEqual([REPORT_LINK, "#findings", "#document", "#sources", "#nemotron"]);
+    // the tile's caption and the header's two Nemotron counts link to the tab, then the Report link to the owner's report
+    // in the repository, then the four tabs
+    expect([...html.matchAll(/\b(?:href|src|action)="([^"]*)"/g)].map((m) => m[1])).toEqual(["#nemotron", "#nemotron", "#nemotron", REPORT_LINK, "#findings", "#document", "#sources", "#nemotron"]);
     expect([...html.matchAll(/fetch\(([^)]*)\)/g)].map((m) => m[1])).toEqual(['"data/index.json"', "e.file"]);
   });
 
@@ -211,6 +218,96 @@ describe("the replay page", () => {
     expect(header).toContain(`<p class="report"><a href="${REPORT_LINK}">Report</a><br><span class="meta">The owner's report, <code>examples/report.html</code>: one HTML file over the same recorded bundle as the Document tab, opened from a clone of the repository.</span></p>`);
     const nav = /<nav class="tabs"[\s\S]*?<\/nav>/.exec(header)![0];
     expect(nav).not.toContain(REPORT_LINK);
+  });
+
+  it("the header counts each finding once by its finding id, beside the 9 rows over 3 slices, as static HTML; each slice keeps its own counts", () => {
+    const html = built.files.get("index.html")!;
+    const header = /<header>[\s\S]*?<\/header>/.exec(html)![0];
+    const stats = /<ul class="stats" id="stats">[\s\S]*?<\/ul>/.exec(header)![0];
+    const t = built.index.totals.nemotron;
+    expect(stats.split("\n").slice(1, 5)).toEqual([
+      "<li><b>8</b>findings, 9 rows over 3 slices</li>",
+      "<li><b>1 ESCALATE, 4 ADOPT, 3 HOLD</b>verbs</li>",
+      "<li><b>33 / 33</b>checks re-run over the slices at build, counts equal</li>",
+      "<li><b>4</b>finding classes</li>",
+    ]);
+    expect(stats).toBe(headerStats(built.index.totals));
+    expect(stats).toContain(`Nemotron calls in eval ${t.stamp}`);
+    expect(header).not.toMatch(/\b9 findings\b|\b2 ESCALATE\b/);
+    // the slice view: the proxy_split finding in the proxy-split slice and again in the orphans slice, each slice's own counts as before
+    const id = (dir: string): string[] => example(dir).findings.map((f) => f.fields.find(([k]) => k === "finding id")![1]!);
+    expect(id("orphans")).toContain(id("proxy-split")[0]);
+    expect(example("proxy-split")).toMatchObject({ verbs: { ESCALATE: 1 }, classes: { proxy_split: 1 } });
+    expect(example("orphans")).toMatchObject({ verbs: { ESCALATE: 1, HOLD: 3, ADOPT: 3 }, classes: { proxy_split: 1, orphan_record: 3, orphan_vhost: 3 } });
+    expect(built.index.examples.reduce((n, e) => n + e.findings, 0)).toBe(built.index.totals.rows);
+    // the Findings tab's filter line counts rows over the slices
+    expect(html).toContain('n + " of " + plural(all, "row") + " over " + plural(slices.length, "slice") + " shown"');
+  });
+
+  it("one finding in two slices counts once in the header and once in each slice; read with two verbs it counts under each", async () => {
+    const dir = path.join(tmp, "two-slices");
+    for (const d of ["proxy-split", "proxy-split-again"]) cpSync(path.join(EXAMPLES, "proxy-split"), path.join(dir, d), { recursive: true });
+    const twice = await buildSite({ examplesDir: dir, outDir: path.join(tmp, "two-slices-out"), samplePath: null, memoryDir: STORE });
+    expect(twice.index.examples.map((e) => [e.dir, e.findings])).toEqual([["proxy-split", 1], ["proxy-split-again", 1]]);
+    expect(twice.index.totals).toMatchObject({ examples: 2, findings: 1, rows: 2, checks: 8, verbs: { ESCALATE: 1 }, classes: { proxy_split: 1 }, judgeModels: { none: 1 } });
+    for (const d of ["proxy-split", "proxy-split-again"]) expect(JSON.parse(twice.files.get(`data/${d}.json`)!)).toMatchObject({ verbs: { ESCALATE: 1 }, classes: { proxy_split: 1 } });
+    const html = twice.files.get("index.html")!;
+    expect(html).toContain("<li><b>1</b>finding, 2 rows over 2 slices</li>");
+    expect(html).toContain("<li><b>1 ESCALATE</b>verbs</li>");
+
+    // the second slice's record read as ADOPT (stale, published with --allow-stale): one finding, counted under each verb
+    const file = path.join(dir, "proxy-split-again", "findings.json");
+    const findings = JSON.parse(readFileSync(file, "utf8")) as Record<string, any>[];
+    findings[0].verb = "ADOPT";
+    writeFileSync(file, `${JSON.stringify(findings, null, 2)}\n`);
+    const two = await buildSite({ examplesDir: dir, write: false, samplePath: null, memoryDir: STORE, allowStale: true });
+    expect(two.index.totals).toMatchObject({ findings: 1, rows: 2, verbs: { ESCALATE: 1, ADOPT: 1 }, classes: { proxy_split: 1 } });
+  }, 120_000);
+
+  it("opens with the tile, above the counts and the tabs: Ultra alone (C4) beside the checks with Ultra as the falsifier (C3), per run, over the run under per-call scope, 25 to 26 Oct 2026", async () => {
+    const v = built.nemotron.totals.stamp === path.basename(ISOLATED) ? built.nemotron : await nemotronView(ISOLATED);
+    // the numbers as the run files and planted.json hold them
+    const counts = (c: string, r: number): { false_positives: number; labelled_no: number } =>
+      (JSON.parse(readFileSync(path.join(ISOLATED, `${c}-run${r}.json`), "utf8")) as { counts: { false_positives: number; labelled_no: number } }).counts;
+    const planted = (JSON.parse(readFileSync(path.join(ISOLATED, "planted.json"), "utf8")) as { claims: { config: string; run: number; struck: boolean }[] }).claims;
+    for (const r of [1, 2, 3]) {
+      expect(v.headline!.alone.runs[r - 1]).toEqual({ run: r, valid: true, readYes: counts("C4", r).false_positives, labelledNo: counts("C4", r).labelled_no });
+      const p = planted.filter((c) => c.config === "C3" && c.run === r);
+      expect(v.headline!.checks.runs[r - 1]).toEqual({ run: r, valid: true, readYes: counts("C3", r).false_positives, labelledNo: counts("C3", r).labelled_no, struck: p.filter((c) => c.struck).length, claims: p.length });
+    }
+    expect(v.headline).toEqual({
+      alone: { config: "C4", runs: [{ run: 1, valid: true, readYes: 6, labelledNo: 9 }, { run: 2, valid: true, readYes: 5, labelledNo: 9 }, { run: 3, valid: true, readYes: 6, labelledNo: 9 }] },
+      checks: {
+        config: "C3",
+        runs: [{ run: 1, valid: true, readYes: 0, labelledNo: 9, struck: 9, claims: 10 }, { run: 2, valid: true, readYes: 0, labelledNo: 9, struck: 8, claims: 10 }, { run: 3, valid: true, readYes: 0, labelledNo: 9, struck: 8, claims: 10 }],
+      },
+      started: "2026-10-25T23:34:17.784Z", finished: "2026-10-26T00:18:13.152Z",
+    });
+    expect(headlineTile(v)).toBe([
+      '<div class="headline">',
+      "<h2>Ultra alone vs the checks with Ultra as the falsifier</h2>",
+      '<ul class="stats">',
+      "<li><b>6, 5, 6 of 9</b>items labelled no that Ultra alone (C4) reads as yes, runs 1, 2 and 3</li>",
+      "<li><b>0, 0, 0 of 9</b>items labelled no that the checks with Ultra as the falsifier (C3) read as yes, runs 1, 2 and 3</li>",
+      "<li><b>9, 8, 8 of 10</b>planted false claims struck by C3, runs 1, 2 and 3</li>",
+      "</ul>",
+      '<p class="meta">From <a href="#nemotron"><code>eval/results/2026-10-25T23-34-17Z</code></a>, the dev set, 25 Oct 2026 23:34 UTC to 26 Oct 2026 00:18 UTC.</p>',
+      "</div>",
+    ].join("\n"));
+    // in the page: static, in the header after the lede and before the counts, the Report link and the tabs
+    const html = built.files.get("index.html")!;
+    const header = /<header>[\s\S]*?<\/header>/.exec(html)![0];
+    const at = header.indexOf(headlineTile(built.nemotron));
+    expect(at).toBeGreaterThan(header.indexOf('<p class="lede">'));
+    expect(at).toBeLessThan(header.indexOf('<ul class="stats" id="stats">'));
+    expect(header.indexOf('<ul class="stats" id="stats">')).toBeLessThan(header.indexOf('<nav class="tabs"'));
+    // the tile's colours are the page's tokens
+    const css = /<style>([\s\S]*?)<\/style>/.exec(html)![1].split("\n").filter((l) => l.startsWith(".headline"));
+    expect(css.length).toBeGreaterThan(0);
+    for (const rule of css) expect(rule).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i);
+    // the Nemotron tab holds the same counts per run
+    const nm = panel("nemotron");
+    if (built.nemotron.headline) for (const r of built.nemotron.headline.alone.runs) expect(nm).toContain(`<tr><td>${built.nemotron.headline.alone.config}</td><td>${r.run}</td>`);
   });
 
   it("carries the owner's document as the Document tab: every heading, table row and list item of examples/document.md, and the line on where it comes from with its decision instant", () => {
@@ -267,8 +364,8 @@ describe("the replay page", () => {
     // the nav names the tab, and the header's two stats link to it: the calls, and the judge SELECTs re-run
     const html = built.files.get("index.html")!;
     expect(html).toContain('<a href="#nemotron">Nemotron</a>');
-    expect(html).toContain('h("a", { href: "#nemotron" }, String(t.nemotron.calls))');
-    expect(html).toContain('h("a", { href: "#nemotron" }, t.nemotron.rerunEqual + " / " + t.nemotron.judgeSelects)');
+    expect(html).toContain(`<li><b><a href="#nemotron">${calls}</a></b>Nemotron calls in eval ${t.stamp}, ${t.signatureVerified} receipts verified</li>`);
+    expect(html).toContain(`<li><b><a href="#nemotron">${t.rerunEqual} / ${t.judgeSelects}</a></b>Nemotron judge SELECTs re-run at build, counts equal${t.notRunnable ? `; ${t.notRunnable} recorded text does not run` : ""}</li>`);
     expect(html).not.toContain("judge model in these runs");
   });
 

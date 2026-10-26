@@ -35,7 +35,7 @@ import type { QueryTally } from "../data/engines/counting.ts";
 import type { ExplainResult } from "../explain/explain.ts";
 import type { Tracer } from "../trace.ts";
 import type { PassStep } from "./pass.ts";
-import { MODE, PLAIN, Table, passView, summaryView, thousands, whatHappened, type ActFacts, type PresentOptions, type StepView, type StoryInput, type TicketFacts } from "./present.ts";
+import { MODE, PLAIN, Table, explainedView, passView, summaryView, thousands, whatHappened, type ActFacts, type PresentOptions, type StepView, type StoryInput, type TicketFacts } from "./present.ts";
 
 export const SKIPPABLE = ["collect", "probe", "validate", "act", "tickets", "document"] as const;
 export type Skippable = (typeof SKIPPABLE)[number];
@@ -219,7 +219,11 @@ export async function runCycle(opts: CycleOptions, steps: CycleSteps, io: CycleI
     return r.ok && !r.pass ? { ...r, ok: false, reason: "the pass step returned no result" } : r;
   });
   const pass = passed?.pass ?? null;
-  const explained = await step("explain", null, () => steps.explain(pass!));
+  // the explain row: the step's counts, and under them one block per cause over the pass's findings (explainedView)
+  const explained = await step("explain", null, async () => {
+    const r = await steps.explain(pass!);
+    return r.explain && r.view ? { ...r, view: explainedView(r.view, r.explain, pass!.findings) } : r;
+  });
   const acted = await step("act", "act", () => steps.act(pass!));
   const ticketed = await step("tickets", "tickets", () => steps.tickets(pass!));
   const actStatus = lines.find((l) => l.step === "act")?.status;
