@@ -5,7 +5,8 @@
 // Layout (the design's, written by src/vault/): <DRIFT_VAULT_DIR>/<tenant>/<alias> per host, the fetched
 // files at their real paths without the leading slash, .drift/paths.json (real path -> redacted object id)
 // and .drift/links.json (symlink path -> target path); <DRIFT_VAULT_DIR>/<tenant>/cloudflare holding
-// <zone>/<record_id>.json per record. Each commit's subject is "run <run_id> <surface> <started_at>".
+// <zone>/<record_id>.json per record; <DRIFT_VAULT_DIR>/<tenant>/zetaris holding <raw id>.json per Zetaris
+// control-plane object (src/zetaris/control.ts). Each commit's subject is "run <run_id> <surface> <started_at>".
 //
 // Contract:
 //   - The vault holds real bytes and real names; what leaves this module is redacted: missing
@@ -18,6 +19,11 @@
 //     validated by validateCloudflareCopy (src/validate/cfschema.ts) against the commit's own records,
 //     which are the DNS run's, its zone folders and the inventory. A copy that fails to parse as a JSON
 //     record fails.
+//   - validateZetarisCommit: every <raw id>.json of the commit outside .drift/, validated by validateControlCopy
+//     (src/validate/zetaris.ts) against the commit's own object ids and the blob_sha256 each object's vault_copy row
+//     recorded (by its redacted object id from .drift/paths.json; unchecked for an object the caller has no row of).
+//   - commitsOf: of a list of commit hashes, the ones a repository holds (git cat-file -e), and treeOf a commit's
+//     tree hash, so a caller validates one tree once whatever number of commits share it.
 //   - copyValidationRows: one row per vault copy, every row the one result of the validation they share;
 //     validation_id = stableId("val", copy_id, validator, validated_at); missing_dependencies joined by
 //     newlines; output_redacted cut at 2000 characters.
@@ -31,13 +37,14 @@ import { validationId, type CopyValidation, type ValidationResult, type Validato
 import type { Redactor } from "../redactor.ts";
 import { validateCloudflareCopy, type CfRecord } from "./cfschema.ts";
 import { ValidateError, validateNginxTree, type NginxRunner } from "./nginx.ts";
+import { validateControlCopy } from "./zetaris.ts";
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const COMMIT = /^[0-9a-f]{4,64}$/i;
 const ISO_MS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 export const OUTPUT_MAX = 2000;
 export const CLOUDFLARE_REPO = "cloudflare";
-/** The Zetaris control plane's repository (src/zetaris/control.ts): JSON objects, no nginx tree and no record, so no validator reads it. */
+/** The Zetaris control plane's repository (src/zetaris/control.ts): one JSON object per file, read by zetaris-json. */
 export const ZETARIS_REPO = "zetaris";
 
 /** <vaultDir>/<tenant>/<name>, both ids checked. */
@@ -47,13 +54,13 @@ export function repositoryDir(vaultDir: string, tenant: string, name: string): s
   return path.join(vaultDir, tenant, name);
 }
 
-/** The tenant's vault repositories: host aliases (sorted) and whether the Cloudflare repository exists. */
-export function vaultRepositories(vaultDir: string, tenant: string): { hosts: string[]; cloudflare: boolean } {
+/** The tenant's vault repositories: host aliases (sorted) and whether the Cloudflare and the Zetaris repositories exist. */
+export function vaultRepositories(vaultDir: string, tenant: string): { hosts: string[]; cloudflare: boolean; zetaris: boolean } {
   if (!ID.test(tenant)) throw new ValidateError(`tenant must be a plain id, got ${JSON.stringify(tenant)}`);
   const dir = path.join(vaultDir, tenant);
-  if (!existsSync(dir)) return { hosts: [], cloudflare: false };
+  if (!existsSync(dir)) return { hosts: [], cloudflare: false, zetaris: false };
   const repos = readdirSync(dir).filter((n) => ID.test(n) && statSync(path.join(dir, n)).isDirectory() && existsSync(path.join(dir, n, ".git"))).sort();
-  return { hosts: repos.filter((n) => n !== CLOUDFLARE_REPO && n !== ZETARIS_REPO), cloudflare: repos.includes(CLOUDFLARE_REPO) };
+  return { hosts: repos.filter((n) => n !== CLOUDFLARE_REPO && n !== ZETARIS_REPO), cloudflare: repos.includes(CLOUDFLARE_REPO), zetaris: repos.includes(ZETARIS_REPO) };
 }
 
 function git(repo: string, args: readonly string[], input?: Buffer): { status: number; stdout: Buffer } {
@@ -86,6 +93,16 @@ export function resolveCommit(repo: string, commit: string): string {
   const r = git(repo, ["rev-parse", "--verify", "--quiet", `${commit}^{commit}`]);
   if (r.status !== 0) throw new ValidateError(`no commit ${commit} in the repository`);
   return r.stdout.toString("utf8").trim();
+}
+
+/** Of `commits` (full hashes), the ones the repository holds, in the order given. */
+export function commitsOf(repo: string, commits: readonly string[]): string[] {
+  return commits.filter((c) => COMMIT.test(c) && git(repo, ["cat-file", "-e", `${c}^{commit}`]).status === 0);
+}
+
+/** A commit's tree hash: two commits with one tree hold the same files. */
+export function treeOf(repo: string, commit: string): string {
+  return gitOk(repo, ["rev-parse", "--verify", `${commit}^{tree}`]).toString("utf8").trim();
 }
 
 /** The run id from a commit subject "run <run_id> <surface> <started_at>", or null. */
@@ -279,6 +296,68 @@ function cloudflareCommit(opts: ValidateCloudflareCommitOptions): CloudflareComm
     };
   });
   return { repository: `${opts.tenant}/${CLOUDFLARE_REPO}`, commit, run_id: runOfCommit(repo, commit), zones: wanted === null ? zones.length : 1, records };
+}
+
+export interface ControlObjectValidation {
+  /** The object id as the rows carry it, redacted (.drift/paths.json). */
+  object_id: string;
+  result: ValidationResult;
+  missing_dependencies: string[];
+  output: string;
+}
+
+export interface ValidateZetarisCommitOptions {
+  vaultDir: string;
+  tenant: string;
+  commit: string;
+  redactor: Redactor;
+  /** The blob_sha256 each object's vault_copy row recorded, by redacted object id; null when the rows were not read, and an object absent from it goes unchecked. */
+  recorded: ReadonlyMap<string, string> | null;
+}
+
+/** zetaris-json over every object copy of one commit of the tenant's Zetaris repository; redacted. */
+export interface ZetarisCommitValidation { repository: string; commit: string; run_id: string | null; objects: ControlObjectValidation[] }
+
+export function validateZetarisCommit(opts: ValidateZetarisCommitOptions): ZetarisCommitValidation {
+  try {
+    return zetarisCommit(opts);
+  } catch (e) {
+    throw redactedError(e, opts.redactor);
+  }
+}
+
+function zetarisCommit(opts: ValidateZetarisCommitOptions): ZetarisCommitValidation {
+  const repo = repositoryDir(opts.vaultDir, opts.tenant, ZETARIS_REPO);
+  if (!existsSync(path.join(repo, ".git"))) throw new ValidateError(`no Zetaris vault repository for ${opts.tenant}`);
+  const commit = resolveCommit(repo, opts.commit);
+  const { files } = readCommit(repo, commit);
+  const paths = parsePaths(files.get(".drift/paths.json"));
+  const r = opts.redactor;
+  const objects = [...files].filter(([k]) => !k.startsWith(".drift/")).sort(([a], [b]) => (a < b ? -1 : 1));
+  const ids = new Set(objects.map(([k]) => k.replace(/\.json$/, "")));
+  const out = objects.map(([k, bytes]): ControlObjectValidation => {
+    const id = k.replace(/\.json$/, "");
+    const objectId = paths.get(k) ?? r.text(id);
+    const v = k.endsWith(".json")
+      ? validateControlCopy(id, bytes, { ids, recorded: opts.recorded?.get(objectId) ?? null })
+      : { result: "fail" as const, missing_dependencies: [], output: `${id} is a file the zetaris.control collector does not write (every object is <id>.json)` };
+    return { object_id: objectId, result: v.result, missing_dependencies: [...new Set(v.missing_dependencies.map((d) => r.text(d)))].sort(), output: r.text(v.output) };
+  });
+  return { repository: `${opts.tenant}/${ZETARIS_REPO}`, commit, run_id: runOfCommit(repo, commit), objects: out };
+}
+
+/** .drift/paths.json (tree path without the leading slash or real path -> redacted object id) as a map keyed by tree path. */
+function parsePaths(bytes: Uint8Array | undefined): Map<string, string> {
+  if (!bytes) return new Map();
+  let v: unknown;
+  try {
+    v = JSON.parse(Buffer.from(bytes).toString("utf8"));
+  } catch {
+    throw new ValidateError(".drift/paths.json fails to parse as JSON");
+  }
+  const out = new Map<string, string>();
+  for (const [k, id] of Object.entries((v ?? {}) as Record<string, unknown>)) if (typeof id === "string") out.set(k.replace(/^\/+/, ""), id);
+  return out;
 }
 
 /** One copy_validation row per vault copy, all carrying one validation's (already redacted) result. */

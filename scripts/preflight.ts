@@ -17,6 +17,9 @@ import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { ZetarisEngine } from "../src/data/engines/zetaris.ts";
 import { describeVerdict, runPreflight } from "../src/preflight/run.ts";
 import { Tracer, type TraceEvent } from "../src/trace.ts";
+import { exitOnConfigError } from "../src/cli.ts";
+
+exitOnConfigError();
 
 const { values: args } = parseArgs({
   options: {

@@ -2,7 +2,7 @@
 // policy/hackathon.json and the redacted object ids of the recorded bundle (sample/bundle.json, 24 Oct
 // 2026). Every precedence case names a setting the bundle holds, so a re-recorded bundle that drops one
 // fails here first. Offline and deterministic.
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,7 +12,7 @@ import { ruleId, type PolicyRule } from "../src/data/rows.ts";
 import { globMatch, literalLength } from "../src/policy/glob.ts";
 import { PolicyError, loadPolicyFile, parsePolicyFile, policyRows } from "../src/policy/load.ts";
 import { rankedRules, resolvePolicy, type SettingRef } from "../src/policy/resolve.ts";
-import { PolicyFile, PolicyRuleRow } from "../src/policy/schema.ts";
+import { PolicyFile, PolicyRuleRow, TENANT, TENANT_ID } from "../src/policy/schema.ts";
 import { Redactor } from "../src/redactor.ts";
 import bundle from "../sample/bundle.json" with { type: "json" };
 import { QUEST_FILE, T, WWW_RECORD } from "./fixtures/catalogue-params.ts";
@@ -119,6 +119,21 @@ describe("glob", () => {
 });
 
 describe("schema and loader", () => {
+  it("one tenant id pattern: TENANT_ID takes a vault directory name, TENANT adds * for a policy file, and every script that reads --tenant holds it to TENANT_ID", () => {
+    for (const ok of ["client-1", "lab-1", "Client_A.b", "a", "x".repeat(64)]) expect(TENANT_ID.test(ok), ok).toBe(true);
+    for (const bad of ["", "*", "a.", "-a", ".a", "a b", "a/b", "x".repeat(65)]) expect(TENANT_ID.test(bad), bad).toBe(false);
+    expect(TENANT.test("*")).toBe(true);
+    expect(["client-1", "a.", "*x"].map((t) => TENANT.test(t))).toEqual([true, false, false]);
+    const scripts = path.join(ROOT, "scripts");
+    for (const f of readdirSync(scripts).filter((n) => n.endsWith(".ts"))) {
+      const text = readFileSync(path.join(scripts, f), "utf8");
+      if (!/\btenant: \{ type: "string"|arg\("--tenant"\)/.test(text)) continue;
+      // a script that reads --tenant names no pattern of its own; the ones that test one test TENANT_ID (policy-load takes * as well)
+      expect(text, f).not.toMatch(/const TENANT\w* = \//);
+      if (/TENANT\w*\.test\(/.test(text)) expect(text, f).toMatch(f === "policy-load.ts" ? /\bTENANT\.test\(/ : /\bTENANT_ID\.test\(/);
+    }
+  });
+
   it("the committed policy/hackathon.json passes the file schema, and each of its 17 rows passes the row schema", () => {
     expect(PolicyFile.safeParse(RAW).success).toBe(true);
     expect(loaded.file).toMatchObject({ version: 2, author: "operator", since: "2026-10-25T00:00:00.000Z", tenant: "*" });

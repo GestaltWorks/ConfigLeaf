@@ -27,7 +27,7 @@ import { FakeModel } from "./fixtures/actions/fake-model.ts";
 import { TENANT, buildBase, buildWorld, type Base, type World } from "./fixtures/actions/world.ts";
 import bundle from "./fixtures/authored-bundle.json" with { type: "json" };
 import { MemTracer } from "./fixtures/mem-tracer.ts";
-import { isolated } from "./fixtures/signed-receipt.ts";
+import { TEST_KEY, isolated } from "./fixtures/signed-receipt.ts";
 import ultraJson from "./fixtures/receipt-ultra.json" with { type: "json" };
 import type { SignedReceipt } from "../src/adapters/nightshift.ts";
 
@@ -403,7 +403,7 @@ describe("withholding: what the prompt builders do with a decision", () => {
 
 describe("judgeClaim behind the guard, with a stubbed model", () => {
   const ultra = isolated(ultraJson as unknown as SignedReceipt);
-  const receipts = { find: async (id: string) => (ultra.body.receipt.receipt_id === id ? ultra : null) };
+  const receipts = { keys: [TEST_KEY], find: async (id: string) => (ultra.body.receipt.receipt_id === id ? ultra : null) };
   const sql = "SELECT asset_id FROM {{t:inventory_asset}} WHERE address = '203.0.113.77'";
   let layer: DataLayer;
   type ChatOpts = Parameters<JudgeModel["chatWithFallback"]>[0];

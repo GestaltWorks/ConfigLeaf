@@ -24,8 +24,16 @@ export const ON_NO_COPY = ["investigate_ticket", "ticket", "adopt"] as const;
 export const ALERTS = ["always", "on_fix", "never"] as const;
 export const PSA_PRIORITIES = ["P1", "P2", "P3", "P4"] as const;
 
-/** A tenant id (a header-safe token) or "*". */
-export const TENANT = /^(?:\*|[A-Za-z0-9][A-Za-z0-9._-]{0,63})$/;
+/**
+ * A tenant id, the one pattern every script that takes --tenant holds it to: a header-safe token of letters, digits,
+ * ".", "_" and "-", up to 64, starting with a letter or a digit and ending in anything but ".", so it is also a
+ * directory name of the vault (src/vault/vault.ts) on every file system.
+ */
+export const TENANT_ID = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9_-])?$/;
+/** How a usage line names TENANT_ID. */
+export const TENANT_ID_SHAPE = "a tenant id ([A-Za-z0-9._-], up to 64, no trailing dot)";
+/** A policy file's tenant: a tenant id or "*" (every tenant). */
+export const TENANT = new RegExp(`^(?:\\*|${TENANT_ID.source.slice(1, -1)})$`);
 const ISO_MS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 const glob = () => z.string().min(1).max(512).regex(/^[^\u0000-\u001f\u007f]+$/, "a glob is printable text on one line");

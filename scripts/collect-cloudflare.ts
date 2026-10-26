@@ -22,12 +22,12 @@ import { config, redact } from "../src/config.ts";
 import { Cloudflare, auditWindow, collectCloudflare, type CloudflareCollection } from "../src/collectors/cloudflare.ts";
 import type { CollectionRun } from "../src/data/rows.ts";
 import { Store } from "../src/data/store.ts";
+import { TENANT_ID, TENANT_ID_SHAPE } from "../src/policy/schema.ts";
 import { Redactor } from "../src/redactor.ts";
 import { Tracer } from "../src/trace.ts";
 import { hookSummary, vaultCloudflareRun } from "../src/vault/hook.ts";
 import { Vault } from "../src/vault/vault.ts";
 
-const TENANT = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const USAGE = "usage: npm run collect:cloudflare -- --tenant <id> [--since YYYY-MM-DD] [--dry-run]";
 
 function die(msg: string): never {
@@ -37,7 +37,7 @@ function die(msg: string): never {
 
 const { values: args } = parseArgs({ options: { tenant: { type: "string" }, since: { type: "string" }, "dry-run": { type: "boolean", default: false } } });
 const tenant = args.tenant ?? die("--tenant is required");
-if (!TENANT.test(tenant)) die(`--tenant must be lowercase letters, digits and dashes, got ${tenant}`);
+if (!TENANT_ID.test(tenant)) die(`--tenant must be ${TENANT_ID_SHAPE}, got ${tenant}`);
 const dry = args["dry-run"] === true;
 try {
   auditWindow(new Date(), args.since);

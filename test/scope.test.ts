@@ -10,7 +10,7 @@ import { config } from "../src/config.ts";
 import { tenantAppId } from "../src/gate.ts";
 import { MEMORY_PROBE_APP, SHARED_SCOPE, freshScopeCheck, sharedScopeLine } from "../scripts/spike-nightshift.ts";
 import { MemTracer } from "./fixtures/mem-tracer.ts";
-import { ULTRA_MODEL, signed, ultraReceipt } from "./fixtures/signed-receipt.ts";
+import { TEST_KEY, ULTRA_MODEL, signed, ultraReceipt } from "./fixtures/signed-receipt.ts";
 
 const HEX16 = "[0-9a-f]{16}";
 const esc = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -94,28 +94,30 @@ describe("Nightshift chat: a fresh meterless-scope per request", () => {
 });
 
 describe("the spike's memory lines (scripts/spike-nightshift.ts), over receipts signed here", () => {
+  /** The keys the spike's checks trust here: the fixture's, which signs every receipt of this block. */
+  const KEYS = [TEST_KEY];
   const injected = (n: number) => ({ hmem: { ids: Array.from({ length: n }, (_, i) => `mem_${i}`), injected: n, reason: `retrieved ${n} memories`, strategy: "comprehensive", top_score: 0.55 } });
 
   it("PASS for a fresh-scope call whose signed receipt shows hmem null or absent; FAIL when it shows injected memory, a bad signature or no receipt", () => {
-    const pass = freshScopeCheck(ultraReceipt("rcpt_fresh", "chatcmpl-1", MEMORY_PROBE_APP, { hmem: null }), "drift-agent-probe-0123456789abcdef");
+    const pass = freshScopeCheck(ultraReceipt("rcpt_fresh", "chatcmpl-1", MEMORY_PROBE_APP, { hmem: null }), "drift-agent-probe-0123456789abcdef", undefined, KEYS);
     expect(pass).toEqual({ ok: true, label: "a call under a fresh meterless-scope gets no injected memory (its signed receipt shows hmem null)", detail: "scope drift-agent-probe-0123456789abcdef, receipt rcpt_fresh, hmem null" });
-    expect(freshScopeCheck(ultraReceipt("rcpt_abs", "chatcmpl-2", MEMORY_PROBE_APP), "s").ok).toBe(true);
-    expect(freshScopeCheck(ultraReceipt("rcpt_abs", "chatcmpl-2", MEMORY_PROBE_APP), "s").detail).toBe("scope s, receipt rcpt_abs, hmem absent");
-    const fail = freshScopeCheck(ultraReceipt("rcpt_mem", "chatcmpl-3", MEMORY_PROBE_APP, injected(2)), "s");
+    expect(freshScopeCheck(ultraReceipt("rcpt_abs", "chatcmpl-2", MEMORY_PROBE_APP), "s", undefined, KEYS).ok).toBe(true);
+    expect(freshScopeCheck(ultraReceipt("rcpt_abs", "chatcmpl-2", MEMORY_PROBE_APP), "s", undefined, KEYS).detail).toBe("scope s, receipt rcpt_abs, hmem absent");
+    const fail = freshScopeCheck(ultraReceipt("rcpt_mem", "chatcmpl-3", MEMORY_PROBE_APP, injected(2)), "s", undefined, KEYS);
     expect(fail).toMatchObject({ ok: false, detail: "scope s, receipt rcpt_mem, hmem injected 2" });
     const tampered = ultraReceipt("rcpt_t", "chatcmpl-4", MEMORY_PROBE_APP, { hmem: null });
     tampered.body.receipt.app = "drift-agent-other";
-    expect(freshScopeCheck(tampered, "s")).toMatchObject({ ok: false, detail: "scope s, receipt rcpt_t (signature does not verify), hmem null" });
+    expect(freshScopeCheck(tampered, "s", undefined, KEYS)).toMatchObject({ ok: false, detail: "scope s, receipt rcpt_t (signature does not verify), hmem null" });
     expect(freshScopeCheck(null, "s")).toMatchObject({ ok: false, detail: "scope s, receipt not in the runtime list" });
     expect(freshScopeCheck(null, undefined, "chat m -> 502: provider_error")).toMatchObject({ ok: false, detail: "call failed: chat m -> 502: provider_error" });
   });
 
   it("the shared-scope line reports the injected count only: no ids, no reason, no content", () => {
-    const line = sharedScopeLine(ultraReceipt("rcpt_user", "chatcmpl-5", MEMORY_PROBE_APP, injected(3)));
+    const line = sharedScopeLine(ultraReceipt("rcpt_user", "chatcmpl-5", MEMORY_PROBE_APP, injected(3)), undefined, KEYS);
     expect(line).toBe('INFO  a call under the shared meterless-scope "user" (every call\'s scope before 26 Oct): hmem injected 3 records');
     expect(line).not.toMatch(/mem_|retrieved|0\.55/);
-    expect(sharedScopeLine(ultraReceipt("rcpt_u1", "chatcmpl-6", MEMORY_PROBE_APP, injected(1)))).toMatch(/: hmem injected 1 record$/);
-    expect(sharedScopeLine(signed({ receipt_id: "rcpt_u0", hmem: null }))).toMatch(/: hmem injected 0 records$/);
+    expect(sharedScopeLine(ultraReceipt("rcpt_u1", "chatcmpl-6", MEMORY_PROBE_APP, injected(1)), undefined, KEYS)).toMatch(/: hmem injected 1 record$/);
+    expect(sharedScopeLine(signed({ receipt_id: "rcpt_u0", hmem: null }), undefined, KEYS)).toMatch(/: hmem injected 0 records$/);
     expect(sharedScopeLine(null, "chat m -> 502: lightning_empty_response")).toMatch(/: no receipt to read \(call failed: chat m -> 502: lightning_empty_response\)$/);
   });
 });

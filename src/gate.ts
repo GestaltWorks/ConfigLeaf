@@ -45,9 +45,14 @@
 // fixtures of 23 Oct (test/fixtures/receipt-*.json) included (3 records each). The adapter now sends a fresh
 // meterless-scope per request (src/adapters/nightshift.ts freshScope); the gate result records the scope sent and the
 // injected count the signed receipt states.
+//
+// Signing key (26 Oct 2026). A receipt carries its own public key, and any key signs a receipt whose signature verifies
+// under it, so the gate trusts a receipt only under a pinned key: the finder's keys (ReceiptFinder.keys), else
+// RECEIPT_KEY (src/adapters/nightshift.ts), the key every committed receipt is signed with. A receipt under any other key
+// gives signatureOk false and a reason that names its key.
 
 import { randomBytes } from "node:crypto";
-import { Nightshift, verifyReceipt, type ChatResult, type SignedReceipt } from "./adapters/nightshift.ts";
+import { Nightshift, RECEIPT_KEY, receiptKeyFingerprint, verifyReceipt, type ChatResult, type SignedReceipt } from "./adapters/nightshift.ts";
 import { config } from "./config.ts";
 import type { Tracer } from "./trace.ts";
 
@@ -91,7 +96,12 @@ export const memoryInjectedOf = (r: SignedReceipt): number => hmemOf(r)?.injecte
 
 export interface ReceiptFinder {
   find(receiptId: string): Promise<SignedReceipt | null>;
+  /** The signing keys, as fingerprints (receiptKeyFingerprint), of the receipts it finds; [RECEIPT_KEY] when absent. */
+  readonly keys?: readonly string[];
 }
+
+/** The fingerprint of a receipt's signing key; null when the receipt carries no pubkey_b64 text. */
+const keyOf = (r: SignedReceipt): string | null => (typeof r.pubkey_b64 === "string" ? receiptKeyFingerprint(r.pubkey_b64) : null);
 
 /** The model a receipt says answered: the winning phase's model, else routing.winner, else winning_route.model. */
 export function servedModelOf(r: SignedReceipt): string | null {
@@ -208,7 +218,8 @@ export function newNonce(): string {
 /**
  * Gate one chat result. The served model comes from the receipt when it is found, else from the
  * response (so the trace says what the response claimed); the signature is checked when the receipt
- * is found. ok only when the receipt was found, its signature verifies, the served tier is the
+ * is found, under the finder's keys (ReceiptFinder.keys, [RECEIPT_KEY] when absent). ok only when the
+ * receipt was found, its signing key is one of those keys, its signature verifies, the served tier is the
  * requested tier, the receipt says no memory was injected (hmem null, absent or injected 0) and, when
  * `custody` is given, the receipt is ours (checkCustody): the response body is exactly what a
  * substituting proxy controls, so its own routed_model (or its copy of hmem) never passes the gate on
@@ -224,7 +235,9 @@ export async function gateChatResult(
   custody?: CustodyExpectation,
 ): Promise<GateResult> {
   const receipt = result.receiptId ? await receipts.find(result.receiptId) : null;
-  const signatureOk = receipt ? verifyReceipt(receipt) : null;
+  const trusted = receipts.keys ?? [RECEIPT_KEY];
+  const signatureOk = receipt ? verifyReceipt(receipt, trusted) : null;
+  const key = receipt ? keyOf(receipt) : null;
   const servedModel = (receipt ? servedModelOf(receipt) : null) ?? result.modelRouted ?? null;
   const servedTier = tierOf(servedModel);
   const custodyCheck = custody && receipt && signatureOk === true ? checkCustody(receipt, result, custody) : undefined;
@@ -246,7 +259,9 @@ export async function gateChatResult(
 
   const source = receipt ? `receipt ${result.receiptId}` : result.receiptId ? `receipt ${result.receiptId} not in the runtime list, response says` : "no receipt_id on the response, response says";
   const records = (n: number): string => `${n} record${n === 1 ? "" : "s"}`;
-  const reason = signatureOk === false ? `${source}: signature does not verify; body altered or not signed by the runtime`
+  // Worded with no key-like word before a fingerprint, so the trace's redactor (src/redactor.ts nearKey) keeps the fingerprints whole.
+  const reason = signatureOk === false && (key === null || !trusted.includes(key)) ? `${source}: signed by an untrusted signer, fingerprint ${key ?? "unreadable"}; the gate trusts ${trusted.join(", ")}`
+    : signatureOk === false ? `${source}: signature does not verify; body altered or not signed by the runtime`
     : servedTier !== requestedTier ? `${source} ${servedModel ?? "no model"} (${servedTier}), ${requestedTier} was requested`
     : hmem && signatureOk ? `memory injected (${records(hmem.injected)}): ${source} ${servedModel} (${servedTier}), hmem ids ${hmem.ids.join(", ") || "none listed"}${hmem.topScore !== null ? `, top_score ${hmem.topScore}` : ""}${scope ? `, scope ${scope}` : ""}; the answer was conditioned on earlier stored answers, not judged`
     : custodyCheck && !custodyCheck.ok ? custodyCheck.reason

@@ -372,7 +372,7 @@ describe.skipIf(!url)("Store, live drift-pg (throwaway schema)", () => {
     expect(second.stdout).toContain("policy:load: policy_rule 0 row(s) written, 17 already stored");
     const dry = spawnSync(process.execPath, ["--import", "tsx", "scripts/policy-load.ts", "--tenant", A, "--dry-run"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
     expect(dry.status).toBe(0);
-    expect(dry.stdout).toContain("policy:load: dry run, nothing written (16 row(s) for policy_rule)");
+    expect(dry.stdout).toContain("policy:load: dry run, nothing written (17 row(s) for policy_rule)");
     const usage = spawnSync(process.execPath, ["--import", "tsx", "scripts/policy-load.ts"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
     expect(usage.status).toBe(2);
     expect(usage.stderr).toMatch(/--tenant is required/);
@@ -381,9 +381,9 @@ describe.skipIf(!url)("Store, live drift-pg (throwaway schema)", () => {
   it("the eight new tables: each insert writes once, a re-insert writes 0, collected text is redacted, a non-canonical since is refused", async () => {
     const { rows: rules } = loadPolicyFile(path.join(ROOT, "policy", "hackathon.json"), { tenant: A, redactor: new Redactor(config.redactSalt || "test-salt", config.redactWords) });
     const before = await count("policy_rule");
-    expect(await store.insertPolicyRules(rules)).toBe(16 - before);
+    expect(await store.insertPolicyRules(rules)).toBe(17 - before);
     expect(await store.insertPolicyRules(rules)).toBe(0);
-    expect(await count("policy_rule")).toBe(16);
+    expect(await count("policy_rule")).toBe(17);
     await expect(store.insertPolicyRules([{ ...rules[0], rule_id: "rule-0000000000000000", since: "2026-10-25T00:00:00Z" }])).rejects.toThrow(/policy_rule\.since: timestamps must be/);
 
     const run = "run-nginx-7f1c-1023";
@@ -464,7 +464,7 @@ describe.skipIf(!url)("Store, live drift-pg (throwaway schema)", () => {
     const own = { ...shared[0], tenant_id: A, rule_id: ruleId(A, shared[0].surface, shared[0].object_glob, shared[0].setting_glob, 1) };
     const other = { ...shared[0], tenant_id: "client-b", rule_id: ruleId("client-b", shared[0].surface, shared[0].object_glob, shared[0].setting_glob, 1) };
     expect(await store.insertPolicyRules([own, other])).toBe(2);
-    expect((await store.policyRules(A)).map((r) => r.tenant_id).sort()).toEqual([...Array(16).fill("*"), A]);
+    expect((await store.policyRules(A)).map((r) => r.tenant_id).sort()).toEqual([...Array(17).fill("*"), A]);
     expect((await store.policyRules("client-b")).filter((r) => r.tenant_id !== "*").map((r) => r.rule_id)).toEqual([other.rule_id]);
   });
 });

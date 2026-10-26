@@ -26,8 +26,11 @@ import { parseArgs } from "node:util";
 import { config, redact } from "../src/config.ts";
 import { DEFAULT_PORT, startConsole } from "../src/console/server.ts";
 import { liveBackend, liveRefusal, sampleBackend, zetarisGaps, type Backend } from "../src/console/state.ts";
-import { TENANT } from "../src/policy/schema.ts";
+import { TENANT_ID, TENANT_ID_SHAPE } from "../src/policy/schema.ts";
 import { FileTracer, traceIdOf } from "../src/loop/trace.ts";
+import { exitOnConfigError } from "../src/cli.ts";
+
+exitOnConfigError();
 
 const USAGE = "usage: npm run console -- [--tenant <id>] [--port <n>] [--bundle <file>] [--write] [--help]";
 
@@ -51,7 +54,7 @@ const portText = args.port ?? process.env.CONSOLE_PORT ?? String(DEFAULT_PORT);
 const port = Number(portText);
 if (!/^\d{1,5}$/.test(portText) || port < 1 || port > 65535) usage(`the port is 1 to 65535, got ${portText}`);
 const tenantGiven = args.tenant ?? process.env.CONSOLE_TENANT;
-if (tenantGiven !== undefined && (!TENANT.test(tenantGiven) || tenantGiven === "*")) usage(`a tenant id is [A-Za-z0-9._-], up to 64, got ${tenantGiven}`);
+if (tenantGiven !== undefined && !TENANT_ID.test(tenantGiven)) usage(`the tenant must be ${TENANT_ID_SHAPE}, got ${tenantGiven}`);
 if (!config.sampleMode && args.bundle) usage("--bundle is for sample mode (SAMPLE_MODE=true); live mode reads the app Postgres through Zetaris");
 if (!config.sampleMode && args.write) usage("--write is for sample mode; live mode records exceptions into DRIFT_MEMORY_DIR");
 

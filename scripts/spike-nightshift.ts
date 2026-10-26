@@ -8,7 +8,7 @@
 // the one every call shared before, is reported by its injected count only (an INFO line, no ids, no content).
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { Nightshift, verifyReceipt, type ChatResult, type SignedReceipt } from "../src/adapters/nightshift.ts";
+import { Nightshift, RECEIPT_KEY, verifyReceipt, type ChatResult, type SignedReceipt } from "../src/adapters/nightshift.ts";
 import { config } from "../src/config.ts";
 import { hmemOf } from "../src/gate.ts";
 import { Tracer } from "../src/trace.ts";
@@ -23,21 +23,21 @@ const hmemText = (r: SignedReceipt): string => {
   return raw === null ? "hmem null" : raw === undefined ? "hmem absent" : `hmem injected ${hmemOf(r)?.injected ?? 0}`;
 };
 
-/** The PASS/FAIL line of the fresh-scope call: its receipt found, signed, and showing no injected memory (hmem null or absent). */
-export function freshScopeCheck(receipt: SignedReceipt | null, scope: string | undefined, error?: string): { ok: boolean; label: string; detail: string } {
+/** The PASS/FAIL line of the fresh-scope call: its receipt found, signed under one of `keys`, and showing no injected memory (hmem null or absent). */
+export function freshScopeCheck(receipt: SignedReceipt | null, scope: string | undefined, error?: string, keys: readonly string[] = [RECEIPT_KEY]): { ok: boolean; label: string; detail: string } {
   const label = "a call under a fresh meterless-scope gets no injected memory (its signed receipt shows hmem null)";
   if (!receipt) return { ok: false, label, detail: error ? `call failed: ${error}` : `scope ${scope ?? "-"}, receipt not in the runtime list` };
-  const signedOk = verifyReceipt(receipt);
+  const signedOk = verifyReceipt(receipt, keys);
   const ok = signedOk && hmemOf(receipt) === null;
   return { ok, label, detail: `scope ${scope ?? "-"}, receipt ${receipt.body.receipt?.receipt_id}${signedOk ? "" : " (signature does not verify)"}, ${hmemText(receipt)}` };
 }
 
-/** The INFO line of the call under the shared scope "user": what Nightshift injected, counts only. */
-export function sharedScopeLine(receipt: SignedReceipt | null, error?: string): string {
+/** The INFO line of the call under the shared scope "user": what Nightshift injected, counts only; the signature checked under `keys`. */
+export function sharedScopeLine(receipt: SignedReceipt | null, error?: string, keys: readonly string[] = [RECEIPT_KEY]): string {
   const head = `INFO  a call under the shared meterless-scope "${SHARED_SCOPE}" (every call's scope before 26 Oct)`;
   if (!receipt) return `${head}: no receipt to read (${error ? `call failed: ${error}` : "receipt not in the runtime list"})`;
   const n = hmemOf(receipt)?.injected ?? 0;
-  return `${head}: hmem injected ${n} record${n === 1 ? "" : "s"}${verifyReceipt(receipt) ? "" : " (signature does not verify)"}`;
+  return `${head}: hmem injected ${n} record${n === 1 ? "" : "s"}${verifyReceipt(receipt, keys) ? "" : " (signature does not verify)"}`;
 }
 
 async function main(): Promise<void> {
@@ -90,7 +90,7 @@ async function main(): Promise<void> {
   const shared = await memoryCall(SHARED_SCOPE);
 
   const receipts = await ns.receipts();
-  const verified = receipts.filter(verifyReceipt).length;
+  const verified = receipts.filter((r) => verifyReceipt(r)).length;
   check(receipts.length > 0 && verified === receipts.length, "every receipt signature verifies offline", `${verified}/${receipts.length}`);
   const wanted = [fast?.receiptId, judge?.receiptId].filter(Boolean);
   const ours = receipts.filter((r) => wanted.includes(r.body.receipt.receipt_id));
