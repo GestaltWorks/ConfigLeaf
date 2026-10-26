@@ -62,6 +62,7 @@ describe("dreaming over the committed lessons", () => {
     const r = cli("dream", COMMITTED, "--at", "2026-10-26T12:00:00Z");
     expect(r.err).toBe("");
     expect(r.status).toBe(0);
+    expect(r.out.split("\n")[0]).toBe("dream: store examples/memory");      // the store as the repository names it, never an absolute path
     expect(r.out).toContain("2 proposal(s) over 23 lesson(s) in force; nothing is written by proposing");
     expect(r.out).toMatch(/drm-[0-9a-f]{12} {2}insight {2}derives from 23 lesson\(s\): mem-1 mem-2 mem-3 mem-4 mem-5 mem-6 … \+17 more/);
     expect(r.out).toMatch(/drm-[0-9a-f]{12} {2}invariant {2}derives from 23 lesson\(s\)/);

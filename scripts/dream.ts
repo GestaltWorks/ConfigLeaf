@@ -8,6 +8,7 @@
 //
 // The store is the directory DRIFT_MEMORY_DIR names (--memory-dir for one command; examples/memory in sample mode when
 // blank), opened read only. --at sets the instant that decides which lessons are in force.
+import path from "node:path";
 import { parseArgs } from "node:util";
 import { dreamOver, inForce, renderDream } from "../src/engine/dreaming.ts";
 import { TechnicianMemory } from "../src/engine/memory.ts";
@@ -23,5 +24,7 @@ if (Number.isNaN(at) || (args.at !== undefined && !/Z$/.test(args.at))) {
 }
 
 const memory = new TechnicianMemory({ storage: "read", directory: args["memory-dir"], clock: () => at });
-console.log(`dream: store ${memory.directory}`);
+// The store as the screen names it: under the working directory, relative to it; else its last segment.
+const rel = path.relative(process.cwd(), memory.directory!);
+console.log(`dream: store ${rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? rel.replace(/\\/g, "/") : path.basename(memory.directory!)}`);
 for (const line of renderDream(dreamOver(memory), inForce(memory).length)) console.log(line);

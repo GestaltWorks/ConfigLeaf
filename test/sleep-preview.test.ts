@@ -29,6 +29,7 @@ describe("npm run sleep -- --preview", () => {
     const r = sleep("--preview", "--at", "2026-10-26T12:00:00Z");
     expect(r.err).toBe("");
     expect(r.status).toBe(0);
+    expect(r.out.split("\n")[0]).toBe("sleep: store examples/memory");      // the store as the repository names it, never an absolute path
     expect(r.out).toContain("sleep preview at 2026-10-26T12:00:00.000Z: 23 record(s), 23 lesson(s); nothing is changed");
     expect(r.out).toContain("consolidate 0");
     expect(r.out).toContain("archive     0");
