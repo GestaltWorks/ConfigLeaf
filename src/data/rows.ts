@@ -272,6 +272,24 @@ export interface FindingCause {
   decided_at: string;
 }
 
+/**
+ * A change window on one object (the console's Unlock): open while opened_at <= the instant < until and closed_at is
+ * null. setting_path "*" covers every setting of the object. src/policy/decide.ts holds a drift under it.
+ */
+export interface ChangeWindow {
+  window_id: string;
+  tenant_id: string;
+  surface: string;
+  host: string | null;
+  object_id: string;
+  setting_path: string;
+  opened_by: string;
+  opened_at: string;
+  until: string;
+  reason: string;
+  closed_at: string | null;
+}
+
 export interface Rows {
   collection_run: CollectionRun;
   observation: Observation;
@@ -290,6 +308,7 @@ export interface Rows {
   ticket: Ticket;
   referent_fingerprint: ReferentFingerprint;
   finding_cause: FindingCause;
+  change_window: ChangeWindow;
 }
 
 export type TableName = keyof Rows;
@@ -312,6 +331,7 @@ export const COLUMNS = {
   ticket: ["ticket_id", "tenant_id", "psa", "external_id", "url", "type", "priority", "status", "action_id", "finding_id", "created_at", "updated_at"],
   referent_fingerprint: ["obs_id", "dns_run_id", "fingerprint", "resolved_at"],
   finding_cause: ["cause_id", "tenant_id", "finding_id", "disposition_id", "class", "actor", "mechanism", "occurred_at", "source_host", "evidence_ids", "diff", "summary", "window_from", "window_to", "decided_at"],
+  change_window: ["window_id", "tenant_id", "surface", "host", "object_id", "setting_path", "opened_by", "opened_at", "until", "reason", "closed_at"],
 } as const satisfies { [K in TableName]: readonly (keyof Rows[K])[] };
 
 /** Compile-time: an interface column missing from COLUMNS makes this `never` and the line below a type error. */
@@ -342,10 +362,11 @@ export const KEYS = {
   ticket: ["ticket_id"],
   referent_fingerprint: ["obs_id", "dns_run_id"],
   finding_cause: ["cause_id"],
+  change_window: ["window_id"],
 } as const satisfies { [K in TableName]: readonly (keyof Rows[K])[] };
 
-/** A timestamp column: every *_at, and policy_rule.since. Both loaders hold these to the canonical millisecond form. */
-export const isTimestampColumn = (column: string): boolean => column.endsWith("_at") || column === "since";
+/** A timestamp column: every *_at, policy_rule.since and change_window.until. Both loaders hold these to the canonical millisecond form. */
+export const isTimestampColumn = (column: string): boolean => column.endsWith("_at") || column === "since" || column === "until";
 
 /**
  * The columns that carry collected text, and how the Redactor reads each: "value" is one setting value
@@ -372,6 +393,7 @@ export const REDACT = {
   ticket: { url: "text" },
   referent_fingerprint: {},
   finding_cause: { actor: "text", mechanism: "text", source_host: "text", diff: "text", summary: "text" },
+  change_window: { host: "text", object_id: "text", opened_by: "text", reason: "text" },
 } as const satisfies { [K in TableName]: Partial<Record<keyof Rows[K], "text" | "value">> };
 
 export const AUTHORITY = { live: 100, backup: 40, approved: 20 } as const;
@@ -421,3 +443,7 @@ export const causeId = (tenantId: string, dispositionIdValue: string): string =>
 export const dispositionId = (
   tenantId: string, surface: string, host: string | null, objectId: string, settingPath: string, valueHash: string, findingId: string, runId: string, decidedAt: string,
 ): string => stableId("disp", tenantId, surface, host, objectId, settingPath, valueHash, findingId, runId, decidedAt);
+
+/** One change window on one object (and setting, "*" for all of them), opened at one instant. */
+export const windowId = (tenantId: string, surface: string, host: string | null, objectId: string, settingPath: string, openedAt: string): string =>
+  stableId("win", tenantId, surface, host, objectId, settingPath, openedAt);

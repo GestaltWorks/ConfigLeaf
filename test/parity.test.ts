@@ -58,6 +58,7 @@ const ORDER: Record<string, string> = {
   ticket: "ticket_id",
   referent_fingerprint: "obs_id, dns_run_id",
   finding_cause: "cause_id",
+  change_window: "window_id",
 };
 /** The action table's columns in DDL order, the head of every derived action table below. */
 const ACTION_COLUMNS = COLUMNS.action.join(", ");

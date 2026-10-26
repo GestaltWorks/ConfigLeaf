@@ -516,14 +516,16 @@ export function approvedMissing(dl: DataLayer, params: ApprovedMissingParams, op
  * host with NULL as a value, object_id, setting_path, value_hash) whose disposition rows hold a HOLD before that
  * instant, the one with no HOLD of the same key at a later decided_at before it (at an equal decided_at the greater
  * disposition_id). A HOLD the Decider keeps carries this row's expires_at forward, so every HOLD of a key shares the
- * expiry of the first. In surface, object_id, setting_path, value_hash, then disposition_id order.
+ * expiry of the first. In surface, object_id, setting_path, value_hash, then disposition_id order. A HOLD a change
+ * window gave (its reason starts "change window ", src/policy/decide.ts WINDOW_REASON) is no rule's HOLD and is left
+ * out, so a window neither starts nor ends a rule's expiry.
  */
 export const PRIOR_HOLDS_SQL = `SELECT d.disposition_id, d.surface, d.host, d.object_id, d.setting_path, d.value_hash, d.rule_id, d.expires_at, d.decided_at, d.finding_id
 FROM {{t:disposition}} d
-WHERE d.tenant_id = {{p:tenant_id}} AND d.verb = 'HOLD' AND d.decided_at < {{p:decided_at}}
+WHERE d.tenant_id = {{p:tenant_id}} AND d.verb = 'HOLD' AND d.decided_at < {{p:decided_at}} AND d.reason NOT LIKE 'change window %'
   AND NOT EXISTS (SELECT 1 FROM {{t:disposition}} n WHERE n.tenant_id = d.tenant_id AND n.surface = d.surface AND n.object_id = d.object_id
     AND n.setting_path = d.setting_path AND n.value_hash = d.value_hash AND COALESCE(n.host, '') = COALESCE(d.host, '') AND n.verb = 'HOLD'
-    AND n.decided_at < {{p:decided_at}}
+    AND n.decided_at < {{p:decided_at}} AND n.reason NOT LIKE 'change window %'
     AND (n.decided_at > d.decided_at OR (n.decided_at = d.decided_at AND n.disposition_id > d.disposition_id)))
 ORDER BY d.surface, d.object_id, d.setting_path, d.value_hash, d.disposition_id`;
 
@@ -617,3 +619,16 @@ export const DOC_PROBE_FAILURES_SQL = `SELECT kind, target, probe_id
 FROM {{t:probe}}
 WHERE tenant_id = {{p:tenant_id}} AND run_id = {{p:run_id}} AND status = 'fail'
 ORDER BY kind, target, probe_id`;
+
+/**
+ * Every change window of the tenant (sql/schema.sql change_window), open or closed, oldest first: the Decider picks the
+ * open one on a finding's object (src/policy/decide.ts openWindow), the console lists them per object.
+ */
+export const CHANGE_WINDOWS_SQL = `SELECT window_id, tenant_id, surface, host, object_id, setting_path, opened_by, opened_at, until, reason, closed_at
+FROM {{t:change_window}}
+WHERE tenant_id = {{p:tenant_id}}
+ORDER BY opened_at, window_id`;
+
+export function changeWindows(dl: DataLayer, tenantId: string, opts?: RunOptions): Promise<QueryResult> {
+  return dl.run(CHANGE_WINDOWS_SQL, { tenant_id: tenantId }, opts);
+}

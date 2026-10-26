@@ -224,3 +224,19 @@ CREATE TABLE IF NOT EXISTS finding_cause (
   window_to      TEXT NOT NULL,      -- the pass's decided_at
   decided_at     TEXT NOT NULL       -- the pass's decided_at
 );
+-- A change window a technician declared on one object (the console's Unlock, src/console/): while it is open,
+-- opened_at <= the pass's instant < until and closed_at NULL, a drift on the object that a rule would roll back, fix or
+-- hold is held until the window ends (src/policy/decide.ts). Approve and Lock close it early; nothing deletes a row.
+CREATE TABLE IF NOT EXISTS change_window (
+  window_id      TEXT PRIMARY KEY,   -- stableId("win", tenant_id, surface, host, object_id, setting_path, opened_at)
+  tenant_id      TEXT NOT NULL,
+  surface        TEXT NOT NULL,      -- linux.nginx | cloudflare.dns
+  host           TEXT,               -- null for cloudflare.dns
+  object_id      TEXT NOT NULL,      -- the redacted object id the observation rows carry
+  setting_path   TEXT NOT NULL,      -- * for every setting of the object, or one setting path
+  opened_by      TEXT NOT NULL,      -- who declared it, free text through the redactor
+  opened_at      TEXT NOT NULL,
+  until          TEXT NOT NULL,      -- ISO 8601 UTC, the millisecond form: where the window ends
+  reason         TEXT NOT NULL,      -- why, free text through the redactor
+  closed_at      TEXT                -- set when Approve or Lock closes it before until; null otherwise
+);

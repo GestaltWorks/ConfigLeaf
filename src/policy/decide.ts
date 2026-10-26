@@ -28,7 +28,15 @@
 //      ESCALATE, "hold under rule <id> expired <expires_at>; the finding stands". A kept HOLD carries the
 //      expiry forward, so every HOLD of a live value shares the first one's expiry, and once it passes every
 //      later pass on that value is ESCALATE.
-//   3. Default, when no rule governs the setting: the verb the checks alone give (ADOPT when every check
+//   3. Change window, the last step before the default: a technician's declared window on the finding's object
+//      (sql/schema.sql change_window, opened from the console's Unlock), open at decided_at (opened_at <= decided_at
+//      < until, closed_at null), on a drift class (drift_vs_approved, changed_since_backup, approved_missing). A
+//      verb the rule gave of ROLLBACK, FIX or HOLD becomes HOLD until the window's until, "change window <id> opened
+//      by <who> until <until>: <why>", decided_by "policy", rule_id the rule's: the agent leaves a change the
+//      technician declared alone until the window ends. ESCALATE and ADOPT stand, and the probes still run.
+//      Outside a window, on another object or on any other class, nothing changes. A window never loosens an
+//      exception's or a lapse's verdict (step 1 decides first), and a cause (src/explain/) never reaches here.
+//   4. Default, when no rule governs the setting: the verb the checks alone give (ADOPT when every check
 //      holds and none was rejected, else ESCALATE) and the checks' own sentence. decided_by "default".
 //   Production is affected when a probe of the pass with status fail targets a name the object serves
 //   (an nginx object's redacted server_name values in the run, a record's redacted name); answering when
@@ -48,7 +56,7 @@
 // ESCALATE, "no probe run in this pass".
 
 import type { FindingClass } from "../catalogue/templates.ts";
-import type { DecidedBy, DispositionVerb, PolicyRule } from "../data/rows.ts";
+import type { ChangeWindow, DecidedBy, DispositionVerb, PolicyRule } from "../data/rows.ts";
 
 /** The verb the checks alone give, as the pass computed it before any policy. */
 export type ChecksVerb = "ADOPT" | "ESCALATE";
@@ -99,6 +107,41 @@ export interface DecideInput {
   decidedAt: string;
   /** The setting's prior HOLD on the same live value; null or absent when the ledger holds none. */
   priorHold?: PriorHold | null;
+  /** The change window on the finding's object (openWindow); null or absent when none is declared. */
+  window?: WindowView | null;
+}
+
+/** A change window as the Decider reads it (sql/schema.sql change_window). */
+export type WindowView = Pick<ChangeWindow, "window_id" | "opened_by" | "opened_at" | "until" | "reason" | "closed_at">;
+
+/** The classes a change window holds: a setting's own value moved from its approval, its backup or its object. */
+export const WINDOW_CLASSES: readonly FindingClass[] = ["drift_vs_approved", "changed_since_backup", "approved_missing"];
+/** The verbs a window turns into its HOLD: the ones that would write to the host or the zone, and a rule's own HOLD. */
+const WINDOW_HELD: readonly DispositionVerb[] = ["ROLLBACK", "FIX", "HOLD"];
+/** How every window HOLD's reason starts: PRIOR_HOLDS_SQL leaves these out, so a window never carries a rule's expiry. */
+export const WINDOW_REASON = "change window ";
+
+/** Open at `at`: opened_at <= at < until, and not closed. */
+export function windowOpen(w: WindowView, at: string): boolean {
+  const t = Date.parse(at);
+  return w.closed_at === null && Date.parse(w.opened_at) <= t && t < Date.parse(w.until);
+}
+
+/** The window that covers a setting at `at`: same tenant, surface, host and object, setting "*" or its own; the latest opened when several are. */
+export function openWindow<W extends ChangeWindow>(windows: readonly W[], s: { tenant_id: string; surface: string; host: string | null; object_id: string; setting_path: string }, at: string): W | null {
+  const mine = windows.filter((w) => w.tenant_id === s.tenant_id && w.surface === s.surface && (w.host ?? "") === (s.host ?? "") && w.object_id === s.object_id
+    && (w.setting_path === "*" || w.setting_path === s.setting_path) && windowOpen(w, at));
+  return mine.sort((a, b) => (a.opened_at < b.opened_at ? -1 : a.opened_at > b.opened_at ? 1 : a.window_id < b.window_id ? -1 : 1)).at(-1) ?? null;
+}
+
+/** The sentence of a window's HOLD. */
+export const windowReason = (w: WindowView): string => `${WINDOW_REASON}${w.window_id} opened by ${w.opened_by} until ${w.until}: ${w.reason}`;
+
+/** Step 3: the rule's verb inside an open window on a drift class. */
+function inWindow(input: DecideInput, d: Decision): Decision {
+  const w = input.window;
+  if (!w || !WINDOW_CLASSES.includes(input.finding.class) || !windowOpen(w, input.decidedAt) || !WINDOW_HELD.includes(d.verb)) return d;
+  return { verb: "HOLD", reason: windowReason(w), expires_at: new Date(w.until).toISOString(), decided_by: "policy", rule_id: d.rule_id };
 }
 
 export interface Decision {
@@ -196,7 +239,7 @@ export function decide(input: DecideInput): Decision {
     };
   }
   if (!rule) return { verb: checks.verb, reason: checks.why, expires_at: null, decided_by: "default", rule_id: null };
-  return againstPriorHold(input, rule, byRule(input, rule));
+  return inWindow(input, againstPriorHold(input, rule, byRule(input, rule)));
 }
 
 /**

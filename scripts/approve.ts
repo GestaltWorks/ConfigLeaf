@@ -15,7 +15,8 @@
 // Every row is printed (redacted) with its state against the approvals already stored: new, replaces, current
 // or superseded. --dry-run prints and writes nothing; otherwise the new, replaces and superseded rows go through
 // Store.insertApproved (DATABASE_URL; --schema for another search_path) and the current ones are skipped, so a
-// re-run over an unchanged estate writes 0 rows and a re-approval of an earlier value is written as the latest.
+// re-run over an unchanged estate writes 0 rows and a re-approval of an earlier value is written as the latest. The
+// sign-off and its lines are src/vault/approve.ts approveRun, which the console's Approve (src/console/) runs as well.
 // Exit 0 on success, 1 when the Store refuses or the selection matches nothing, 2 on a usage error or, for a
 // write, a blank REDACT_SALT (a real path or zone would get a pseudonym no observation carries).
 
@@ -26,7 +27,7 @@ import { config, redact } from "../src/config.ts";
 import type { CollectionRun } from "../src/data/rows.ts";
 import { Store } from "../src/data/store.ts";
 import { Redactor } from "../src/redactor.ts";
-import { DNS_FIELDS, DNS_SURFACE, NGINX_SURFACE, approvalStatus, approvalsFor, approvalsToWrite, resolveObject, resolveZone, type ApprovalSelection } from "../src/vault/approve.ts";
+import { ApproveError, DNS_FIELDS, DNS_SURFACE, NGINX_SURFACE, approveRun, resolveObject, resolveZone, runLine, type ApprovalSelection } from "../src/vault/approve.ts";
 
 const USAGE = "usage: npm run approve -- --tenant <id> (--host <alias> [--object <real path | redacted object id>] | --zone <zone> | --record <id> | --all) [--by <name>] [--note <text>] [--schema <name>] [--dry-run] [--help]";
 const TENANT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
@@ -75,8 +76,6 @@ function fail(msg: string): never {
   process.exit(1);
 }
 
-const runLine = (r: CollectionRun): string => `${r.surface} run ${r.run_id}${r.host ? ` on ${r.host}` : ""}, started ${r.started_at}, ${r.observed_count}/${r.expected_count} ${r.status}`;
-
 let store: Store | undefined;
 try {
   store = Store.fromEnv({ schema: args.schema });
@@ -120,22 +119,13 @@ try {
   await store?.close();
 }
 
+/** The sign-off itself (src/vault/approve.ts approveRun, which the console's Approve runs too), its lines printed. */
 async function finish(run: CollectionRun, observations: Awaited<ReturnType<Store["observationsOf"]>>, selection: ApprovalSelection): Promise<void> {
-  const rows = approvalsFor(observations, selection, by, note, new Date());
-  if (!rows.length) fail(`the selection matches no setting in ${runLine(run)}`);
-  const stored = await store!.rowsOf("approved_setting", { tenant_id: tenant });
-  const states = approvalStatus(rows, stored);
-  console.log(`approve: ${runLine(run)}: ${rows.length} setting(s) selected (${selection.kind}), approved_by ${by}${note ? `, note "${note}"` : ""}`);
-  rows.forEach((r, i) => console.log(`  ${states[i].padEnd(10)} ${r.approval_id}  ${r.surface.padEnd(14)} ${(r.host ?? "-").padEnd(11)} ${r.object_id}  ${r.setting_path}  ${r.value_hash.slice(0, 19)}`));
-  const tally = (["new", "replaces", "current", "superseded"] as const).map((s) => `${s} ${states.filter((x) => x === s).length}`).join(", ");
-  console.log(`approve: ${tally}`);
-  if (states.includes("superseded")) console.log("approve: a superseded row re-approves an earlier value; it is written as a new approval and becomes the latest");
-  const toWrite = approvalsToWrite(rows, states);
-  const current = rows.length - toWrite.length;
-  if (dryRun) {
-    console.log(`approve: dry run, nothing written (${toWrite.length} row(s) for approved_setting, ${current} current)`);
-    return;
+  try {
+    const r = await approveRun(store!, { tenant, run, observations, selection, by, note, now: new Date(), dryRun });
+    for (const l of r.lines) console.log(l);
+  } catch (e) {
+    if (e instanceof ApproveError) fail(e.message);
+    throw e;
   }
-  const n = toWrite.length ? await store!.insertApproved(toWrite) : 0;
-  console.log(`approve: approved_setting ${n} row(s) written, ${current} current and skipped`);
 }

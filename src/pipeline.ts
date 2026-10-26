@@ -57,6 +57,10 @@
 //            is weighed as drift_vs_approved is, against the live value "". A HOLD the rule gives meets the
 //            latest HOLD the ledger holds on the same live value (PRIOR_HOLDS_SQL, read once per tenant
 //            with rules, decided before this pass): in force, the HOLD keeps that expiry; expired, ESCALATE.
+//            Then the change window: on the first drift a rule weighs, the tenant's change_window rows
+//            (CHANGE_WINDOWS_SQL, read once per tenant); a window open at decided_at on the finding's object
+//            turns the rule's ROLLBACK, FIX or HOLD of a drift_vs_approved, changed_since_backup or
+//            approved_missing finding into a HOLD until the window ends, and the decide line names the window.
 //            Without a governing rule the verbs and the decide line are the default's. Between checks the
 //            stop rule (src/stoprule.ts) may end checking early; for a finding on a DNS record
 //            the step dates its exposure (src/engine/world.ts). When the pass is given a
@@ -85,16 +89,16 @@ import { CATALOGUE, runCheck, type CheckResult, type FindingClass } from "./cata
 import { fingerprintRows } from "./data/fingerprint.ts";
 import { DataLayerError, type DataLayer } from "./data/layer.ts";
 import {
-  approvedCopies, approvedMissing, auditSpan, changedSinceBackup, driftVsApproved, hero, latestApprovals, listRuns, objects, observationsOf, orphanRecords, orphanVhosts,
+  approvedCopies, approvedMissing, auditSpan, changeWindows, changedSinceBackup, driftVsApproved, hero, latestApprovals, listRuns, objects, observationsOf, orphanRecords, orphanVhosts,
   policyRules, priorHolds, probesOfRun, proxiedWithoutRealIp, proxySplit, resolutions, runComplete, wildcardWithoutRealIp,
 } from "./data/queries.ts";
-import { dispositionId, type DecidedBy, type Disposition, type DispositionVerb, type PolicyRule } from "./data/rows.ts";
+import { dispositionId, type ChangeWindow, type DecidedBy, type Disposition, type DispositionVerb, type PolicyRule } from "./data/rows.ts";
 import type { ExceptionLesson, TechnicianMemory } from "./engine/memory.ts";
 import { DriftWorld, recordExposure, type ExposureLine, type ExposureMeasure, type Observation } from "./engine/world.ts";
 import type { Ledger } from "./ledger.ts";
 // The Decider and the rule that governs a setting (src/policy/).
 import {
-  APPROVAL_CLASSES, NO_PROBE_RUN, decide, production, productionText, validCopy, type ApprovedValue, type CopyCandidate, type ExceptionState, type PriorHold, type ProbeView,
+  APPROVAL_CLASSES, NO_PROBE_RUN, WINDOW_CLASSES, decide, openWindow, production, productionText, validCopy, type ApprovedValue, type CopyCandidate, type ExceptionState, type PriorHold, type ProbeView,
 } from "./policy/decide.ts";
 import { resolvePolicy } from "./policy/resolve.ts";
 import { PolicyRuleRow, issues } from "./policy/schema.ts";
@@ -314,6 +318,26 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
   const holdKey = (x: { surface: string; host: string | null; object_id: string; setting_path: string; value_hash: string }): string =>
     [x.surface, x.host ?? "", x.object_id, x.setting_path, x.value_hash].join("\u001f");
 
+  // The tenant's change windows (CHANGE_WINDOWS_SQL), read once per tenant on the first drift a rule weighs: a window
+  // holds drift_vs_approved, changed_since_backup and approved_missing only. A read that fails (a store whose schema
+  // predates change_window) is traced not_checked and the pass decides as it did before windows existed.
+  const windowsByTenant = new Map<string, ChangeWindow[]>();
+  const windowsFor = async (tenant: string): Promise<ChangeWindow[]> => {
+    const known = windowsByTenant.get(tenant);
+    if (known) return known;
+    let rows: ChangeWindow[] = [];
+    try {
+      rows = objects(await changeWindows(layer, tenant, { tracer, agent: "decider", limit: 100_000 })).map((w) => ({
+        window_id: w.window_id, tenant_id: w.tenant_id, surface: w.surface, host: nul(w.host), object_id: w.object_id, setting_path: w.setting_path,
+        opened_by: w.opened_by, opened_at: w.opened_at, until: w.until, reason: w.reason, closed_at: nul(w.closed_at),
+      }));
+    } catch (err) {
+      tracer?.emit({ agent: "decider", action: "check", status: "not_checked", input_summary: `change_window ${tenant}`, output_summary: `change windows of ${tenant} not read; no window holds a finding this pass`, detail: (err as Error).message });
+    }
+    windowsByTenant.set(tenant, rows);
+    return rows;
+  };
+
   /** check, decide, judge for one finding, whatever produced it; appends to findings. `approved` is the setting's latest approval, which a drift_vs_approved and an approved_missing row carry. */
   const assess = async (finding: FindingSummary, view: WorldView | undefined, approved: ApprovedValue | null = null): Promise<void> => {
     const cls = finding.class;
@@ -406,7 +430,8 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     const probes = weigh ? await probesFor(finding) : NO_PROBES;
     const serves = weigh ? servedNames(finding) : [];
     const priorHold = weigh ? (holdsByTenant.get(finding.tenant_id)?.get(holdKey(finding)) ?? null) : null;
-    const decision = decide({ finding: { class: cls }, rule, exception: exceptionState, checks: { verb: policyVerb, why: policyWhy }, approved, copies, probes, serves, decidedAt, priorHold });
+    const window = weigh && WINDOW_CLASSES.includes(cls) ? openWindow(await windowsFor(finding.tenant_id), finding, decidedAt) : null;
+    const decision = decide({ finding: { class: cls }, rule, exception: exceptionState, checks: { verb: policyVerb, why: policyWhy }, approved, copies, probes, serves, decidedAt, priorHold, window });
     const verb: Verb = decision.verb;
     const why = decision.reason;
     if (applied && recalled) recalled.applied += 1;
@@ -433,6 +458,7 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
         + `the checks alone say ${policyVerb}; ${productionText(prod!)}`
         + (approved ? `; approved ${h12(approved.value_hash)}, ${copies.length} copy row(s), ${copy ? `valid copy ${copy.copy_id} at ${copy.git_commit.slice(0, 8)}` : "no valid copy"}` : "")
         + (priorHold ? `; prior HOLD since ${priorHold.decided_at} until ${priorHold.expires_at}` : "")
+        + (window ? `; change window ${window.window_id} open from ${window.opened_at} until ${window.until}` : "")
       : DEFAULT_POLICY_DETAIL;
     tracer?.emit({
       agent: "decider", action: "decide", status: "ok", input_summary: `${cls} ${setting}`, output_summary: `${verb}: ${why}`,

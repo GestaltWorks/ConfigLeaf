@@ -24,8 +24,8 @@
 //     copy_validation, probe, disposition, action, ticket, referent_fingerprint) and of finding_cause
 //     (the explain step, src/explain/), each ON CONFLICT DO NOTHING on its key. Reads: latestPassingRun
 //     (the gate's definition of passing), observationsOf, dnsRecordsOf, policyRules (the tenant's and
-//     every "*" rule), and rowsOf for any table by column equality; every read is one READ ONLY transaction and returns rows in natural-key order. One
-//     update: updateTicket, a ticket row's external_id, url, status and action_id by ticket_id with
+//     every "*" rule), and rowsOf for any table by column equality; every read is one READ ONLY transaction and returns rows in natural-key order. Two
+//     updates: closeChangeWindow, a change window's closed_at while it is null (the console's Approve and Lock), and updateTicket, a ticket row's external_id, url, status and action_id by ticket_id with
 //     updated_at, the url redacted (the PSA step, src/psa/step.ts); ticketsOf reads one tenant's tickets; actionsOf the
 //     actions that carry out a list of dispositions (src/actions/). An action row's target, reason and record go
 //     through the redactor, and a record over rows.ts ACTION_RECORD_MAX (4000) characters is refused.
@@ -47,7 +47,7 @@ import { SqlJsEngine } from "./engines/sqljs.ts";
 import { SCHEMA_SQL } from "./schema.ts";
 import {
   ACTION_RECORD_MAX, COLUMNS, KEYS, REDACT, isTimestampColumn,
-  type Action, type ApprovedSetting, type AuditEvent, type BackupItem, type BackupSnapshot, type CollectionRun, type CopyValidation,
+  type Action, type ApprovedSetting, type AuditEvent, type BackupItem, type BackupSnapshot, type ChangeWindow, type CollectionRun, type CopyValidation,
   type Disposition, type DnsRecord, type FindingCause, type InventoryAsset, type Observation, type PolicyRule, type Probe, type ReferentFingerprint,
   type Rows, type RunStatus, type TableName, type Ticket, type VaultCopy,
 } from "./rows.ts";
@@ -97,6 +97,7 @@ const CONFLICT: { [K in TableName]: string | null } = {
   ticket: "ON CONFLICT (ticket_id) DO NOTHING",
   referent_fingerprint: "ON CONFLICT (obs_id, dns_run_id) DO NOTHING",
   finding_cause: "ON CONFLICT (cause_id) DO NOTHING",
+  change_window: "ON CONFLICT (window_id) DO NOTHING",
 };
 
 type Row = Record<string, string | number | null>;
@@ -204,6 +205,13 @@ export class Store {
   insertTickets(rows: readonly Ticket[]): Promise<number> { return this.write("ticket", rows); }
   insertReferentFingerprints(rows: readonly ReferentFingerprint[]): Promise<number> { return this.write("referent_fingerprint", rows); }
   insertFindingCauses(rows: readonly FindingCause[]): Promise<number> { return this.write("finding_cause", rows); }
+  insertChangeWindows(rows: readonly ChangeWindow[]): Promise<number> { return this.write("change_window", rows); }
+
+  /** Close one change window that is still open (closed_at null) at closedAt, the canonical millisecond form; returns the rows changed, 0 when it is unknown or closed already. */
+  async closeChangeWindow(windowId: string, closedAt: string): Promise<number> {
+    if (!ISO_MS.test(closedAt)) throw new StoreError(`change_window.closed_at: timestamps must be ISO 8601 UTC in the millisecond form YYYY-MM-DDTHH:MM:SS.mmmZ, got ${closedAt}`);
+    return this.tx(async (c) => (await c.query("UPDATE change_window SET closed_at = $2 WHERE window_id = $1 AND closed_at IS NULL", [windowId, closedAt])).rowCount ?? 0);
+  }
 
   /**
    * One ticket row's mutable columns by ticket_id: external_id, url, status and action_id as the patch names
