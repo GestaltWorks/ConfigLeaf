@@ -1,0 +1,1824 @@
+{
+ "config": {
+  "id": "C1",
+  "text": "C0 plus Nemotron 3.5 Lightning selecting and parameterising checks from the catalogue",
+  "select": {
+   "kind": "model",
+   "tier": "lightning"
+  },
+  "judge": null,
+  "direct": null
+ },
+ "run": 1,
+ "valid": true,
+ "invalid_reason": null,
+ "started_at": "2026-10-26T08:21:55.336Z",
+ "finished_at": "2026-10-26T08:44:25.534Z",
+ "recording": "test/fixtures/recorded-bundle.json",
+ "tenant": "client-1",
+ "decided_at": "2026-10-24T07:59:23.745Z",
+ "policy": {
+  "file": "policy/hackathon.json",
+  "version": 2,
+  "rows": 17,
+  "inserted": 17,
+  "rules": 17
+ },
+ "split_seed": "eaad75c7a2dca621fbae34c92b20a1658bf9778ab8b0de03cfdfe9b8ed4e94c2",
+ "set": "heldout",
+ "counts": {
+  "items": 23,
+  "scored": 20,
+  "not_raised": 3,
+  "with_verdict": 20,
+  "not_judged": 0,
+  "agree": 20,
+  "disagree": 0,
+  "unsure": 0,
+  "false_positives": 0,
+  "labelled_no": 20,
+  "checks_selected": 78,
+  "checks_valid": 78,
+  "checks_invalid": 0,
+  "checks_ran_unmodified": 78,
+  "checks_run": 78,
+  "falsifier_ran": 0,
+  "falsifier_struck": 0,
+  "agreed_strikes": 0,
+  "wrong_strikes": 0,
+  "early_stops": 0,
+  "judge_withheld": 0,
+  "findings_assessed": 20,
+  "findings_with_disposition": 20,
+  "calls": 20,
+  "cache_hits": 0,
+  "substitutions": 0,
+  "memory_injected": 0,
+  "tokens_in": 34840,
+  "tokens_out": 94639,
+  "latency_ms_median": 65999
+ },
+ "items": [
+  {
+   "id": "E01",
+   "class": "proxy_split",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-b4a40091cdb4f906"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-b4a40091cdb4f906",
+     "class": "proxy_split",
+     "summary": "host-524b42.quest is proxied and aliases host-4c795e.quest, whose A record is direct to ip-6fb86d: the origin the proxy hides is published on the name it points at",
+     "decided_by": "policy",
+     "rule_id": "rule-8e75e1d767980665",
+     "checks": [
+      {
+       "template": "actor_attributed",
+       "holds": true,
+       "rows": 2
+      },
+      {
+       "template": "referent_unchanged",
+       "holds": false,
+       "rows": 3
+      },
+      {
+       "template": "record_reverted",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-8e75e1d767980665 restores a setting to its approved value; this proxy_split finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-24T11:59:23.745Z; this configuration alone says ESCALATE: 2 of 4 preconditions fail: referent_unchanged, record_reverted",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E02",
+   "class": "proxied_without_real_ip",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-45d5f3f4a2eb0b2e"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-45d5f3f4a2eb0b2e",
+     "class": "proxied_without_real_ip",
+     "summary": "host-18efce.ai is proxied through Cloudflare to ip-6b6bba, and server[host-18efce.ai:443].real_ip in /etc/nginx/conf.d/word-005ed8-prod.conf on host-aa516a is absent: the block that serves it sees Cloudflare's addresses as its visitors",
+     "decided_by": "policy",
+     "rule_id": "rule-66810b66396a3b15",
+     "checks": [
+      {
+       "template": "host_in_inventory",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "actor_attributed",
+       "holds": true,
+       "rows": 2
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": true,
+       "rows": 1
+      },
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T07:59:23.745Z; this configuration alone says ESCALATE: 1 of 4 preconditions fail: host_in_inventory",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E05",
+   "class": "proxied_without_real_ip",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-b91b1690878eaf0e"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-b91b1690878eaf0e",
+     "class": "proxied_without_real_ip",
+     "summary": "*.host-503b27.ai is proxied through Cloudflare to ip-6b6bba, and no server block on host-aa516a trusts a Cloudflare range (http.real_ip in /etc/nginx/nginx.conf is absent): every name under the wildcard sees Cloudflare's addresses as its visitors",
+     "decided_by": "policy",
+     "rule_id": "rule-b8d9962485c3ced4",
+     "checks": [
+      {
+       "template": "host_in_inventory",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "actor_attributed",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-b8d9962485c3ced4 (normal) holds this proxied_without_real_ip finding until 2026-10-27T07:59:23.745Z; this configuration alone says ESCALATE: 3 of 4 preconditions fail: host_in_inventory, actor_attributed, previous_value_recoverable",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E06",
+   "class": "orphan_record",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-d62857e241af66e2"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-d62857e241af66e2",
+     "class": "orphan_record",
+     "summary": "host-3fef97.club (A, direct) lands on ip-6b6bba, host-aa516a, where no enabled server block names it: requests for it reach the default server",
+     "decided_by": "policy",
+     "rule_id": "rule-b8d9962485c3ced4",
+     "checks": [
+      {
+       "template": "host_in_inventory",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "actor_attributed",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T07:59:23.745Z; this configuration alone says ESCALATE: 3 of 4 preconditions fail: host_in_inventory, actor_attributed, previous_value_recoverable",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E09",
+   "class": "proxied_without_real_ip",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-4503aff67c556c58"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-4503aff67c556c58",
+     "class": "proxied_without_real_ip",
+     "summary": "host-62f7a4.com is proxied through Cloudflare to ip-6fb86d, and server[host-62f7a4.com:443].real_ip in /etc/nginx/sites-available/host-62f7a4.com on host-4b4dc1 is absent: the block that serves it sees Cloudflare's addresses as its visitors",
+     "decided_by": "policy",
+     "rule_id": "rule-66810b66396a3b15",
+     "checks": [
+      {
+       "template": "actor_attributed",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "host_in_inventory",
+       "holds": false,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T07:59:23.745Z; this configuration alone says ESCALATE: 3 of 4 preconditions fail: actor_attributed, previous_value_recoverable, host_in_inventory",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E11",
+   "class": "orphan_record",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-58b251b5fce8fbff"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-58b251b5fce8fbff",
+     "class": "orphan_record",
+     "summary": "host-50b116.com (A, proxied) lands on ip-6fb86d, host-4b4dc1, where no enabled server block names it: requests for it reach the default server",
+     "decided_by": "policy",
+     "rule_id": "rule-b8d9962485c3ced4",
+     "checks": [
+      {
+       "template": "host_in_inventory",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "actor_attributed",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T07:59:23.745Z; this configuration alone says ESCALATE: 3 of 4 preconditions fail: host_in_inventory, actor_attributed, previous_value_recoverable",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E12",
+   "class": "orphan_record",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-8fc67ccb1e4eebfa"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-8fc67ccb1e4eebfa",
+     "class": "orphan_record",
+     "summary": "host-c10fff.com (A, proxied) lands on ip-6fb86d, host-4b4dc1, where no enabled server block names it: requests for it reach the default server",
+     "decided_by": "policy",
+     "rule_id": "rule-b8d9962485c3ced4",
+     "checks": [
+      {
+       "template": "host_in_inventory",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "actor_attributed",
+       "holds": true,
+       "rows": 1
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T07:59:23.745Z; this configuration alone says ESCALATE: 2 of 4 preconditions fail: host_in_inventory, previous_value_recoverable",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E14",
+   "class": "orphan_vhost",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-3661fcc541693ada"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-3661fcc541693ada",
+     "class": "orphan_vhost",
+     "summary": "host-89f6e7.com is a server_name in /etc/nginx/sites-available/host-9ac4f1.com on host-4b4dc1 (enabled) with no record of that name in the collected zones and no wildcard covering its zone",
+     "decided_by": "policy",
+     "rule_id": "rule-b8d9962485c3ced4",
+     "checks": [
+      {
+       "template": "other_settings_reference",
+       "holds": false,
+       "rows": 3
+      },
+      {
+       "template": "backup_recent",
+       "holds": true,
+       "rows": 9
+      },
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 3,
+      "valid": 3,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 3,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-b8d9962485c3ced4 (normal) holds this orphan_vhost finding until 2026-10-27T07:59:23.745Z; this configuration alone says ESCALATE: 1 of 3 preconditions fail: other_settings_reference",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E15",
+   "class": "orphan_vhost",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-add52203af12de8a"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-add52203af12de8a",
+     "class": "orphan_vhost",
+     "summary": "host-9ac4f1.com is a server_name in /etc/nginx/sites-available/host-9ac4f1.com on host-4b4dc1 (enabled) with no record of that name in the collected zones and no wildcard covering its zone",
+     "decided_by": "policy",
+     "rule_id": "rule-b8d9962485c3ced4",
+     "checks": [
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "other_settings_reference",
+       "holds": false,
+       "rows": 3
+      },
+      {
+       "template": "backup_recent",
+       "holds": true,
+       "rows": 9
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 3,
+      "valid": 3,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 3,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-b8d9962485c3ced4 (normal) holds this orphan_vhost finding until 2026-10-27T07:59:23.745Z; this configuration alone says ESCALATE: 1 of 3 preconditions fail: other_settings_reference",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E18",
+   "class": "dns_change_history",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-61de32aa64e37148"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-61de32aa64e37148",
+     "class": "dns_change",
+     "summary": "record 510ec8f604eada42808a4a1ab2287ac6 (host-e1e296.com A) has 1 change(s) in the audit log between 2026-07-02T21:48:33.241Z and 2026-07-02T21:48:33.241Z; the last one, at 2026-07-02T21:48:33.241Z, set it to A ip-6b6bba, proxied false",
+     "decided_by": "policy",
+     "rule_id": "rule-a3f26f34efab2ebb",
+     "checks": [
+      {
+       "template": "dns_target_in_inventory",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "actor_attributed",
+       "holds": true,
+       "rows": 1
+      },
+      {
+       "template": "referent_unchanged",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "record_reverted",
+       "holds": false,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-a3f26f34efab2ebb restores a setting to its approved value; this dns_change finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-24T11:59:23.745Z; this configuration alone says ESCALATE: 1 of 4 preconditions fail: record_reverted",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E19",
+   "class": "dns_change_history",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-68c8214c8bf0b788"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-68c8214c8bf0b788",
+     "class": "dns_change",
+     "summary": "record 4c6d209470c71ee2c4668f5f435a4ae1 (host-f324df.com A) has 1 change(s) in the audit log between 2026-07-02T21:48:52.906Z and 2026-07-02T21:48:52.906Z; the last one, at 2026-07-02T21:48:52.906Z, set it to A ip-6fb86d, proxied true",
+     "decided_by": "policy",
+     "rule_id": "rule-a3f26f34efab2ebb",
+     "checks": [
+      {
+       "template": "dns_target_in_inventory",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "actor_attributed",
+       "holds": true,
+       "rows": 1
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "referent_unchanged",
+       "holds": false,
+       "rows": 1
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-a3f26f34efab2ebb restores a setting to its approved value; this dns_change finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-24T11:59:23.745Z; this configuration alone says ESCALATE: 2 of 4 preconditions fail: previous_value_recoverable, referent_unchanged",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E20",
+   "class": "dns_change_history",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-ed80417d790eab35"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-ed80417d790eab35",
+     "class": "dns_change",
+     "summary": "record 82de28f7baf86a005babc11f85b45bc4 (host-18efce.ai A) has 2 change(s) in the audit log between 2026-07-03T21:07:59.237Z and 2026-07-07T18:01:30.530Z; the last one, at 2026-07-07T18:01:30.530Z, set it to A ip-6b6bba, proxied true",
+     "decided_by": "policy",
+     "rule_id": "rule-8e75e1d767980665",
+     "checks": [
+      {
+       "template": "dns_target_in_inventory",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "actor_attributed",
+       "holds": true,
+       "rows": 2
+      },
+      {
+       "template": "record_reverted",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-8e75e1d767980665 restores a setting to its approved value; this dns_change finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-24T11:59:23.745Z; this configuration alone says ESCALATE: 1 of 4 preconditions fail: record_reverted",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E21",
+   "class": "dns_change_history",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-00169c595cf4600f"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-00169c595cf4600f",
+     "class": "dns_change",
+     "summary": "record 1f75c652a377966a1c93c8803d203808 (*.host-503b27.ai A) has 1 change(s) in the audit log between 2026-07-03T21:25:19.373Z and 2026-07-03T21:25:19.373Z; the last one, at 2026-07-03T21:25:19.373Z, set it to A ip-6b6bba, proxied false",
+     "decided_by": "policy",
+     "rule_id": "rule-a3f26f34efab2ebb",
+     "checks": [
+      {
+       "template": "dns_target_in_inventory",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "referent_unchanged",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "actor_attributed",
+       "holds": true,
+       "rows": 1
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-a3f26f34efab2ebb restores a setting to its approved value; this dns_change finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-24T11:59:23.745Z; this configuration alone says ADOPT: all 4 preconditions hold; candidate pending a judge",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E22",
+   "class": "dns_change_history",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-4efd199d2014ec6f"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-4efd199d2014ec6f",
+     "class": "dns_change",
+     "summary": "record 25a23b5c40a3de0ea11b6054a7b54d07 (host-c10fff.com A) has 1 change(s) in the audit log between 2026-07-06T18:46:40.994Z and 2026-07-06T18:46:40.994Z; the last one, at 2026-07-06T18:46:40.994Z, set it to A ip-6fb86d, proxied true",
+     "decided_by": "policy",
+     "rule_id": "rule-a3f26f34efab2ebb",
+     "checks": [
+      {
+       "template": "dns_target_in_inventory",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "referent_unchanged",
+       "holds": false,
+       "rows": 1
+      },
+      {
+       "template": "actor_attributed",
+       "holds": true,
+       "rows": 1
+      },
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-a3f26f34efab2ebb restores a setting to its approved value; this dns_change finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-24T11:59:23.745Z; this configuration alone says ESCALATE: 1 of 4 preconditions fail: referent_unchanged",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E23",
+   "class": "dns_change_history",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-38e1062be36b45b0"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-38e1062be36b45b0",
+     "class": "dns_change",
+     "summary": "record 9ee8076d949534eb9ceef147017db541 (host-492568.ai A) has 1 change(s) in the audit log between 2026-07-07T18:29:23.079Z and 2026-07-07T18:29:23.079Z; the last one, at 2026-07-07T18:29:23.079Z, set it to A ip-6b6bba, proxied false",
+     "decided_by": "policy",
+     "rule_id": "rule-a3f26f34efab2ebb",
+     "checks": [
+      {
+       "template": "dns_target_in_inventory",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "actor_attributed",
+       "holds": true,
+       "rows": 1
+      },
+      {
+       "template": "referent_unchanged",
+       "holds": false,
+       "rows": 1
+      },
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-a3f26f34efab2ebb restores a setting to its approved value; this dns_change finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-24T11:59:23.745Z; this configuration alone says ESCALATE: 1 of 4 preconditions fail: referent_unchanged",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E25",
+   "class": "dns_change_history",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-563eadc738047023"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-563eadc738047023",
+     "class": "dns_change",
+     "summary": "record 6b6b8a5464881541716a106e7f10661b (host-17a03d.info A) has 2 change(s) in the audit log between 2026-08-12T20:24:40.514Z and 2026-08-12T20:46:27.442Z; the last one, at 2026-08-12T20:46:27.442Z, set it to A ip-6fb86d, proxied false",
+     "decided_by": "policy",
+     "rule_id": "rule-a3f26f34efab2ebb",
+     "checks": [
+      {
+       "template": "dns_target_in_inventory",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "referent_unchanged",
+       "holds": false,
+       "rows": 2
+      },
+      {
+       "template": "other_settings_reference",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-a3f26f34efab2ebb restores a setting to its approved value; this dns_change finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-24T11:59:23.745Z; this configuration alone says ESCALATE: 1 of 4 preconditions fail: referent_unchanged",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E26",
+   "class": "dns_change_history",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-148f416637cf96fe"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-148f416637cf96fe",
+     "class": "dns_change",
+     "summary": "record 92d1b88e598e4fdd0a47a92d07b9def9 (host-c2af6d.info A) has 2 change(s) in the audit log between 2026-08-12T20:24:40.978Z and 2026-08-12T20:46:23.199Z; the last one, at 2026-08-12T20:46:23.199Z, set it to A ip-6fb86d, proxied false",
+     "decided_by": "policy",
+     "rule_id": "rule-a3f26f34efab2ebb",
+     "checks": [
+      {
+       "template": "dns_target_in_inventory",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "actor_attributed",
+       "holds": true,
+       "rows": 2
+      },
+      {
+       "template": "record_reverted",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "other_settings_reference",
+       "holds": true,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-a3f26f34efab2ebb restores a setting to its approved value; this dns_change finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-24T11:59:23.745Z; this configuration alone says ESCALATE: 1 of 4 preconditions fail: record_reverted",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E27",
+   "class": "dns_bulk_delete",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-c88ff653b44300be"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-c88ff653b44300be",
+     "class": "dns_change",
+     "summary": "8 DNS record(s) deleted on 2026-10-11 between 2026-10-11T00:17:11.206Z and 2026-10-11T12:21:57.973Z; the last, record 663a1b04b78c12ede3dbe4a20f2d174e (host-1f459a.info TXT), at 2026-10-11T12:21:57.973Z",
+     "decided_by": "policy",
+     "rule_id": "rule-b8d9962485c3ced4",
+     "checks": [
+      {
+       "template": "dns_target_in_inventory",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "actor_attributed",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "referent_unchanged",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-b8d9962485c3ced4 (normal) holds this dns_change finding until 2026-10-27T07:59:23.745Z; this configuration alone says ESCALATE: 1 of 4 preconditions fail: actor_attributed",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E28",
+   "class": "dns_bulk_delete",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-618cb25a815b9bff"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-618cb25a815b9bff",
+     "class": "dns_change",
+     "summary": "6 DNS record(s) deleted on 2026-05-22 between 2026-05-22T00:51:56.723Z and 2026-05-22T01:03:44.344Z; the last, record 98c20b583fbb2e1b933921b443b9243a (host-65c144.ai TXT), at 2026-05-22T01:03:44.344Z",
+     "decided_by": "policy",
+     "rule_id": "rule-b8d9962485c3ced4",
+     "checks": [
+      {
+       "template": "dns_target_in_inventory",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "actor_attributed",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "referent_unchanged",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "record_reverted",
+       "holds": false,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-b8d9962485c3ced4 (normal) holds this dns_change finding until 2026-10-27T07:59:23.745Z; this configuration alone says ESCALATE: 2 of 4 preconditions fail: actor_attributed, record_reverted",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E29",
+   "class": "dns_bulk_delete",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-38f07fae40ba78c6"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-38f07fae40ba78c6",
+     "class": "dns_change",
+     "summary": "6 DNS record(s) deleted on 2026-06-03 between 2026-06-03T17:07:29.041Z and 2026-06-03T20:58:31.068Z; the last, record 1d7c7c480af0b51580a652852bda5034 (host-24f835.quest TXT), at 2026-06-03T20:58:31.068Z",
+     "decided_by": "policy",
+     "rule_id": "rule-b8d9962485c3ced4",
+     "checks": [
+      {
+       "template": "dns_target_in_inventory",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "actor_attributed",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "referent_unchanged",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "record_reverted",
+       "holds": false,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": {
+      "selected": 4,
+      "valid": 4,
+      "invalid": [],
+      "other": null
+     },
+     "ran_unmodified": 4,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-b8d9962485c3ced4 (normal) holds this dns_change finding until 2026-10-27T07:59:23.745Z; this configuration alone says ESCALATE: 2 of 4 preconditions fail: actor_attributed, record_reverted",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E33",
+   "class": "drift_vs_approved",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": null,
+   "not_raised": "the recording raises no drift_vs_approved finding",
+   "verdict": null,
+   "reading": null,
+   "agree": null,
+   "not_judged": null,
+   "subjects": [],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E35",
+   "class": "drift_vs_approved",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": null,
+   "not_raised": "the recording raises no drift_vs_approved finding",
+   "verdict": null,
+   "reading": null,
+   "agree": null,
+   "not_judged": null,
+   "subjects": [],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E36",
+   "class": "drift_vs_approved",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": null,
+   "not_raised": "the recording raises no drift_vs_approved finding",
+   "verdict": null,
+   "reading": null,
+   "agree": null,
+   "not_judged": null,
+   "subjects": [],
+   "direct": null,
+   "strikes": 0
+  }
+ ],
+ "calls": [
+  {
+   "kind": "select",
+   "item": "E01",
+   "finding": "fnd-b4a40091cdb4f906",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_13faodnx",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 41546,
+   "tokens_in": 1681,
+   "tokens_out": 3362,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_13faodnx nvidia/nemotron-3.5-lightning-30b-a3b (lightning), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-1",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E02",
+   "finding": "fnd-45d5f3f4a2eb0b2e",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_evt8i05j",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 71949,
+   "tokens_in": 1723,
+   "tokens_out": 4018,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_evt8i05j nvidia/nemotron-3.5-lightning-30b-a3b (lightning), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-2",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E05",
+   "finding": "fnd-b91b1690878eaf0e",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_7hhuixgo",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 59195,
+   "tokens_in": 1695,
+   "tokens_out": 5250,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_7hhuixgo nvidia/nemotron-3.5-lightning-30b-a3b (lightning), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-3",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E06",
+   "finding": "fnd-d62857e241af66e2",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_1ve436aa",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 45402,
+   "tokens_in": 1693,
+   "tokens_out": 4154,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_1ve436aa nvidia/nemotron-3.5-lightning-30b-a3b (lightning), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-4",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E09",
+   "finding": "fnd-4503aff67c556c58",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_g1idtubb",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 103339,
+   "tokens_in": 1734,
+   "tokens_out": 6173,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_g1idtubb nvidia/nemotron-3.5-lightning-30b-a3b (lightning), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-5",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E11",
+   "finding": "fnd-58b251b5fce8fbff",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_zevblm48",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 40914,
+   "tokens_in": 1697,
+   "tokens_out": 3488,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_zevblm48 nvidia/nemotron-3.5-lightning-30b-a3b (lightning), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-6",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E12",
+   "finding": "fnd-8fc67ccb1e4eebfa",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_hd449xsc",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 47780,
+   "tokens_in": 1681,
+   "tokens_out": 4558,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_hd449xsc nvidia/nemotron-3.5-lightning-30b-a3b (lightning), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-7",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E14",
+   "finding": "fnd-3661fcc541693ada",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_wak1ejz2",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 69828,
+   "tokens_in": 1683,
+   "tokens_out": 4622,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_wak1ejz2 nvidia/nemotron-3.5-lightning-30b-a3b (lightning), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-8",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E15",
+   "finding": "fnd-add52203af12de8a",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_ef6tyitl",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 54755,
+   "tokens_in": 1678,
+   "tokens_out": 4588,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_ef6tyitl nvidia/nemotron-3.5-lightning-30b-a3b (lightning), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-9",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E18",
+   "finding": "fnd-61de32aa64e37148",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_bilo11lu",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 58082,
+   "tokens_in": 1782,
+   "tokens_out": 4439,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_bilo11lu nvidia/nemotron-3.5-lightning-30b-a3b (lightning), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-10",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E19",
+   "finding": "fnd-68c8214c8bf0b788",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_lo8fxl7w",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 71421,
+   "tokens_in": 1779,
+   "tokens_out": 4314,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_lo8fxl7w nvidia/nemotron-3.5-lightning-30b-a3b (lightning), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-11",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E20",
+   "finding": "fnd-ed80417d790eab35",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_c4aulj78",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 112267,
+   "tokens_in": 1773,
+   "tokens_out": 5194,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_c4aulj78 nvidia/nemotron-3.5-lightning-30b-a3b (lightning), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-12",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E21",
+   "finding": "fnd-00169c595cf4600f",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_90lr848m",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 48175,
+   "tokens_in": 1799,
+   "tokens_out": 3461,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_90lr848m nvidia/nemotron-3.5-lightning-30b-a3b (lightning), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-13",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E22",
+   "finding": "fnd-4efd199d2014ec6f",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_wrbqswol",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 71274,
+   "tokens_in": 1785,
+   "tokens_out": 5579,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_wrbqswol nvidia/nemotron-3.5-lightning-30b-a3b (lightning), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-14",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E23",
+   "finding": "fnd-38e1062be36b45b0",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_ea596wpy",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 65431,
+   "tokens_in": 1781,
+   "tokens_out": 4604,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_ea596wpy nvidia/nemotron-3.5-lightning-30b-a3b (lightning), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-15",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E25",
+   "finding": "fnd-563eadc738047023",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_o5x1f6h7",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 66580,
+   "tokens_in": 1801,
+   "tokens_out": 5326,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_o5x1f6h7 nvidia/nemotron-3.5-lightning-30b-a3b (lightning), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-16",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E26",
+   "finding": "fnd-148f416637cf96fe",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_lfdgftkl",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 85268,
+   "tokens_in": 1785,
+   "tokens_out": 6818,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_lfdgftkl nvidia/nemotron-3.5-lightning-30b-a3b (lightning), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-17",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E27",
+   "finding": "fnd-c88ff653b44300be",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_a066bo83",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 107778,
+   "tokens_in": 1762,
+   "tokens_out": 5278,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_a066bo83 nvidia/nemotron-3.5-lightning-30b-a3b (lightning), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-18",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E28",
+   "finding": "fnd-618cb25a815b9bff",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_3zeby181",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 66567,
+   "tokens_in": 1761,
+   "tokens_out": 4494,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_3zeby181 nvidia/nemotron-3.5-lightning-30b-a3b (lightning), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-19",
+   "memory_injected": 0
+  },
+  {
+   "kind": "select",
+   "item": "E29",
+   "finding": "fnd-38f07fae40ba78c6",
+   "attempt": 1,
+   "requested_tier": "lightning",
+   "model_requested": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "hop": 0,
+   "route_attempts": 1,
+   "served_model": "nvidia/nemotron-3.5-lightning-30b-a3b",
+   "served_tier": "lightning",
+   "receipt_id": "rcpt_req_fkuna5gv",
+   "signature_ok": true,
+   "cache_status": "miss",
+   "latency_ms": 57178,
+   "tokens_in": 1767,
+   "tokens_out": 4919,
+   "gate": "ok",
+   "reason": "receipt rcpt_req_fkuna5gv nvidia/nemotron-3.5-lightning-30b-a3b (lightning), signature verified, no memory injected, custody holds",
+   "scope": "heldout-2026-10-26T08-21-54Z-20",
+   "memory_injected": 0
+  }
+ ],
+ "pass": null
+}

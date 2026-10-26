@@ -147,7 +147,7 @@ describe("the README carries the table as npm run eval:table prints it", () => {
 
   it("every block names a committed results directory and begins with the script's output for it, byte for byte", { timeout: 60_000 }, () => {
     const found = blocks();
-    expect(found.map((b) => b.stamp)).toEqual(["2026-10-25T23-34-17Z", "2026-10-25T09-25-44Z"]);
+    expect(found.map((b) => b.stamp)).toEqual(["2026-10-26T08-21-54Z", "2026-10-25T23-34-17Z", "2026-10-25T09-25-44Z"]);
     for (const { stamp, body } of found) {
       const r = spawnSync(process.execPath, ["--import", "tsx", "scripts/eval-table.ts", `eval/results/${stamp}`], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
       expect(r.status, r.stderr).toBe(0);

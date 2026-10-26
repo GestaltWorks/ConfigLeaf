@@ -44,15 +44,15 @@
       "none": 8
     },
     "nemotron": {
-      "stamp": "2026-10-25T23-34-17Z",
-      "set": "dev",
-      "calls": 390,
-      "signatureVerified": 390,
+      "stamp": "2026-10-26T08-21-54Z",
+      "set": "heldout",
+      "calls": 413,
+      "signatureVerified": 375,
       "cacheHits": 0,
       "substitutions": 0,
-      "judgeSelects": 134,
-      "rerunEqual": 130,
-      "notRunnable": 4
+      "judgeSelects": 125,
+      "rerunEqual": 119,
+      "notRunnable": 6
     }
   },
   "sample": {

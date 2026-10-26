@@ -1,0 +1,1502 @@
+{
+ "config": {
+  "id": "C0",
+  "text": "SQL only: the class's default precondition checks, no model (what SAMPLE_MODE runs)",
+  "select": {
+   "kind": "default"
+  },
+  "judge": null,
+  "direct": null
+ },
+ "run": 3,
+ "valid": true,
+ "invalid_reason": null,
+ "started_at": "2026-10-26T08:21:55.160Z",
+ "finished_at": "2026-10-26T08:21:55.336Z",
+ "recording": "test/fixtures/recorded-bundle.json",
+ "tenant": "client-1",
+ "decided_at": "2026-10-24T07:59:23.745Z",
+ "policy": {
+  "file": "policy/hackathon.json",
+  "version": 2,
+  "rows": 17,
+  "inserted": 17,
+  "rules": 17
+ },
+ "split_seed": "eaad75c7a2dca621fbae34c92b20a1658bf9778ab8b0de03cfdfe9b8ed4e94c2",
+ "set": "heldout",
+ "counts": {
+  "items": 23,
+  "scored": 20,
+  "not_raised": 3,
+  "with_verdict": 20,
+  "not_judged": 0,
+  "agree": 20,
+  "disagree": 0,
+  "unsure": 0,
+  "false_positives": 0,
+  "labelled_no": 20,
+  "checks_selected": 0,
+  "checks_valid": 0,
+  "checks_invalid": 0,
+  "checks_ran_unmodified": 0,
+  "checks_run": 75,
+  "falsifier_ran": 0,
+  "falsifier_struck": 0,
+  "agreed_strikes": 0,
+  "wrong_strikes": 0,
+  "early_stops": 0,
+  "judge_withheld": 0,
+  "findings_assessed": 20,
+  "findings_with_disposition": 20,
+  "calls": 0,
+  "cache_hits": 0,
+  "substitutions": 0,
+  "memory_injected": 0,
+  "tokens_in": 0,
+  "tokens_out": 0,
+  "latency_ms_median": null
+ },
+ "items": [
+  {
+   "id": "E01",
+   "class": "proxy_split",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-b4a40091cdb4f906"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-b4a40091cdb4f906",
+     "class": "proxy_split",
+     "summary": "host-524b42.quest is proxied and aliases host-4c795e.quest, whose A record is direct to ip-6fb86d: the origin the proxy hides is published on the name it points at",
+     "decided_by": "policy",
+     "rule_id": "rule-8e75e1d767980665",
+     "checks": [
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "actor_attributed",
+       "holds": true,
+       "rows": 2
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": true,
+       "rows": 1
+      },
+      {
+       "template": "referent_unchanged",
+       "holds": false,
+       "rows": 3
+      }
+     ],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-8e75e1d767980665 restores a setting to its approved value; this proxy_split finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-24T11:59:23.745Z",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E02",
+   "class": "proxied_without_real_ip",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-45d5f3f4a2eb0b2e"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-45d5f3f4a2eb0b2e",
+     "class": "proxied_without_real_ip",
+     "summary": "host-18efce.ai is proxied through Cloudflare to ip-6b6bba, and server[host-18efce.ai:443].real_ip in /etc/nginx/conf.d/word-005ed8-prod.conf on host-aa516a is absent: the block that serves it sees Cloudflare's addresses as its visitors",
+     "decided_by": "policy",
+     "rule_id": "rule-66810b66396a3b15",
+     "checks": [
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "host_in_inventory",
+       "holds": true,
+       "rows": 1
+      },
+      {
+       "template": "actor_attributed",
+       "holds": true,
+       "rows": 2
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": true,
+       "rows": 1
+      }
+     ],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T07:59:23.745Z",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E05",
+   "class": "proxied_without_real_ip",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-b91b1690878eaf0e"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-b91b1690878eaf0e",
+     "class": "proxied_without_real_ip",
+     "summary": "*.host-503b27.ai is proxied through Cloudflare to ip-6b6bba, and no server block on host-aa516a trusts a Cloudflare range (http.real_ip in /etc/nginx/nginx.conf is absent): every name under the wildcard sees Cloudflare's addresses as its visitors",
+     "decided_by": "policy",
+     "rule_id": "rule-b8d9962485c3ced4",
+     "checks": [
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "host_in_inventory",
+       "holds": true,
+       "rows": 1
+      },
+      {
+       "template": "actor_attributed",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": false,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-b8d9962485c3ced4 (normal) holds this proxied_without_real_ip finding until 2026-10-27T07:59:23.745Z",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E06",
+   "class": "orphan_record",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-d62857e241af66e2"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-d62857e241af66e2",
+     "class": "orphan_record",
+     "summary": "host-3fef97.club (A, direct) lands on ip-6b6bba, host-aa516a, where no enabled server block names it: requests for it reach the default server",
+     "decided_by": "policy",
+     "rule_id": "rule-b8d9962485c3ced4",
+     "checks": [
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "host_in_inventory",
+       "holds": true,
+       "rows": 1
+      },
+      {
+       "template": "actor_attributed",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": false,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T07:59:23.745Z",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E09",
+   "class": "proxied_without_real_ip",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-4503aff67c556c58"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-4503aff67c556c58",
+     "class": "proxied_without_real_ip",
+     "summary": "host-62f7a4.com is proxied through Cloudflare to ip-6fb86d, and server[host-62f7a4.com:443].real_ip in /etc/nginx/sites-available/host-62f7a4.com on host-4b4dc1 is absent: the block that serves it sees Cloudflare's addresses as its visitors",
+     "decided_by": "policy",
+     "rule_id": "rule-66810b66396a3b15",
+     "checks": [
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "host_in_inventory",
+       "holds": true,
+       "rows": 1
+      },
+      {
+       "template": "actor_attributed",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": false,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T07:59:23.745Z",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E11",
+   "class": "orphan_record",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-58b251b5fce8fbff"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-58b251b5fce8fbff",
+     "class": "orphan_record",
+     "summary": "host-50b116.com (A, proxied) lands on ip-6fb86d, host-4b4dc1, where no enabled server block names it: requests for it reach the default server",
+     "decided_by": "policy",
+     "rule_id": "rule-b8d9962485c3ced4",
+     "checks": [
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "host_in_inventory",
+       "holds": true,
+       "rows": 1
+      },
+      {
+       "template": "actor_attributed",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": false,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T07:59:23.745Z",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E12",
+   "class": "orphan_record",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-8fc67ccb1e4eebfa"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-8fc67ccb1e4eebfa",
+     "class": "orphan_record",
+     "summary": "host-c10fff.com (A, proxied) lands on ip-6fb86d, host-4b4dc1, where no enabled server block names it: requests for it reach the default server",
+     "decided_by": "policy",
+     "rule_id": "rule-b8d9962485c3ced4",
+     "checks": [
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "host_in_inventory",
+       "holds": true,
+       "rows": 1
+      },
+      {
+       "template": "actor_attributed",
+       "holds": true,
+       "rows": 1
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": false,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T07:59:23.745Z",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E14",
+   "class": "orphan_vhost",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-3661fcc541693ada"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-3661fcc541693ada",
+     "class": "orphan_vhost",
+     "summary": "host-89f6e7.com is a server_name in /etc/nginx/sites-available/host-9ac4f1.com on host-4b4dc1 (enabled) with no record of that name in the collected zones and no wildcard covering its zone",
+     "decided_by": "policy",
+     "rule_id": "rule-b8d9962485c3ced4",
+     "checks": [
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "other_settings_reference",
+       "holds": false,
+       "rows": 3
+      },
+      {
+       "template": "backup_recent",
+       "holds": true,
+       "rows": 9
+      }
+     ],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-b8d9962485c3ced4 (normal) holds this orphan_vhost finding until 2026-10-27T07:59:23.745Z",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E15",
+   "class": "orphan_vhost",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": {
+    "via": "facts",
+    "findings": [
+     "fnd-add52203af12de8a"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-add52203af12de8a",
+     "class": "orphan_vhost",
+     "summary": "host-9ac4f1.com is a server_name in /etc/nginx/sites-available/host-9ac4f1.com on host-4b4dc1 (enabled) with no record of that name in the collected zones and no wildcard covering its zone",
+     "decided_by": "policy",
+     "rule_id": "rule-b8d9962485c3ced4",
+     "checks": [
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "other_settings_reference",
+       "holds": false,
+       "rows": 3
+      },
+      {
+       "template": "backup_recent",
+       "holds": true,
+       "rows": 9
+      }
+     ],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-b8d9962485c3ced4 (normal) holds this orphan_vhost finding until 2026-10-27T07:59:23.745Z",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E18",
+   "class": "dns_change_history",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-61de32aa64e37148"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-61de32aa64e37148",
+     "class": "dns_change",
+     "summary": "record 510ec8f604eada42808a4a1ab2287ac6 (host-e1e296.com A) has 1 change(s) in the audit log between 2026-07-02T21:48:33.241Z and 2026-07-02T21:48:33.241Z; the last one, at 2026-07-02T21:48:33.241Z, set it to A ip-6b6bba, proxied false",
+     "decided_by": "policy",
+     "rule_id": "rule-a3f26f34efab2ebb",
+     "checks": [
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "host_in_inventory",
+       "holds": true,
+       "rows": 1
+      },
+      {
+       "template": "actor_attributed",
+       "holds": true,
+       "rows": 1
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": false,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-a3f26f34efab2ebb restores a setting to its approved value; this dns_change finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-24T11:59:23.745Z; this configuration alone says ESCALATE: 1 of 4 preconditions fail: previous_value_recoverable",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E19",
+   "class": "dns_change_history",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-68c8214c8bf0b788"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-68c8214c8bf0b788",
+     "class": "dns_change",
+     "summary": "record 4c6d209470c71ee2c4668f5f435a4ae1 (host-f324df.com A) has 1 change(s) in the audit log between 2026-07-02T21:48:52.906Z and 2026-07-02T21:48:52.906Z; the last one, at 2026-07-02T21:48:52.906Z, set it to A ip-6fb86d, proxied true",
+     "decided_by": "policy",
+     "rule_id": "rule-a3f26f34efab2ebb",
+     "checks": [
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "host_in_inventory",
+       "holds": true,
+       "rows": 1
+      },
+      {
+       "template": "actor_attributed",
+       "holds": true,
+       "rows": 1
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": false,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-a3f26f34efab2ebb restores a setting to its approved value; this dns_change finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-24T11:59:23.745Z; this configuration alone says ESCALATE: 1 of 4 preconditions fail: previous_value_recoverable",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E20",
+   "class": "dns_change_history",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-ed80417d790eab35"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-ed80417d790eab35",
+     "class": "dns_change",
+     "summary": "record 82de28f7baf86a005babc11f85b45bc4 (host-18efce.ai A) has 2 change(s) in the audit log between 2026-07-03T21:07:59.237Z and 2026-07-07T18:01:30.530Z; the last one, at 2026-07-07T18:01:30.530Z, set it to A ip-6b6bba, proxied true",
+     "decided_by": "policy",
+     "rule_id": "rule-8e75e1d767980665",
+     "checks": [
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "host_in_inventory",
+       "holds": true,
+       "rows": 1
+      },
+      {
+       "template": "actor_attributed",
+       "holds": true,
+       "rows": 2
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": true,
+       "rows": 1
+      }
+     ],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-8e75e1d767980665 restores a setting to its approved value; this dns_change finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-24T11:59:23.745Z; this configuration alone says ADOPT: all 4 preconditions hold; candidate pending a judge",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E21",
+   "class": "dns_change_history",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-00169c595cf4600f"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-00169c595cf4600f",
+     "class": "dns_change",
+     "summary": "record 1f75c652a377966a1c93c8803d203808 (*.host-503b27.ai A) has 1 change(s) in the audit log between 2026-07-03T21:25:19.373Z and 2026-07-03T21:25:19.373Z; the last one, at 2026-07-03T21:25:19.373Z, set it to A ip-6b6bba, proxied false",
+     "decided_by": "policy",
+     "rule_id": "rule-a3f26f34efab2ebb",
+     "checks": [
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "host_in_inventory",
+       "holds": true,
+       "rows": 1
+      },
+      {
+       "template": "actor_attributed",
+       "holds": true,
+       "rows": 1
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": false,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-a3f26f34efab2ebb restores a setting to its approved value; this dns_change finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-24T11:59:23.745Z; this configuration alone says ESCALATE: 1 of 4 preconditions fail: previous_value_recoverable",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E22",
+   "class": "dns_change_history",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-4efd199d2014ec6f"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-4efd199d2014ec6f",
+     "class": "dns_change",
+     "summary": "record 25a23b5c40a3de0ea11b6054a7b54d07 (host-c10fff.com A) has 1 change(s) in the audit log between 2026-07-06T18:46:40.994Z and 2026-07-06T18:46:40.994Z; the last one, at 2026-07-06T18:46:40.994Z, set it to A ip-6fb86d, proxied true",
+     "decided_by": "policy",
+     "rule_id": "rule-a3f26f34efab2ebb",
+     "checks": [
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "host_in_inventory",
+       "holds": true,
+       "rows": 1
+      },
+      {
+       "template": "actor_attributed",
+       "holds": true,
+       "rows": 1
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": false,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-a3f26f34efab2ebb restores a setting to its approved value; this dns_change finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-24T11:59:23.745Z; this configuration alone says ESCALATE: 1 of 4 preconditions fail: previous_value_recoverable",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E23",
+   "class": "dns_change_history",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-38e1062be36b45b0"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-38e1062be36b45b0",
+     "class": "dns_change",
+     "summary": "record 9ee8076d949534eb9ceef147017db541 (host-492568.ai A) has 1 change(s) in the audit log between 2026-07-07T18:29:23.079Z and 2026-07-07T18:29:23.079Z; the last one, at 2026-07-07T18:29:23.079Z, set it to A ip-6b6bba, proxied false",
+     "decided_by": "policy",
+     "rule_id": "rule-a3f26f34efab2ebb",
+     "checks": [
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "host_in_inventory",
+       "holds": true,
+       "rows": 1
+      },
+      {
+       "template": "actor_attributed",
+       "holds": true,
+       "rows": 1
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": false,
+       "rows": 0
+      }
+     ],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-a3f26f34efab2ebb restores a setting to its approved value; this dns_change finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-24T11:59:23.745Z; this configuration alone says ESCALATE: 1 of 4 preconditions fail: previous_value_recoverable",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E25",
+   "class": "dns_change_history",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-563eadc738047023"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-563eadc738047023",
+     "class": "dns_change",
+     "summary": "record 6b6b8a5464881541716a106e7f10661b (host-17a03d.info A) has 2 change(s) in the audit log between 2026-08-12T20:24:40.514Z and 2026-08-12T20:46:27.442Z; the last one, at 2026-08-12T20:46:27.442Z, set it to A ip-6fb86d, proxied false",
+     "decided_by": "policy",
+     "rule_id": "rule-a3f26f34efab2ebb",
+     "checks": [
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "host_in_inventory",
+       "holds": true,
+       "rows": 1
+      },
+      {
+       "template": "actor_attributed",
+       "holds": true,
+       "rows": 2
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": true,
+       "rows": 1
+      }
+     ],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-a3f26f34efab2ebb restores a setting to its approved value; this dns_change finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-24T11:59:23.745Z; this configuration alone says ADOPT: all 4 preconditions hold; candidate pending a judge",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E26",
+   "class": "dns_change_history",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-148f416637cf96fe"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-148f416637cf96fe",
+     "class": "dns_change",
+     "summary": "record 92d1b88e598e4fdd0a47a92d07b9def9 (host-c2af6d.info A) has 2 change(s) in the audit log between 2026-08-12T20:24:40.978Z and 2026-08-12T20:46:23.199Z; the last one, at 2026-08-12T20:46:23.199Z, set it to A ip-6fb86d, proxied false",
+     "decided_by": "policy",
+     "rule_id": "rule-a3f26f34efab2ebb",
+     "checks": [
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "host_in_inventory",
+       "holds": true,
+       "rows": 1
+      },
+      {
+       "template": "actor_attributed",
+       "holds": true,
+       "rows": 2
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": true,
+       "rows": 1
+      }
+     ],
+     "rejected": [],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-a3f26f34efab2ebb restores a setting to its approved value; this dns_change finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-24T11:59:23.745Z; this configuration alone says ADOPT: all 4 preconditions hold; candidate pending a judge",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E27",
+   "class": "dns_bulk_delete",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-c88ff653b44300be"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-c88ff653b44300be",
+     "class": "dns_change",
+     "summary": "8 DNS record(s) deleted on 2026-10-11 between 2026-10-11T00:17:11.206Z and 2026-10-11T12:21:57.973Z; the last, record 663a1b04b78c12ede3dbe4a20f2d174e (host-1f459a.info TXT), at 2026-10-11T12:21:57.973Z",
+     "decided_by": "policy",
+     "rule_id": "rule-b8d9962485c3ced4",
+     "checks": [
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "actor_attributed",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": true,
+       "rows": 2
+      }
+     ],
+     "rejected": [
+      "host_in_inventory: address: Invalid input: expected string, received undefined"
+     ],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-b8d9962485c3ced4 (normal) holds this dns_change finding until 2026-10-27T07:59:23.745Z; this configuration alone says ESCALATE: 1 of 3 preconditions fail: actor_attributed; 1 check(s) could not be bound from the finding or were refused by the guard",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E28",
+   "class": "dns_bulk_delete",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-618cb25a815b9bff"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-618cb25a815b9bff",
+     "class": "dns_change",
+     "summary": "6 DNS record(s) deleted on 2026-05-22 between 2026-05-22T00:51:56.723Z and 2026-05-22T01:03:44.344Z; the last, record 98c20b583fbb2e1b933921b443b9243a (host-65c144.ai TXT), at 2026-05-22T01:03:44.344Z",
+     "decided_by": "policy",
+     "rule_id": "rule-b8d9962485c3ced4",
+     "checks": [
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "actor_attributed",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": true,
+       "rows": 2
+      }
+     ],
+     "rejected": [
+      "host_in_inventory: address: Invalid input: expected string, received undefined"
+     ],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-b8d9962485c3ced4 (normal) holds this dns_change finding until 2026-10-27T07:59:23.745Z; this configuration alone says ESCALATE: 1 of 3 preconditions fail: actor_attributed; 1 check(s) could not be bound from the finding or were refused by the guard",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E29",
+   "class": "dns_bulk_delete",
+   "set": "heldout",
+   "label": "no",
+   "kind": "history",
+   "matched": {
+    "via": "history",
+    "findings": [
+     "fnd-38f07fae40ba78c6"
+    ]
+   },
+   "not_raised": null,
+   "verdict": "HOLD",
+   "reading": "no",
+   "agree": true,
+   "not_judged": null,
+   "subjects": [
+    {
+     "finding_id": "fnd-38f07fae40ba78c6",
+     "class": "dns_change",
+     "summary": "6 DNS record(s) deleted on 2026-06-03 between 2026-06-03T17:07:29.041Z and 2026-06-03T20:58:31.068Z; the last, record 1d7c7c480af0b51580a652852bda5034 (host-24f835.quest TXT), at 2026-06-03T20:58:31.068Z",
+     "decided_by": "policy",
+     "rule_id": "rule-b8d9962485c3ced4",
+     "checks": [
+      {
+       "template": "run_complete",
+       "holds": true,
+       "rows": 0
+      },
+      {
+       "template": "actor_attributed",
+       "holds": false,
+       "rows": 0
+      },
+      {
+       "template": "previous_value_recoverable",
+       "holds": true,
+       "rows": 2
+      }
+     ],
+     "rejected": [
+      "host_in_inventory: address: Invalid input: expected string, received undefined"
+     ],
+     "selection": null,
+     "ran_unmodified": 0,
+     "early_stops": 0,
+     "judge": null,
+     "verb": "HOLD",
+     "reason": "rule rule-b8d9962485c3ced4 (normal) holds this dns_change finding until 2026-10-27T07:59:23.745Z; this configuration alone says ESCALATE: 1 of 3 preconditions fail: actor_attributed; 1 check(s) could not be bound from the finding or were refused by the guard",
+     "not_judged": null
+    }
+   ],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E33",
+   "class": "drift_vs_approved",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": null,
+   "not_raised": "the recording raises no drift_vs_approved finding",
+   "verdict": null,
+   "reading": null,
+   "agree": null,
+   "not_judged": null,
+   "subjects": [],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E35",
+   "class": "drift_vs_approved",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": null,
+   "not_raised": "the recording raises no drift_vs_approved finding",
+   "verdict": null,
+   "reading": null,
+   "agree": null,
+   "not_judged": null,
+   "subjects": [],
+   "direct": null,
+   "strikes": 0
+  },
+  {
+   "id": "E36",
+   "class": "drift_vs_approved",
+   "set": "heldout",
+   "label": "no",
+   "kind": "pass",
+   "matched": null,
+   "not_raised": "the recording raises no drift_vs_approved finding",
+   "verdict": null,
+   "reading": null,
+   "agree": null,
+   "not_judged": null,
+   "subjects": [],
+   "direct": null,
+   "strikes": 0
+  }
+ ],
+ "calls": [],
+ "pass": [
+  {
+   "id": "fnd-b4a40091cdb4f906",
+   "class": "proxy_split",
+   "verb": "HOLD",
+   "reason": "rule rule-8e75e1d767980665 restores a setting to its approved value; this proxy_split finding concerns the setting's relation to another setting while its own value stands, so it is held until 2026-10-24T11:59:23.745Z"
+  },
+  {
+   "id": "fnd-45d5f3f4a2eb0b2e",
+   "class": "proxied_without_real_ip",
+   "verb": "HOLD",
+   "reason": "rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-9bfe1da7d028260c",
+   "class": "proxied_without_real_ip",
+   "verb": "HOLD",
+   "reason": "rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-a08488f45ff63140",
+   "class": "proxied_without_real_ip",
+   "verb": "HOLD",
+   "reason": "rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-5bd1b4c03ee72c7a",
+   "class": "proxied_without_real_ip",
+   "verb": "HOLD",
+   "reason": "rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-dfe22fa267b51c91",
+   "class": "proxied_without_real_ip",
+   "verb": "HOLD",
+   "reason": "rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-8a843610aeb1b709",
+   "class": "proxied_without_real_ip",
+   "verb": "HOLD",
+   "reason": "rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-05b163bfda4c027f",
+   "class": "proxied_without_real_ip",
+   "verb": "HOLD",
+   "reason": "rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-f3bcb9860c5a0b3d",
+   "class": "proxied_without_real_ip",
+   "verb": "HOLD",
+   "reason": "rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-8fc350e6aa5840d1",
+   "class": "proxied_without_real_ip",
+   "verb": "HOLD",
+   "reason": "rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-385949946c990113",
+   "class": "proxied_without_real_ip",
+   "verb": "HOLD",
+   "reason": "rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-b91b1690878eaf0e",
+   "class": "proxied_without_real_ip",
+   "verb": "HOLD",
+   "reason": "rule rule-b8d9962485c3ced4 (normal) holds this proxied_without_real_ip finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-d62857e241af66e2",
+   "class": "orphan_record",
+   "verb": "HOLD",
+   "reason": "rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-d5622dbd2bf43e3e",
+   "class": "proxied_without_real_ip",
+   "verb": "HOLD",
+   "reason": "rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-b0472de6319451c4",
+   "class": "proxied_without_real_ip",
+   "verb": "HOLD",
+   "reason": "rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-2f1b5857f0426b68",
+   "class": "proxied_without_real_ip",
+   "verb": "HOLD",
+   "reason": "rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-b3ea13c119d7b589",
+   "class": "proxied_without_real_ip",
+   "verb": "HOLD",
+   "reason": "rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-770d13f327d54d12",
+   "class": "proxied_without_real_ip",
+   "verb": "HOLD",
+   "reason": "rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-7548fb2a2e3cdca4",
+   "class": "proxied_without_real_ip",
+   "verb": "HOLD",
+   "reason": "rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-4503aff67c556c58",
+   "class": "proxied_without_real_ip",
+   "verb": "HOLD",
+   "reason": "rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-de3c5e8ebdc2d209",
+   "class": "proxied_without_real_ip",
+   "verb": "HOLD",
+   "reason": "rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-028260c299ff1cb0",
+   "class": "proxied_without_real_ip",
+   "verb": "HOLD",
+   "reason": "rule rule-66810b66396a3b15 (high) holds this proxied_without_real_ip finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-58b251b5fce8fbff",
+   "class": "orphan_record",
+   "verb": "HOLD",
+   "reason": "rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-8fc67ccb1e4eebfa",
+   "class": "orphan_record",
+   "verb": "HOLD",
+   "reason": "rule rule-b8d9962485c3ced4 (normal) holds this orphan_record finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-51038b9539a0174a",
+   "class": "orphan_vhost",
+   "verb": "HOLD",
+   "reason": "rule rule-b8d9962485c3ced4 (normal) holds this orphan_vhost finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-3661fcc541693ada",
+   "class": "orphan_vhost",
+   "verb": "HOLD",
+   "reason": "rule rule-b8d9962485c3ced4 (normal) holds this orphan_vhost finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-add52203af12de8a",
+   "class": "orphan_vhost",
+   "verb": "HOLD",
+   "reason": "rule rule-b8d9962485c3ced4 (normal) holds this orphan_vhost finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-5659bc0009e919cd",
+   "class": "changed_since_backup",
+   "verb": "HOLD",
+   "reason": "rule rule-b8d9962485c3ced4 (normal) holds this changed_since_backup finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-716490e540d42790",
+   "class": "changed_since_backup",
+   "verb": "HOLD",
+   "reason": "rule rule-b8d9962485c3ced4 (normal) holds this changed_since_backup finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-d5f5c501592e697d",
+   "class": "changed_since_backup",
+   "verb": "HOLD",
+   "reason": "rule rule-b8d9962485c3ced4 (normal) holds this changed_since_backup finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-e10b50c7948c5848",
+   "class": "changed_since_backup",
+   "verb": "HOLD",
+   "reason": "rule rule-b8d9962485c3ced4 (normal) holds this changed_since_backup finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-ea23604748d61d14",
+   "class": "changed_since_backup",
+   "verb": "HOLD",
+   "reason": "rule rule-b8d9962485c3ced4 (normal) holds this changed_since_backup finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-886be3c070350b34",
+   "class": "changed_since_backup",
+   "verb": "HOLD",
+   "reason": "rule rule-b8d9962485c3ced4 (normal) holds this changed_since_backup finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-4fb13976860818af",
+   "class": "changed_since_backup",
+   "verb": "HOLD",
+   "reason": "rule rule-b8d9962485c3ced4 (normal) holds this changed_since_backup finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-6d51e4d2fd3fd39f",
+   "class": "changed_since_backup",
+   "verb": "HOLD",
+   "reason": "rule rule-b8d9962485c3ced4 (normal) holds this changed_since_backup finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-5448095a827b5bc6",
+   "class": "changed_since_backup",
+   "verb": "HOLD",
+   "reason": "rule rule-b8d9962485c3ced4 (normal) holds this changed_since_backup finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-be865fadc4461041",
+   "class": "changed_since_backup",
+   "verb": "HOLD",
+   "reason": "rule rule-b8d9962485c3ced4 (normal) holds this changed_since_backup finding until 2026-10-27T07:59:23.745Z"
+  },
+  {
+   "id": "fnd-95ded60ec0aea326",
+   "class": "changed_since_backup",
+   "verb": "HOLD",
+   "reason": "rule rule-b8d9962485c3ced4 (normal) holds this changed_since_backup finding until 2026-10-27T07:59:23.745Z"
+  }
+ ]
+}

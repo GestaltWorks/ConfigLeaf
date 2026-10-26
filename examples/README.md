@@ -22,7 +22,7 @@ and `test/export.test.ts` holds equal to the files on disk; the prose names none
 | `memory/` | 23 lessons |
 | `document.md` | 199 lines, 23,074 bytes |
 | `report.html` | 31,328 bytes |
-| `executive.html` | 32,854 bytes; 1 incident, 6 DQ rules |
+| `executive.html` | 32,860 bytes; 1 incident, 6 DQ rules |
 <!-- end of the table npm run examples writes -->
 
 Each slice also keeps what the Decider reads for its own rows: the `policy_rule` rows (versions 1 and 2, the shipped
