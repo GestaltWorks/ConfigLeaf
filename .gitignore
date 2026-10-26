@@ -4,6 +4,8 @@ node_modules/
 !.env.example
 logs/
 .world/
+# The execution contract's Ed25519 key (src/guard/contract.ts), generated on first use. Never commit it.
+.scout/
 *.log
 /document.md
 /report.html

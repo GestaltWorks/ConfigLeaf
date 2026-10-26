@@ -136,7 +136,7 @@ td pre{white-space:pre-wrap;word-break:break-word;margin:4px 0 0;min-width:36ch;
 <section class="panel" id="document"><div class="wrap md">
 <h2>Configuration document: client-1</h2>
 <p class="meta">Rendered from SQL over the recorded bundle at the decision instant it states, <code>2026-10-25T14:17:53.416Z</code>. <code>npm run document</code> in sample mode writes it to <code>examples/document.md</code>, and this tab is that markdown as HTML.</p>
-<div class="hashes">examples/document.md sha256:616139ad335f6603846c6fe06d0ded6abb6792f7724551c1fb53dbbdc451eb47 (23074 bytes, LF)</div>
+<div class="hashes">examples/document.md sha256:6c7c4707956bfd00b0bec345b9db086df25686305841d1ac00143a78ce419247 (23074 bytes, LF)</div>
 <p>What the agent holds for client-1, read through one data layer (sql.js over sample/bundle.json) when this page is rendered. Every number is a count of the rows, or a value of a row, that the queries listed at the end return.</p>
 <h3>Estate</h3>
 <p>61 collection runs on record, 61 passing the DQ gate. 2 hosts and 6 zones in the latest passing runs.</p>
@@ -279,7 +279,7 @@ td pre{white-space:pre-wrap;word-break:break-word;margin:4px 0 0;min-width:36ch;
 <thead><tr><th scope="col">source</th><th scope="col">Zetaris datasource</th><th scope="col">tables</th><th scope="col">rows</th><th scope="col">what it holds</th></tr></thead>
 <tbody>
 <tr><td>technician memory store (<code>examples/memory</code>)</td><td><code>LESSONS</code></td><td><code>LESSONS.lesson</code>, <code>LESSONS.ledger</code></td><td>23 lessons, 23 ledger entries</td><td>the lessons the technician taught, in the Meterless H-MEM store, each with its tenant, scope key, expiry and provenance; the Decider recalls them, and an accepted exception makes its finding ADOPT until it expires</td></tr>
-<tr><td>policy rules (<code>policy/hackathon.json</code>)</td><td><code>RULES</code></td><td><code>RULES.rule</code></td><td>16 rules, version 2</td><td>the MSP&#39;s policy, one row per rule under the rule id every disposition decided by policy names</td></tr>
+<tr><td>policy rules (<code>policy/hackathon.json</code>)</td><td><code>RULES</code></td><td><code>RULES.rule</code></td><td>17 rules, version 2</td><td>the MSP&#39;s policy, one row per rule under the rule id every disposition decided by policy names</td></tr>
 <tr><td>Cloudflare live (<code>api.cloudflare.com/client/v4/zones/&lt;zone id&gt;/dns_records</code>)</td><td><code>CLOUDFLARE</code></td><td><code>CLOUDFLARE.zone_&lt;zone id&gt;</code></td><td>58 records in 6 zones on 26 Oct 2026</td><td>every DNS record at the provider now, which Zetaris fetches itself under the read token at each query; drift_usl.dns_live holds each to the last complete DNS collection run by record id, type and proxied flag</td></tr>
 </tbody>
 </table></div>
@@ -368,7 +368,7 @@ td pre{white-space:pre-wrap;word-break:break-word;margin:4px 0 0;min-width:36ch;
 <thead><tr><th scope="col">source</th><th scope="col">Zetaris datasource</th><th scope="col">tables</th><th scope="col">rows</th><th scope="col">what it holds</th></tr></thead>
 <tbody>
 <tr><td>technician memory store (<code>examples/memory</code>)</td><td><code>LESSONS</code></td><td><code>LESSONS.lesson</code>, <code>LESSONS.ledger</code></td><td>23 lessons, 23 ledger entries</td><td>the lessons the technician taught, in the Meterless H-MEM store, each with its tenant, scope key, expiry and provenance; the Decider recalls them, and an accepted exception makes its finding ADOPT until it expires</td></tr>
-<tr><td>policy rules (<code>policy/hackathon.json</code>)</td><td><code>RULES</code></td><td><code>RULES.rule</code></td><td>16 rules, version 2</td><td>the MSP&#39;s policy, one row per rule under the rule id every disposition decided by policy names</td></tr>
+<tr><td>policy rules (<code>policy/hackathon.json</code>)</td><td><code>RULES</code></td><td><code>RULES.rule</code></td><td>17 rules, version 2</td><td>the MSP&#39;s policy, one row per rule under the rule id every disposition decided by policy names</td></tr>
 <tr><td>Cloudflare live (<code>api.cloudflare.com/client/v4/zones/&lt;zone id&gt;/dns_records</code>)</td><td><code>CLOUDFLARE</code></td><td><code>CLOUDFLARE.zone_&lt;zone id&gt;</code></td><td>58 records in 6 zones on 26 Oct 2026</td><td>every DNS record at the provider now, which Zetaris fetches itself under the read token at each query; drift_usl.dns_live holds each to the last complete DNS collection run by record id, type and proxied flag</td></tr>
 </tbody>
 </table></div>

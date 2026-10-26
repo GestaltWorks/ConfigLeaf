@@ -272,3 +272,28 @@ describe("wildcard hostnames", () => {
     expect(out).toContain("*.host-17a03d.info");
   });
 });
+
+describe("Microsoft 365 names (pass d)", () => {
+  const r = new Redactor("m365-unit-salt");
+  const T6 = "tenant-[0-9a-f]{6}";
+  it("pseudonymises every label before onmicrosoft.com and before a dkim.mail.microsoft partition; keeps selector<N>-, _labels and the suffix", () => {
+    expect(r.text("contoso.onmicrosoft.com")).toMatch(new RegExp(String.raw`^${T6}\.onmicrosoft\.com$`));
+    expect(r.text("contoso.mail.onmicrosoft.com")).toMatch(new RegExp(String.raw`^${T6}\.${T6}\.onmicrosoft\.com$`));
+    expect(r.text("selector1-contoso-com._domainkey.contoso.onmicrosoft.com")).toMatch(new RegExp(String.raw`^selector1-${T6}\._domainkey\.${T6}\.onmicrosoft\.com$`));
+    expect(r.text("selector2-contoso-com._domainkey.contoso.n-v1.dkim.mail.microsoft")).toMatch(new RegExp(String.raw`^selector2-${T6}\._domainkey\.${T6}\.n-v1\.dkim\.mail\.microsoft$`));
+    expect(r.text("_sip._tls.contoso.onmicrosoft.com")).toMatch(new RegExp(String.raw`^_sip\._tls\.${T6}\.onmicrosoft\.com$`));
+  });
+  it("one label, one pseudonym, case aside; another salt another; the rule and the host rule never touch its output again", () => {
+    const a = r.text("contoso.onmicrosoft.com");
+    expect(r.text("CONTOSO.onmicrosoft.com")).toBe(a);
+    expect(r.text("selector1-contoso-com._domainkey.contoso.onmicrosoft.com").endsWith(`.${a}`)).toBe(true);
+    expect(new Redactor("other").text("contoso.onmicrosoft.com")).not.toBe(a);
+    for (const s of [a, r.text("selector1-x._domainkey.y.z-v1.dkim.mail.microsoft")]) expect([r.text(s), r.value(s)]).toEqual([s, s]);
+  });
+  it("leaves to the host rule what is not under a Microsoft 365 suffix, and the bare suffix itself", () => {
+    expect(r.text("contoso.onmicrosoft.community")).toMatch(/^host-[0-9a-f]{6}\.community$/);
+    expect(r.text("contoso-com.mail.protection.outlook.com")).toMatch(/^host-[0-9a-f]{6}\.com$/);
+    expect(r.text("onmicrosoft.com")).toMatch(/^host-[0-9a-f]{6}\.com$/);
+    expect(r.text("m365.dns host-abcdef.com/MX/@")).toBe("m365.dns host-abcdef.com/MX/@");
+  });
+});
