@@ -9,8 +9,8 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, describe, expect, it } from "vitest";
-import { ConflictError, MemoryError, TechnicianMemory, type FindingScope } from "../src/engine/memory.ts";
+import { afterAll, describe, expect, it, vi } from "vitest";
+import { ConflictError, MemoryError, TechnicianMemory, describeLesson, lessonOf, type FindingScope } from "../src/engine/memory.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const T0 = Date.parse("2026-10-24T12:00:00.000Z");
@@ -140,6 +140,51 @@ describe("the conflict gate", () => {
     expect(() => two.recordException(exception({ expiresAt: LATER, resolutions: [{ with: x.id, strategy: "supersede" }, { with: y.id, strategy: "supersede" }, { with: stray.id, strategy: "supersede" }] })))
       .toThrow(new RegExp(`${stray.id} does not conflict with this lesson \\(it conflicts with ${x.id}, ${y.id}\\)`));
     expect(two.lessons()).toHaveLength(3);
+  });
+
+  it("refuses two resolutions for one lesson, alike or contradictory, before it reads or writes anything", () => {
+    const m = mem();
+    const a = m.recordException(exception());
+    const entries = m.ledgerEntries().length;
+    expect(() => m.recordException(exception({ expiresAt: LATER, resolutions: [{ with: a.id, strategy: "supersede" }, { with: a.id, strategy: "keep_both" }] })))
+      .toThrow(`resolution refused: ${a.id} is named twice, as supersede and as keep_both; settle each lesson once`);
+    expect(() => m.recordException(exception({ expiresAt: LATER, resolutions: [{ with: a.id, strategy: "supersede" }, { with: a.id, strategy: "supersede" }] })))
+      .toThrow(`resolution refused: ${a.id} is named twice; settle each lesson once`);
+    expect(m.lessons()).toEqual([a]);
+    expect(m.ledgerEntries()).toHaveLength(entries);
+  });
+
+  it("records every lesson a lesson supersedes, not only the first, and persists once after the record it adds", () => {
+    const m = mem();
+    const a = m.recordException(exception());
+    const b = m.recordException(exception({ reason: "recorded again" }));
+    const persist = vi.spyOn(m.hmem.store, "persist");
+    const fresh = m.recordException(exception({ expiresAt: LATER, resolutions: [{ with: a.id, strategy: "supersede" }, { with: b.id, strategy: "supersede" }] }));
+    expect(fresh.supersedes).toEqual([a.id, b.id]);
+    expect(m.hmem.store.get(fresh.id)?.supersedes).toBe(a.id);                       // the reference's single field keeps the first
+    expect(m.lesson(a.id)?.supersededBy).toBe(fresh.id);
+    expect(m.lesson(b.id)?.supersededBy).toBe(fresh.id);
+    expect(persist).toHaveBeenCalledTimes(2);                                        // the reference's add, then one write for the supersessions
+    // the ids ride on the record, so a reload reads them back
+    const reread = lessonOf(m.hmem.store.get(fresh.id)!);
+    expect(reread?.supersedes).toEqual([a.id, b.id]);
+    const kept = m.recordException(exception({ scopeKey: "www.example.invalid", expiresAt: LATER }));
+    expect(kept.supersedes).toBeUndefined();
+  });
+
+  it("keeps one lesson on one line: a newline in a reason or an answer prints as \\n in the description and in the refusal", () => {
+    const m = mem();
+    const held = m.recordException(exception({ reason: "line one\nline two" }));
+    expect(describeLesson(held)).not.toContain("\n");
+    expect(describeLesson(held)).toContain("line one\\nline two");
+    const e = refusal(() => m.recordException(exception({ expiresAt: LATER, reason: "renewed\r\nthrough the winter" })));
+    expect(e.message).not.toMatch(/[\r\n]/);
+    expect(e.candidate).not.toMatch(/[\r\n]/);
+    expect(e.message).toContain("renewed\\nthrough the winter");
+    const q = mem();
+    q.recordAnswer(answer("Yes"));
+    const a = refusal(() => q.recordAnswer(answer("No\nnot at all", "Is the origin reached only through the tunnel?")));
+    expect(a.message).not.toMatch(/[\r\n]/);
   });
 
   it("survives the store's directory: a superseded lesson reloads superseded and stays unrecalled", () => {

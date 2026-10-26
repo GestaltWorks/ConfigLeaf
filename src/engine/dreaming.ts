@@ -18,7 +18,7 @@
 import { createHash } from "node:crypto";
 import { DEFAULTS, HMEM } from "../../vendor/hmem/src/index.ts";
 import type { FindingClass } from "../catalogue/templates.ts";
-import { MemoryError, cleanFree, type ConflictResolution, type ExceptionLesson, type Lesson, type TechnicianMemory } from "./memory.ts";
+import { MemoryError, cleanFree, oneLine, type ConflictResolution, type ExceptionLesson, type Lesson, type TechnicianMemory } from "./memory.ts";
 
 /** A rule: an exception lesson over several scope keys with `derivedFrom` lineage. */
 export type Rule = ExceptionLesson & { scopeKeys: string[]; derivedFrom: string[] };
@@ -172,7 +172,7 @@ export function renderDream(r: DreamResult): string[] {
   for (const p of r.proposals) {
     out.push("");
     out.push(`${p.id}  ADOPT ${p.findingClass} on ${p.scopeKeys.length} scope(s), tenant ${p.tenantId}, until ${p.expiresAt}, derived from ${p.derivedFrom.length} lesson(s)`);
-    out.push(`  reason       ${clip(p.reason, 150)}`);
+    out.push(`  reason       ${clip(oneLine(p.reason), 150)}`);
     out.push(`  scopes       ${ids(p.scopeKeys, 12)}`);
     out.push(`  derivedFrom  ${ids(p.derivedFrom, 40)}`);
     out.push(`  clustered    by the reference's dreaming as ${p.clusters.join(", ")}`);
@@ -187,7 +187,7 @@ export function renderDream(r: DreamResult): string[] {
     out.push("", `no rule for ${w.lessons.length} lesson(s) of ${w.clusters.join(", ")}: ${ids(w.lessons)}`);
     out.push(`  why          ${w.why}`);
   }
-  for (const l of r.relabels) out.push("", `relabel ${l.id} to the domain ${l.domain}: listed only, since the Decider reads no lesson's domain (${clip(l.content, 100)})`);
+  for (const l of r.relabels) out.push("", `relabel ${l.id} to the domain ${l.domain}: listed only, since the Decider reads no lesson's domain (${clip(oneLine(l.content), 100)})`);
   if (r.approved.length) {
     out.push("", `${r.approved.length} rule(s) approved and in force:`);
     for (const a of r.approved) out.push(`  ${a.id}  ADOPT ${a.findingClass} on ${a.scopeKeys.length} scope(s), until ${a.expiresAt}, derived from ${a.derivedFrom.length} lesson(s), approved by ${a.provenance.by} at ${a.recordedAt}`);

@@ -5,7 +5,8 @@
 // documentation names (RFC 2606), which the redactor passes through.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -50,6 +51,34 @@ describe("npm run sleep -- --preview", () => {
     expect(bare.err).toContain("previews and changes nothing; --preview is required");
     expect(sleep("--preview", "--at", "yesterday").status).toBe(2);
   }, 240_000);
+
+  it("leaves the store byte-identical when the plan is not empty, so the scratch execute() runs: on disk through the CLI, and every live record, embedding included, in memory", () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "sleep-store-"));
+    try {
+      const m = new TechnicianMemory({ storage: "local", directory: dir, clock: () => T0 });
+      for (const k of ["old", "older"]) m.recordException({ tenantId: "client-a", findingClass: "orphan_vhost", scopeKey: `${k}.example.invalid`, reason: "left over from the migration", expiresAt: "2026-11-15T00:00:00.000Z", provenance: prov });
+      const before = digest(dir);
+      const r = spawnSync(process.execPath, ["--import", "tsx", "scripts/sleep.ts", "--preview", "--at", new Date(T0 + 40 * DAY_MS).toISOString(), "--memory-dir", dir], { cwd: ROOT, encoding: "utf8", timeout: 120_000, env: { ...process.env, NO_COLOR: "1" } });
+      expect(r.status).toBe(0);
+      expect(r.stdout).toMatch(/synthesize {2}1 /);                       // a non-empty plan: the scratch copy is executed
+      expect(r.stdout).toContain("if executed");
+      expect(digest(dir)).toBe(before);
+
+      let now = T0 + 40 * DAY_MS;
+      const live = new TechnicianMemory({ storage: "local", directory: dir, clock: () => now });
+      const records = JSON.stringify(live.hmem.store.all());             // every field of every live record, the embeddings included
+      const objects = live.hmem.store.all();
+      const view = previewSleep(live);
+      expect(view.ifExecuted).not.toBeNull();
+      expect(JSON.stringify(live.hmem.store.all())).toBe(records);
+      expect(live.hmem.store.all().every((rec, i) => rec === objects[i])).toBe(true);   // the same objects, none replaced or mutated
+      expect(live.hmem.ledger.all().filter((e) => e.action !== "create")).toEqual([]);   // and the live ledger holds no sleep entry
+      now += DAY_MS;
+      expect(digest(dir)).toBe(before);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
 
   it("plans the archive of an old, unread, unreferenced lesson at the clock it is asked at, lists the lapsed, and changes nothing on the store", () => {
     let now = T0;

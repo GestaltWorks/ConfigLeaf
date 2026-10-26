@@ -84,6 +84,8 @@ interface LessonBase {
   provenance: LessonProvenance;
   /** The lesson that replaced this one when a conflict was settled with `supersede`. A superseded lesson is kept on record and never recalled. */
   supersededBy?: string;
+  /** Every lesson this one replaced when a conflict was settled with `supersede`; the reference's own `supersedes` field holds the first. */
+  supersedes?: string[];
 }
 export interface AnswerLesson extends LessonBase { kind: "answer"; question: string; answer: string; scope: { type: ScopeType; key: string } }
 export interface ExceptionLesson extends LessonBase {
@@ -141,6 +143,12 @@ export class ConflictError extends MemoryError {
   }
 }
 
+/** Free text on one line: a newline in a reason, question or answer prints as \n, so one lesson stays one line of output. */
+export const oneLine = (s: string): string => s.replace(/\r\n|\r|\n/g, "\\n");
+
+/** The ids the supersede resolutions name, in order. */
+const supersededIds = (resolutions: readonly ConflictResolution[]): string[] => resolutions.filter((r) => r.strategy === "supersede").map((r) => r.with);
+
 /** One lesson in one line: id, kind, what it covers, until when, who taught it and when, and what it says. */
 export function describeLesson(l: Lesson): string {
   const head = l.kind === "exception" && l.scopeKeys
@@ -148,7 +156,7 @@ export function describeLesson(l: Lesson): string {
     : l.kind === "exception"
       ? `${l.id}  exception  ${l.findingClass} on ${l.scopeKey} (${l.tenantId})`
       : `${l.id}  answer     ${l.scope.type} ${l.scope.key} (${l.tenantId})`;
-  const said = l.kind === "exception" ? l.reason : `Q ${l.question} A ${l.answer}`;
+  const said = oneLine(l.kind === "exception" ? l.reason : `Q ${l.question} A ${l.answer}`);
   const lineage = l.kind === "exception" && l.derivedFrom ? `  derived from ${l.derivedFrom.length} lesson(s)` : "";
   return `${head}  until ${l.expiresAt}  by ${l.provenance.by} at ${l.recordedAt}${lineage}${l.supersededBy ? `  superseded by ${l.supersededBy}` : ""}: ${said}`;
 }
@@ -200,6 +208,8 @@ const TAG = {
   question: "question:", answer: "answer:", reason: "reason:", provKind: "prov_kind:", provAt: "prov_at:", provBy: "prov_by:", provRun: "prov_run:",
   // A rule: every scope key it covers (space-joined; a key is one token) and the proposal it was approved from. "scope_key:" is not a prefix of "scope_keys:".
   scopeKeys: "scope_keys:", proposal: "dream_id:",
+  // One tag per lesson a record superseded.
+  supersedes: "supersedes:",
 } as const;
 const tagOf = (tags: readonly string[], prefix: string): string | undefined => {
   const t = tags.find((x) => x.startsWith(prefix));
@@ -213,7 +223,11 @@ export function lessonOf(r: MemoryRecord): Lesson | null {
   const tenantId = tagOf(r.tags, TAG.tenant), expiresAt = tagOf(r.tags, TAG.expires), recordedAt = tagOf(r.tags, TAG.recorded);
   const pk = tagOf(r.tags, TAG.provKind), pa = tagOf(r.tags, TAG.provAt), pb = tagOf(r.tags, TAG.provBy), pr = tagOf(r.tags, TAG.provRun);
   if (!tenantId || !expiresAt || !recordedAt || !pk || !pa || !pb) return null;
-  const base = { id: r.id, tenantId, expiresAt, recordedAt, provenance: { kind: pk, at: pa, by: pb, ...(pr ? { runId: pr } : {}) }, ...(r.supersededBy ? { supersededBy: r.supersededBy } : {}) };
+  const replaced = r.tags.filter((t) => t.startsWith(TAG.supersedes)).map((t) => t.slice(TAG.supersedes.length));
+  const base = {
+    id: r.id, tenantId, expiresAt, recordedAt, provenance: { kind: pk, at: pa, by: pb, ...(pr ? { runId: pr } : {}) },
+    ...(r.supersededBy ? { supersededBy: r.supersededBy } : {}), ...(replaced.length ? { supersedes: replaced } : {}),
+  };
   if (kind === "answer") {
     const type = tagOf(r.tags, TAG.scopeType), k = tagOf(r.tags, TAG.scopeKey), question = tagOf(r.tags, TAG.question), answer = tagOf(r.tags, TAG.answer);
     if (!type || !k || question === undefined || answer === undefined || !(SCOPE_TYPES as readonly string[]).includes(type)) return null;
@@ -266,7 +280,7 @@ function disagreement(held: Claim, fresh: Claim): string | null {
   }
   if (held.kind === "answer" && fresh.kind === "answer") {
     return normQuestion(held.question) === normQuestion(fresh.question) && normQuestion(held.answer) !== normQuestion(fresh.answer)
-      ? `both answer "${fresh.question}" on ${fresh.key} and the answers differ`
+      ? `both answer "${oneLine(fresh.question)}" on ${fresh.key} and the answers differ`
       : null;
   }
   return null;
@@ -333,6 +347,13 @@ export class TechnicianMemory {
    * lesson that is not in conflict.
    */
   private gate(fresh: Claim, resolutions: readonly ConflictResolution[], except: ReadonlySet<string> = new Set()): LessonConflict[] {
+    // One resolution per lesson: two for the same id, whether alike or contradictory, are refused before anything is read.
+    const named = new Map<string, string>();
+    for (const r of resolutions) {
+      const prior = named.get(r.with);
+      if (prior !== undefined) throw new MemoryError(`resolution refused: ${r.with} is named twice${prior === r.strategy ? "" : `, as ${prior} and as ${r.strategy}`}; settle each lesson once`);
+      named.set(r.with, r.strategy);
+    }
     if (!this.gated) {
       if (resolutions.length) throw new MemoryError("resolution refused: this store is open without the conflict gate, so there is nothing to settle");
       return [];
@@ -368,8 +389,8 @@ export class TechnicianMemory {
     const open = conflicts.filter((c) => !resolutions.some((r) => r.with === c.with.id));
     if (open.length) {
       const fresher = fresh.kind === "exception"
-        ? `${fresh.keys.length > 1 ? "rule" : "exception"} for ${fresh.findingClass} on ${fresh.keys.length > 3 ? `${fresh.keys.slice(0, 3).join(" ")} … +${fresh.keys.length - 3} more` : fresh.keys.join(" ")} (${fresh.tenantId}) until ${fresh.expiresAt}: ${fresh.text}`
-        : `answer on ${fresh.key} (${fresh.tenantId}) until ${fresh.expiresAt}: ${fresh.text}`;
+        ? `${fresh.keys.length > 1 ? "rule" : "exception"} for ${fresh.findingClass} on ${fresh.keys.length > 3 ? `${fresh.keys.slice(0, 3).join(" ")} … +${fresh.keys.length - 3} more` : fresh.keys.join(" ")} (${fresh.tenantId}) until ${fresh.expiresAt}: ${oneLine(fresh.text)}`
+        : `answer on ${fresh.key} (${fresh.tenantId}) until ${fresh.expiresAt}: ${oneLine(fresh.text)}`;
       throw new ConflictError(
         `lesson refused: it contradicts ${open.length === 1 ? "a lesson" : `${open.length} lessons`} in force on the same scope key. New: ${fresher}. Held: ${open.map((c) => `${describeLesson(c.with)} (${c.reason})`).join(" | ")}. `
         + `Settle each by id: supersede (the new lesson replaces it; it stays on record, marked superseded, and is no longer recalled) or keep_both.`,
@@ -379,7 +400,7 @@ export class TechnicianMemory {
     return conflicts;
   }
 
-  /** After the new lesson is stored: the ledger's conflict_detected and conflict_resolved, the actor the technician; a superseded lesson is marked, kept and persisted. */
+  /** After the new lesson is stored: the ledger's conflict_detected and conflict_resolved, the actor the technician; a superseded lesson is marked and kept. The caller persists, once. */
   private settle(winner: Lesson, conflicts: readonly LessonConflict[], resolutions: readonly ConflictResolution[], by: string): void {
     for (const c of conflicts) {
       const strategy = resolutions.find((r) => r.with === c.with.id)!.strategy;
@@ -395,7 +416,6 @@ export class TechnicianMemory {
         this.hmem.ledger.log(winner.id, "conflict_resolved", by, { details: { conflictId, strategy, with: c.with.id } });
       }
     }
-    if (conflicts.length) this.hmem.store.persist();
   }
 
   /** (a) An answer to a question, on one scope of the tenant's estate, until it expires; stored and listed. */
@@ -413,16 +433,18 @@ export class TechnicianMemory {
         `${TAG.kind}answer`, `${TAG.tenant}${v.tenantId}`, `${TAG.scopeType}${v.scope.type}`, `${TAG.scopeKey}${v.scope.key}`,
         `${TAG.expires}${v.expiresAt}`, `${TAG.recorded}${recordedAt}`, `${TAG.question}${question}`, `${TAG.answer}${answer}`,
         ...this.provTags(v.provenance, by),
+        ...supersededIds(resolutions).map((id) => `${TAG.supersedes}${id}`),
       ],
       source: `technician:${v.provenance.kind}`,
       provenance: { origin: "manual", learnedAt: Date.parse(v.provenance.at), label: `answer taught by ${by}`, ...(v.provenance.runId ? { refs: [v.provenance.runId] } : {}) },
       chatId: v.tenantId,
-      supersedes: resolutions.find((r) => r.strategy === "supersede")?.with,
+      supersedes: supersededIds(resolutions)[0],
     });
     const lesson = lessonOf(rec);
     if (!lesson || lesson.kind !== "answer") throw new MemoryError(`answer ${rec.id} did not round-trip through the store`);
     this.index.set(lesson.id, lesson);
     this.settle(lesson, conflicts, resolutions, by);
+    if (conflicts.length) this.hmem.store.persist();
     return lesson;
   }
 
@@ -441,16 +463,18 @@ export class TechnicianMemory {
         `${TAG.kind}exception`, `${TAG.tenant}${v.tenantId}`, `${TAG.cls}${v.findingClass}`, `${TAG.scopeKey}${v.scopeKey}`,
         `${TAG.expires}${v.expiresAt}`, `${TAG.recorded}${recordedAt}`, `${TAG.reason}${reason}`,
         ...this.provTags(v.provenance, by),
+        ...supersededIds(resolutions).map((id) => `${TAG.supersedes}${id}`),
       ],
       source: `technician:${v.provenance.kind}`,
       provenance: { origin: "user_correction", learnedAt: Date.parse(v.provenance.at), label: `exception accepted by ${by}`, ...(v.provenance.runId ? { refs: [v.provenance.runId] } : {}) },
       chatId: v.tenantId,
-      supersedes: resolutions.find((r) => r.strategy === "supersede")?.with,
+      supersedes: supersededIds(resolutions)[0],
     });
     const lesson = lessonOf(rec);
     if (!lesson || lesson.kind !== "exception") throw new MemoryError(`exception ${rec.id} did not round-trip through the store`);
     this.index.set(lesson.id, lesson);
     this.settle(lesson, conflicts, resolutions, by);
+    if (conflicts.length) this.hmem.store.persist();
     return lesson;
   }
 

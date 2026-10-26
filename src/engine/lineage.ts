@@ -11,10 +11,11 @@
 // The recall score is the reference's own hybrid ranking (MemoryRetrievalService.scoreOne) of the lesson for the query
 // "<finding class> <scope key>", the two facts the Decider matched on. The Decider matches by exact scope key and gates on
 // no score; the number says how the reference ranks the lesson for that query, against its retrieval threshold.
+import { z } from "zod";
 import type { LedgerEntry } from "../../vendor/hmem/src/index.ts";
 import type { Finding } from "../pipeline.ts";
 import { isRule } from "./dreaming.ts";
-import { DEFAULTS, scopeValuesOf, type Lesson, type ScopeType, type TechnicianMemory } from "./memory.ts";
+import { DEFAULTS, MemoryError, oneLine, scopeValuesOf, type Lesson, type ScopeType, type TechnicianMemory } from "./memory.ts";
 
 export interface ConflictMet {
   id: string;
@@ -59,19 +60,36 @@ export interface Lineage {
 const iso = (ms: number): string => new Date(ms).toISOString();
 const SCOPE_ORDER: ScopeType[] = ["name", "host", "address"];
 
+// The details the ledger holds for the entries this module reads, as TechnicianMemory writes them. A ledger entry of one of these
+// actions whose details do not match is corrupt or from another schema: reading it fails loudly, naming the entry, and nothing
+// is guessed.
+const DETECTED = z.object({ conflictId: z.string().min(1), with: z.string().min(1), reason: z.string(), confidence: z.number() });
+const RESOLVED = z.object({ conflictId: z.string().min(1), strategy: z.enum(["supersede", "keep_both"]), winner: z.string().min(1).optional(), with: z.string().min(1).optional() });
+const APPROVED = z.object({ proposalId: z.string().min(1), derivedFrom: z.array(z.string()) });
+
+function detailsOf<T extends z.ZodType>(schema: T, e: LedgerEntry): z.infer<T> {
+  const r = schema.safeParse(e.details);
+  if (r.success) return r.data;
+  throw new MemoryError(`the ledger entry ${e.action} for ${e.memoryId} at ${iso(e.timestamp)} has malformed details: ${r.error.issues.map((i) => `${i.path.join(".") || "details"} ${i.message}`).join("; ")}`);
+}
+
+/** The winner a conflict_resolved entry names, if any. */
+const winnerOf = (e: LedgerEntry): string | undefined => (e.action === "conflict_resolved" ? detailsOf(RESOLVED, e).winner : undefined);
+
 function conflictsOf(memory: TechnicianMemory, id: string): ConflictMet[] {
   const entries = memory.ledgerEntries();
+  const resolved = new Map<string, { entry: LedgerEntry; details: z.infer<typeof RESOLVED> }>();
+  for (const e of entries) if (e.action === "conflict_resolved") resolved.set(detailsOf(RESOLVED, e).conflictId, { entry: e, details: detailsOf(RESOLVED, e) });
   const met: ConflictMet[] = [];
   for (const e of entries) {
     if (e.action !== "conflict_detected") continue;
-    const d = (e.details ?? {}) as { conflictId?: string; with?: string; reason?: string; confidence?: number };
+    const d = detailsOf(DETECTED, e);
     const side = e.memoryId === id ? "new" : d.with === id ? "held" : null;
-    if (!side || !d.conflictId) continue;
-    const r = entries.find((x) => x.action === "conflict_resolved" && (x.details as { conflictId?: string } | undefined)?.conflictId === d.conflictId);
-    const rd = (r?.details ?? {}) as { strategy?: string; winner?: string };
+    if (!side) continue;
+    const r = resolved.get(d.conflictId);
     met.push({
-      id: d.conflictId, other: side === "new" ? d.with ?? "?" : e.memoryId, side, reason: d.reason ?? "", confidence: d.confidence ?? 0, detectedAt: iso(e.timestamp),
-      resolution: r ? { strategy: rd.strategy ?? "?", by: r.actor, at: iso(r.timestamp), winner: rd.winner ?? null } : null,
+      id: d.conflictId, other: side === "new" ? d.with : e.memoryId, side, reason: d.reason, confidence: d.confidence, detectedAt: iso(e.timestamp),
+      resolution: r ? { strategy: r.details.strategy, by: r.entry.actor, at: iso(r.entry.timestamp), winner: r.details.winner ?? null } : null,
     });
   }
   return met;
@@ -118,7 +136,7 @@ export function lineageOf(memory: TechnicianMemory, found: Finding): Lineage {
       taught,
       conflicts: [...conflicts.values()],
       // Its own entries, and the resolutions logged under a lesson it superseded (the reference logs conflict_resolved under the loser).
-      history: memory.ledgerEntries().filter((e) => e.memoryId === lesson.id || (e.action === "conflict_resolved" && (e.details as { winner?: string } | undefined)?.winner === lesson.id)),
+      history: memory.ledgerEntries().filter((e) => e.memoryId === lesson.id || winnerOf(e) === lesson.id),
     },
   };
 }
@@ -127,11 +145,15 @@ const clip = (s: string, n: number): string => (s.length > n ? `${s.slice(0, n -
 const ids = (xs: readonly string[], n = 8): string => (xs.length <= n ? xs.join(" ") : `${xs.slice(0, n).join(" ")} … +${xs.length - n} more`);
 
 function entryLine(e: LedgerEntry): string {
-  const d = (e.details ?? {}) as Record<string, unknown>;
-  const note = e.action === "conflict_detected" ? ` with ${String(d.with)}`
-    : e.action === "conflict_resolved" ? ` ${String(d.strategy)}${d.winner ? `, winner ${String(d.winner)}` : d.with ? ` with ${String(d.with)}` : ""}`
-      : e.action === "dream_approved" ? ` proposal ${String(d.proposalId)}, derived from ${(d.derivedFrom as string[] | undefined)?.length ?? "?"} lesson(s)`
-        : "";
+  let note = "";
+  if (e.action === "conflict_detected") note = ` with ${detailsOf(DETECTED, e).with}`;
+  else if (e.action === "conflict_resolved") {
+    const d = detailsOf(RESOLVED, e);
+    note = ` ${d.strategy}${d.winner ? `, winner ${d.winner}` : d.with ? ` with ${d.with}` : ""}`;
+  } else if (e.action === "dream_approved") {
+    const d = detailsOf(APPROVED, e);
+    note = ` proposal ${d.proposalId}, derived from ${d.derivedFrom.length} lesson(s)`;
+  }
   return `${iso(e.timestamp)}  ${e.action}${note}  by ${e.actor}`;
 }
 
@@ -141,7 +163,7 @@ export function renderLineage(l: Lineage): string[] {
     `why ${l.finding.id}`,
     `  finding     ${l.finding.class}: ${clip(l.finding.where, 150)}`,
     `  decision    ${l.decision.verb}${l.decision.expiresAt ? ` until ${l.decision.expiresAt}` : ""}, decided by ${l.decision.decidedBy}${l.decision.ruleId ? ` under ${l.decision.ruleId}` : ""}`,
-    `  because     ${clip(l.decision.reason, 220)}`,
+    `  because     ${clip(oneLine(l.decision.reason), 220)}`,
   ];
   const x = l.lesson;
   if (!x) {

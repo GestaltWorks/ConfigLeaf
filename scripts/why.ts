@@ -18,7 +18,8 @@ import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { lessonRows, ruleRows } from "../src/data/file-rows.ts";
 import { decisionInstantWith } from "../src/data/instant.ts";
 import { lineageOf, renderLineage } from "../src/engine/lineage.ts";
-import { MemoryError, TechnicianMemory } from "../src/engine/memory.ts";
+import { badAt, parseAt } from "../src/engine/cli.ts";
+import { MemoryError, TechnicianMemory, oneLine } from "../src/engine/memory.ts";
 import { DriftWorld } from "../src/engine/world.ts";
 import { MemoryLedger } from "../src/ledger.ts";
 import { runPass } from "../src/pipeline.ts";
@@ -29,25 +30,43 @@ const { values: args } = parseArgs({
   options: { finding: { type: "string" }, at: { type: "string" }, bundle: { type: "string", default: "sample/bundle.json" }, "memory-dir": { type: "string" } },
 });
 
-const fail = (msg: string, code = 2): never => {
+function fail(msg: string, code = 2): never {
   console.error(msg);
   process.exit(code);
-};
+}
 
 if (!args.finding) fail(USAGE);
 // --at is the instant the lessons are recalled at (an expiry at or before it has lapsed); the clock when absent.
-const at = args.at === undefined ? Date.now() : Date.parse(args.at);
-if (Number.isNaN(at) || (args.at !== undefined && !/Z$/.test(args.at))) fail(`--at is an ISO 8601 UTC instant such as 2026-10-26T12:00:00Z, got ${JSON.stringify(args.at)}\n${USAGE}`);
+const at = parseAt(args.at);
+if (at === null) fail(badAt(args.at));
 
 try {
   const memory = new TechnicianMemory({ storage: "read", directory: args["memory-dir"], clock: () => at });
-  const bundle = JSON.parse(readFileSync(args.bundle!, "utf8"));
+  // A bundle that is missing, is not JSON or does not load is a usage error: one plain line, exit 2, never a stack trace.
+  let bundle: unknown;
+  try {
+    bundle = JSON.parse(readFileSync(args.bundle!, "utf8"));
+  } catch (err) {
+    fail(`cannot read the bundle ${args.bundle}: ${oneLine((err as Error).message)}`);
+  }
   const engine = await SqlJsEngine.create();
-  engine.loadBundle(bundle);
-  engine.loadFileTables({ lesson: lessonRows(memory), rule: ruleRows() });
-  const decidedAt = new Date(decisionInstantWith(bundle, memory.lessons().map((l) => l.recordedAt)) ?? Date.now()).toISOString();
-  const pass = await runPass(new DataLayer(engine), { world: new DriftWorld("why"), memory, at: new Date(at).toISOString(), ledger: new MemoryLedger(engine), decidedAt });
-  engine.close();
+  let pass: Awaited<ReturnType<typeof runPass>> | undefined;
+  let loadError: string | null = null;
+  try {
+    try {
+      engine.loadBundle(bundle as Parameters<SqlJsEngine["loadBundle"]>[0]);
+      engine.loadFileTables({ lesson: lessonRows(memory), rule: ruleRows() });
+    } catch (err) {
+      loadError = `the bundle ${args.bundle} does not load: ${oneLine((err as Error).message)}`;
+    }
+    if (!loadError) {
+      const decidedAt = new Date(decisionInstantWith(bundle, memory.lessons().map((l) => l.recordedAt)) ?? Date.now()).toISOString();
+      pass = await runPass(new DataLayer(engine), { world: new DriftWorld("why"), memory, at: new Date(at).toISOString(), ledger: new MemoryLedger(engine), decidedAt });
+    }
+  } finally {
+    engine.close(); // on every path: a pass that throws leaves no open engine behind
+  }
+  if (loadError || !pass) fail(loadError ?? "the pass did not run");
   const found = pass.findings.find((f) => f.id === args.finding);
   if (!found) {
     fail(`no finding ${args.finding} in the pass over ${args.bundle} (${pass.findings.length} findings). Their ids:\n${pass.findings.map((f) => `  ${f.id}  ${f.finding.class}  ${f.verb}  ${f.finding.host ?? f.finding.surface}  ${f.finding.object_id}  ${f.finding.setting_path}`).join("\n")}`, 1);

@@ -238,6 +238,8 @@ describe("approving a rule proposal", () => {
     expect(() => m.recordRule({ ...base, scopeKeys: ["a.example.invalid", "b.example.invalid", "x.example.invalid"], derivedFrom: ["mem-1", "mem-2"] })).toThrow(/not exactly the keys/);
     expect(() => m.recordRule({ ...base, scopeKeys: ["a.example.invalid"], derivedFrom: ["mem-1", "mem-1"] })).toThrow(/at least two lessons/);
     expect(() => m.recordRule({ ...base, scopeKeys: ["a.example.invalid", "b.example.invalid"], derivedFrom: ["mem-1", "mem-2"], proposalId: "dream-1" })).toThrow(/proposalId/);
+    // the lesson table packs a rule's keys into one space-separated column: a key with whitespace never reaches it
+    expect(() => m.recordRule({ ...base, scopeKeys: ["a.example.invalid", "b example"], derivedFrom: ["mem-1", "mem-2"] })).toThrow(/one token with no whitespace/);
     expect(m.lessons().every((l) => !l.supersededBy)).toBe(true);
     expect(rulesOf(m)).toEqual([]);
   });
