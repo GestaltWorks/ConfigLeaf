@@ -53,10 +53,18 @@ function rowValues(def: TableDef, rows: readonly Record<string, unknown>[], wher
 export class SqlJsEngine implements Engine {
   readonly name = "sqljs" as const;
 
-  /** A statement of run() is between prepare and free (see run). */
-  private open = false;
+  /**
+   * Set while run() is between prepare and free. run() awaits nothing and insertRows() is synchronous, so another call finds it
+   * set only if an await crept into run(); that call then fails loudly, never interleaving two statements on one database
+   * (the concurrent pass, PASS_CONCURRENCY; test/concurrency.test.ts).
+   */
+  private running = false;
 
   private constructor(private readonly db: Database) {}
+
+  private refuseOverlap(what: string): void {
+    if (this.running) throw new Error(`sqljs: ${what} while another statement was running on this engine; run() must not await between prepare and free`);
+  }
 
   /** A fresh in-memory database with the shared schema and the file tables applied. */
   static async create(): Promise<SqlJsEngine> {
@@ -125,6 +133,7 @@ export class SqlJsEngine implements Engine {
    * refused. Returns the rows inserted.
    */
   insertRows<K extends TableName>(table: K, rows: readonly Rows[K][]): number {
+    this.refuseOverlap(`a write to ${String(table)} started`);
     const def = tableDef(table);
     if (!def || !Object.hasOwn(KEYS, table)) throw new DataLayerError(`unknown table: ${String(table)}`);
     if (!Array.isArray(rows)) throw new DataLayerError(`${table}: rows must be an array`);
@@ -172,18 +181,17 @@ export class SqlJsEngine implements Engine {
   /**
    * Run exactly one statement. Same refusal as the Zetaris adapter: a trailing semicolon is stripped, a second statement is refused; a ';' inside a literal is data.
    * Nothing in it awaits, so a statement runs whole from prepare to free: the concurrent pass's overlapping calls (PASS_CONCURRENCY) run one statement
-   * at a time on one engine, each as it would alone (test/concurrency.test.ts). `open` holds that to account: a call that arrives while a statement is
-   * open (an await added between prepare and free, or a tracer that queries from inside emit) is refused, never interleaved.
+   * at a time on one engine, each as it would alone. `running` enforces it: a call that finds a statement in progress throws (test/concurrency.test.ts).
    */
   async run(sql: string, opts: RunOptions = {}): Promise<QueryResult> {
-    if (this.open) throw new DataLayerError("sqljs: run re-entered while a statement is open; a statement runs whole, with no await between prepare and free");
     const clean = sql.trim().replace(/;+\s*$/, "");
     if (/;\s*\S/.test(stripLiterals(clean))) throw new DataLayerError("one statement per call");
+    this.refuseOverlap("a statement started");
     const queryId = randomUUID();
     const limit = opts.limit ?? 1000;
     const t0 = Date.now();
     let stmt: Statement | undefined;
-    this.open = true;
+    this.running = true;
     try {
       stmt = this.db.prepare(clean);
       const columns = stmt.getColumnNames();
@@ -202,7 +210,7 @@ export class SqlJsEngine implements Engine {
       throw err instanceof DataLayerError ? err : new DataLayerError(`sqljs: ${msg}`);
     } finally {
       stmt?.free();
-      this.open = false;
+      this.running = false;
     }
   }
 

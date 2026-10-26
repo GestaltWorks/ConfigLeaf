@@ -1,7 +1,7 @@
 // The concurrent pass (src/concurrency.ts, src/pipeline.ts, PASS_CONCURRENCY): the helpers on their own (tasks four at a time
 // with their commits in task order, a tracer that cannot be taken failing its task rather than hanging, held lines written in
 // task order, a shared read run once with its lines where the first task in order asked); sql.js under overlapping runs,
-// writes and reads interleaved four at a time, a re-entered run refused; the pass at concurrency 1 and 4 over the sample
+// writes and reads interleaved four at a time, a re-entered run or write refused; the pass at concurrency 1 and 4 over the sample
 // bundle with the committed lessons and over the test fixtures, with equal findings, dispositions, ledger rows, recalls and
 // trace events (timestamps, latencies and query ids aside), a failing pass included; and over an engine that waits 50 ms
 // before each query, the queries in flight (1, then 4) and the same queries, trace and findings at both. No assertion
@@ -277,21 +277,27 @@ describe("sql.js under overlapping runs", () => {
     engine.close();
   });
 
-  it("refuses a run that arrives while a statement is open, and runs the next one once it is freed", async () => {
+  it("refuses a statement or a write that arrives while a statement is open, loudly, and runs the next one once it is freed", async () => {
     const engine = await SqlJsEngine.create();
     engine.loadBundle(recorded);
-    // a tracer that queries the same engine from inside emit, which run calls with its statement still open
+    // a tracer that queries and writes the same engine from inside emit, which run calls with its statement still open
     class Reentrant extends MemTracer {
       inner: Promise<unknown> | undefined;
+      write: unknown;
       override emit(e: Omit<TraceEvent, "ts" | "trace_id">): TraceEvent {
         this.inner ??= engine.run("SELECT 1 AS n");
+        try { engine.insertRows("referent_fingerprint", []); } catch (err) { this.write ??= err; }
         return super.emit(e);
       }
     }
     const tracer = new Reentrant("test_reentry", {});
     expect((await engine.run("SELECT COUNT(*) AS n FROM collection_run", { tracer })).rowCount).toBe(1);
-    await expect(tracer.inner).rejects.toThrow(/^sqljs: run re-entered while a statement is open/);
+    await expect(tracer.inner).rejects.toThrow(/^sqljs: a statement started while another statement was running on this engine/);
+    expect(String(tracer.write)).toContain("sqljs: a write to referent_fingerprint started while another statement was running on this engine");
+    // a plain Error, not the DataLayerError a check records as a rejection: the pass fails rather than carrying on
+    await expect(tracer.inner).rejects.not.toBeInstanceOf(DataLayerError);
     expect((await engine.run("SELECT 1 AS n")).rows).toEqual([["1"]]);
+    expect(engine.insertRows("referent_fingerprint", [])).toBe(0);
     // a statement that fails frees the engine too
     await expect(engine.run("SELECT nope FROM nowhere")).rejects.toThrow(DataLayerError);
     expect((await engine.run("SELECT 2 AS n")).rows).toEqual([["2"]]);
@@ -356,6 +362,8 @@ describe("the pass at concurrency 1 and 4: every finding, disposition, ledger ro
     // actor_attributed on one record, which several findings check: the first of them in order fails
     ["a check's query", (sql) => sql.startsWith("SELECT event_id, source, actor, action") && sql.includes("resource_id = '82de28f7baf86a005babc"), undefined],
     ["a detector's query", (sql) => sql.startsWith("SELECT n.obs_id, n.host, n.object_id, n.setting_path, n.refers_to_id"), undefined],
+    // the second query of an exposure measurement, a read several findings share: the record's row came back, the first event fails
+    ["an exposure query", (sql) => sql.startsWith("SELECT e.event_id, e.action, e.actor, e.occurred_at,"), undefined],
     // run_complete of the second host run: the gate asks first, before any finding's check does
     ["the gate's query of one run", (sql) => sql.startsWith("SELECT c.run_id") && sql.includes("WHERE c.run_id = 'run-67f4d6923cb4838d'"), undefined],
     ["the ledger's second referent fingerprint write, a commit", () => false, (e) => {
@@ -375,10 +383,12 @@ describe("the pass at concurrency 1 and 4: every finding, disposition, ledger ro
     });
   }
 
-  it("a pass whose World Model exposure write throws, a commit: no ok exposure line, the failed one last, the same at 1 and 4", async () => {
+  it("a pass whose third World Model exposure write throws, a commit: an ok line for each of the two edges stored, none for the third, its failed line last, the same at 1 and 4", async () => {
     class FailingWorld extends DriftWorld {
-      override async exposure(): Promise<never> {
-        throw new Error("planted World Model failure");
+      private stores = 0;
+      override async exposure(...args: Parameters<DriftWorld["exposure"]>) {
+        if (++this.stores === 3) throw new Error("planted World Model failure");
+        return super.exposure(...args);
       }
     }
     const at = async (c: number) => passAt(recorded, c, { engine: (e) => slowEngine(e, 0).engine, opts: { decidedAt: AT, world: new FailingWorld("test_concurrency_edge") } });
@@ -387,7 +397,7 @@ describe("the pass at concurrency 1 and 4: every finding, disposition, ledger ro
     expect(one.error).toBe("planted World Model failure");
     expect(four.error).toBe(one.error);
     const exposure = one.trace.filter((e) => e.action === "triage" && e.input_summary?.startsWith("exposure "));
-    expect(exposure.filter((e) => e.status === "ok")).toEqual([]);
+    expect(exposure.filter((e) => e.status === "ok")).toHaveLength(2);
     expect(exposure.filter((e) => e.status === "failed")).toHaveLength(1);
     expect(one.trace.at(-1)).toMatchObject({ agent: "decider", status: "failed", output_summary: "exposure edge not stored: planted World Model failure" });
     expect(four.trace).toEqual(one.trace);
