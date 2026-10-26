@@ -1,0 +1,46 @@
+{
+  "repository": "https://github.com/Meterless/Meterless",
+  "commit": "1742dec56a66e58eef9dda2d2b865823758ca8cd",
+  "files": [
+    {
+      "path": "vendor/scout-intent/LICENSE",
+      "upstream": "engines/scout-intent/LICENSE",
+      "blob": "d1a6bb88af6e6b79738dd192fb491a99eb2a7fe3"
+    },
+    {
+      "path": "vendor/scout-intent/evals/fixtures/intents.json",
+      "upstream": "engines/scout-intent/evals/fixtures/intents.json",
+      "blob": "d7c8cab620d37c3aa18aeb8accffc8ebace87c89"
+    },
+    {
+      "path": "vendor/scout-intent/evals/regression-set/v1/edge-cases/clarification.jsonl",
+      "upstream": "engines/scout-intent/evals/regression-set/v1/edge-cases/clarification.jsonl",
+      "blob": "4ed9b2a2682b46c67b5c6a4cbbc6b0bdf40ba6d6"
+    },
+    {
+      "path": "vendor/scout-intent/evals/regression-set/v1/injection/adversarial.jsonl",
+      "upstream": "engines/scout-intent/evals/regression-set/v1/injection/adversarial.jsonl",
+      "blob": "ca3dc0af2af9c36a4c7a624b9cd78e4d66cd0361"
+    },
+    {
+      "path": "vendor/scout-intent/evals/regression-set/v1/intents/deal.jsonl",
+      "upstream": "engines/scout-intent/evals/regression-set/v1/intents/deal.jsonl",
+      "blob": "95f655269e2b161cc7277a2b9d4e346aabedaa08"
+    },
+    {
+      "path": "vendor/scout-intent/evals/regression-set/v1/intents/email.jsonl",
+      "upstream": "engines/scout-intent/evals/regression-set/v1/intents/email.jsonl",
+      "blob": "81e05f103018419f8dd39e6028976688ed3b685b"
+    },
+    {
+      "path": "vendor/scout-intent/evals/regression-set/v1/intents/research-and-plan.jsonl",
+      "upstream": "engines/scout-intent/evals/regression-set/v1/intents/research-and-plan.jsonl",
+      "blob": "55d132bfa9399f98b874553dc4a39ecad1969314"
+    },
+    {
+      "path": "vendor/scout-intent/evals/regression-set/v1/multi-intent/composed.jsonl",
+      "upstream": "engines/scout-intent/evals/regression-set/v1/multi-intent/composed.jsonl",
+      "blob": "3e04f9f1bcb7ec1e1ff9c900d871fd1d92dd6774"
+    }
+  ]
+}

@@ -4,7 +4,8 @@ Everything in this repository was written during the GenAI Works Open Agent Hack
 (from 22 Oct 2026 00:00 UTC), with two exceptions, both declared here: the Meterless World Model reference
 implementation (`vendor/world-model/`) and the Meterless H-MEM reference implementation (`vendor/hmem/`), each
 vendored unmodified from https://github.com/Meterless/Meterless at commit `1742dec56a66e58eef9dda2d2b865823758ca8cd`.
-No other code predates the window; the repository's first commit, `07427fb`, is of 24 Oct 2026 02:43 UTC.
+No other code predates the window; the repository's first commit, `07427fb`, is of 24 Oct 2026 02:43 UTC. One set of
+third-party data files, the Meterless Scout Intent smoke set (`vendor/scout-intent/`), is declared below; it holds no code.
 
 ## Input data
 
@@ -59,6 +60,26 @@ What this repository copied and changed, per Apache-2.0 section 4(b):
 - `npm test` checks each of the 19 files under `vendor/hmem/` against its git blob id at the upstream commit
   (`vendor/UPSTREAM.json`, `test/vendor.test.ts`); `gh api repos/Meterless/Meterless/git/trees/1742dec56a66e58eef9dda2d2b865823758ca8cd?recursive=1`
   lists the same ids.
+
+## Vendored: Meterless Scout Intent smoke-set data
+
+| | |
+|---|---|
+| Path | `vendor/scout-intent/` |
+| Upstream | https://github.com/Meterless/Meterless, `engines/scout-intent`: `LICENSE`, `evals/fixtures/intents.json` and the six `evals/regression-set/v1/**/*.jsonl` files |
+| Upstream commit | `1742dec56a66e58eef9dda2d2b865823758ca8cd` (the same clone and commit as the entries above) |
+| Licence | Apache-2.0, copyright 2026 Meterless. Full text in `vendor/scout-intent/LICENSE` (byte-identical to `vendor/hmem/LICENSE`) |
+| NOTICE | Upstream ships no NOTICE file at that commit, so there is none to carry |
+
+What this repository copied and changed, per Apache-2.0 section 4(b):
+
+- Copied the eight data files above, byte for byte, with line endings as LF. They are the 32-example v1 smoke set and the
+  intent registry fixture the spec's eval harness loads.
+- Copied no code. Upstream ships no reference implementation of Scout Intent, and its eval runner is not copied, installed,
+  built or run. `src/guard/` is written in this repository; `src/guard/smoke.ts` is its own runner over the data.
+- Wrote `vendor/scout-intent/README.md` and `vendor/scout-intent/UPSTREAM.json` here; they are not upstream files.
+- `npm test` checks each of the 8 data files against its git blob id at the upstream commit
+  (`vendor/scout-intent/UPSTREAM.json`, `test/vendor.test.ts`).
 
 ## Libraries
 
