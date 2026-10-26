@@ -19,13 +19,16 @@ import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { REDACT, type AuditEvent } from "../src/data/rows.ts";
 import type { Store } from "../src/data/store.ts";
 import { Redactor } from "../src/redactor.ts";
+import { BASH, sayBashSkip } from "./fixtures/bash.ts";
 
 const r = new Redactor("fixture-salt");
 const T = "lab-1";
 const HOST = pseudonymHost(r, "web7-alias");
 const ctx: JournalContext = { tenantId: T, host: HOST, redact: (s) => redactText(r, s) };
 const H6 = "[0-9a-f]{6}";
-const bashOk = spawnSync("bash", ["-c", "true"]).status === 0;
+// The bash tests need a bash that shares this process's files and environment (test/fixtures/bash.ts); elsewhere they skip, saying why.
+const bashOk = BASH.ok;
+sayBashSkip("journal");
 
 // The two measured shapes, names invented.
 const TEE = "2026-10-25T15:55:12+00:00 web7 sudo[3055347]:   tvance : PWD=/home/tvance ; USER=root ; COMMAND=/usr/bin/tee -- /etc/nginx/conf.d/example.conf";

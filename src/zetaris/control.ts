@@ -84,10 +84,32 @@ export const OPTIONAL_STATEMENTS: readonly ControlStatement[] = ["grants"];
  */
 export const STATEMENT_INDEX: Readonly<Partial<Record<ControlStatement, string>>> = { grants: "grants" };
 
-/** The optional statements a stored zetaris.control run did not check: those whose index object (redacted as the rows carry it) its observations lack. */
-export function notCheckedIn(objectIds: Iterable<string>, redactor: Pick<Redactor, "text">): ControlStatement[] {
+/**
+ * The optional statements a stored zetaris.control run did not check: those whose index object, as the rows carry it, its
+ * observations lack. The index ids name nothing of the estate, so the redactor leaves them as written; `redactor` is the
+ * collector's, for a tenant whose REDACT_WORDS would reach one.
+ */
+export function notCheckedIn(objectIds: Iterable<string>, redactor: Pick<Redactor, "text"> = { text: (s) => s }): ControlStatement[] {
   const ids = new Set(objectIds);
   return OPTIONAL_STATEMENTS.filter((s) => !ids.has(redactor.text(STATEMENT_INDEX[s] ?? s)));
+}
+
+/** The objects each optional statement gives: the listing and one object per entry (grants, grant/<principal>). */
+const STATEMENT_OBJECTS: Readonly<Partial<Record<ControlStatement, (objectId: string) => boolean>>> = {
+  grants: (id) => id === "grants" || id.startsWith("grant/"),
+};
+/** What the reason of an object a statement did not give says. */
+export const NOT_CHECKED_REASON: Readonly<Partial<Record<ControlStatement, string>>> = { grants: "SHOW GRANT refused" };
+
+/**
+ * Why a run of `surface` lacks the approved object `objectId`, when the collector knows: on zetaris.control, an object a
+ * statement the run did not check would have given ("SHOW GRANT refused" for the grants listing and each principal's
+ * grants); null otherwise, an object the run read and found gone. `runObjectIds` are the run's observations' object ids.
+ */
+export function absentBecause(surface: string, objectId: string, runObjectIds: Iterable<string>): string | null {
+  if (surface !== CONTROL_SURFACE) return null;
+  const s = notCheckedIn(runObjectIds).find((x) => STATEMENT_OBJECTS[x]?.(objectId));
+  return s ? NOT_CHECKED_REASON[s] ?? null : null;
 }
 
 /** What npm run approve -- --surface zetaris.control prints for each statement its source run did not check. */

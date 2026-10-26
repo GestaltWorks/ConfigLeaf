@@ -7,9 +7,10 @@
 //      lesson's expiry; a lapsed one gives ESCALATE. decided_by "operator", whatever rule matches, whatever
 //      HOLD the setting had.
 //   2. Policy, when a rule governs the setting (src/policy/resolve.ts); decided_by "policy", rule_id the rule.
-//      on_drift escalate, first and whatever the lock or the class: ESCALATE, the reason naming the finding's class and
-//      the drift from the approved value when there is one; the agent changes nothing (the rule zetaris.control
-//      carries, the layer the agent reads through).
+//      on_drift escalate, first and whatever the lock or the class: ESCALATE, the reason naming the finding's class, its
+//      object and the drift from the approved value when there is one; the agent changes nothing (the rule
+//      zetaris.control carries, the layer the agent reads through). An approved_missing reason names why the run lacks
+//      the object when the collector knows it ("SHOW GRANT refused", src/zetaris/control.ts absentBecause).
 //      drift_vs_approved (the live value differs from the latest approval) and approved_missing (the approved
 //      object is absent from the run: a drift from the approved value to the live value ""):
 //        lock 1 or on_drift rollback:
@@ -101,7 +102,12 @@ export interface ProbeView { run_id: string | null; rows: readonly { kind: strin
 export interface PriorHold { decided_at: string; expires_at: string; rule_id: string | null }
 
 export interface DecideInput {
-  finding: { class: FindingClass };
+  /**
+   * The finding: its class; its object id as the rows carry it, which an escalate rule's reason names; and for an
+   * approved_missing finding, why the run lacks the object when the collector knows (a statement it could not run:
+   * "SHOW GRANT refused"), which the reason names after the absence.
+   */
+  finding: { class: FindingClass; object_id?: string; absent?: string | null };
   rule: PolicyRule | null;
   exception: ExceptionState;
   checks: { verb: ChecksVerb; why: string };
@@ -272,13 +278,16 @@ function byRule(input: DecideInput, rule: PolicyRule, until = holdUntil(input.de
   const prod = production(input.probes, input.serves);
   const id = rule.rule_id;
   const cls = input.finding.class;
+  // "approved <hash> is absent from the run", with why when the collector knows it
+  const absent = (a12: string): string => `approved ${a12} is absent from the run${input.finding.absent ? ` (${input.finding.absent})` : ""}`;
 
   // escalate: a technician decides every finding the rule governs; the agent changes nothing, whatever the lock.
   if (rule.on_drift === "escalate") {
+    const on = input.finding.object_id ? ` on ${input.finding.object_id}` : "";
     const what = APPROVAL_CLASSES.includes(cls) && input.approved
-      ? (cls === "approved_missing" ? `: approved ${hex(input.approved.value_hash, 12)} is absent from the run` : `: live value drifted from approved ${hex(input.approved.value_hash, 12)}`)
+      ? (cls === "approved_missing" ? `: ${absent(hex(input.approved.value_hash, 12))}` : `: live value drifted from approved ${hex(input.approved.value_hash, 12)}`)
       : "";
-    return by("ESCALATE", `this ${cls} finding stands${what}; rule ${id} (${rule.criticality}) sends it to a technician and the agent changes nothing`);
+    return by("ESCALATE", `this ${cls} finding stands${on}${what}; rule ${id} (${rule.criticality}) sends it to a technician and the agent changes nothing`);
   }
 
   if (APPROVAL_CLASSES.includes(cls) && input.approved) {
@@ -286,7 +295,7 @@ function byRule(input: DecideInput, rule: PolicyRule, until = holdUntil(input.de
     const a12 = hex(approvedHash, 12);
     const missing = cls === "approved_missing";
     // what the setting is against its approval, and what restoring or adopting it does
-    const state = missing ? `approved ${a12} is absent from the run` : `live value drifted from approved ${a12}`;
+    const state = missing ? absent(a12) : `live value drifted from approved ${a12}`;
     const restores = missing ? "restores it from that copy" : "rolls it back to that copy";
     const adopts = missing ? "adopts its absence" : "adopts the live value";
     if (rule.lock === 1 || rule.on_drift === "rollback") {

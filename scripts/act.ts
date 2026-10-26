@@ -34,6 +34,9 @@ import { runPass } from "../src/pipeline.ts";
 import { TENANT_ID, TENANT_ID_SHAPE } from "../src/policy/schema.ts";
 import { Redactor } from "../src/redactor.ts";
 import { Vault } from "../src/vault/vault.ts";
+import { exitOnConfigError } from "../src/cli.ts";
+
+exitOnConfigError();
 
 const USAGE = `usage: npm run act -- --tenant <id> [--run <pass run id>]... [--apply] [--only ${ONLY_KINDS.join(",")}] [--schema <name>] [--verbose|--quiet] [--help]`;
 

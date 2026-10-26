@@ -46,6 +46,9 @@ import { MODE, Table, passView, presentOptions } from "../src/loop/present.ts";
 import { FileTracer } from "../src/loop/trace.ts";
 import { TENANT_ID, TENANT_ID_SHAPE } from "../src/policy/schema.ts";
 import { Redactor } from "../src/redactor.ts";
+import { exitOnConfigError } from "../src/cli.ts";
+
+exitOnConfigError();
 
 const USAGE = "usage: npm run pass -- --tenant <id> [--decided-at <ISO 8601 UTC>] [--no-ledger] [--schema <name>] [--verbose|--quiet] [--help]";
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?Z$/;

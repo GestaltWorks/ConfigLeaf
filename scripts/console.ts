@@ -24,6 +24,9 @@ import { config, redact } from "../src/config.ts";
 import { DEFAULT_PORT, startConsole } from "../src/console/server.ts";
 import { liveBackend, liveRefusal, sampleBackend, zetarisGaps, type Backend } from "../src/console/state.ts";
 import { TENANT_ID, TENANT_ID_SHAPE } from "../src/policy/schema.ts";
+import { exitOnConfigError } from "../src/cli.ts";
+
+exitOnConfigError();
 
 const USAGE = "usage: npm run console -- [--tenant <id>] [--port <n>] [--bundle <file>] [--write] [--help]";
 

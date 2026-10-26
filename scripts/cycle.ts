@@ -47,6 +47,9 @@ import { SKIPPABLE, parseSkip, type Skippable } from "../src/loop/cycle.ts";
 import { liveCycle, liveRefusal, liveShared, type LiveShared } from "../src/loop/live.ts";
 import { presentOptions } from "../src/loop/present.ts";
 import { TENANT_ID, TENANT_ID_SHAPE } from "../src/policy/schema.ts";
+import { exitOnConfigError } from "../src/cli.ts";
+
+exitOnConfigError();
 
 const USAGE = `usage: npm run cycle -- --tenant <id> [--apply] [--skip ${SKIPPABLE.join("|")}]... [--tickets-dry-run] [--verbose|--quiet] [--help]`;
 

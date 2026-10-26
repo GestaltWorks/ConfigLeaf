@@ -27,7 +27,7 @@ import { resolvePolicy } from "../src/policy/resolve.ts";
 import { Redactor } from "../src/redactor.ts";
 import { approvalsFor } from "../src/vault/approve.ts";
 import {
-  CONTROL_HOST, CONTROL_STATEMENTS, CONTROL_SURFACE, canonical, collectControl, controlObjects, controlRows, controlText, notCheckedIn, notCheckedWarnings, readControl, sha256, storeControl,
+  CONTROL_HOST, CONTROL_STATEMENTS, CONTROL_SURFACE, absentBecause, canonical, collectControl, controlObjects, controlRows, controlText, notCheckedIn, notCheckedWarnings, readControl, sha256, storeControl,
   type ControlRead, type ControlStore,
 } from "../src/zetaris/control.ts";
 import { MemTracer } from "./fixtures/mem-tracer.ts";
@@ -279,7 +279,7 @@ describe("the pass over the control plane, policy/hackathon.json", () => {
     expect(r.findings.map((f) => [f.finding.class, f.finding.object_id, f.verb, f.disposition.decided_by, f.disposition.rule_id])).toEqual([
       ["drift_vs_approved", "dq/run_complete", "ESCALATE", "policy", rule.rule_id],
     ]);
-    expect(r.findings[0].disposition.reason).toMatch(/^this drift_vs_approved finding stands: live value drifted from approved [0-9a-f]{12}; rule rule-[0-9a-f]{16} \(critical\) sends it to a technician and the agent changes nothing$/);
+    expect(r.findings[0].disposition.reason).toMatch(/^this drift_vs_approved finding stands on dq\/run_complete: live value drifted from approved [0-9a-f]{12}; rule rule-[0-9a-f]{16} \(critical\) sends it to a technician and the agent changes nothing$/);
     const diff = r.causes[0].cause.diff!.split("\n");
     expect(diff.slice(0, 2)).toEqual(["--- approved definition", "+++ live definition"]);
     expect(diff.filter((l) => /^[-+] /.test(l))).toEqual([`-  "expression": "status = 'complete'",`, `+  "expression": "status = 'complete' OR 1 = 1",`]);
@@ -292,6 +292,9 @@ describe("the pass over the control plane, policy/hackathon.json", () => {
       ["approved_missing", "usl/drift_usl/copy", "ESCALATE"],
       ["drift_vs_approved", "usl/drift_usl", "ESCALATE"],
     ]);
+    // an entity the run read and found gone names no statement: its reason is the absence alone
+    expect(dropped.findings.find((f) => f.finding.object_id === "usl/drift_usl/copy")!.disposition.reason)
+      .toMatch(/^this approved_missing finding stands on usl\/drift_usl\/copy: approved [0-9a-f]{12} is absent from the run; rule /);
     const list = dropped.findings.find((f) => f.finding.object_id === "usl/drift_usl")!;
     expect(dropped.causes.find((c) => c.finding_id === list.id)?.cause.diff).toContain(`-    "copy"`);
     const widened = await passOver(answers({ ...BASE, grants: [...BASE.grants, ["`DRIFT`.`APPROVED_SETTING`", "INSERT"]] }));
@@ -299,15 +302,21 @@ describe("the pass over the control plane, policy/hackathon.json", () => {
     expect(widened.causes[0].cause.diff).toContain(`+      "privilege": "INSERT"`);
   });
 
-  it("SHOW GRANT refused after a baseline with grants: both approved grant objects come back approved_missing, ESCALATE, and the run reads back as grants not checked", async () => {
+  it("SHOW GRANT refused after a baseline with grants: both approved grant objects come back approved_missing, ESCALATE, the reason naming the object and the refusal", async () => {
     const refused = await passOver({ ...answers(BASE), grants: { error: "Zetaris 403: Access Control Read is required" } });
     // the baseline approved the grants listing and the one principal's grants
     const grantIds = ["grants", redactor.text(`grant/${PRINCIPAL}`)].sort();
     expect(refused.approvals.map((a) => a.object_id).filter((i) => i.startsWith("grant")).sort()).toEqual(grantIds);
     expect(refused.findings.map((f) => [f.finding.class, f.finding.object_id, f.verb, f.disposition.rule_id]).sort()).toEqual(grantIds.map((i) => ["approved_missing", i, "ESCALATE", rule.rule_id]));
     for (const f of refused.findings) {
-      expect(f.disposition.reason).toMatch(/^this approved_missing finding stands: approved [0-9a-f]{12} is absent from the run; rule rule-[0-9a-f]{16} \(critical\) sends it to a technician and the agent changes nothing$/);
+      const on = f.finding.object_id.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+      expect(f.disposition.reason).toMatch(new RegExp(`^this approved_missing finding stands on ${on}: approved [0-9a-f]{12} is absent from the run \\(SHOW GRANT refused\\); rule rule-[0-9a-f]{16} \\(critical\\) sends it to a technician and the agent changes nothing$`));
     }
+    // absentBecause: a grant object of a run that lacks the grants listing, and nothing else
+    expect(absentBecause(CONTROL_SURFACE, "grants", refused.second.observations.map((o) => o.object_id))).toBe("SHOW GRANT refused");
+    expect(absentBecause(CONTROL_SURFACE, "usl/drift_usl/copy", refused.second.observations.map((o) => o.object_id))).toBeNull();
+    expect(absentBecause(CONTROL_SURFACE, redactor.text(`grant/${PRINCIPAL}`), rowsOf(answers(BASE), 5).observations.map((o) => o.object_id))).toBeNull();
+    expect(absentBecause("linux.nginx", "grants", [])).toBeNull();
     // what the Store keeps of the refusal: the run lacks the grants listing, so notCheckedIn names the statement and approve warns
     const ids = refused.second.observations.map((o) => o.object_id);
     expect(notCheckedIn(ids, redactor)).toEqual(["grants"]);

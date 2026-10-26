@@ -41,6 +41,9 @@ import { runPass } from "../src/pipeline.ts";
 import { TENANT_ID, TENANT_ID_SHAPE } from "../src/policy/schema.ts";
 import { Redactor, countLabels } from "../src/redactor.ts";
 import { Tracer } from "../src/trace.ts";
+import { exitOnConfigError } from "../src/cli.ts";
+
+exitOnConfigError();
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const USAGE = "usage: npm run document -- --tenant <id> [--bundle <file>] [--out <path>] [--help]";

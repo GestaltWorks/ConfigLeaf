@@ -83,6 +83,9 @@ import { VERBS, runPass } from "../src/pipeline.ts";
 import { Tracer } from "../src/trace.ts";
 import { REST_DB } from "../src/zetaris/setup.ts";
 import bundle from "../sample/bundle.json" with { type: "json" };
+import { exitOnConfigError } from "../src/cli.ts";
+
+exitOnConfigError();
 
 const USAGE = "usage: SAMPLE_MODE=true npm run sample [-- --verbose|--quiet|--json] [--help]";
 

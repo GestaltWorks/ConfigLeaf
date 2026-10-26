@@ -9,10 +9,11 @@
 // each query, the queries in flight (1, then 4) and the same queries, trace and findings at both. No assertion rests on wall
 // time: a loaded runner stretches it.
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { HeldTracer, OrderedTrace, SharedReads, checkLimit, closing, inOrder, type Task } from "../src/concurrency.ts";
-import { parsePassConcurrency } from "../src/config.ts";
+import { ConfigError, parsePassConcurrency } from "../src/config.ts";
 import { decisionInstantWith } from "../src/data/instant.ts";
 import { DataLayer, DataLayerError, type Engine } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
@@ -209,11 +210,15 @@ describe("inOrder: tasks at most `limit` at a time, commits in task order", () =
     expect(maxInCommit).toBe(1);
   });
 
-  it("takes a whole number from 1 to 16, as PASS_CONCURRENCY does, and says why above it", async () => {
-    for (const bad of [0, -1, 1.5, Number.NaN, 17, 64]) expect(() => checkLimit(bad)).toThrow(RangeError);
+  it("takes a whole number from 1 to 16, as PASS_CONCURRENCY does, and says why above it: one check, src/config.ts's", async () => {
+    for (const bad of [0, -1, 1.5, Number.NaN, 17, 64]) expect(() => checkLimit(bad)).toThrow(ConfigError);
     expect(checkLimit(16)).toBe(16);
-    expect(() => checkLimit(17)).toThrow("concurrency is a whole number from 1 to 16, got 17");
-    await expect(inOrder([], 0, () => undefined)).rejects.toThrow(RangeError);
+    expect(() => checkLimit(17)).toThrow("PASS_CONCURRENCY: at most 16, got 17; each read in flight is one more query against the datasource at once");
+    expect(() => checkLimit(0)).toThrow("PASS_CONCURRENCY: a whole number of at least 1, got 0");
+    await expect(inOrder([], 0, () => undefined)).rejects.toThrow(ConfigError);
+    // the limit lives in src/config.ts alone
+    expect(readFileSync(new URL("../src/concurrency.ts", import.meta.url), "utf8")).not.toMatch(/MAX_PASS_CONCURRENCY|\b16\b/);
+    for (const bad of ["0", "17"]) expect(() => parsePassConcurrency(bad)).toThrow(ConfigError);
     expect(parsePassConcurrency("")).toBe(4);
     expect(parsePassConcurrency(" 1 ")).toBe(1);
     expect(parsePassConcurrency("8")).toBe(8);
@@ -228,6 +233,12 @@ describe("an invalid PASS_CONCURRENCY at startup", () => {
   const ROOT = fileURLToPath(new URL("..", import.meta.url));
   // the environment a judge's clean clone has: none of the operator's own variables
   const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(DRIFT|ZETARIS|METERLESS|M365)_/.test(k)));
+
+  it("the config module throws, never exits: importing it with an invalid value is fine, and reading the value throws ConfigError", async () => {
+    const r = spawnSync(process.execPath, ["--import", "tsx", "-e", 'import("./src/config.ts").then((m) => { try { void m.config.passConcurrency; } catch (e) { console.log(e instanceof m.ConfigError, e.message); } })'], { cwd: ROOT, encoding: "utf8", timeout: 50_000, env: { ...clean, PASS_CONCURRENCY: "17" } });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toBe("true PASS_CONCURRENCY: at most 16, got 17; each read in flight is one more query against the datasource at once\n");
+  }, 60_000);
 
   it("exits 2 with one plain line on stderr, never a stack trace, before the script does anything", { timeout: 60_000 }, () => {
     for (const [value, line] of [
@@ -523,6 +534,37 @@ describe("the pass at concurrency 1 and 4: every finding, disposition, ledger ro
     return { error, trace: events(tracer), before, after };
   };
   const isOkExposure = (e: ReturnType<typeof events>[number]) => e.action === "triage" && e.status === "ok" && !!e.input_summary?.startsWith("exposure ");
+
+  it("several detectors failing in one pass: each is one trace line, in detector order, closing the trace; the first is thrown and no disposition recorded, the same at 1 and 4", async () => {
+    // the proxy_split detector of the tenant and the orphan_vhost read of each host's survey
+    const fails = (sql: string) => sql.startsWith("SELECT c.zone, c.name AS proxied_name") || sql.startsWith("SELECT n.obs_id, n.host, n.object_id, n.setting_path, n.refers_to_id");
+    const at = async (c: number) => {
+      const sql = await SqlJsEngine.create();
+      sql.loadBundle(recorded);
+      const before = await ledgerRows(sql);
+      const tracer = new MemTracer("test_concurrency_detectors", { model: "none" });
+      const error = await runPass(new DataLayer(slowEngine(sql, 0, fails).engine), { tracer, world: new DriftWorld("test_concurrency_detectors"), ledger: new MemoryLedger(sql), decidedAt: AT, concurrency: c })
+        .then(() => null, (e: Error) => e.message);
+      const after = await ledgerRows(sql);
+      sql.close();
+      return { error, trace: events(tracer), before, after };
+    };
+    const [one, four] = [await at(1), await at(4)];
+    expect(one.error).toMatch(/^planted failure: SELECT c\.zone, c\.name AS proxied_name/);
+    expect(four.error).toBe(one.error);
+    const failed = (t: typeof one.trace) => t.filter((e) => e.agent === "detector" && e.status === "failed");
+    const lines = failed(one.trace);
+    expect(lines.length).toBeGreaterThanOrEqual(2);
+    expect(lines[0].output_summary).toMatch(/^failed: planted failure: SELECT c\.zone, c\.name AS proxied_name/);
+    expect(lines.slice(1).every((e) => e.output_summary?.startsWith("failed: planted failure: SELECT n.obs_id, n.host, n.object_id"))).toBe(true);
+    expect(lines.every((e) => e.detail === `${lines.length} detector(s) failed this pass; nothing is recorded`)).toBe(true);
+    // in detector order, and the last lines of the trace
+    const order = lines.map((e) => Number(/^detector (\d+) of \d+$/.exec(e.input_summary ?? "")?.[1]));
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    expect(one.trace.slice(-lines.length)).toEqual(lines);
+    expect(four.trace).toEqual(one.trace);
+    for (const r of [one, four]) expect(r.after.dispositions).toEqual(r.before.dispositions);
+  });
 
   it("one commit that fails among many (the third exposure edge's store): the pass rejects, the ledger gets no disposition, the trace is the clean pass's up to it and stops at its failed line, the same at 1 and 4", async () => {
     class FailingWorld extends DriftWorld {

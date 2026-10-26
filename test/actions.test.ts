@@ -42,6 +42,7 @@ import { MemoryTicketRows, ticketStep } from "../src/psa/step.ts";
 import { Redactor } from "../src/redactor.ts";
 import { FakeModel } from "./fixtures/actions/fake-model.ts";
 import { ALIAS, APP, BLOG, HOST, SHOP, TENANT, ZONE, ZONE_ID, buildBase, buildWorld, type Base, type World } from "./fixtures/actions/world.ts";
+import { BASH, sayBashSkip } from "./fixtures/bash.ts";
 import policyBundle from "./fixtures/policy-bundle.json" with { type: "json" };
 
 const hex = (s: string | Buffer) => createHash("sha256").update(s).digest("hex");
@@ -49,7 +50,9 @@ const body = (run: string, object: string): string => policyBundle.observation.f
 const APPROVED_APP = body("run-nginx-7f1c-1020", APP);
 const LIVE_APP = body("run-nginx-7f1c-1023", APP);
 const APPROVED_BLOG = body("run-nginx-7f1c-1020", BLOG);
-const bashOk = spawnSync("bash", ["-c", "true"]).status === 0;
+// The bash tests need a bash that shares this process's files and environment (test/fixtures/bash.ts); elsewhere they skip, saying why.
+const bashOk = BASH.ok;
+sayBashSkip("actions");
 
 const of = (w: World, verb: string, object: string, setting = "file"): Disposition => w.dispositions.find((d) => d.verb === verb && d.object_id === object && d.setting_path === setting && d.decided_at === "2026-10-23T03:00:00.000Z")!;
 const run = (w: World, opts: Partial<Parameters<typeof act>[0]> = {}, over: Parameters<World["deps"]>[0] = {}): Promise<ActResult> =>

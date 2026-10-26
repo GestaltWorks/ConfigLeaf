@@ -37,6 +37,9 @@ import { FileTracer, LabelTracer } from "../src/loop/trace.ts";
 import { GithubIssues } from "../src/psa/github.ts";
 import { storeTicketRows, ticketStep } from "../src/psa/step.ts";
 import { Redactor } from "../src/redactor.ts";
+import { exitOnConfigError } from "../src/cli.ts";
+
+exitOnConfigError();
 
 const USAGE = "usage: npm run tickets -- --tenant <id> [--dry-run] [--bundle <file>] [--schema <name>] [--verbose|--quiet] [--help]";
 

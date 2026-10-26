@@ -86,8 +86,9 @@
 // a pass one task at a time runs it, and so do its trace lines, held until every line before them is written. A read
 // several findings need (a probe run's rows, a tenant's change windows, a record's exposure, a tenant's audit span, a DNS
 // run's observations) runs once, its lines where the first finding in order asks for it, under that ask's agent, and each
-// later ask is one line naming its own agent and the read it reused. A failure anywhere fails the pass: the dispositions go
-// to the ledger only after every step, so a pass that throws records none (the observe step's referent fingerprints,
+// later ask is one line naming its own agent and the read it reused. Every detector runs when another fails, and each
+// failure is one trace line, so a pass that several detectors fail names them all. A failure anywhere fails the pass: the
+// dispositions go to the ledger only after every step, so a pass that throws records none (the observe step's referent fingerprints,
 // written as it runs, are keyed, and the next pass writes none twice). The detectors read the World
 // Model's fingerprints, which the decide step's exposure edges never touch, so every detector runs before the first
 // finding is checked. At any PASS_CONCURRENCY the findings, dispositions, ledger rows and trace lines are those of 1,
@@ -122,6 +123,7 @@ import {
 import { resolvePolicy } from "./policy/resolve.ts";
 import { PolicyRuleRow, issues } from "./policy/schema.ts";
 import type { Tracer } from "./trace.ts";
+import { absentBecause } from "./zetaris/control.ts";
 // The verifier's stop rule and the withdraw rule before the judge (src/stoprule.ts).
 import { VERDICT_CANNOT_MOVE, countersSummary, earlyStopSummary, shouldStop, shouldWithdraw, zeroCounters, type StopCounters, type StopPolicy } from "./stoprule.ts";
 
@@ -482,7 +484,12 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     const windows = weigh && WINDOW_CLASSES.includes(cls) ? await windowsFor(finding.tenant_id, t) : null;
     const window = windows ? openWindow(windows.rows, finding, decidedAt) : null;
     const windowError = windows?.error ?? null;
-    const decision = decide({ finding: { class: cls }, rule, exception: exceptionState, checks: { verb: policyVerb, why: policyWhy }, approved, copies, probes, serves, decidedAt, priorHold, window, windowError });
+    // An approved object the run lacks because a statement of the run was not checked says so (src/zetaris/control.ts).
+    const absent = cls === "approved_missing" ? absentBecause(finding.surface, finding.object_id, (obsByRun.get(finding.run_id) ?? []).map((o) => o.object_id)) : null;
+    const decision = decide({
+      finding: { class: cls, object_id: finding.object_id, absent }, rule, exception: exceptionState, checks: { verb: policyVerb, why: policyWhy },
+      approved, copies, probes, serves, decidedAt, priorHold, window, windowError,
+    });
     const verb: Verb = decision.verb;
     const why = decision.reason;
     if (applied && recalled) recalled.applied += 1;
@@ -910,24 +917,37 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     await detectMissing(dns, "cloudflare.dns", "", "cloudflare.dns", dns.run_id, t, report);
   });
 
-  // The detectors' step. On a detector's failure the findings reported before it are still checked and decided, as a pass
-  // one task at a time had done by then, and the detector's error is thrown after them.
+  // The detectors' step. A detector that fails fails its own lines (the trace ends there) and every other detector still
+  // runs, so the same failures are known at any PASS_CONCURRENCY. The findings reported up to the first failure in order
+  // are still checked and decided, as a pass one task at a time had done by then; then each failure is one trace line, in
+  // detector order, and the first is thrown.
   const reported: Reported[][] = detectors.map(() => []);
-  let failedAt = detectors.length;
-  const detected = await inTurn(detectors.map((detect, d): Task => async (t) => {
+  const failures: { d: number; error: unknown }[] = [];
+  await inTurn(detectors.map((detect, d): Task => async (t) => {
     try {
       await detect(t, (finding, view, approved) => reported[d].push({ finding, view, approved: approved ?? null, lines: t?.hold() }));
-    } catch (err) {
-      failedAt = Math.min(failedAt, d);
-      throw err;
+    } catch (error) {
+      failures.push({ d, error });
+      t?.fail();
     }
     return () => {};
-  })).then(() => null, (error: unknown) => ({ error }));
+  }));
+  failures.sort((a, b) => a.d - b.d);
+  const failedAt = failures[0]?.d ?? detectors.length;
 
   // check, decide, judge: every finding a task, its lines where its detector reported it, its commit in the order reported.
   const queue = reported.slice(0, failedAt + 1).flat();
-  await inTurn(queue.map((q): Task => (t) => assess(q.finding, q.view, q.approved, t)), (i) => queue[i].lines);
-  if (detected) throw detected.error;
+  try {
+    await inTurn(queue.map((q): Task => (t) => assess(q.finding, q.view, q.approved, t)), (i) => queue[i].lines);
+  } finally {
+    for (const f of failures) {
+      tracer?.emit({
+        agent: "detector", action: "detect", status: "failed", input_summary: `detector ${f.d + 1} of ${detectors.length}`,
+        output_summary: `failed: ${((f.error as Error)?.message ?? String(f.error)).slice(0, 300)}`, detail: `${failures.length} detector(s) failed this pass; nothing is recorded`,
+      });
+    }
+  }
+  if (failures.length) throw failures[0].error;
 
   // The settings of the pass's latest passing runs that a locked rule governs and that have no approved value on
   // record: what a locked rule has nothing to roll back to. Counted, one line per pass, no finding.

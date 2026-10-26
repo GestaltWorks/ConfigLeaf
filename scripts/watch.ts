@@ -18,6 +18,9 @@ import { liveCycle, liveRefusal, liveShared, type LiveShared } from "../src/loop
 import { presentOptions } from "../src/loop/present.ts";
 import { watch } from "../src/loop/watch.ts";
 import { TENANT_ID, TENANT_ID_SHAPE } from "../src/policy/schema.ts";
+import { exitOnConfigError } from "../src/cli.ts";
+
+exitOnConfigError();
 
 const USAGE = `usage: npm run watch -- --tenant <id> --every <minutes> [--apply] [--skip ${SKIPPABLE.join("|")}]... [--tickets-dry-run] [--verbose|--quiet] [--help]`;
 
