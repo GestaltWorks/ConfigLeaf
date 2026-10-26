@@ -87,6 +87,7 @@ const REVIEWED_UNFENCED: Readonly<Record<string, string>> = {
   "queries.LATEST_APPROVALS_SQL": "the tie-break compares n with a",
   "queries.ORPHAN_VHOST_SQL": "the OR holds a NOT EXISTS subquery",
   "queries.PRIOR_HOLDS_SQL": "the tie-break compares n with d",
+  "queries.FAILING_RUNS_SQL": "the OR group holds a scalar subquery, as in RUN_COMPLETE_SQL",
   "queries.RUN_COMPLETE_SQL": "the OR group holds a scalar subquery",
   "templates.CATALOGUE[restore_would_regress]": "b.value_hash against a.value_hash",
   "templates.CATALOGUE[run_complete]": "RUN_COMPLETE_SQL",
