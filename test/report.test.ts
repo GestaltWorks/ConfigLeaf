@@ -252,10 +252,14 @@ describe("the report over sample/bundle.json for client-1", () => {
 
   it("prints with light tokens, text included, the bar in place and every fold open; one inline script; no absolute URL, nothing loaded from outside; under the budget", () => {
     const print = printBlock(s.html);
-    for (const token of ["color-scheme:light", "--fg:#1d1e20", "--muted:#62666d", "--need:#b3361d", "--hold:#835700", "--adopted:#6c7178", "--ok:#2f6b45", "--bg:#fff"]) expect(print, token).toContain(token);
+    // print: a white page and white cards over the light tokens of :root; the dark ones apply on a screen only, never in print
+    for (const token of ["color-scheme:light", "--bg:#fff", "--card:#fff"]) expect(print, token).toContain(token);
+    for (const token of ["--fg:#1d1e20", "--muted:#62666d", "--need:#b3361d", "--hold:#835700", "--adopted:#6c7178", "--ok:#2f6b45"]) expect(s.html, token).toContain(token);
+    expect(s.html).toContain("@media screen and (prefers-color-scheme:dark){:root{");
+    expect(s.html).not.toMatch(/@media \(prefers-color-scheme:dark\)/);
     expect(print).toContain(".bar{position:static}");
     expect(print).toContain(".fold[hidden]{display:block}");
-    expect(s.html).toMatch(/@media \(prefers-color-scheme:dark\)\{:root\{--bg:#141517;--fg:#e8e6e1;/);
+    expect(s.html).toMatch(/@media screen and \(prefers-color-scheme:dark\)\{:root\{--bg:#141517;--fg:#e8e6e1;/);
     // the bundle's only URL, the ticket's, is pseudonymised: the page carries no absolute URL at all
     expect(sample.ticket.filter((x) => x.tenant_id === T).every((x) => /host-[0-9a-f]{6}/.test(x.url ?? ""))).toBe(true);
     expect(s.html).not.toMatch(/https?:\/\//);

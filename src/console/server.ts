@@ -110,6 +110,8 @@ export interface ConsoleOptions {
   print?: (line: string) => void;
   /** Where the console's own findings go (a duplicate rule family); default a FileTracer in logs/ when tracePasses is on, else none. */
   tracer?: Tracer;
+  /** The download's renderer: src/document/executive.ts renderExecutive unless a test gives another. */
+  renderFile?: typeof renderExecutive;
 }
 
 export interface ConsoleServer {
@@ -138,12 +140,14 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
 
   // One state per tenant: the console's pass, a pass running, the snapshot and the source counts. The header's switcher
   // sets `current`; a request reads the tenant it began with.
-  interface TenantState { pass: PassRun | null; running: { startedAt: string; done: Promise<void> } | null; snapshot: Promise<Snapshot> | null; sources: Promise<SourceCount[]> | null }
+  // `first` is the tenant's first pass once one is asked for: set before any await, so two requests that name a tenant
+  // at once share one pass, never two.
+  interface TenantState { pass: PassRun | null; running: { startedAt: string; done: Promise<void> } | null; snapshot: Promise<Snapshot> | null; sources: Promise<SourceCount[]> | null; first: Promise<void> | null }
   const states = new Map<string, TenantState>();
   let current = b.tenant;
   const st = (tenant: string): TenantState => {
     let s = states.get(tenant);
-    if (!s) states.set(tenant, (s = { pass: null, running: null, snapshot: null, sources: null }));
+    if (!s) states.set(tenant, (s = { pass: null, running: null, snapshot: null, sources: null, first: null }));
     return s;
   };
   const be = (tenant: string): Backend => withTenant(b, tenant);
@@ -171,7 +175,9 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
     }
     return s.snapshot;
   };
-  // a write or a pass changes the one store the tenants share: each reads it again
+  // A write or a pass changes the one store every tenant reads: the "*" policy rows, the lesson store and the file
+  // tables are shared, and Sources counts every row of the shared tables. No write can be shown to touch one tenant's
+  // rows alone, so every tenant reads the store again; a snapshot is re-read lazily, at the next page of that tenant.
   const invalidate = (): void => { for (const s of states.values()) { s.snapshot = null; s.sources = null; } };
 
   const doPass = async (tenant: string, decidedAt: string): Promise<PassRun> => {
@@ -187,13 +193,28 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
     s.running = { startedAt, done };
     return done;
   };
-  /** A tenant's first pass, when the console starts and when the switcher first names it: at the sample's instant in sample mode, in the background live. */
-  const firstPass = async (tenant: string, when: "listening" | "before"): Promise<void> => {
-    if (o.firstPass === "sync" && when === "before") await doPass(tenant, b.sampleInstant ?? clock().toISOString());
-    else if (o.firstPass === "background" && when === "listening") void startPass(tenant, clock().toISOString());
+  /**
+   * A tenant's first pass, when the console starts and when the switcher first names it: at the sample's instant in
+   * sample mode, in the background live. The guard (TenantState.first) is set synchronously, before the pass is
+   * awaited, so concurrent switches to one tenant wait for the one pass; a first pass that fails clears it, and the
+   * next switch tries again.
+   */
+  const firstPass = (tenant: string): Promise<void> => {
+    const s = st(tenant);
+    if (s.first) return s.first;
+    const run = async (): Promise<void> => {
+      if (o.firstPass === "sync") {
+        const r = await doPass(tenant, b.sampleInstant ?? clock().toISOString());
+        print(`console: first pass of ${tenant} decided at ${r.decidedAt}`);
+      } else if (o.firstPass === "background") void startPass(tenant, clock().toISOString());
+    };
+    const p = run().catch((e: unknown) => { if (s.first === p) s.first = null; throw e; });
+    s.first = p;
+    return p;
   };
 
-  await firstPass(current, "before");
+  // the console's own tenant: in sample mode its pass before listening, live a dry pass once it listens
+  if (o.firstPass === "sync") await firstPass(current);
 
   const view = async (tenant: string): Promise<View> => {
     const s = await snap(tenant);
@@ -263,7 +284,15 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
           return html(await page(tenant, "executive", "Executive report", () => ({ body: errorPage((e as Error).message) })), 400);
         }
         const { x, ctx } = await executive(tenant, period);
-        return { status: 200, type: "text/html; charset=utf-8", body: renderExecutive(x, ctx), attachment };
+        // the file and its CSP before anything is sent: a renderer that fails, or a file fileCsp refuses, is a 500 page
+        try {
+          const file = (o.renderFile ?? renderExecutive)(x, ctx);
+          fileCsp(file);
+          return { status: 200, type: "text/html; charset=utf-8", body: file, attachment };
+        } catch (e) {
+          print(`console: the executive report of ${tenant} was not written as a file: ${b.redactor.text(redact((e as Error)?.message ?? String(e)))}`);
+          return html(await page(tenant, "executive", "Executive report", () => ({ body: errorPage(`The executive report could not be written as one file: ${b.redactor.text(redact((e as Error)?.message ?? String(e))).split("\n")[0].slice(0, 200)}. The page itself still reads it.`) })), 500);
+        }
       }
       case "/templates": return html(await page(tenant, "templates", "Templates", (v) => ({ body: templatesPage(v) }), { toast }));
       case "/settings": {
@@ -424,10 +453,9 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
     tenant: async (f) => {
       const want = f.get("tenant") ?? "";
       if (!b.tenants.includes(want)) throw new ActionError(`the store holds no run of tenant ${want.slice(0, 64) || "(none named)"}; the switcher lists ${b.tenants.join(", ")}`);
-      const first = !st(want).pass && !st(want).running;
-      if (first) await firstPass(want, "before");
+      const first = st(want).first === null;
+      await firstPass(want);
       current = want;
-      if (first) await firstPass(want, "listening");
       return { ok: true, title: `Switched to ${want}`, lines: [`every page now reads ${want}'s rows${first && st(want).pass ? `; its first pass decided at ${utc(st(want).pass!.decidedAt)}` : ""}`] };
     },
   };
@@ -474,7 +502,9 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
       const back = form.get("return") ?? "/overview";
       // a switch answers with the page it came from, read again for the new tenant: a reload then asks for nothing twice
       if (m[1] === "tenant" && toast.ok) { res.writeHead(303, { ...answerHeaders("text/plain; charset=utf-8", csp("")), location: returnPathOf(back) }); res.end(); return; }
-      const r = await render(current, ["/settings", "/findings", "/overview"].includes(back) ? back : "/overview", new URLSearchParams(), toast);
+      // every action returns to the same pages a switch does (RETURN_PATHS), read again with the toast
+      const to = new URL(returnPathOf(back), origin);
+      const r = await render(current, to.pathname, to.searchParams, toast);
       return send(res, status, "text/html; charset=utf-8", r!.body);
     };
     if (body === null) return reply({ ok: false, status: 413, title: "Refused: the form is larger than 64 KB", lines: [] });
@@ -509,7 +539,7 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
   const port = (server.address() as AddressInfo).port;
   origin = `http://${o.host ?? "127.0.0.1"}:${port}`;
   hosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`]);
-  await firstPass(current, "listening");
+  if (o.firstPass === "background") await firstPass(current);
 
   return {
     url: origin, port, csrf,
@@ -558,10 +588,11 @@ const ROUTE_HEADERS: ReadonlySet<string> = new Set(["content-disposition"]);
  * security headers. A route sets its content type (an argument of its own) and, for a download, content-disposition;
  * any other name it gives is refused with an error, so no route can set, replace or drop a fixed header.
  */
-export function answerHeaders(type: string, policy: string, route: Readonly<Record<string, string>> = {}): Record<string, string> {
+export function answerHeaders(type: string, policy: string, route: Readonly<Record<string, string>> = {}, server: { cache?: string; etag?: string } = {}): Record<string, string> {
   const other = Object.keys(route).filter((k) => !ROUTE_HEADERS.has(k.toLowerCase()));
   if (other.length) throw new Error(`a route sets its content type and content-disposition only, not ${other.join(", ")}`);
-  return { ...route, "content-type": type, "cache-control": "no-store", "content-security-policy": policy, ...SECURITY };
+  // `server` is the server's own: the assets' year-long cache and their ETag (sendAsset); a route never passes it
+  return { ...route, "content-type": type, "cache-control": server.cache ?? "no-store", ...(server.etag ? { etag: server.etag } : {}), "content-security-policy": policy, ...SECURITY };
 }
 
 /** One answer, its headers from answerHeaders: the CSP the server chose (csp("") unless given) and a route's own content-disposition. */
@@ -610,7 +641,7 @@ export function fileCsp(file: string): string {
 
 /** A static part of the shell: its path names its hash, so it is cached for a year and never revalidated; an If-None-Match on its ETag is 304. */
 function sendAsset(req: http.IncomingMessage, res: http.ServerResponse, a: Asset): void {
-  const head = { "content-type": a.type, "cache-control": "public, max-age=31536000, immutable", etag: a.etag, ...SECURITY, "content-security-policy": csp("") };
+  const head = answerHeaders(a.type, csp(""), {}, { cache: "public, max-age=31536000, immutable", etag: a.etag });
   if (req.headers["if-none-match"] === a.etag) { res.writeHead(304, head); res.end(); return; }
   res.writeHead(200, { ...head, "content-length": Buffer.byteLength(a.body) });
   res.end(req.method === "HEAD" ? "" : a.body);

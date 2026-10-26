@@ -4,7 +4,7 @@
 // scale is the stated one, and the mark is a drawing with no words that a screen reader skips. The pages' own tests
 // (report, executive, console, site) hold the pages to it after; this holds the primitives.
 import { describe, expect, it } from "vitest";
-import { BASE_CSS, DARK, DARK_MORE, LIGHT, LIGHT_MORE, MARK, PRINT_TOKENS, ROOT_CSS, SCALE } from "../src/design/theme.ts";
+import { BASE_CSS, DARK, LIGHT, MARK, PRINT_TOKENS, ROOT_CSS, SCALE, TOKENS } from "../src/design/theme.ts";
 
 /** A token list "--a:x;--b:y" as a map, failing on a name given twice or an entry that is not a custom property. */
 function tokens(list: string): Map<string, string> {
@@ -28,16 +28,18 @@ function contrast(a: string, b: string): number {
   return (hi + 0.05) / (lo + 0.05);
 }
 
-const light = new Map([...tokens(LIGHT), ...tokens(LIGHT_MORE)]);
-const dark = new Map([...tokens(DARK), ...tokens(DARK_MORE)]);
+const light = tokens(LIGHT);
+const dark = tokens(DARK);
 const scale = tokens(SCALE);
 
 describe("the one design's tokens", () => {
-  it("light and dark define the same names, the base set and the console's additions apart, none twice", () => {
-    expect([...tokens(DARK).keys()]).toEqual([...tokens(LIGHT).keys()]);
-    expect([...tokens(DARK_MORE).keys()]).toEqual([...tokens(LIGHT_MORE).keys()]);
-    expect([...tokens(LIGHT).keys()].filter((k) => tokens(LIGHT_MORE).has(k))).toEqual([]);
+  it("one table holds each colour's light and dark value side by side: LIGHT and DARK are read off it, the same names in the same order, none twice", () => {
+    expect([...light]).toEqual(TOKENS.map(([n, l]) => [n, l]));
+    expect([...dark]).toEqual(TOKENS.map(([n, , d]) => [n, d]));
+    expect(new Set(TOKENS.map(([n]) => n)).size).toBe(TOKENS.length);
     expect([...light.keys()].filter((k) => scale.has(k))).toEqual([]);
+    // the owner's report's colours and the console's additions, in one list
+    expect(TOKENS.map(([n]) => n)).toEqual(["--bg", "--fg", "--muted", "--line", "--card", "--soft", "--need", "--need-bg", "--hold", "--hold-bg", "--adopted", "--ok", "--ok-bg", "--locked", "--locked-bg", "--window", "--window-bg", "--hover", "--focus", "--scrim", "--shadow"]);
   });
 
   it("every colour token is a #rrggbb colour, an rgba() scrim or a shadow", () => {
@@ -62,16 +64,15 @@ describe("the one design's tokens", () => {
 });
 
 describe("the one design's rules", () => {
-  it("the root rules: light tokens and the scale on :root, the dark ones under prefers-color-scheme: dark, each with its color-scheme", () => {
-    expect(ROOT_CSS).toBe(`:root{${LIGHT};${LIGHT_MORE};${SCALE};color-scheme:light}\n@media (prefers-color-scheme:dark){:root{${DARK};${DARK_MORE};color-scheme:dark}}`);
+  it("the root rules: light tokens and the scale on :root, the dark ones on a screen that prefers dark (never in print), each with its color-scheme", () => {
+    expect(ROOT_CSS).toBe(`:root{${LIGHT};${SCALE};color-scheme:light}\n@media screen and (prefers-color-scheme:dark){:root{${DARK};color-scheme:dark}}`);
   });
 
-  it("print: the light tokens, then a white page and white cards over them, the light color-scheme", () => {
-    expect(PRINT_TOKENS).toBe(`color-scheme:light;${LIGHT};${LIGHT_MORE};--bg:#fff;--card:#fff;--soft:#f3f3f3`);
-    // the later declaration wins, as in a CSS block
-    const print = new Map(PRINT_TOKENS.split(";").slice(1).map((e) => e.split(/:(.*)/s).slice(0, 2) as [string, string]));
-    expect([print.get("--bg"), print.get("--card"), print.get("--fg"), print.get("--need")]).toEqual(["#fff", "#fff", light.get("--fg"), light.get("--need")]);
-    expect(contrast(print.get("--muted")!, "#ffffff")).toBeGreaterThanOrEqual(4.5);
+  it("print sets the white page and cards once and copies no light token: the light ones already hold, the dark ones are for a screen", () => {
+    expect(PRINT_TOKENS).toBe("color-scheme:light;--bg:#fff;--card:#fff;--soft:#f3f3f3");
+    for (const [n] of TOKENS.filter(([n]) => !["--bg", "--card", "--soft"].includes(n))) expect(PRINT_TOKENS, n).not.toContain(`${n}:`);
+    // the light text and states still read on the white page
+    for (const n of ["--fg", "--muted", "--need", "--ok"]) expect(contrast(light.get(n)!, "#ffffff"), n).toBeGreaterThanOrEqual(4.5);
   });
 
   it("every variable the shared rules read is a token of the design, or carries its own fallback", () => {

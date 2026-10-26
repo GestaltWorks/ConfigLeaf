@@ -7,8 +7,7 @@
 <meta name="description" content="Every finding of the ConfigLeaf pass over recorded, redacted real collections, with the SQL that ran, the rows it returned, the hashes and the judge step.">
 <style>
 :root{--bg:#fbfaf7;--fg:#1d1e20;--muted:#62666d;--line:#dedad2;--card:#ffffff;--soft:#f2f0eb;--need:#b3361d;--need-bg:#fbebe6;--hold:#835700;--hold-bg:#f8ecd2;--adopted:#6c7178;--ok:#2f6b45;--ok-bg:#e3f0e7;--locked:#2b5c8a;--locked-bg:#e7eef6;--window:#835700;--window-bg:#f8ecd2;--hover:#f3f1ec;--focus:#2b5c8a;--scrim:rgba(20,20,22,.36);--shadow:0 10px 40px rgba(0,0,0,.14);--sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--mono:ui-monospace,SFMono-Regular,"Cascadia Mono",Consolas,"Liberation Mono",Menlo,monospace;--t-xs:12px;--t-s:13.5px;--t-m:15px;--t-l:17px;--t-xl:22px;--t-num:28px;--radius:10px;color-scheme:light}
-@media (prefers-color-scheme:dark){:root{--bg:#141517;--fg:#e8e6e1;--muted:#a3a19b;--line:#33353a;--card:#1b1c1f;--soft:#222428;--need:#ff8e74;--need-bg:#3a201a;--hold:#f0c46e;--hold-bg:#382c13;--adopted:#9a9da3;--ok:#8fd1a6;--ok-bg:#1b3124;--locked:#8db8e6;--locked-bg:#1b2733;--window:#f0c46e;--window-bg:#382c13;--hover:#202226;--focus:#8db8e6;--scrim:rgba(0,0,0,.55);--shadow:0 10px 40px rgba(0,0,0,.5);color-scheme:dark}}
-:root{--code:var(--soft);--chip:var(--soft);--bad:var(--need);--bad-bg:var(--need-bg);--warn:var(--hold);--warn-bg:var(--hold-bg);--accent:var(--locked)}
+@media screen and (prefers-color-scheme:dark){:root{--bg:#141517;--fg:#e8e6e1;--muted:#a3a19b;--line:#33353a;--card:#1b1c1f;--soft:#222428;--need:#ff8e74;--need-bg:#3a201a;--hold:#f0c46e;--hold-bg:#382c13;--adopted:#9a9da3;--ok:#8fd1a6;--ok-bg:#1b3124;--locked:#8db8e6;--locked-bg:#1b2733;--window:#f0c46e;--window-bg:#382c13;--hover:#202226;--focus:#8db8e6;--scrim:rgba(0,0,0,.55);--shadow:0 10px 40px rgba(0,0,0,.5);color-scheme:dark}}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--fg);font:var(--t-m)/1.45 var(--sans);overflow-wrap:anywhere}
@@ -43,17 +42,15 @@ code,.mono{font-family:var(--mono);font-size:.87em}
 .tile .s{margin:0;font-size:12.5px;color:var(--muted)}
 .alert{border:1px solid var(--need);border-radius:var(--radius);padding:10px 12px;color:var(--need);background:var(--need-bg)}
 .calm{color:var(--ok);font-weight:600}
-body{--page:1100px;--gutter:16px;line-height:1.55}
-pre,table{overflow-wrap:normal}
-.wrap{max-width:1100px;margin:0 auto;padding:0 16px}
-.bar{position:static}
+.wrap{max-width:1100px;margin:0 auto;padding:0 16px;line-height:1.55}
+.brand{display:flex;align-items:center;gap:10px;margin:0 0 8px}
 header{padding:28px 0 12px;border-bottom:1px solid var(--line)}
-h1{margin:0 0 8px}
-h2{margin:40px 0 6px}
+.brand h1{margin:0}
+main h2{margin:40px 0 6px}
 h4{font-size:var(--t-xs);text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:22px 0 8px}
-p{margin:6px 0 10px;max-width:78ch}
+main p,header p{margin:6px 0 10px;max-width:78ch}
 .lede{color:var(--muted);font-size:var(--t-m)}
-pre{background:var(--code);border-radius:6px;padding:10px 12px;margin:6px 0;overflow:auto;max-height:440px;font:12.5px/1.5 var(--mono);white-space:pre;tab-size:2}
+pre{overflow-wrap:normal;background:var(--soft);border-radius:6px;padding:10px 12px;margin:6px 0;overflow:auto;max-height:440px;font:12.5px/1.5 var(--mono);white-space:pre;tab-size:2}
 .stats{display:flex;flex-wrap:wrap;gap:8px 22px;margin:14px 0 4px;padding:0;list-style:none}
 .stats b{font-size:var(--t-l);display:block;line-height:1.2;font-variant-numeric:tabular-nums}
 .stats li{color:var(--muted);font-size:var(--t-s)}
@@ -64,8 +61,7 @@ pre{background:var(--code);border-radius:6px;padding:10px 12px;margin:6px 0;over
 .headline .stats li{flex:1 1 13rem;max-width:21rem}
 .controls{position:sticky;top:0;z-index:2;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 0;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
 .controls label{font-size:.85rem;color:var(--muted)}
-select,button{font:inherit;font-size:var(--t-s);color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:7px;padding:5px 10px}
-button{cursor:pointer}
+select,button{cursor:pointer;font:inherit;font-size:var(--t-s);color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:7px;padding:5px 10px}
 button:hover,select:hover{border-color:var(--muted)}
 .meta{font-size:.82rem;color:var(--muted);margin:4px 0}
 .meta code{word-break:break-all}
@@ -84,31 +80,30 @@ details.finding[open]>summary::before{transform:rotate(90deg)}
 .v-ROLLBACK{background:var(--ok-bg);color:var(--ok)}
 .v-ADOPT{background:var(--soft);color:var(--adopted)}
 .v-HOLD{background:var(--hold-bg);color:var(--hold)}
-.cls{background:var(--chip);color:var(--fg);font-weight:500}
+.cls{background:var(--soft);color:var(--fg);font-weight:500}
 .ok{color:var(--ok)}
-.warnc{color:var(--warn)}
+.warnc{color:var(--hold)}
 .t-holds{background:var(--ok-bg);color:var(--ok)}
-.t-fails{background:var(--bad-bg);color:var(--bad)}
-.t-other{background:var(--chip);color:var(--muted)}
+.t-fails{background:var(--need-bg);color:var(--need)}
+.t-other{background:var(--soft);color:var(--muted)}
 dl.fields{display:grid;grid-template-columns:max-content 1fr;gap:3px 14px;margin:8px 0;font-size:.85rem}
 dl.fields dt{color:var(--muted)}
 dl.fields dd{margin:0;font-family:var(--mono);font-size:.82rem;word-break:break-all}
 .check{border-left:3px solid var(--line);padding:2px 0 6px 12px;margin:14px 0}
 .check.c-holds{border-left-color:var(--ok)}
-.check.c-fails{border-left-color:var(--bad)}
+.check.c-fails{border-left-color:var(--need)}
 .check h3{font-family:var(--mono);font-size:.92rem;font-weight:600}
 .purpose{color:var(--muted);font-size:.85rem;margin:2px 0 6px}
 .sentence{margin:4px 0 6px}
 .scroll{overflow-x:auto;margin:6px 0;border:1px solid var(--line);border-radius:6px}
-table{border-collapse:collapse;font:12px/1.4 var(--mono);width:max-content;min-width:100%}
-th,td{padding:4px 8px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
-th{background:var(--code);font-weight:600;position:sticky;top:0}
-td{white-space:pre-wrap;word-break:break-word;max-width:46ch}
+table{overflow-wrap:normal;border-collapse:collapse;font:12px/1.4 var(--mono);width:max-content;min-width:100%}
+th{padding:4px 8px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line);background:var(--soft);font-weight:600;position:sticky;top:0}
+td{padding:4px 8px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line);white-space:pre-wrap;word-break:break-word;max-width:46ch}
 tr:last-child td{border-bottom:0}
 .hashes{font:11.5px/1.5 var(--mono);color:var(--muted);word-break:break-all}
-.note{background:var(--code);border-radius:6px;padding:10px 12px;font-size:.88rem}
+.note{background:var(--soft);border-radius:6px;padding:10px 12px;font-size:.88rem}
 .empty{color:var(--muted);font-size:.85rem;font-style:italic}
-.error{background:var(--bad-bg);color:var(--bad);padding:12px 14px;border-radius:6px}
+.error{background:var(--need-bg);color:var(--need);padding:12px 14px;border-radius:6px}
 footer{margin:48px 0 0;padding:22px 0 40px;border-top:1px solid var(--line);color:var(--muted);font-size:.88rem}
 footer p{max-width:86ch}
 [hidden]{display:none!important}
@@ -124,18 +119,14 @@ footer p{max-width:86ch}
 .md li{margin:4px 0;max-width:110ch}
 .md .scroll{width:max-content;max-width:100%}
 .md>.meta{max-width:86ch}
-td details summary{cursor:pointer;color:var(--accent)}
+td details summary{cursor:pointer;color:var(--locked)}
 td pre{white-space:pre-wrap;word-break:break-word;margin:4px 0 0;min-width:36ch;font-size:11.5px}
 @media (max-width:640px){body{font-size:16px}.controls{position:static}dl.fields{grid-template-columns:1fr}dl.fields dt{margin-top:6px}details.finding>summary{padding:12px 10px}.body{padding:0 10px 14px}}
 </style>
 </head>
 <body>
-<div class="bar"><div class="bar-in">
-<span class="mark" aria-hidden="true"><svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M50 12C68 26 82 44 80 62C78 78 64 88 50 88C36 88 22 78 20 62C18 44 32 26 50 12Z"/><path class="vein" stroke-width="5" d="M50 30V94M50 54L64 46M50 68L36 60"/></svg></span>
-<nav class="sum" aria-label="Reports"><a href="../examples/report.html">Report</a> · <a href="../examples/executive.html">Executive report</a></nav>
-</div></div>
 <header><div class="wrap">
-<h1>ConfigLeaf: every finding, with the SQL behind it</h1>
+<div class="brand"><span class="mark" aria-hidden="true"><svg viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M50 12C68 26 82 44 80 62C78 78 64 88 50 88C36 88 22 78 20 62C18 44 32 26 50 12Z"/><path class="vein" stroke-width="5" d="M50 30V94M50 54L64 46M50 68L36 60"/></svg></span><h1>ConfigLeaf: every finding, with the SQL behind it</h1></div>
 <p class="lede">A config-drift assurance pass for MSP technicians, replayed from recorded collections. Open a finding to see the detector query that raised it, each precondition check with the SQL that ran, the rows it returned and the hashes, and the judge step. The Document tab holds the owner's document over the full recorded bundle, the Sources tab names the tables and the source behind each finding class, and the Nemotron tab holds the eval's Nemotron calls with every SELECT its judges wrote, re-run at build. In a live pass the same detector and check SQL runs as Zetaris Lightning SQL over the <code>DRIFT</code> datasource, beside the technician's memory store, the policy file and the Cloudflare DNS API, which it reads live, with the <code>drift_usl</code> semantic layer and its six DQ rules over the four; on this page it runs on sql.js over the recorded rows, and <code>test/parity.test.ts</code> holds the two engines to the same columns, rows and totals.</p>
 <div class="headline">
 <h2>Ultra alone vs the checks with Ultra as the falsifier</h2>

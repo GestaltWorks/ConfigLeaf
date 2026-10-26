@@ -61,7 +61,7 @@ import {
 } from "../loop/present.ts";
 import type { Finding, Verb } from "../pipeline.ts";
 import type { DocumentData, OpenDisposition } from "./render.ts";
-import { BASE_CSS, DARK, LIGHT, MARK, PRINT_TOKENS, ROOT_CSS } from "../design/theme.ts";
+import { BASE_CSS, MARK, PRINT_TOKENS, ROOT_CSS } from "../design/theme.ts";
 import { KIND_WORD, STATUS_WORD, SURFACES, gateWhy, policyOf, surfaceName } from "./words.ts";
 
 /** The report's budget with the sample data. */
@@ -792,8 +792,6 @@ function footerHtml(f: Facts): string {
 
 // ---- the page ---------------------------------------------------------------------------------------------------
 
-/** The colour tokens, from the one design (src/design/theme.ts); the console and the executive report read the same. */
-export { DARK, LIGHT };
 
 const CSS = `${ROOT_CSS}
 ${BASE_CSS}

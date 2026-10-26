@@ -59,9 +59,8 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { config, redact } from "../src/config.ts";
 import { renderDocument } from "../src/document/render.ts";
-import { exportLabels } from "../src/document/export.ts";
+import { exportLabels, labelsIn } from "../src/document/export.ts";
 import { loadSamplePolicy, policyFileShown, sampleReport, textSha256 } from "../src/document/sample.ts";
-import { countLabels } from "../src/redactor.ts";
 import { DataLayer } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { decisionInstantWith } from "../src/data/instant.ts";
@@ -220,7 +219,7 @@ try {
     const doc = await renderDocument(layer, { tenant: reportTenant, classes: new Map(pass.findings.map((f) => [f.id, f.finding.class])), source: `sql.js over ${BUNDLE}`, tracer, report: true });
     const html = sampleReport(doc, pass.findings, { path: BUNDLE, sha256: textSha256(readFileSync(path.join(ROOT, BUNDLE), "utf8")) });
     const labels = exportLabels();
-    const hits = { document: Object.keys(countLabels(doc.markdown, labels)).length, report: Object.keys(countLabels(html, labels)).length };
+    const hits = { document: labelsIn(doc.markdown, labels), report: labelsIn(html, labels) };
     const refused = (["document", "report"] as const).find((k) => hits[k] > 0);
     if (refused) {
       const why = `deny-list probe: ${hits[refused]} of ${count(labels.length, "configured label")} appear in the ${refused === "document" ? "page" : "report"}; ${DOCUMENT} and ${REPORT} not written`;

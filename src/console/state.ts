@@ -27,7 +27,7 @@ import path from "node:path";
 import { actionOf } from "../actions/plan.ts";
 import { runCheck } from "../catalogue/templates.ts";
 import type { FindingClass } from "../catalogue/templates.ts";
-import { config } from "../config.ts";
+import { config, redact } from "../config.ts";
 import { CountingEngine, NO_QUERIES, type QueryTally } from "../data/engines/counting.ts";
 import { SqlJsEngine } from "../data/engines/sqljs.ts";
 import { ZetarisEngine } from "../data/engines/zetaris.ts";
@@ -212,22 +212,29 @@ export async function zetarisGaps(b: Pick<Backend, "counting" | "layer">, dataso
 
 /**
  * The tenants the store holds runs of, as tenant ids (tenantIds), with the one the console started for. A read that
- * fails is not swallowed: the switcher lists the started tenant alone, `error` says why (redacted, one line) for the
- * page and the start line, and the tracer gets one failed line naming it (live, logs/console_start_*.jsonl).
+ * fails is not swallowed: the switcher lists the started tenant alone, `error` says why for the page and the start
+ * line, and the tracer gets one failed line naming it. `error` is plain text, escaped once where a page shows it: the
+ * message's first line only (no stack), secrets and a URL's user and password scrubbed (config.ts redact), then the
+ * tenant's redactor, at most 200 characters.
  */
 export async function readTenants(layer: DataLayer, started: string, redactor: { text(s: string): string }, tracer?: Tracer): Promise<{ tenants: string[]; error: string | null }> {
   try {
     const r = await layer.run(TENANTS_SQL, {}, { agent: "console", limit: 1000 });
     return { tenants: tenantIds([...objects(r).map((x) => x.tenant_id), started]), error: null };
   } catch (e) {
-    const error = redactor.text((e as Error)?.message ?? String(e)).split("\n")[0].slice(0, 200);
+    const error = redactor.text(redact(String((e as Error)?.message ?? e).split("\n")[0])).slice(0, 200);
     tracer?.emit({ agent: "console", action: "detect", status: "failed", input_summary: `console tenants ${started}`, output_summary: `the store's tenants were not read; the switcher lists ${started} alone`, detail: error });
     return { tenants: tenantIds([started]), error };
   }
 }
 
-/** Live mode: the Store on DATABASE_URL (the schema applied, so change_window exists), the layer over Zetaris, the tenant's redactor, the vault at DRIFT_VAULT_DIR. */
-export async function liveBackend(o: { tenant: string; tracer?: Tracer }): Promise<Backend> {
+/**
+ * Live mode: the Store on DATABASE_URL (the schema applied, so change_window exists), the layer over Zetaris, the
+ * tenant's redactor, the vault at DRIFT_VAULT_DIR. The caller names the tracer the start's own findings go to (a
+ * tenants read that failed): scripts/console.ts gives a FileTracer, whose file in logs/ is written at its first line
+ * only, so a start that finds nothing leaves no file.
+ */
+export async function liveBackend(o: { tenant: string; tracer: Tracer }): Promise<Backend> {
   const refused = liveRefusal();
   if (refused) throw new Error(refused);
   const store = Store.fromEnv();
@@ -235,7 +242,7 @@ export async function liveBackend(o: { tenant: string; tracer?: Tracer }): Promi
   const redactor = new Redactor(config.redactSalt, config.redactWords);
   const counting = new CountingEngine(new ZetarisEngine());
   const layer = new DataLayer(counting);
-  const { tenants, error: tenantsError } = await readTenants(layer, o.tenant, redactor, o.tracer ?? new FileTracer(traceIdOf("console_start"), { model: "none" }));
+  const { tenants, error: tenantsError } = await readTenants(layer, o.tenant, redactor, o.tracer);
   return {
     mode: "live", tenant: o.tenant, tenants, tenantsError, layer, counting, engine: null, redactor, windows: new PgWindows(store), approvals: store,
     ledger: null, vault: Vault.fromEnv({ redactor }), memoryDir: config.memoryDir, memoryWritable: true,

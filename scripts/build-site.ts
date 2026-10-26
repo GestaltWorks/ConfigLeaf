@@ -33,8 +33,9 @@
 // ../examples/report.html, and one, Executive report, to the executive report (examples/executive.html,
 // src/document/executive.ts) as ../examples/executive.html, each with one line saying what the file is: fixed relative
 // links, so the build stays the same whatever the reports hold; they open when the page is read from a clone of the
-// repository. The page wears the one design (src/design/theme.ts): its tokens light and dark, the type scale, the
-// header bar with the leaf mark, the cards. The landing page's pages nav links the executive report beside the owner's.
+// repository. The page wears the one design (src/design/theme.ts): its tokens, the type scale, the leaf mark beside
+// the heading, the cards; it names no token of its own and sets no shared selector twice (test/site.test.ts). The
+// landing page's pages nav links the executive report beside the owner's.
 //
 // A fourth static tab, Nemotron, is built from one eval results directory (BuildOptions.resultsDir, `--results`; by
 // default the lexically newest directory under eval/results that holds planted.json and C*-run*.json): the run files'
@@ -141,7 +142,7 @@ export const word = (n: number): string => NUMBER_WORDS[n] ?? String(n);
  * The page and every data file together. 300,000 from 24 Oct 2026; 350,000 from 25 Oct 2026, when the Nemotron tab over
  * eval/results/2026-10-25T23-34-17Z, whose Ultra judge SELECTs run longer, took the build to 314,907 bytes; 400,000 from
  * 26 Oct 2026, when the landing page (docs/site.html, the ConfigLeaf mark inline in it) took the build to 356,981 bytes;
- * the replay page in the one design (src/design/theme.ts) takes the build with the CLOUDFLARE lane to 364,313 bytes.
+ * the replay page in the one design (src/design/theme.ts) takes the build with the CLOUDFLARE lane to 364,108 bytes.
  */
 export const MAX_BYTES = 400_000;
 /** The header's Report link: the owner's report (npm run examples writes it), relative to docs/ in a clone of the repository. */
@@ -1667,19 +1668,16 @@ const page = (headline: string, stats: string, documentTab: string, sourcesTab: 
 <meta name="description" content="Every finding of the ConfigLeaf pass over recorded, redacted real collections, with the SQL that ran, the rows it returned, the hashes and the judge step.">
 <style>
 ${ROOT_CSS}
-:root{--code:var(--soft);--chip:var(--soft);--bad:var(--need);--bad-bg:var(--need-bg);--warn:var(--hold);--warn-bg:var(--hold-bg);--accent:var(--locked)}
 ${BASE_CSS}
-body{--page:1100px;--gutter:16px;line-height:1.55}
-pre,table{overflow-wrap:normal}
-.wrap{max-width:1100px;margin:0 auto;padding:0 16px}
-.bar{position:static}
+.wrap{max-width:1100px;margin:0 auto;padding:0 16px;line-height:1.55}
+.brand{display:flex;align-items:center;gap:10px;margin:0 0 8px}
 header{padding:28px 0 12px;border-bottom:1px solid var(--line)}
-h1{margin:0 0 8px}
-h2{margin:40px 0 6px}
+.brand h1{margin:0}
+main h2{margin:40px 0 6px}
 h4{font-size:var(--t-xs);text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:22px 0 8px}
-p{margin:6px 0 10px;max-width:78ch}
+main p,header p{margin:6px 0 10px;max-width:78ch}
 .lede{color:var(--muted);font-size:var(--t-m)}
-pre{background:var(--code);border-radius:6px;padding:10px 12px;margin:6px 0;overflow:auto;max-height:440px;font:12.5px/1.5 var(--mono);white-space:pre;tab-size:2}
+pre{overflow-wrap:normal;background:var(--soft);border-radius:6px;padding:10px 12px;margin:6px 0;overflow:auto;max-height:440px;font:12.5px/1.5 var(--mono);white-space:pre;tab-size:2}
 .stats{display:flex;flex-wrap:wrap;gap:8px 22px;margin:14px 0 4px;padding:0;list-style:none}
 .stats b{font-size:var(--t-l);display:block;line-height:1.2;font-variant-numeric:tabular-nums}
 .stats li{color:var(--muted);font-size:var(--t-s)}
@@ -1690,8 +1688,7 @@ pre{background:var(--code);border-radius:6px;padding:10px 12px;margin:6px 0;over
 .headline .stats li{flex:1 1 13rem;max-width:21rem}
 .controls{position:sticky;top:0;z-index:2;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 0;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
 .controls label{font-size:.85rem;color:var(--muted)}
-select,button{font:inherit;font-size:var(--t-s);color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:7px;padding:5px 10px}
-button{cursor:pointer}
+select,button{cursor:pointer;font:inherit;font-size:var(--t-s);color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:7px;padding:5px 10px}
 button:hover,select:hover{border-color:var(--muted)}
 .meta{font-size:.82rem;color:var(--muted);margin:4px 0}
 .meta code{word-break:break-all}
@@ -1710,31 +1707,30 @@ details.finding[open]>summary::before{transform:rotate(90deg)}
 .v-ROLLBACK{background:var(--ok-bg);color:var(--ok)}
 .v-ADOPT{background:var(--soft);color:var(--adopted)}
 .v-HOLD{background:var(--hold-bg);color:var(--hold)}
-.cls{background:var(--chip);color:var(--fg);font-weight:500}
+.cls{background:var(--soft);color:var(--fg);font-weight:500}
 .ok{color:var(--ok)}
-.warnc{color:var(--warn)}
+.warnc{color:var(--hold)}
 .t-holds{background:var(--ok-bg);color:var(--ok)}
-.t-fails{background:var(--bad-bg);color:var(--bad)}
-.t-other{background:var(--chip);color:var(--muted)}
+.t-fails{background:var(--need-bg);color:var(--need)}
+.t-other{background:var(--soft);color:var(--muted)}
 dl.fields{display:grid;grid-template-columns:max-content 1fr;gap:3px 14px;margin:8px 0;font-size:.85rem}
 dl.fields dt{color:var(--muted)}
 dl.fields dd{margin:0;font-family:var(--mono);font-size:.82rem;word-break:break-all}
 .check{border-left:3px solid var(--line);padding:2px 0 6px 12px;margin:14px 0}
 .check.c-holds{border-left-color:var(--ok)}
-.check.c-fails{border-left-color:var(--bad)}
+.check.c-fails{border-left-color:var(--need)}
 .check h3{font-family:var(--mono);font-size:.92rem;font-weight:600}
 .purpose{color:var(--muted);font-size:.85rem;margin:2px 0 6px}
 .sentence{margin:4px 0 6px}
 .scroll{overflow-x:auto;margin:6px 0;border:1px solid var(--line);border-radius:6px}
-table{border-collapse:collapse;font:12px/1.4 var(--mono);width:max-content;min-width:100%}
-th,td{padding:4px 8px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}
-th{background:var(--code);font-weight:600;position:sticky;top:0}
-td{white-space:pre-wrap;word-break:break-word;max-width:46ch}
+table{overflow-wrap:normal;border-collapse:collapse;font:12px/1.4 var(--mono);width:max-content;min-width:100%}
+th{padding:4px 8px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line);background:var(--soft);font-weight:600;position:sticky;top:0}
+td{padding:4px 8px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line);white-space:pre-wrap;word-break:break-word;max-width:46ch}
 tr:last-child td{border-bottom:0}
 .hashes{font:11.5px/1.5 var(--mono);color:var(--muted);word-break:break-all}
-.note{background:var(--code);border-radius:6px;padding:10px 12px;font-size:.88rem}
+.note{background:var(--soft);border-radius:6px;padding:10px 12px;font-size:.88rem}
 .empty{color:var(--muted);font-size:.85rem;font-style:italic}
-.error{background:var(--bad-bg);color:var(--bad);padding:12px 14px;border-radius:6px}
+.error{background:var(--need-bg);color:var(--need);padding:12px 14px;border-radius:6px}
 footer{margin:48px 0 0;padding:22px 0 40px;border-top:1px solid var(--line);color:var(--muted);font-size:.88rem}
 footer p{max-width:86ch}
 [hidden]{display:none!important}
@@ -1750,18 +1746,14 @@ footer p{max-width:86ch}
 .md li{margin:4px 0;max-width:110ch}
 .md .scroll{width:max-content;max-width:100%}
 .md>.meta{max-width:86ch}
-td details summary{cursor:pointer;color:var(--accent)}
+td details summary{cursor:pointer;color:var(--locked)}
 td pre{white-space:pre-wrap;word-break:break-word;margin:4px 0 0;min-width:36ch;font-size:11.5px}
 @media (max-width:640px){body{font-size:16px}.controls{position:static}dl.fields{grid-template-columns:1fr}dl.fields dt{margin-top:6px}details.finding>summary{padding:12px 10px}.body{padding:0 10px 14px}}
 </style>
 </head>
 <body>
-<div class="bar"><div class="bar-in">
-${MARK}
-<nav class="sum" aria-label="Reports"><a href="${REPORT_LINK}">Report</a> · <a href="${EXECUTIVE_LINK}">Executive report</a></nav>
-</div></div>
 <header><div class="wrap">
-<h1>ConfigLeaf: every finding, with the SQL behind it</h1>
+<div class="brand">${MARK}<h1>ConfigLeaf: every finding, with the SQL behind it</h1></div>
 <p class="lede">A config-drift assurance pass for MSP technicians, replayed from recorded collections. Open a finding to see the detector query that raised it, each precondition check with the SQL that ran, the rows it returned and the hashes, and the judge step. The Document tab holds the owner's document over the full recorded bundle, the Sources tab names the tables and the source behind each finding class, and the Nemotron tab holds the eval's Nemotron calls with every SELECT its judges wrote, re-run at build. In a live pass the same detector and check SQL runs as Zetaris Lightning SQL over the <code>${escapeHtml(DATASOURCE)}</code> datasource, beside the technician's memory store, the policy file and the Cloudflare DNS API, which it reads live, with the <code>${escapeHtml(USL_NAME)}</code> semantic layer and its ${word(DQ_RULES.length)} DQ rules over the four; on this page it runs on sql.js over the recorded rows, and <code>test/parity.test.ts</code> holds the two engines to the same columns, rows and totals.</p>
 ${headline}
 ${stats}

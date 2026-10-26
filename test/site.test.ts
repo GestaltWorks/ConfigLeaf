@@ -207,9 +207,9 @@ describe("the replay page", () => {
     // the script and the styles name no host but localhost (the file:// hint); the document's ticket url is text in a list item
     const code = [...html.matchAll(/<(script|style)>([\s\S]*?)<\/\1>/g)].map((m) => m[2]).join("\n");
     expect(code).not.toMatch(/https?:\/\/(?!localhost)/);
-    // the header bar links the two reports, the tile's caption and the header's two Nemotron counts link to the tab, then
-    // the Report and Executive report links to the two reports in the repository, then the four tabs
-    expect([...html.matchAll(/\b(?:href|src|action)="([^"]*)"/g)].map((m) => m[1])).toEqual([REPORT_LINK, EXECUTIVE_LINK, "#nemotron", "#nemotron", "#nemotron", REPORT_LINK, EXECUTIVE_LINK, "#findings", "#document", "#sources", "#nemotron"]);
+    // the tile's caption and the header's two Nemotron counts link to the tab, then the Report and Executive report
+    // links to the two reports in the repository, then the four tabs: one link to each report, no second nav
+    expect([...html.matchAll(/\b(?:href|src|action)="([^"]*)"/g)].map((m) => m[1])).toEqual(["#nemotron", "#nemotron", "#nemotron", REPORT_LINK, EXECUTIVE_LINK, "#findings", "#document", "#sources", "#nemotron"]);
     expect([...html.matchAll(/fetch\(([^)]*)\)/g)].map((m) => m[1])).toEqual(['"data/index.json"', "e.file"]);
   });
 
@@ -226,8 +226,19 @@ describe("the replay page", () => {
     const nav = /<nav class="tabs"[\s\S]*?<\/nav>/.exec(header)![0];
     expect(nav).not.toContain(REPORT_LINK);
     expect(nav).not.toContain(EXECUTIVE_LINK);
-    // the one design's header bar above the header: the leaf mark, then the two reports
-    expect(html).toContain(`<div class="bar"><div class="bar-in">\n${MARK}\n<nav class="sum" aria-label="Reports"><a href="${REPORT_LINK}">Report</a> · <a href="${EXECUTIVE_LINK}">Executive report</a></nav>`);
+    // the one design's leaf mark beside the heading; the tabs are the page's one nav
+    expect(header).toContain(`<div class="brand">${MARK}<h1>ConfigLeaf: every finding, with the SQL behind it</h1></div>`);
+    expect(html.match(/<nav\b[^>]*>/g)).toEqual(['<nav class="tabs" aria-label="Page sections">']);
+  });
+
+  it("the page's style block reads one set of tokens, the theme's, and sets no selector twice outside its media blocks", () => {
+    const css = /<style>([\s\S]*?)<\/style>/.exec(built.files.get("index.html")!)![1];
+    expect(css).not.toMatch(/var\(--(?:code|chip|bad|bad-bg|warn|warn-bg|accent)\)/);
+    expect(css).not.toMatch(/--(?:code|chip|bad|warn|accent):/);
+    const top = css.replace(/@media[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, "");
+    const count = new Map<string, number>();
+    for (const m of top.matchAll(/([^{}]+)\{[^{}]*\}/g)) for (const sel of m[1].split(",").map((x) => x.trim()).filter(Boolean)) count.set(sel, (count.get(sel) ?? 0) + 1);
+    expect([...count].filter(([, n]) => n > 1)).toEqual([]);
   });
 
   it("the header counts each finding once by its finding id, beside the 9 rows over 3 slices, as static HTML; each slice keeps its own counts", () => {

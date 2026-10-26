@@ -3,9 +3,11 @@
 // (scripts/build-site.ts, scripts/site/landing.html). Each page states its own layout; the colours, the type scale, the
 // header bar, the cards and the tiles come from here, so the pages read as one product.
 //
-//   tokens    the owner's report's colours (LIGHT, DARK) and the ones the console added (the lock, an open window, the
-//             hover, the focus ring, the scrim, the shadow, ok's background), light and dark by prefers-color-scheme;
-//             in print the light ones on a white page (PRINT_ROOT).
+//   tokens    one table (TOKENS), each colour's light and dark value side by side: the owner's report's colours and
+//             the ones the console added (ok's background, the lock, an open window, the hover, the focus ring, the
+//             scrim, the shadow). LIGHT and DARK are read off it, so the two schemes cannot drift apart. The light
+//             ones are the page's; the dark ones apply on a screen that prefers dark, never in print, so print needs
+//             no second copy of the light tokens: PRINT_TOKENS sets only the white page and cards.
 //   scale     one type scale (12, 13.5, 15, 17 and 22 px, 28 px for a tile's number), one monospace and one sans stack,
 //             one corner radius.
 //   bar       the sticky header bar: the leaf mark, the summary line in the bar's 17 px, the who line in 12.5 px muted.
@@ -14,20 +16,43 @@
 // No colour is the only signal anywhere: a verb or a state carries its word, and a chart's series carry a pattern and
 // a label as well as a fill (src/document/charts.ts).
 
-export const LIGHT = "--bg:#fbfaf7;--fg:#1d1e20;--muted:#62666d;--line:#dedad2;--card:#ffffff;--soft:#f2f0eb;--need:#b3361d;--need-bg:#fbebe6;--hold:#835700;--hold-bg:#f8ecd2;--adopted:#6c7178;--ok:#2f6b45";
-export const DARK = "--bg:#141517;--fg:#e8e6e1;--muted:#a3a19b;--line:#33353a;--card:#1b1c1f;--soft:#222428;--need:#ff8e74;--need-bg:#3a201a;--hold:#f0c46e;--hold-bg:#382c13;--adopted:#9a9da3;--ok:#8fd1a6";
-/** The tokens the console added, now every page's: ok's background, the lock, an open window, the hover, the focus ring, the scrim and the shadow. */
-export const LIGHT_MORE = "--ok-bg:#e3f0e7;--locked:#2b5c8a;--locked-bg:#e7eef6;--window:#835700;--window-bg:#f8ecd2;--hover:#f3f1ec;--focus:#2b5c8a;--scrim:rgba(20,20,22,.36);--shadow:0 10px 40px rgba(0,0,0,.14)";
-export const DARK_MORE = "--ok-bg:#1b3124;--locked:#8db8e6;--locked-bg:#1b2733;--window:#f0c46e;--window-bg:#382c13;--hover:#202226;--focus:#8db8e6;--scrim:rgba(0,0,0,.55);--shadow:0 10px 40px rgba(0,0,0,.5)";
+/** Every colour token with its light and its dark value. */
+export const TOKENS: readonly (readonly [name: string, light: string, dark: string])[] = [
+  ["--bg", "#fbfaf7", "#141517"],
+  ["--fg", "#1d1e20", "#e8e6e1"],
+  ["--muted", "#62666d", "#a3a19b"],
+  ["--line", "#dedad2", "#33353a"],
+  ["--card", "#ffffff", "#1b1c1f"],
+  ["--soft", "#f2f0eb", "#222428"],
+  ["--need", "#b3361d", "#ff8e74"],
+  ["--need-bg", "#fbebe6", "#3a201a"],
+  ["--hold", "#835700", "#f0c46e"],
+  ["--hold-bg", "#f8ecd2", "#382c13"],
+  ["--adopted", "#6c7178", "#9a9da3"],
+  ["--ok", "#2f6b45", "#8fd1a6"],
+  ["--ok-bg", "#e3f0e7", "#1b3124"],
+  ["--locked", "#2b5c8a", "#8db8e6"],
+  ["--locked-bg", "#e7eef6", "#1b2733"],
+  ["--window", "#835700", "#f0c46e"],
+  ["--window-bg", "#f8ecd2", "#382c13"],
+  ["--hover", "#f3f1ec", "#202226"],
+  ["--focus", "#2b5c8a", "#8db8e6"],
+  ["--scrim", "rgba(20,20,22,.36)", "rgba(0,0,0,.55)"],
+  ["--shadow", "0 10px 40px rgba(0,0,0,.14)", "0 10px 40px rgba(0,0,0,.5)"],
+];
+/** The light tokens, as one declaration list. */
+export const LIGHT = TOKENS.map(([name, light]) => `${name}:${light}`).join(";");
+/** The dark tokens, the same names in the same order. */
+export const DARK = TOKENS.map(([name, , dark]) => `${name}:${dark}`).join(";");
 /** The type scale, the two stacks and the radius, the same in both schemes. */
 export const SCALE = `--sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--mono:ui-monospace,SFMono-Regular,"Cascadia Mono",Consolas,"Liberation Mono",Menlo,monospace;--t-xs:12px;--t-s:13.5px;--t-m:15px;--t-l:17px;--t-xl:22px;--t-num:28px;--radius:10px`;
 
-/** The light tokens on a white page, for print. */
-export const PRINT_TOKENS = `color-scheme:light;${LIGHT};${LIGHT_MORE};--bg:#fff;--card:#fff;--soft:#f3f3f3`;
+/** Print: the light tokens already hold (the dark ones are for a screen), on a white page with white cards. */
+export const PRINT_TOKENS = "color-scheme:light;--bg:#fff;--card:#fff;--soft:#f3f3f3";
 
-/** The root rules: the tokens light, dark by prefers-color-scheme. */
-export const ROOT_CSS = `:root{${LIGHT};${LIGHT_MORE};${SCALE};color-scheme:light}
-@media (prefers-color-scheme:dark){:root{${DARK};${DARK_MORE};color-scheme:dark}}`;
+/** The root rules: the tokens light, dark on a screen that prefers it. */
+export const ROOT_CSS = `:root{${LIGHT};${SCALE};color-scheme:light}
+@media screen and (prefers-color-scheme:dark){:root{${DARK};color-scheme:dark}}`;
 
 /** The rules every page shares: the page, the type scale, links, code, the header bar, cards and tiles. */
 export const BASE_CSS = `*{box-sizing:border-box}

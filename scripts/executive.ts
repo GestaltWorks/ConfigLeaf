@@ -27,7 +27,7 @@ import { DataLayer } from "../src/data/layer.ts";
 import { EXECUTIVE_MAX_BYTES, PERIODS, PERIOD_WORD, evalReceipts, isPeriod, readExecutive, renderExecutive, type Executive } from "../src/document/executive.ts";
 import { renderDocument } from "../src/document/render.ts";
 import { repoTip } from "../src/document/report.ts";
-import { sampleExecutive, textSha256 } from "../src/document/sample.ts";
+import { defaultTenant, sampleExecutive, textSha256 } from "../src/document/sample.ts";
 import { TechnicianMemory } from "../src/engine/memory.ts";
 import { DriftWorld } from "../src/engine/world.ts";
 import { runPass } from "../src/pipeline.ts";
@@ -74,8 +74,8 @@ try {
     const text = readFileSync(file, "utf8");
     const bundle = JSON.parse(text) as Record<string, unknown>;
     const runs = (bundle.collection_run ?? []) as { tenant_id: string; surface: string; started_at: string }[];
-    tenant = args.tenant ?? [...runs].filter((r) => r.surface === "cloudflare.dns").sort((a, b) => (a.started_at < b.started_at ? -1 : 1)).at(-1)?.tenant_id ?? "";
-    if (!tenant) usage(`${rel(file)} holds no DNS run, so no default tenant: --tenant names one`);
+    tenant = args.tenant ?? defaultTenant(runs) ?? "";
+    if (!tenant) usage(`${rel(file)} holds no DNS run with a tenant id and an instant, so no default tenant: --tenant names one`);
     if (!runs.some((r) => r.tenant_id === tenant)) usage(`${rel(file)} holds no run of tenant ${tenant}`);
     out = path.resolve(ROOT, args.out ?? path.join("examples", "executive.html"));
     ({ html, executive: x } = await sampleExecutive(bundle, { tenant, memory: new TechnicianMemory({ storage: "read" }), source: `sql.js over ${rel(file)}`, period, file: { path: rel(file), sha256: textSha256(text) }, tracer }));
@@ -92,7 +92,7 @@ try {
     x = await readExecutive(layer, doc.data, { tenant, period, at: new Date().toISOString(), classes, receipts: evalReceipts(ROOT), tracer });
     html = renderExecutive(x, { redactor: new Redactor(config.redactSalt, config.redactWords), policyFile: config.policyFile, tip: repoTip(ROOT) });
   }
-  const labels = probeExport([["report", html]]);
+  const labelCount: number = probeExport([["report", html]]);
   const bytes = Buffer.byteLength(html);
   if (bytes > EXECUTIVE_MAX_BYTES) {
     console.error(`executive: the report is ${bytes} bytes, over the ${EXECUTIVE_MAX_BYTES}-byte budget; nothing written`);
@@ -100,7 +100,7 @@ try {
   }
   writeFileSync(out, html);
   const k = x.kpis;
-  console.log(`executive: ${rel(out)} written for ${tenant}, ${PERIOD_WORD[period]} to ${x.at} (${x.days.length} days), ${bytes} bytes; ${k.driftEvents} drift event(s), ${x.incidentCount} incident(s), ${k.actions.total} action(s), coverage ${k.covered} of ${k.objects} objects; deny-list probe 0 of ${labels} label(s)`);
+  console.log(`executive: ${rel(out)} written for ${tenant}, ${PERIOD_WORD[period]} to ${x.at} (${x.days.length} days), ${bytes} bytes; ${k.driftEvents} drift event(s), ${x.incidentCount} incident(s), ${k.actions.total} action(s), coverage ${k.covered} of ${k.objects} objects${x.unread.length ? `; not read: ${x.unread.map((u) => u.read).join(", ")}` : ""}; deny-list probe 0 of ${labelCount} label(s)`);
 } catch (e) {
   console.error(`executive: ${redact((e as Error).message ?? String(e))}`);
   process.exitCode = 1;

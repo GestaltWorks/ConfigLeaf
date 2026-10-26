@@ -14,20 +14,23 @@
 // the passes write no trace file.
 import { createHash } from "node:crypto";
 import http from "node:http";
-import { cpSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { QueryResult } from "../src/adapters/zetaris.ts";
-import { SAMPLE_MEMORY_DIR } from "../src/config.ts";
+import { SAMPLE_MEMORY_DIR, config } from "../src/config.ts";
 import { ASSETS, CSS, SCRIPT, tenantSwitcher } from "../src/console/html.ts";
 import { duplicateText, encodeKey, latestRules, passDq, plainUrls, templatesOf, timesIn, type View } from "../src/console/pages.ts";
 import {
   PAGE_PATH, RETURN_PATHS, answerHeaders, contentDisposition, csp, downloadName, fileCsp, nonceReport, returnPathOf, startConsole, type ConsoleServer,
 } from "../src/console/server.ts";
 import { isTenantId, objectKey, readTenants, sampleBackend, tenantIds, zetarisGaps, type Backend } from "../src/console/state.ts";
-import { PERIODS } from "../src/document/executive.ts";
+import { PERIODS, renderExecutive, type Executive, type ExecutiveContext } from "../src/document/executive.ts";
+import { defaultTenant } from "../src/document/sample.ts";
+import { BUNDLE_REDACTOR } from "../src/explain/explain.ts";
+import { FileTracer, traceIdOf } from "../src/loop/trace.ts";
 import { TENANT } from "../src/policy/schema.ts";
 import { DataLayer, type Engine } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
@@ -66,13 +69,13 @@ function ticking(iso: string): (() => Date) & { advance: (ms: number) => void } 
 type Row = Record<string, unknown>;
 const rowsOf = (b: Record<string, unknown>, t: string): Row[] => (b[t] ?? []) as Row[];
 
-interface Boot { bundle: Record<string, unknown>; bundlePath: string; tenant: string; at?: string; clock?: () => Date; approve?: typeof approveRun; memoryDir?: string; write?: boolean; before?: (b: Backend) => void }
+interface Boot { bundle: Record<string, unknown>; bundlePath: string; tenant: string; at?: string; clock?: () => Date; approve?: typeof approveRun; memoryDir?: string; write?: boolean; before?: (b: Backend) => void; print?: (line: string) => void; renderFile?: typeof renderExecutive }
 
 async function boot(o: Boot): Promise<{ server: ConsoleServer; backend: Backend }> {
   const backend = await sampleBackend({ tenant: o.tenant, bundle: o.bundle, bundlePath: o.bundlePath, memoryDir: o.memoryDir ?? SAMPLE_MEMORY_DIR, write: o.write === true });
   o.before?.(backend);
   const server = await startConsole({
-    backend, port: 0, clock: o.clock ?? ticking(o.at!), firstPass: "sync", tracePasses: false, print: () => undefined, approve: o.approve,
+    backend, port: 0, clock: o.clock ?? ticking(o.at!), firstPass: "sync", tracePasses: false, print: o.print ?? (() => undefined), approve: o.approve, renderFile: o.renderFile,
     traceDirs: [{ label: "examples/traces", dir: path.join(ROOT, "examples", "traces") }],
   });
   return { server, backend };
@@ -174,7 +177,10 @@ describe("the console over sample/bundle.json, client-1", SERVER, () => {
       const r = await get(server, asset.path);
       expect([r.status, r.headers.get("content-type"), r.headers.get("cache-control"), r.headers.get("etag")]).toEqual([200, type, "public, max-age=31536000, immutable", asset.etag]);
       expect(r.body).toBe(body);
-      expect((await get(server, asset.path, { "if-none-match": asset.etag })).status).toBe(304);
+      // the assets' headers come from answerHeaders too: the CSP and the two security headers on the asset and its 304
+      expect([r.headers.get("content-security-policy"), r.headers.get("x-content-type-options"), r.headers.get("referrer-policy")]).toEqual([csp(""), "nosniff", "no-referrer"]);
+      const again = await get(server, asset.path, { "if-none-match": asset.etag });
+      expect([again.status, again.headers.get("x-content-type-options"), again.headers.get("etag")]).toEqual([304, "nosniff", asset.etag]);
     }
     expect((await get(server, "/assets/console.0000000000000000.css")).status).toBe(404);
   });
@@ -581,6 +587,100 @@ describe("the download's name, an answer's headers, the switch's return paths an
     const live = passDq({ adoptions: { rule: "exception_in_force", of: "pass", decidedAt: "2026-10-26T00:00:00.000Z", adoptions: 23, inForce: 23 }, dns: { rule: "dns_inventory_current", live: 58, current: 57, runId: "run-1" } }, "live", "client-1");
     expect(live.map((x) => [x.text, x.holds])).toEqual([["23 of 23 adoptions in force", true], ["57 of 58 live records at the provider match the last complete DNS run: the provider changed since that run", false]]);
     expect(passDq({ dns: { rule: "dns_inventory_current", error: "zone_x is not there" } }, "live", "client-1")[1]).toMatchObject({ text: "not read: zone_x is not there", holds: null });
+  });
+});
+
+describe("the review of 67cd782: one first pass, a download that fails cleanly, every action's return, the tenants error end to end", SERVER, () => {
+  let server: ConsoleServer;
+  const lines: string[] = [];
+  // the file of the last 30 days has two style blocks, every day on record's renderer throws: the 7 days' is the real one
+  const renderFile = ((x: Executive, ctx: ExecutiveContext): string => {
+    if (x.period === "30d") return renderExecutive(x, ctx).replace("</style>", "</style><style>p{}</style>");
+    if (x.period === "all") throw new Error("the renderer broke\n    at renderExecutive (executive.ts:1:1)");
+    return renderExecutive(x, ctx);
+  }) as typeof renderExecutive;
+  beforeAll(async () => { ({ server } = await boot({ bundle: SAMPLE, bundlePath: "sample/bundle.json", tenant: "client-1", at: "2026-10-25T15:00:00.000Z", print: (l) => lines.push(l), renderFile })); }, BOOT_MS);
+  afterAll(async () => { await server?.close(); });
+  const tenantPost = (tenant: string) => fetch(`${server.url}/do/tenant`, { method: "POST", body: new URLSearchParams({ csrf: server.csrf, tenant }), headers: { accept: "application/json" } });
+
+  it("two switches to a tenant not yet seen, at once, run one first pass, and both answer once it ends", async () => {
+    expect(lines.filter((l) => l.startsWith("console: first pass of "))).toEqual(["console: first pass of client-1 decided at 2026-10-25T14:17:53.416Z"]);
+    const [a, b] = await Promise.all([tenantPost("lab-1"), tenantPost("lab-1")]);
+    expect([a.status, b.status]).toEqual([200, 200]);
+    expect(lines.filter((l) => l.startsWith("console: first pass of lab-1"))).toHaveLength(1);
+    // a third switch, after it, runs none
+    await tenantPost("client-1");
+    await tenantPost("lab-1");
+    expect(lines.filter((l) => l.startsWith("console: first pass of "))).toHaveLength(2);
+    await tenantPost("client-1");
+  });
+
+  it("a download whose file fails: a renderer that throws, or a file with two style blocks, is the console's 500 page with the fixed headers, and the console answers on", async () => {
+    for (const period of ["30d", "all"]) {
+      const r = await get(server, `/executive/download?period=${period}`);
+      expect(r.status, period).toBe(500);
+      expect(r.headers.get("content-disposition"), period).toBeNull();
+      expect([r.headers.get("x-content-type-options"), r.headers.get("referrer-policy"), r.headers.get("cache-control")], period).toEqual(["nosniff", "no-referrer", "no-store"]);
+      expect(r.headers.get("content-security-policy"), period).toMatch(/^default-src 'none'; style-src 'self' 'nonce-/);
+      expect(r.body, period).toContain("<h1>The console could not render this page</h1>");
+      expect(r.body, period).toContain("The executive report could not be written as one file: ");
+      expect(r.body, period).not.toContain("executive.ts:1:1");
+    }
+    expect((await get(server, "/executive/download?period=30d")).body).toContain("fileCsp: the executive report holds one style block, this file opens 2 and closes 2");
+    expect(lines.filter((l) => l.startsWith("console: the executive report of client-1 was not written as a file"))).toHaveLength(3);
+    // the page and the good file still answer
+    expect((await get(server, "/executive/download?period=7d")).status).toBe(200);
+    expect((await get(server, "/executive?period=all")).status).toBe(200);
+  });
+
+  it("every action returns to the pages a switch returns to: a refused action from Templates or the executive report answers that page with its toast", async () => {
+    const form = (ret: string) => fetch(`${server.url}/do/lock`, { method: "POST", body: new URLSearchParams({ csrf: server.csrf, confirm: "yes", key: "", return: ret }) });
+    const templates = await (await form("/templates")).text();
+    expect(templates).toContain("<h1>Templates</h1>");
+    expect(templates).toContain("Lock refused: the object is not in the latest passing runs of this tenant");
+    expect(await (await form("/executive?period=30d")).text()).toContain('<a href="/executive?period=30d" aria-current="page">30 days</a>');
+    for (const back of ["https://elsewhere.example/", "/traces/view?f=..%2F..%2Fpackage.json", "/executive?period=1y"]) expect(await (await form(back)).text(), back).toContain("<h1>Overview</h1>");
+  });
+
+  it("a tenants read that fails reaches the page as plain text escaped once: no stack, no connection string, no password", async () => {
+    const failing = { run: async () => { throw new Error('connect ECONNREFUSED postgres://drift:s3cret-pass@db.internal:5432/drift?password=hunter2 <b>"x"</b> & more\n    at TCPConnectWrap.afterConnect (net.js:1:1)'); } } as unknown as DataLayer;
+    const { error } = await readTenants(failing, "client-1", BUNDLE_REDACTOR);
+    expect(error).not.toMatch(/s3cret-pass|hunter2|TCPConnectWrap|net\.js/);
+    expect(error).toContain("<redacted>");
+    const html = tenantSwitcher({ tenant: "client-1", tenants: ["client-1"], csrf: "c", returnTo: "/overview", tenantsError: error });
+    // escaped once: the markup is text, and no entity is escaped twice
+    expect(html).toContain("&lt;b&gt;&quot;x&quot;&lt;/b&gt; &amp; more");
+    expect(html).not.toMatch(/&amp;(?:lt|gt|quot|amp);/);
+    expect(html).not.toContain('<b>"x"</b>');
+  });
+
+  it("the live start's tracer is the caller's: a FileTracer writes logs/<id>.jsonl at its first line only, so a start that reads the tenants leaves no file", async () => {
+    const id = traceIdOf("console_start_test");
+    const fileOf = path.join(config.logDir, `${id}.jsonl`);
+    const answering = { run: async () => result(["tenant_id"], [["client-1"]]) } as unknown as DataLayer;
+    await readTenants(answering, "client-1", BUNDLE_REDACTOR, new FileTracer(id, { model: "none" }));
+    expect(existsSync(fileOf)).toBe(false);
+    const failing = { run: async () => { throw new Error("timeout"); } } as unknown as DataLayer;
+    try {
+      await readTenants(failing, "client-1", BUNDLE_REDACTOR, new FileTracer(id, { model: "none" }));
+      const lines = readFileSync(fileOf, "utf8").trim().split("\n").map((l) => JSON.parse(l) as { status: string; input_summary: string });
+      expect(lines.map((l) => [l.status, l.input_summary])).toEqual([["failed", "console tenants client-1"]]);
+    } finally {
+      rmSync(fileOf, { force: true });
+    }
+    expect(readFileSync(path.join(ROOT, "src", "console", "state.ts"), "utf8")).toMatch(/export async function liveBackend\(o: \{ tenant: string; tracer: Tracer \}\)/);
+  });
+});
+
+describe("the sample's default tenant", () => {
+  it("is the tenant of the latest cloudflare.dns run whose tenant id and instant are well formed; null when none is", () => {
+    const run = (tenant_id: unknown, started_at: unknown, surface = "cloudflare.dns") => ({ tenant_id, surface, started_at });
+    expect(defaultTenant(SAMPLE.collection_run as Row[])).toBe("client-1");
+    expect(defaultTenant([run("a-1", "2026-10-25T10:00:00.000Z"), run("b-1", "2026-10-25T11:00:00.000Z"), run("c-1", "2026-10-25T12:00:00.000Z", "linux.nginx")])).toBe("b-1");
+    // a malformed instant or tenant id does not count, whatever it sorts as
+    expect(defaultTenant([run("a-1", "2026-10-25T10:00:00.000Z"), run("z-1", "9999"), run("z-2", "2026-10-25T23:00:00Z"), run('x"y', "2026-10-25T23:00:00.000Z"), run("*", "2026-10-25T23:00:00.000Z"), run(7, "2026-10-25T23:00:00.000Z")])).toBe("a-1");
+    expect(defaultTenant([run("a-1", "2026-02-30T10:00:00.000Z")])).toBeNull();
+    expect(defaultTenant([])).toBeNull();
   });
 });
 

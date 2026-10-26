@@ -19,13 +19,9 @@
 import { createHash } from "node:crypto";
 import { EXECUTIVE_CSS } from "../document/executive.ts";
 import { escapeHtml } from "../document/report.ts";
-import { BASE_CSS, DARK, DARK_MORE, LIGHT, LIGHT_MORE, MARK, PRINT_TOKENS, ROOT_CSS } from "../design/theme.ts";
+import { BASE_CSS, MARK, PRINT_TOKENS, ROOT_CSS } from "../design/theme.ts";
 
 export { escapeHtml };
-
-/** The console's tokens: the one design's (src/design/theme.ts), the owner's report's colours and the console's own on top. */
-export const CONSOLE_LIGHT = `${LIGHT};${LIGHT_MORE}`;
-export const CONSOLE_DARK = `${DARK};${DARK_MORE}`;
 
 export const CSS = `${ROOT_CSS}
 ${BASE_CSS}

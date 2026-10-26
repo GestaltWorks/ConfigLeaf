@@ -26,6 +26,7 @@ import { BUNDLE_REDACTOR, MemoryCauseSink, explainTenants, type ExplainResult } 
 import { MemoryLedger } from "../ledger.ts";
 import { runPass, type Finding, type PassResult } from "../pipeline.ts";
 import { loadPolicyFile } from "../policy/load.ts";
+import { TENANT } from "../policy/schema.ts";
 import type { Tracer } from "../trace.ts";
 import { evalReceipts, readExecutive, renderExecutive, type Executive, type Period } from "./executive.ts";
 import { renderDocument, type DocumentResult } from "./render.ts";
@@ -53,6 +54,20 @@ export function loadSamplePolicy(engine: SqlJsEngine, bundle: Record<string, unk
   let inserted = 0;
   for (const tenant of tenants) inserted += engine.insertRows("policy_rule", loadPolicyFile(path.resolve(ROOT, file), { tenant, redactor: BUNDLE_REDACTOR }).rows);
   return inserted;
+}
+
+const ISO_MS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+/**
+ * The tenant a sample render defaults to: the tenant of the bundle's latest cloudflare.dns run. Only a run whose
+ * tenant_id is a tenant id (src/policy/schema.ts TENANT, never "*") and whose started_at is an instant in the
+ * millisecond form counts, so the order compares like with like whatever a --bundle holds; null when no run does.
+ */
+export function defaultTenant(runs: readonly { tenant_id?: unknown; surface?: unknown; started_at?: unknown }[]): string | null {
+  const ok = runs.filter((r): r is { tenant_id: string; surface: string; started_at: string } =>
+    typeof r.tenant_id === "string" && r.tenant_id !== "*" && TENANT.test(r.tenant_id) && r.surface === "cloudflare.dns"
+    && typeof r.started_at === "string" && ISO_MS.test(r.started_at) && new Date(r.started_at).toISOString() === r.started_at);
+  return [...ok].sort((a, b) => (a.started_at < b.started_at ? -1 : a.started_at > b.started_at ? 1 : 0)).at(-1)?.tenant_id ?? null;
 }
 
 /** The pass, the explain step and the page with the report's reads, over one bundle for one tenant. */

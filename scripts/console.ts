@@ -27,6 +27,7 @@ import { config, redact } from "../src/config.ts";
 import { DEFAULT_PORT, startConsole } from "../src/console/server.ts";
 import { liveBackend, liveRefusal, sampleBackend, zetarisGaps, type Backend } from "../src/console/state.ts";
 import { TENANT } from "../src/policy/schema.ts";
+import { FileTracer, traceIdOf } from "../src/loop/trace.ts";
 
 const USAGE = "usage: npm run console -- [--tenant <id>] [--port <n>] [--bundle <file>] [--write] [--help]";
 
@@ -68,7 +69,8 @@ try {
     if (!tenantGiven) usage("live mode needs a tenant: --tenant <id> or CONSOLE_TENANT");
     const refused = liveRefusal();
     if (refused) usage(refused);
-    backend = await liveBackend({ tenant: tenantGiven });
+    // the start's own findings (a tenants read that failed) go to logs/console_start_*.jsonl, written at the first line only
+    backend = await liveBackend({ tenant: tenantGiven, tracer: new FileTracer(traceIdOf("console_start"), { model: "none" }) });
   }
 } catch (e) {
   console.error(`console: ${redact((e as Error).message ?? String(e))}`);

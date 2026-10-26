@@ -92,10 +92,10 @@ try {
       zetaris: { datasource: config.zetaris.datasource, queries: sent.queries, rows: sent.rows, failed: sent.failed },
     });
   }
-  const labels = probeExport([["page", doc.markdown], ["report", html]]);
+  const labelCount: number = probeExport([["page", doc.markdown], ["report", html]]);
   writeFileSync(out, doc.markdown);
   writeFileSync(reportOut, html);
-  console.log(`document: ${rel(out)} written for ${tenant}, ${doc.markdown.split("\n").length - 1} lines, ${doc.open} finding(s) open, ${doc.queries.reduce((n, c) => n + c.runs, 0)} queries; ${rel(reportOut)} ${Buffer.byteLength(html)} bytes; deny-list probe 0 of ${labels} label(s); ${doc.decidedAt ? `decided at ${doc.decidedAt}` : "no decision on the latest passing runs"}`);
+  console.log(`document: ${rel(out)} written for ${tenant}, ${doc.markdown.split("\n").length - 1} lines, ${doc.open} finding(s) open, ${doc.queries.reduce((n, c) => n + c.runs, 0)} queries; ${rel(reportOut)} ${Buffer.byteLength(html)} bytes; deny-list probe 0 of ${labelCount} label(s); ${doc.decidedAt ? `decided at ${doc.decidedAt}` : "no decision on the latest passing runs"}`);
 } catch (e) {
   console.error(`document: ${redact((e as Error).message ?? String(e))}`);
   process.exitCode = 1;

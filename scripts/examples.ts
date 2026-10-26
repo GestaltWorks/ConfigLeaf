@@ -189,6 +189,55 @@ function toBundleFile(ex: Example): BundleFile {
   return out as BundleFile;
 }
 
+/** The markers around the table examples/README.md carries; the script writes what is between them. */
+export const FACTS_START = "<!-- npm run examples writes this table -->";
+export const FACTS_END = "<!-- end of the table npm run examples writes -->";
+
+/**
+ * The table of every count and size examples/README.md names, read off the files under `dir` as they are on disk:
+ * each slice's rows, tables and findings by verb, the policy rows and the rules the shipped file makes govern, the
+ * lessons, and the three files the sample renders. npm run examples writes it into the README, and
+ * test/export.test.ts holds the README's table equal to it, so no number on that page is kept by hand.
+ */
+export function examplesFacts(dir: string): string {
+  const n = (x: number): string => x.toLocaleString("en-US");
+  const read = (f: string): string => readFileSync(path.join(dir, f), "utf8").replace(/\r\n/g, "\n");
+  const bytes = (f: string): number => Buffer.byteLength(read(f));
+  const rows: string[] = [];
+  const slices = ["proxy-split", "wildcard-no-real-ip", "orphans"];
+  const policyRows = new Set<number>();
+  for (const d of slices) {
+    const bundle = JSON.parse(read(`${d}/bundle.json`)) as Record<string, unknown>;
+    const tables = Object.entries(bundle).filter(([k, v]) => k !== "_note" && Array.isArray(v) && v.length) as [string, unknown[]][];
+    policyRows.add(((bundle.policy_rule ?? []) as unknown[]).length);
+    const findings = JSON.parse(read(`${d}/findings.json`)) as { verb: string }[];
+    const verbs = VERBS.map((v) => [v, findings.filter((f) => f.verb === v).length] as const).filter(([, c]) => c).map(([v, c]) => `${v} ${c}`).join(", ");
+    rows.push(`| \`${d}/\` | ${n(tables.reduce((a, [, v]) => a + v.length, 0))} rows in ${tables.length} tables; ${findings.length} finding${findings.length === 1 ? "" : "s"}: ${verbs} |`);
+  }
+  const policy = JSON.parse(readFileSync(fileURLToPath(new URL("../policy/hackathon.json", import.meta.url)), "utf8")) as { version: number; rules: unknown[] };
+  const lessons = new TechnicianMemory({ storage: "read", directory: path.join(dir, "memory") }).lessons().length;
+  const doc = read("document.md");
+  const exec = read("executive.html");
+  const incidents = /<h2>Incidents of the period<span class="cnt">([\d,]+)<\/span><\/h2>/.exec(exec)?.[1] ?? "?";
+  const dq = (exec.match(/<li><span class="dq [a-z]+">/g) ?? []).length;
+  rows.push(
+    `| policy | ${[...policyRows].map(n).join(", ")} \`policy_rule\` rows in each slice; with the shipped \`policy/hackathon.json\` loaded, version ${policy.version}'s ${policy.rules.length} rules govern |`,
+    `| \`memory/\` | ${lessons} lessons |`,
+    `| \`document.md\` | ${n(doc.split("\n").length - 1)} lines, ${n(Buffer.byteLength(doc))} bytes |`,
+    `| \`report.html\` | ${n(bytes("report.html"))} bytes |`,
+    `| \`executive.html\` | ${n(Buffer.byteLength(exec))} bytes; ${incidents} incident${incidents === "1" ? "" : "s"}, ${dq} DQ rules |`,
+  );
+  return ["| file | what the last run of npm run examples measured |", "| --- | --- |", ...rows].join("\n");
+}
+
+/** The README with its table replaced by `facts`. */
+export function withFacts(readme: string, facts: string): string {
+  const a = readme.indexOf(FACTS_START);
+  const b = readme.indexOf(FACTS_END);
+  if (a < 0 || b < a) throw new Error(`examples/README.md lacks the markers ${FACTS_START} and ${FACTS_END}`);
+  return `${readme.slice(0, a + FACTS_START.length)}\n${facts}\n${readme.slice(b)}`;
+}
+
 const invoked = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href.toLowerCase() : "";
 /** The slices, the owner's report and the executive report, written under --out (default examples/). */
 async function main(): Promise<void> {
@@ -223,11 +272,14 @@ async function main(): Promise<void> {
   // the executive report over the same bundle and tenant, the last 7 days to the decision instant (npm run report:executive in sample mode)
   const ex = await sampleExecutive(JSON.parse(text) as Record<string, unknown>, { tenant: TENANT, memory, source: "sql.js over sample/bundle.json", period: "7d", file: { path: "sample/bundle.json", sha256: textSha256(text) } });
   // both through the one deny-list probe before either is written (src/document/export.ts)
-  const labels = probeExport([["report", html], ["executive report", ex.html]]);
+  const labelCount: number = probeExport([["report", html], ["executive report", ex.html]]);
   writeFileSync(path.join(args.out!, "report.html"), html);
-  console.log(`report: ${path.join(args.out!, "report.html").replace(/\\/g, "/")} for ${TENANT}, ${Buffer.byteLength(html)} bytes, ${r.doc.open} finding(s) open, decided at ${r.doc.decidedAt ?? "none"}; deny-list probe 0 of ${labels} label(s)`);
+  console.log(`report: ${path.join(args.out!, "report.html").replace(/\\/g, "/")} for ${TENANT}, ${Buffer.byteLength(html)} bytes, ${r.doc.open} finding(s) open, decided at ${r.doc.decidedAt ?? "none"}; deny-list probe 0 of ${labelCount} label(s)`);
   writeFileSync(path.join(args.out!, "executive.html"), ex.html);
-  console.log(`executive: ${path.join(args.out!, "executive.html").replace(/\\/g, "/")} for ${TENANT}, ${Buffer.byteLength(ex.html)} bytes, the last 7 days to ${ex.executive.at}, ${ex.executive.incidentCount} incident(s); deny-list probe 0 of ${labels} label(s)`);
+  // the README's table, read off the files as written; the README itself lives beside them, in examples/
+  const readmePath = fileURLToPath(new URL("../examples/README.md", import.meta.url));
+  if (path.resolve(args.out!) === path.dirname(readmePath)) writeFileSync(readmePath, withFacts(readFileSync(readmePath, "utf8").replace(/\r\n/g, "\n"), examplesFacts(args.out!)));
+  console.log(`executive: ${path.join(args.out!, "executive.html").replace(/\\/g, "/")} for ${TENANT}, ${Buffer.byteLength(ex.html)} bytes, the last 7 days to ${ex.executive.at}, ${ex.executive.incidentCount} incident(s); deny-list probe 0 of ${labelCount} label(s)`);
 }
 
 if (invoked === import.meta.url.toLowerCase()) {

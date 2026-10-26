@@ -17,13 +17,21 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { DARK, LIGHT, PRINT_TOKENS } from "../src/design/theme.ts";
 import { barChart, niceScale } from "../src/document/charts.ts";
 import type { FindingSummary } from "../src/catalogue/select.ts";
+import { DataLayer } from "../src/data/layer.ts";
+import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
+import { fileRows } from "../src/data/file-rows.ts";
 import {
-  EXECUTIVE_MAX_BYTES, classOfFinding, dqRows, duration, evalReceipts, evalScans, executiveSections, median, periodDays, renderExecutive, type Executive,
+  DQ_READS, EXECUTIVE_MAX_BYTES, FILE_CSS, RECEIPTS_CACHED, classOfFinding, dqRows, duration, evalReceipts, evalScans, executiveSections, median, periodDays, readExecutive, receiptsCached,
+  renderExecutive, type Executive,
 } from "../src/document/executive.ts";
-import { sampleExecutive, textSha256 } from "../src/document/sample.ts";
+import { renderDocument } from "../src/document/render.ts";
+import { loadSamplePolicy, sampleExecutive, textSha256 } from "../src/document/sample.ts";
+import { BUNDLE_REDACTOR } from "../src/explain/explain.ts";
+import { CAUSES_SQL } from "../src/explain/explain.ts";
+import { MemoryLedger } from "../src/ledger.ts";
 import { TechnicianMemory } from "../src/engine/memory.ts";
 import { DriftWorld } from "../src/engine/world.ts";
-import { shortFindingId } from "../src/pipeline.ts";
+import { runPass, shortFindingId } from "../src/pipeline.ts";
 import { Redactor } from "../src/redactor.ts";
 import { DQ_RULES } from "../src/zetaris/setup.ts";
 
@@ -130,7 +138,7 @@ describe("the executive report over sample/bundle.json", () => {
   it("a chart's fills are the one design's tokens in light and dark: no colour in the markup", () => {
     for (const id of ["ex-findings", "ex-actions", "ex-probes", "ex-approvals"]) expect(figureOf(lab.html, id), id).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(|\sstyle=/i);
     expect(lab.html).toContain(`:root{${LIGHT};`);
-    expect(lab.html).toContain(`@media (prefers-color-scheme:dark){:root{${DARK};`);
+    expect(lab.html).toContain(`@media screen and (prefers-color-scheme:dark){:root{${DARK};`);
     expect(lab.html).toContain(".f-need{fill:var(--need)}");
   });
 
@@ -204,6 +212,121 @@ describe("the executive report over sample/bundle.json", () => {
   });
 });
 
+describe("the review of 67cd782: the reads, the class, the cache, the file and the escaping", () => {
+  it("DQ_READS reads every rule of DQ_RULES: a new rule ships with its reading or this fails", () => {
+    expect(DQ_RULES.map((r) => r.name).filter((n) => !(n in DQ_READS))).toEqual([]);
+    for (const row of c1.executive.dq) expect(row.text, row.rule).not.toBe("the executive report has no reading of this rule");
+  });
+
+  it("classOfFinding reads every finding the sample's pass mints back to its class, with the same functions and the tenant's records; an id it cannot read is an error, never a silent null", async () => {
+    const bundle = JSON.parse(TEXT) as Record<string, unknown>;
+    const engine = await SqlJsEngine.create();
+    try {
+      engine.loadBundle(bundle);
+      loadSamplePolicy(engine, bundle);
+      const pass = await runPass(new DataLayer(engine), { world: new DriftWorld("executive-classes"), memory: new TechnicianMemory({ storage: "read", directory: STORE }) });
+      const records = (bundle.dns_record as { tenant_id: string; record_id: string }[]);
+      expect(pass.findings.length).toBeGreaterThan(20);
+      for (const f of pass.findings) {
+        const ids = [...new Set(records.filter((r) => r.tenant_id === f.finding.tenant_id).map((r) => r.record_id))];
+        expect(classOfFinding({ tenant_id: f.finding.tenant_id, finding_id: f.id, host: f.finding.host, object_id: f.finding.object_id, setting_path: f.finding.setting_path }, ids), f.id).toEqual({ class: f.finding.class });
+      }
+    } finally {
+      engine.close();
+    }
+    const lost = classOfFinding({ tenant_id: "lab-1", finding_id: "fnd-0000000000000000", host: "host-951abf", object_id: "/etc/x", setting_path: "file" }, ["r1", "r2"]);
+    expect(lost).toEqual({ error: "fnd-0000000000000000 is the id of no finding class over its disposition's columns and 2 records of lab-1" });
+  });
+
+  it("every read degrades the same way: a read that fails is named at the top, and every part that rests on it reads not read with the reason, never a count of no rows", async () => {
+    const bundle = JSON.parse(TEXT) as Record<string, unknown>;
+    const engine = await SqlJsEngine.create();
+    try {
+      engine.loadBundle(bundle);
+      loadSamplePolicy(engine, bundle);
+      engine.loadFileTables(fileRows({ memoryDir: STORE, policyFile: "policy/hackathon.json", redactor: BUNDLE_REDACTOR }));
+      const layer = new DataLayer(engine);
+      const memory = new TechnicianMemory({ storage: "read", directory: STORE });
+      const at = c1.executive.at;
+      const pass = await runPass(layer, { world: new DriftWorld("executive-unread"), memory, ledger: new MemoryLedger(engine), decidedAt: at });
+      const classes = new Map(pass.findings.map((f) => [f.id, f.finding.class as string]));
+      const doc = await renderDocument(layer, { tenant: "client-1", classes, source: "sql.js over sample/bundle.json", report: true });
+      // the dispositions and probes reads fail, the causes read returns more rows than the report reads
+      const run = layer.run.bind(layer);
+      layer.run = ((sql, params, opts) => {
+        if (sql.startsWith("SELECT disposition_id, finding_id")) return Promise.reject(new Error("connection reset\n    at Socket.read"));
+        if (sql.startsWith("SELECT kind, target, status, observed_at")) return Promise.reject(new Error("probe table is not there"));
+        if (sql === CAUSES_SQL) return run(sql, params, opts).then((r) => ({ ...r, total: r.rowCount + 100_000 }));
+        return run(sql, params, opts);
+      }) as DataLayer["run"];
+      const x = await readExecutive(layer, doc.data, { tenant: "client-1", period: "7d", at, classes });
+      // one stack line in the error never reaches the report: the first line only
+      expect(x.unread.map((u) => u.read)).toEqual(["dispositions", "probes", "causes"]);
+      expect(x.unread.slice(0, 2).map((u) => u.reason)).toEqual(["connection reset", "probe table is not there"]);
+      expect(x.unread[2].reason).toMatch(/^the read returned \d+ rows, more than the 100000 the report reads$/);
+      const html = renderExecutive(x, { redactor: BUNDLE_REDACTOR });
+      expect(html).toContain('<p class="alert" role="alert">3 reads of this report failed, and every part that rests on one reads &quot;not read&quot;: dispositions (connection reset); probes (probe table is not there); causes (the read returned');
+      const kpis = tiles(sectionOf(html, "summary"));
+      expect(kpis.find(([k]) => k === "Drift events")).toEqual(["Drift events", "not read", "the dispositions read failed: connection reset"]);
+      expect(kpis.find(([k]) => k === "Change to detection")![1]).toBe("not read");
+      // the parts that rest on reads that held keep their numbers
+      expect(kpis.find(([k]) => k === "Coverage")).toEqual(["Coverage", "101 <small>of 116</small>", "objects with an approval of record, 87%"]);
+      expect(figureOf(html, "ex-findings")).toContain('<p class="alert">Not read: the dispositions read failed: connection reset.</p>');
+      expect(figureOf(html, "ex-probes")).toContain('<p class="alert">Not read: the probes read failed: probe table is not there.</p>');
+      expect(figureOf(html, "ex-approvals")).toContain("<table");
+      expect(sectionOf(html, "incidents")).toContain('<p class="alert">Not read: the dispositions read failed: connection reset.</p>');
+      expect(x.dq.find((d) => d.rule === "cause_evidenced")).toMatchObject({ holds: null });
+      expect(html).toContain('<a href="#incidents" class="need">incidents not read</a> · <a href="#summary" class="need">drift events not read</a>');
+      expect(html).not.toContain("Socket.read");
+    } finally {
+      engine.close();
+    }
+  });
+
+  it("the receipts cache holds at most RECEIPTS_CACHED results bases, the least recently used dropped first", () => {
+    const roots = Array.from({ length: RECEIPTS_CACHED + 3 }, () => mkdtempSync(path.join(tmpdir(), "receipts-bound-")));
+    try {
+      for (const r of roots) expect(evalReceipts(r)).toBeNull();
+      expect(receiptsCached()).toBe(RECEIPTS_CACHED);
+      // the repository's base read again is read anew once dropped, and then held
+      const before = evalScans.count;
+      evalReceipts(ROOT);
+      evalReceipts(ROOT);
+      expect(evalScans.count - before).toBeLessThanOrEqual(1);
+      expect(receiptsCached()).toBe(RECEIPTS_CACHED);
+    } finally {
+      for (const r of roots) rmSync(r, { recursive: true, force: true });
+    }
+  });
+
+  it("the file's head is one shape: the metas, the title, then one style block that is FILE_CSS and nothing else, which fileCsp hashes", () => {
+    for (const x of [c1, lab]) {
+      const head = /^<!doctype html>\n<html lang="en">\n<head>\n([\s\S]*?)\n<\/head>\n<body>\n/.exec(x.html);
+      expect(head, "the file opens with its head").not.toBeNull();
+      expect(head![1]).toBe(`<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<meta name="color-scheme" content="light dark">\n<title>${x.executive.tenant} · executive report</title>\n<style>\n${FILE_CSS}\n</style>`);
+      expect(x.html.match(/<style\b/g)).toHaveLength(1);
+      expect(x.html.match(/<\/style>/g)).toHaveLength(1);
+    }
+  });
+
+  it("every string a chart shows passes the escape at its call site: a label, a series name and a day with markup come out as text", () => {
+    const evil = '<img src=x onerror="alert(1)">&';
+    const x: Executive = {
+      ...lab.executive,
+      charts: {
+        ...lab.executive.charts,
+        findings: { ...lab.executive.charts.findings, series: lab.executive.charts.findings.series.map((s) => ({ ...s, label: `${s.label} ${evil}` })) },
+        actions: { ...lab.executive.charts.actions, series: lab.executive.charts.actions.series.map((s) => ({ ...s, label: evil })) },
+        probes: { ...lab.executive.charts.probes, series: [{ key: evil, label: evil, fill: "need" }], values: lab.executive.charts.probes.values.map(() => [1]) },
+      },
+    };
+    const html = executiveSections(x, { redactor: { text: (s) => s } });
+    expect(html).not.toContain(evil);
+    expect(html).not.toMatch(/<img|onerror="/);
+    expect(html).toContain("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;&amp;");
+  });
+});
+
 describe("the period, the median and the charts' scale", () => {
   it("the last 7 or 30 UTC days ending with the instant's, or every day from the earliest row; a span in its two largest units; the middle of a list", () => {
     expect(periodDays("7d", "2026-10-25T14:17:53.416Z", null)).toEqual({ from: "2026-10-19T00:00:00.000Z", days: ["2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23", "2026-10-24", "2026-10-25"] });
@@ -220,15 +343,15 @@ describe("the period, the median and the charts' scale", () => {
     const world = new DriftWorld("executive-test");
     const file = { tenant_id: "lab-1", host: "host-951abf", object_id: "/etc/nginx/sites-available/lab.example", setting_path: "file" };
     const idOf = (cls: string, resource: string | null): string => shortFindingId(world.findingId({ ...file, class: cls as FindingSummary["class"], resource_id: resource }));
-    expect(classOfFinding({ ...file, finding_id: idOf("drift_vs_approved", null) })).toBe("drift_vs_approved");
-    expect(classOfFinding({ ...file, finding_id: idOf("changed_since_backup", null) })).toBe("changed_since_backup");
+    expect(classOfFinding({ ...file, finding_id: idOf("drift_vs_approved", null) })).toEqual({ class: "drift_vs_approved" });
+    expect(classOfFinding({ ...file, finding_id: idOf("changed_since_backup", null) })).toEqual({ class: "changed_since_backup" });
     // a record finding names the record as its resource
     const record = { tenant_id: "client-1", host: null, object_id: "b0a17a719bd2118a535a763379ab7ba9", setting_path: "name" };
-    expect(classOfFinding({ ...record, finding_id: shortFindingId(world.findingId({ ...record, class: "orphan_record", resource_id: record.object_id })) })).toBe("orphan_record");
+    expect(classOfFinding({ ...record, finding_id: shortFindingId(world.findingId({ ...record, class: "orphan_record", resource_id: record.object_id })) })).toEqual({ class: "orphan_record" });
     // another tenant's id, or an id of no class, names none: the function takes no reason to fall back on
-    expect(classOfFinding({ ...file, tenant_id: "client-1", finding_id: idOf("drift_vs_approved", null) })).toBeNull();
-    expect(classOfFinding({ ...file, finding_id: "fnd-0000000000000000" })).toBeNull();
-    expect(classOfFinding.length).toBe(1);
+    expect(classOfFinding({ ...file, tenant_id: "client-1", finding_id: idOf("drift_vs_approved", null) })).toHaveProperty("error");
+    expect(classOfFinding({ ...file, finding_id: "fnd-0000000000000000" })).toHaveProperty("error");
+    expect(classOfFinding.length).toBe(1);  // the disposition alone, the records optional: no reason to fall back on
   });
 
   it("the receipts are read once: a second request lists no directory, a new results directory is read at the next", () => {
@@ -260,12 +383,14 @@ describe("the period, the median and the charts' scale", () => {
   it("one DQ row per rule of the semantic layer, in its order and on its table; a rule the report cannot read says so", () => {
     expect(DQ_RULES.map((r) => r.name)).toEqual(["run_complete", "copy_validated", "action_verified", "cause_evidenced", "exception_in_force", "dns_inventory_current"]);
     const none = { runs: [], copies: { valid: 0, total: 0, ok: 0, gaps: 0, fail: 0, none: 0 }, actions: [], causes: [] };
-    const live = dqRows({ ...none, rows: { adoptions: [], adoptionsError: null, dns: { rule: "dns_inventory_current", live: 58, current: 57, runId: "run-1" }, dnsWhy: null } });
+    const live = dqRows({ ...none, rows: { adoptions: [], unread: {}, dns: { rule: "dns_inventory_current", live: 58, current: 57, runId: "run-1" }, dnsWhy: null } });
     expect(live.map((d) => [d.rule, d.table])).toEqual(DQ_RULES.map((r) => [r.name, r.table]));
     expect(live.at(-1)).toEqual({ rule: "dns_inventory_current", table: "dns_live", text: "57 of 58 records at the provider now match the last complete DNS run by type and proxied flag", holds: false });
-    const failed = dqRows({ ...none, rows: { adoptions: null, adoptionsError: "no lesson table", dns: { rule: "dns_inventory_current", error: "REST table zone_x is not there\nmore" }, dnsWhy: null } });
-    expect(failed.slice(-2).map((d) => [d.text, d.holds])).toEqual([["no lesson table", null], ["REST table zone_x is not there", null]]);
-    expect(dqRows({ ...none, rows: { adoptions: [], adoptionsError: null, dns: null, dnsWhy: null } }, [{ name: "next_rule", table: "t" }])).toEqual([{ rule: "next_rule", table: "t", text: "the executive report has no reading of this rule", holds: null }]);
+    const failed = dqRows({ ...none, rows: { adoptions: null, unread: { adoptions: "no lesson table", dns: "REST table zone_x is not there", causes: "timeout" }, dns: null, dnsWhy: null } });
+    expect(failed.slice(-3).map((d) => [d.rule, d.text, d.holds])).toEqual([
+      ["cause_evidenced", "the causes read failed: timeout", null], ["exception_in_force", "the adoptions read failed: no lesson table", null], ["dns_inventory_current", "the dns read failed: REST table zone_x is not there", null],
+    ]);
+    expect(dqRows({ ...none, rows: { adoptions: [], unread: {}, dns: null, dnsWhy: null } }, [{ name: "next_rule", table: "t" }])).toEqual([{ rule: "next_rule", table: "t", text: "the executive report has no reading of this rule", holds: null }]);
   });
 
   it("a bar chart with no day holds no table and says so", () => {
