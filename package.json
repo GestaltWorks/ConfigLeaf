@@ -33,6 +33,7 @@
     "validate:copies": "tsx scripts/validate-copies.ts",
     "probe": "tsx scripts/probe.ts",
     "act": "tsx scripts/act.ts",
+    "scout:smoke": "tsx scripts/scout-smoke.ts",
     "eval": "tsx scripts/eval.ts",
     "eval:table": "tsx scripts/eval-table.ts",
     "tickets": "tsx scripts/tickets.ts",

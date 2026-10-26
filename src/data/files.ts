@@ -3,7 +3,8 @@
 // policy file, one row per rule. src/data/file-rows.ts builds both from the store and the file, npm run
 // zetaris:setup writes them into the Zetaris filestore and registers them (src/zetaris/setup.ts), and sample mode and
 // the parity test load the same rows into sql.js (SqlJsEngine.loadFileTables). On Zetaris, {{t:lesson}} renders as
-// LESSONS.lesson and {{t:rule}} as RULES.rule (src/data/engines/zetaris.ts); every other table is DRIFT.<table>.
+// drift_usl.lesson, built over LESSONS.lesson, and {{t:rule}} as drift_usl.rule over RULES.rule, as every table renders
+// as the drift_usl entity built from it (src/zetaris/setup.ts READ_AS, src/data/engines/zetaris.ts).
 //
 // ADOPTION_SQL is the cross-source read: every ADOPT the Decider made under an accepted exception (decided_by
 // operator, verb ADOPT) joined to the lesson its reason names. The Decider writes that reason as "accepted exception
