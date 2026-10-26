@@ -5,13 +5,14 @@
 // Contract:
 //   - Binds the host given (127.0.0.1) and the port given (0 for an ephemeral one). A request whose Host header names
 //     another host is refused (421), so a page of another origin cannot reach the console through DNS rebinding.
-//   - GET /overview, /executive?period=7d|30d|all (the executive report, src/document/executive.ts, over the period
+//   - GET /work (the work queue, the landing page), /object?key=<an object's key> (one object on a page of its own),
+//     /overview, /executive?period=7d|30d|all (the executive report, src/document/executive.ts, over the period
 //     ending now: the snapshot's document rows and the report's own reads), /settings, /templates, /findings, /actions,
 //     /traces, /traces/view?f=<dir>/<file>, /sources, /policy, /document, /overview/report (the owner's report,
 //     src/document/report.ts renderReport over the snapshot's rows, with its outbound links opening in the top window)
 //     and /executive/download?period= (the executive report as one standalone file, an attachment named
 //     executive-<tenant>-<period>.html by downloadName, a tenant id only, with filename and an RFC 5987 filename*; its
-//     CSP the file's one style block by hash, fileCsp refusing a file with none or two). / redirects to /overview.
+//     CSP the file's one style block by hash, fileCsp refusing a file with none or two). / redirects to /work.
 //     Anything else is 404. Every answer's headers come from answerHeaders: no-store, the CSP the server chose and the
 //     two security headers are fixed; a route sets its content type and a download's content-disposition, nothing else.
 //   - A policy whose highest version holds two rules of one family (pages.ts latestRules) is named on Templates, printed
@@ -65,14 +66,14 @@ import { PERIODS, evalReceipts, isPeriod, readExecutive, renderExecutive, type E
 import { REPORT_MODE, renderReport, repoTip, utc } from "../document/report.ts";
 import { policyFileShown } from "../document/sample.ts";
 import { MemoryError, TechnicianMemory, scopeValuesOf, type ScopeType } from "../engine/memory.ts";
-import { PLAIN, Table, passView } from "../loop/present.ts";
+import { PLAIN, Table, passView, tail } from "../loop/present.ts";
 import { FileTracer, traceIdOf } from "../loop/trace.ts";
 import type { Tracer } from "../trace.ts";
 import { WindowError, freeText, newWindow } from "../policy/window.ts";
 import { DNS_FIELDS, approveRun, ApproveError, type ApprovalSelection } from "../vault/approve.ts";
 import {
-  barCounts, barHtml, actionsPage, decodeKey, documentPage, duplicateText, errorPage, executivePage, findingsPage, latestRules, overviewPage, passForm, plainUrls, policyPage, settingsPage, sourcesPage, templatesOf,
-  templatesPage, traceViewPage, tracesPage, type SourceCount, type TraceEventRow, type TraceFile, type View,
+  barCounts, barHtml, actionsPage, decodeKey, encodeKey, documentPage, duplicateText, errorPage, executivePage, findingsPage, latestRules, objectPage, overviewPage, passForm, plainUrls, policyPage, settingsPage, sourcesPage,
+  stripHtml, templatesOf, templatesPage, traceViewPage, tracesPage, workPage, type SourceCount, type TraceEventRow, type TraceFile, type View,
 } from "./pages.ts";
 import { ASSETS, escapeHtml, layout, type Asset, type Shell } from "./html.ts";
 import {
@@ -234,14 +235,15 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
 
   const modeLine = b.mode === "sample" ? `sample mode, ${b.source}; changes live for this process` : `live, ${b.source}; passes are dry`;
 
-  const page = async (tenant: string, name: Shell["page"], title: string, render: (v: View) => { body: string; extra?: string }, extra: { toast?: Toast | null; open?: string | null; bar?: boolean; returnTo?: string } = {}): Promise<string> => {
+  /** `strip` replaces the summary bar with the work queue's strip, which holds Run a pass itself: the navigation's is left out. `wide` gives a table page the room of a wide screen. */
+  const page = async (tenant: string, name: Shell["page"], title: string, render: (v: View) => { body: string; extra?: string }, extra: { toast?: Toast | null; open?: string | null; bar?: boolean; strip?: boolean; wide?: boolean; returnTo?: string } = {}): Promise<string> => {
     const v = await view(tenant);
     const r = render(v);
     const c = barCounts(v);
     return layout({
-      title, page: name, tenant, tenants: b.tenants, tenantsError: b.tenantsError ?? null, returnTo: extra.returnTo ?? PAGE_PATH[name], modeLine, bar: extra.bar === false ? null : barHtml(v), csrf,
+      title, page: name, tenant, tenants: b.tenants, tenantsError: b.tenantsError ?? null, returnTo: extra.returnTo ?? PAGE_PATH[name], modeLine, bar: extra.strip ? stripHtml(v) : extra.bar === false ? null : barHtml(v), csrf,
       nav: { settings: v.objects.length, findings: v.decisions.length, needs: c.needs, actions: (v.snapshot.doc.data.actions ?? []).length, traces: v.traces.length, templates: templatesOf(v).length },
-      passForm: passForm(v, "side"), body: r.body, extra: r.extra, toast: extra.toast ? { ok: extra.toast.ok, title: extra.toast.title, lines: extra.toast.lines } : null, open: extra.open ?? null,
+      passForm: extra.strip ? "" : passForm(v, "side"), body: r.body, extra: r.extra, toast: extra.toast ? { ok: extra.toast.ok, title: extra.toast.title, lines: extra.toast.lines } : null, open: extra.open ?? null, wide: extra.wide === true,
     });
   };
 
@@ -258,6 +260,17 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
   const render = async (tenant: string, route: string, query: URLSearchParams, toast: Toast | null = null, nonce = ""): Promise<{ status: number; type: string; body: string; attachment?: string } | null> => {
     const html = (body: string, status = 200) => ({ status, type: "text/html; charset=utf-8", body });
     switch (route) {
+      case "/work": return html(await page(tenant, "work", "Work queue", (v) => workPage(v), { toast, strip: true, wide: true }));
+      case "/object": {
+        // the key a page's link names: the object of the latest passing runs, or a page that says it is not there
+        let key = "";
+        try { key = query.get("key") ?? ""; decodeKey(key); } catch { key = ""; }
+        const v = await view(tenant);
+        const obj = key ? v.objects.find((x) => encodeKey(x.key) === key) : undefined;
+        if (!obj) return html(await page(tenant, "settings", "Object not found", () => ({ body: errorPage(`No such object in the latest passing runs of ${tenant}.`) })), 404);
+        // the title is data like any other: through the redactor (layout escapes it)
+        return html(await page(tenant, "settings", b.redactor.text(obj.kind === "file" ? tail(obj.object_id) : obj.name), (x) => objectPage(x, obj), { toast, wide: true }));
+      }
       case "/overview": return html(await page(tenant, "overview", "Overview", (v) => ({ body: overviewPage(v) }), { toast, bar: false }));
       case "/overview/report": {
         const v = await view(tenant);
@@ -302,7 +315,7 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
         return html(await page(tenant, "settings", "Settings", (v) => {
           const r = settingsPage(v, { group: query.get("group") ?? undefined, lock: query.get("lock") ?? undefined, status: query.get("status") ?? undefined, q: query.get("q") ?? undefined });
           return { body: r.body, extra: r.templates };
-        }, { toast, open: key }));
+        }, { toast, open: key, wide: true }));
       }
       case "/findings": return html(await page(tenant, "findings", "Findings", (v) => ({ body: findingsPage(v) }), { toast }));
       case "/actions": return html(await page(tenant, "actions", "Actions and tickets", (v) => ({ body: actionsPage(v) }), { toast }));
@@ -484,7 +497,7 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
       if (asked !== null && !b.tenants.includes(asked)) return send(res, 400, "text/html; charset=utf-8", layoutError(`No tenant ${asked.slice(0, 64)}: the store holds runs of ${b.tenants.join(", ")}.`));
       const tenant = asked ?? current;
       if (st(tenant).first === null) await firstPass(tenant);
-      if (url.pathname === "/") { res.writeHead(303, { ...answerHeaders("text/plain; charset=utf-8", csp("")), location: "/overview" }); res.end(); return; }
+      if (url.pathname === "/") { res.writeHead(303, { ...answerHeaders("text/plain; charset=utf-8", csp("")), location: "/work" }); res.end(); return; }
       const a = STATIC.get(url.pathname);
       if (a) return sendAsset(req, res, a);
       const nonce = randomBytes(16).toString("base64");
@@ -621,7 +634,7 @@ function send(res: http.ServerResponse, status: number, type: string, body: stri
 
 /** Where each page's switch returns. */
 export const PAGE_PATH: Readonly<Record<Shell["page"], string>> = {
-  overview: "/overview", executive: "/executive", settings: "/settings", templates: "/templates", findings: "/findings", actions: "/actions",
+  work: "/work", overview: "/overview", executive: "/executive", settings: "/settings", templates: "/templates", findings: "/findings", actions: "/actions",
   traces: "/traces", sources: "/sources", policy: "/policy", document: "/document",
 };
 /** The paths a switch may return to, read off PAGE_PATH and the periods: a page of the nav, the executive report with its period; nothing else. */

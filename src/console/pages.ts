@@ -2,15 +2,19 @@
 // snapshot and the console's latest pass). Every data string passes the view's redactor before it is escaped, as the
 // owner's report does; every number links to where it comes from: the findings, the document, the trace, the rule.
 //
+//   Work queue the landing page (/ opens it): a strip with the tenant, the last pass, the counts and Run a pass; the
+//              findings that need a person as table rows (object, live against approved, why, age, status and the row
+//              actions Approve, Unlock, Lock and Open); the held findings with their expiry; the adopted ones folded.
+//   Object     one object on a page of its own (/object): live, approved and the template's recommendation, lock and
+//              rule, last change and who made it, the restore proof, the references, the history, and the actions.
 //   Overview   the owner's report (src/document/report.ts renderReport, unchanged, served at /overview/report and
 //              shown in a frame), the last cycle's trace and when it ran, the decision instant.
 //   Settings   every object of the latest passing runs, files per host and records per zone, one line each on a
 //              wide screen (the object's name and its host or zone; the full path in the drawer): live, approved,
-//              lock, template, last change, status; the ones that need attention first (with a technician, drifted,
-//              held, in an open window), then the rest; filters by host or zone, lock and status, a search box; each
-//              row opens a drawer with the live value against the approved one, the restore proof, what a restore
-//              would regress, the references, the decisions, the action history with receipts, the change windows,
-//              and Unlock, Approve and Lock.
+//              lock, template, last change, status and Approve, Unlock and Lock on the row; the ones that need
+//              attention first (needs you, drifted, held, in an open window), then the rest; filters by host or
+//              zone, lock and status, a search box, the columns sortable; each row opens a drawer with the object's
+//              page in short (the same facts and sections as /object).
 //   Findings   the current decisions by verb with their labels, reasons (every instant in them as the page formats
 //              one), expiries, causes and tickets, and Record exception on each.
 //   Executive  the executive report (src/document/executive.ts) for the period the switch names, with Export PDF (the
@@ -149,13 +153,33 @@ export function barHtml(v: View): string {
 </div></header>`;
 }
 
-/** The "Run a pass" form: the pass over the store, never act. */
-export function passForm(v: Pick<View, "csrf" | "mode" | "passRunning" | "tenant">, where: "side" | "page"): string {
+/** The work queue's strip: the tenant, the pass its rows come from, the counts as links to their sections and Run a pass. */
+export function stripHtml(v: View): string {
+  const c = barCounts(v);
+  const stat = (href: string, n: number, label: string, cls: string): string => `<a href="${href}" class="stat ${cls}"><b>${thousands(n)}</b><span>${label}</span></a>`;
+  const decided = v.source === "pass" && v.pass ? v.pass.decidedAt : v.snapshot.doc.data.decidedAt;
+  return `<header class="bar strip"><div class="bar-in strip-in">
+<div class="strip-id"><b>${v.t(v.tenant)}</b><span>${v.mode === "sample" ? "sample mode" : "live"} · ${v.source === "pass" ? (v.pass?.recorded ? "pass" : "dry pass") : "ledger"} decided ${v.t(utc(decided))}</span></div>
+<nav class="stats" aria-label="Summary">${[
+    stat("#needs", c.needs, c.needs === 1 ? "needs you" : "need you", c.needs ? "need" : "zero"),
+    ...(c.restoring ? [stat("#restore", c.restoring, "to restore", "drifted")] : []),
+    stat("#held", c.held, "held", "held"),
+    stat("#adopted", c.adopted, "adopted", "adopted"),
+    stat("/settings?lock=locked", c.locked, "locked", "locked"),
+    ...(c.windows ? [stat("/settings?lock=window", c.windows, c.windows === 1 ? "window open" : "windows open", "window")] : []),
+  ].join("")}</nav>
+${passForm(v, "strip")}
+</div></header>`;
+}
+
+/** The "Run a pass" form: the pass over the store, never act. The strip's returns to the work queue, the others to Findings. */
+export function passForm(v: Pick<View, "csrf" | "mode" | "passRunning" | "tenant">, where: "side" | "page" | "strip"): string {
   const label = v.mode === "sample" ? "Run a pass" : "Run a dry pass";
   const hint = v.mode === "sample" ? "over sql.js, recorded in memory" : "through Zetaris, nothing recorded";
   if (v.passRunning) return `<p class="busy">A pass is running since ${escapeHtml(utc(v.passRunning))}.</p>`;
-  return `<form method="post" action="/do/pass" data-action="pass"${where === "page" ? "" : ' class="side-pass"'}>
-<input type="hidden" name="csrf" value="${escapeHtml(v.csrf)}"><input type="hidden" name="page_tenant" value="${escapeHtml(v.tenant)}"><input type="hidden" name="return" value="/findings">
+  const cls = where === "page" ? "" : where === "strip" ? ' class="strip-pass"' : ' class="side-pass"';
+  return `<form method="post" action="/do/pass" data-action="pass"${cls}>
+<input type="hidden" name="csrf" value="${escapeHtml(v.csrf)}"><input type="hidden" name="page_tenant" value="${escapeHtml(v.tenant)}"><input type="hidden" name="return" value="${where === "strip" ? "/work" : "/findings"}">
 <button type="submit" class="btn${where === "side" ? " full" : " primary"}">${label}</button>
 <p class="busy" data-busy="Running the pass" hidden>Running the pass</p>
 ${where === "page" ? `<p class="busy">${hint}; the console never runs act</p>` : ""}
@@ -169,6 +193,10 @@ const hidden = (v: View, fields: Record<string, string>): string =>
 const confirmBlock = (text: string, yes: string): string =>
   `<div class="confirm" hidden><p data-summary>${text}</p><div class="act"><button type="submit" class="btn primary" data-yes>${yes}</button><button type="button" class="btn" data-no>Cancel</button></div></div>`;
 
+/** A page's helper text: one or two short lines; whatever more a reader may need sits behind a collapsed fold. */
+const ledeHtml = (short: string, more = ""): string =>
+  `<p class="lede">${short}</p>${more ? `<details class="fold more"><summary>About this page</summary><div class="more-body">${more}</div></details>` : ""}`;
+
 // ---- Overview ---------------------------------------------------------------------------------------------------
 
 export function overviewPage(v: View): string {
@@ -181,15 +209,16 @@ export function overviewPage(v: View): string {
     `<span>Read through ${v.t(v.dataSource)} at ${v.t(utc(v.snapshot.readAt))}, <a href="/document#queries">${plural(v.snapshot.queries.queries, "query", "queries")}</a></span>`,
   ];
   return `<div class="head"><div><h1>Overview</h1>
-<p class="lede">The owner's report for ${v.t(v.tenant)}, rendered from the store when this page loaded: whether anything is wrong, who is handling it, what changed.</p></div></div>
-<div class="facts">${facts.join("\n")}</div>
+${ledeHtml(`The owner's report for ${v.t(v.tenant)}, rendered from the store when this page loaded.`, `<div class="facts">${facts.join("\n")}</div>`)}</div></div>
 <iframe class="report" src="/overview/report" title="The owner's report for ${v.t(v.tenant)}"></iframe>`;
 }
 
 // ---- Settings ---------------------------------------------------------------------------------------------------
 
 const STATUS_CLASS: Readonly<Record<Status, string>> = { "with a technician": "need", drifted: "drifted", held: "held", adopted: "adopted", "in order": "ok" };
-const statusBadge = (s: Status): string => `<span class="b ${STATUS_CLASS[s]}">${s}</span>`;
+/** What a status reads as on the page; the status itself (the filter values, data-status) keeps its name. */
+const STATUS_LABEL: Readonly<Record<Status, string>> = { "with a technician": "needs you", drifted: "drifted", held: "held", adopted: "adopted", "in order": "in order" };
+const statusBadge = (s: Status): string => `<span class="b ${STATUS_CLASS[s]}">${STATUS_LABEL[s]}</span>`;
 
 /** A window's end in a row: day, month and time; a window lasts 72 hours at most, and the drawer names the year. */
 const shortUtc = (iso: string): string => utc(iso).replace(/ \d{4} /, " ");
@@ -236,7 +265,7 @@ export function settingsPage(v: View, filter: { group?: string; lock?: string; s
   const filters = `<div class="filters" role="search">
 <label>Host or zone<select data-filter="group">${opt("", "every host and zone", filter.group)}${groups.map((g) => opt(g, v.t(g), filter.group)).join("")}</select></label>
 <label>Lock<select data-filter="lock">${opt("", "any lock", filter.lock)}${opt("locked", "locked by rule", filter.lock)}${opt("open", "open by rule", filter.lock)}${opt("window", "open window", filter.lock)}</select></label>
-<label>Status<select data-filter="status">${opt("", "any status", filter.status)}${STATUSES.map((s) => opt(s, s, filter.status)).join("")}</select></label>
+<label>Status<select data-filter="status">${opt("", "any status", filter.status)}${STATUSES.map((s) => opt(s, STATUS_LABEL[s], filter.status)).join("")}</select></label>
 <label>Search<input id="q" type="search" placeholder="path, name, rule" value="${escapeHtml(filter.q ?? "")}" autocomplete="off"></label>
 <span class="count" id="count" aria-live="polite">${plural(v.objects.length, "object")}</span>
 </div>`;
@@ -244,34 +273,37 @@ export function settingsPage(v: View, filter: { group?: string; lock?: string; s
   const templates: string[] = [];
   // the objects in their tiers, each tier in the estate's order (files before records, by host or zone, then name)
   const tiers = [[0, 1, 2, 3], [4]].map((ts) => v.objects.filter((o) => ts.includes(tierOf(o))).sort((a, c) => tierOf(a) - tierOf(c)));
-  const heads = ["Needs attention: with a technician, drifted, held or in an open window", "Everything else"];
+  const heads = ["Needs attention: needs you, drifted, held or in an open window", "Everything else"];
   let i = 0;
   tiers.forEach((mine, t) => {
     if (!mine.length) return;
-    rowsHtml.push(`<tr class="grp" data-tier="${t}"><td colspan="7">${heads[t]} · ${plural(mine.length, "object")}</td></tr>`);
+    rowsHtml.push(`<tr class="grp" data-tier="${t}"><td colspan="8">${heads[t]} · ${plural(mine.length, "object")}</td></tr>`);
     for (const o of mine) {
       const id = `o${i++}`;
-      const text = [o.object_id, o.name, o.group, o.rule?.rule_id ?? "", template(o.rule), o.status, o.live.text].join(" ").toLowerCase();
+      const text = [o.object_id, o.name, o.group, o.rule?.rule_id ?? "", template(o.rule), STATUS_LABEL[o.status], o.status, o.live.text].join(" ").toLowerCase();
       const full = o.kind === "file" ? `${o.object_id} on ${o.host ?? "-"}` : `${o.name}, record ${o.object_id} in ${o.group}`;
-      rowsHtml.push(`<tr data-open="${id}" data-key="${escapeHtml(encodeKey(o.key))}" tabindex="0" data-group="${v.t(o.group)}" data-lock="${o.lock}" data-status="${o.status}" data-tier="${t}" data-text="${v.t(text)}" aria-label="${v.t(`${o.name}: ${o.status}, ${o.lock === "window" ? "open window" : o.lock}`)}">
+      rowsHtml.push(`<tr data-open="${id}" data-key="${escapeHtml(encodeKey(o.key))}" tabindex="0" data-group="${v.t(o.group)}" data-lock="${o.lock}" data-status="${o.status}" data-tier="${t}" data-text="${v.t(text)}" aria-label="${v.t(`${o.name}: ${STATUS_LABEL[o.status]}, ${o.lock === "window" ? "open window" : o.lock}`)}">
 <td data-label="Object" title="${v.t(full)}">${objectName(v, o)}</td>
 <td data-label="Live"><code>${v.t(o.live.text)}</code></td>
 <td data-label="Approved">${approvedCell(v, o)}</td>
 <td data-label="Lock">${lockBadge(v, o)}</td>
-<td data-label="Template">${o.rule ? `<a href="/policy#${escapeHtml(o.rule.rule_id)}" title="${v.t(`${o.rule.rule_id}, ${o.rule.criticality}`)}">${v.t(template(o.rule))}</a>` : `<span class="muted">none</span>`}</td>
-<td data-label="Last change"${o.cause ? ` title="${causeText(v, o.cause, actions)}"` : ""}>${causeText(v, o.cause, actions)}</td>
+<td data-label="Template" class="hide-m">${o.rule ? `<a href="/policy#${escapeHtml(o.rule.rule_id)}" title="${v.t(`${o.rule.rule_id}, ${o.rule.criticality}`)}">${v.t(template(o.rule))}</a>` : `<span class="muted">none</span>`}</td>
+<td data-label="Last change" class="hide-m"${o.cause ? ` title="${causeText(v, o.cause, actions)}"` : ""}>${causeText(v, o.cause, actions)}</td>
 <td data-label="Status">${statusBadge(o.status)}</td>
+<td data-label="Actions" class="acts-c"><div class="acts">${actionSet(v, o, "/settings", id, true)}<a class="btn sm" href="${objectHref(o)}" title="Open ${v.t(o.name)} on a page of its own">Open</a></div></td>
 </tr>`);
       templates.push(drawerTemplate(v, o, id, actions));
     }
   });
   const windowsNote = v.snapshot.windowsError ? `<p class="alert">The change windows were not read: ${v.t(v.snapshot.windowsError)}. Unlock is refused until they are. The console applies sql/schema.sql live; npm run zetaris:setup registers change_window in Zetaris and refreshes the disposition table.</p>` : "";
+  const sortable = (label: string, cls = ""): string => `<th scope="col" data-sort${cls ? ` class="${cls}"` : ""}>${label}</th>`;
   const body = `<div class="head"><div><h1>Settings</h1>
-<p class="lede">Every object the estate holds for ${v.t(v.tenant)}: ${plural(files.length, "file")} on ${plural(hosts.length, "host")} and ${plural(records.length, "record")} in ${plural(zones.length, "zone")}, from the latest passing runs (<a href="/document#estate">document</a>), the ones that need attention first. The lock is the governing rule's (<a href="/policy">policy</a>); a change window opens it until the time it names. Select a row for its full path, its detail and the three actions.</p></div></div>
+${ledeHtml(`${plural(v.objects.length, "object")} for ${v.t(v.tenant)}: ${plural(files.length, "file")} on ${plural(hosts.length, "host")}, ${plural(records.length, "record")} in ${plural(zones.length, "zone")}. Select a row for its detail.`,
+    `<p>From the latest passing runs (<a href="/document#estate">document</a>), the ones that need attention first. The lock is the governing rule's (<a href="/policy">policy</a>); a change window opens it until the time it names. Approve makes the live value the approved one, Unlock opens a window, Lock closes it. A row opens a drawer with its full path and detail, Open a page of its own.</p>`)}</div></div>
 ${windowsNote}${filters}
-<div class="tbl wide"><table class="set rt">
-<colgroup><col class="w-obj"><col class="w-live"><col class="w-appr"><col class="w-lock"><col class="w-tpl"><col class="w-last"><col class="w-st"></colgroup>
-<thead><tr><th scope="col">Object</th><th scope="col">Live</th><th scope="col">Approved</th><th scope="col">Lock</th><th scope="col">Template</th><th scope="col">Last change</th><th scope="col">Status</th></tr></thead>
+<div class="tbl flush"><table class="set rt">
+<colgroup><col class="w-obj"><col class="w-live"><col class="w-appr"><col class="w-lock"><col class="w-tpl hide-m"><col class="w-last hide-m"><col class="w-st"><col class="w-act"></colgroup>
+<thead><tr>${sortable("Object")}${sortable("Live")}${sortable("Approved")}${sortable("Lock")}${sortable("Template", "hide-m")}${sortable("Last change", "hide-m")}${sortable("Status")}<th scope="col">Actions</th></tr></thead>
 <tbody>
 ${rowsHtml.join("\n")}
 </tbody>
@@ -371,53 +403,219 @@ function windowsHtml(v: View, o: SettingObject): string {
   return `${open}${past.length ? `<details class="fold"><summary>${plural(past.length, "earlier window")}</summary><ul class="hist">${past.map((x: ChangeWindow) => `<li>${v.t(utc(x.opened_at))} to ${v.t(utc(x.closed_at ?? x.until))}${x.closed_at ? " (closed)" : Date.parse(x.until) <= Date.parse(v.now) ? " (ran out)" : " (not yet open)"} · ${v.t(x.opened_by)}<span class="rc">${v.t(x.reason)}</span></li>`).join("")}</ul></details>` : ""}`;
 }
 
-function actionForms(v: View, o: SettingObject): string {
+const objectHref = (o: SettingObject): string => `/object?key=${encodeURIComponent(encodeKey(o.key))}`;
+
+/**
+ * An object's three actions as buttons: Approve, Unlock and Lock, each opening a small form of its own (a native
+ * popover, which the top layer keeps from being clipped by a table). The form's submit names confirm=yes, so the
+ * popover is the on-page confirmation and an action works with the script (one fetch POST, a toast) and without it
+ * (the server renders the page with the toast). A button an object cannot take is disabled and says why. `forms`
+ * false renders the buttons alone, aimed at the popovers another part of the same page holds under `uid` (the drawer
+ * of a Settings row).
+ */
+function actionSet(v: View, o: SettingObject, ret: string, uid: string, forms: boolean): string {
   const key = encodeKey(o.key);
-  const name = v.t(o.kind === "file" ? tail(o.object_id) : o.name);
+  const name = v.t(o.kind === "file" ? o.object_id : o.name);
   const sample = v.mode === "sample" ? " Sample mode: changes live for this process." : "";
-  const unlock = o.window ? "" : `<form method="post" action="/do/unlock" data-action="unlock" data-summary="Open a change window on ${name} until {until}? The next pass holds a drift on it instead of restoring it.${sample}">
-${hidden(v, { key, return: "/settings" })}
-<p class="fh">Unlock: open a change window</p>
-<label for="w-who-${key}">Who</label><input id="w-who-${key}" name="who" required maxlength="200" autocomplete="off" placeholder="the person or role making the change">
-<label for="w-h-${key}">Until</label><input id="w-h-${key}" name="hours" type="number" required min="${WINDOW_MIN_HOURS}" max="${WINDOW_MAX_HOURS}" step="1" value="4" inputmode="numeric" aria-describedby="w-hh-${key}">
-<p class="hint" id="w-hh-${key}">hours from now, ${WINDOW_MIN_HOURS} to ${WINDOW_MAX_HOURS}</p>
-<label for="w-why-${key}">Why</label><input id="w-why-${key}" name="why" required maxlength="500" autocomplete="off" placeholder="the change the window is for">
-<div class="act"><button type="submit" class="btn window">Unlock</button></div>
-${confirmBlock("", "Open the window")}
-</form>`;
-  const approve = o.live.absent ? "" : `<form method="post" action="/do/approve" data-action="approve" data-summary="Approve the live value of ${name}? It becomes the approved value, from the latest passing run and its vault copy${o.window ? ", and the open window closes" : ""}.${sample}">
-${hidden(v, { key, return: "/settings" })}
-<p class="fh">Approve the live value</p>
-<label for="a-by-${key}">By</label><input id="a-by-${key}" name="by" maxlength="200" autocomplete="off" value="operator">
-<label for="a-note-${key}">Note</label><input id="a-note-${key}" name="note" maxlength="500" autocomplete="off" placeholder="optional">
-<div class="act"><button type="submit" class="btn primary">Approve</button><span class="busy">${o.differs ? "live differs from the approval" : o.approved ? "live is approved already: a re-run writes nothing" : "no approval of record yet"}</span></div>
-${confirmBlock("", "Approve")}
-</form>`;
-  const lock = o.window ? `<form method="post" action="/do/lock" data-action="lock" data-summary="Close the change window on ${name}? The next pass treats a drift on it as before.${sample}">
-${hidden(v, { key, return: "/settings" })}
-<p class="fh">Lock: close the window</p>
-<div class="act"><button type="submit" class="btn lock">Lock</button><span class="busy">closes the window without approving</span></div>
-${confirmBlock("", "Close the window")}
-</form>` : "";
-  return `<div class="wf"><h3>Change it</h3>${unlock}${approve}${lock}</div>`;
+  // the title names the object, so a row's button says which object it acts on to a screen reader as well
+  const trigger = (act: string, label: string, cls: string, title: string): string => `<button type="button" class="btn sm ${cls}" popovertarget="p-${act}-${uid}" title="${title} ${name}">${label}</button>`;
+  const off = (label: string, why: string): string => `<button type="button" class="btn sm" disabled title="${label}: ${escapeHtml(why)}">${label}</button>`;
+  const pop = (act: string, title: string, intro: string, fields: string, go: string, cls: string): string => !forms ? "" : `<div id="p-${act}-${uid}" popover class="pop" role="dialog" aria-labelledby="p-${act}-${uid}-h"><form method="post" action="/do/${act}" data-action="${act}">
+${hidden(v, { key, return: ret })}
+<h3 id="p-${act}-${uid}-h">${title}</h3><p class="pop-o">${name}</p><p class="pop-i">${intro}</p>
+${fields}<div class="act"><button type="submit" name="confirm" value="yes" class="btn ${cls}"${fields ? "" : " autofocus"}>${go}</button><button type="button" class="btn" popovertarget="p-${act}-${uid}" popovertargetaction="hide">Cancel</button></div>
+</form></div>`;
+  const approve = o.live.absent ? off("Approve", "the latest run does not hold this object, so there is no live value to approve")
+    : trigger("approve", "Approve", "approve", "Approve the live value of") + pop("approve", "Approve the live value",
+      `${o.differs ? "Live differs from the approval." : o.approved ? "Live is approved already: a re-run writes nothing." : "No approval of record yet."} It becomes the approved value, from the latest passing run and its vault copy${o.window ? ", and the open window closes" : ""}.${sample}`,
+      `<label for="r-by-${uid}">By</label><input id="r-by-${uid}" name="by" maxlength="200" autocomplete="off" value="operator" autofocus>
+<label for="r-note-${uid}">Note</label><input id="r-note-${uid}" name="note" maxlength="500" autocomplete="off" placeholder="optional">
+`, "Approve", "primary");
+  const unlock = o.window ? off("Unlock", `a change window is open until ${utc(o.window.until)}; Lock or Approve closes it first`)
+    : trigger("unlock", "Unlock", "window", "Open a change window on") + pop("unlock", "Unlock: open a change window",
+      `The next pass holds a drift on it instead of restoring it, until the window ends.${sample}`,
+      `<label for="r-who-${uid}">Who</label><input id="r-who-${uid}" name="who" required maxlength="200" autocomplete="off" placeholder="the person or role making the change" autofocus>
+<label for="r-h-${uid}">Hours</label><input id="r-h-${uid}" name="hours" type="number" required min="${WINDOW_MIN_HOURS}" max="${WINDOW_MAX_HOURS}" step="1" value="4" inputmode="numeric">
+<label for="r-why-${uid}">Why</label><input id="r-why-${uid}" name="why" required maxlength="500" autocomplete="off" placeholder="the change the window is for">
+`, "Open the window", "window");
+  const lock = !o.window ? off("Lock", "no change window is open on this object: it is locked by its rule already, or the rule leaves it open")
+    : trigger("lock", "Lock", "lock", "Close the change window on") + pop("lock", "Lock: close the window",
+      `Closes the change window without approving. The next pass treats a drift on it as before.${sample}`, "", "Close the window", "lock");
+  return `${approve}${unlock}${lock}`;
 }
 
-function drawerTemplate(v: View, o: SettingObject, id: string, actions: readonly Action[]): string {
-  const kicker = o.kind === "file" ? `file on ${o.host ?? "-"} · ${o.surface}` : `record in ${o.group.replace(/^zone /, "zone ")} · ${o.surface}`;
-  return `<template id="t-${id}" data-key="${escapeHtml(encodeKey(o.key))}">
-<div class="dr-head"><div><p class="kicker">${v.t(kicker)}</p><h2 id="dr-title">${v.t(o.kind === "file" ? o.object_id : o.name)}</h2><p class="badges">${statusBadge(o.status)} ${lockBadge(v, o)}${o.rule ? ` <a class="pill" href="/policy#${escapeHtml(o.rule.rule_id)}">${v.t(o.rule.rule_id)}</a>` : ""}</p></div><button type="button" class="btn x" data-close>Close</button></div>
-<div class="dr-body">
-<h3>Live against approved</h3>${liveVsApproved(v, o)}
-<h3>Last change</h3><p>${causeText(v, o.cause, actions)}</p>
+/** An object's facts at a glance: live, approved, the template's recommendation, the lock and its rule, the last change and who made it. */
+function objectSummary(v: View, o: SettingObject, actions: readonly Action[]): string {
+  const r = o.rule;
+  const live = o.live.absent ? `<span class="muted">absent from the latest run</span>` : `<code>${v.t(o.live.text)}</code>`;
+  const approved = !o.approved ? `<span class="muted">no approval of record</span>`
+    : `<code>${v.t(h12(o.approved.value_hash))}</code> ${o.differs ? `<span class="b need">differs from live</span>` : `<span class="b ok">matches live</span>`}<span class="rc">approved ${v.t(utc(o.approved.approved_at))}${o.approved.approved_by ? ` by ${v.t(o.approved.approved_by)}` : ""}</span>`;
+  const recommended = r
+    ? `<a href="/policy#${escapeHtml(r.rule_id)}">${v.t(template(r))}</a><span class="rc">on drift ${v.t(r.on_drift)}; no copy ${v.t(r.on_no_copy)}; hold up to ${v.t(r.hold_max_hours)} h; alert ${v.t(r.alert)}, ${v.t(r.psa_priority)}</span>`
+    : `<span class="muted">no rule governs it: the default checks decide</span>`;
+  const verdicts = o.decisions.length
+    ? o.decisions.map((d) => `${decisionChip(d)} ${v.t(classLabel(d.class))}<span class="rc">${v.t(timesIn(d.reason))}</span>`).join("")
+    : `<span class="muted">no finding: the latest pass found it in order</span>`;
+  const c = o.cause;
+  const changedBy = c ? `${c.actor ? v.t(c.actor) : `<span class="muted">not recorded</span>`}${c.mechanism ? ` via ${v.t(c.mechanism)}` : ""}${c.occurred_at ? `, ${v.t(utc(c.occurred_at))}` : ""}` : `<span class="muted">no record</span>`;
+  return `<dl class="kv glance">
+<dt>Live</dt><dd>${live}</dd>
+<dt>Approved</dt><dd>${approved}</dd>
+<dt>Recommended (template)</dt><dd>${recommended}</dd>
+<dt>Lock</dt><dd>${lockBadge(v, o)}${r ? ` <a class="pill" href="/policy#${escapeHtml(r.rule_id)}">${v.t(r.rule_id)}</a> <span class="muted">${v.t(r.criticality)}</span>` : ""}</dd>
+<dt>Verdict</dt><dd>${verdicts}</dd>
+<dt>Last change</dt><dd>${causeText(v, c, actions)}</dd>
+<dt>Changed by</dt><dd>${changedBy}</dd>
+</dl>`;
+}
+
+/** The sections an object's page and its drawer share, after the facts and the actions. */
+function detailSections(v: View, o: SettingObject): string {
+  return `<h3>Live against approved</h3>${liveVsApproved(v, o)}
 <h3>Restore proof</h3>${restoreProof(v, o)}
 <h3>What a restore would regress</h3>${regressHtml(v, o)}
 <h3>References</h3>${referencesHtml(v, o)}
 <h3>Decisions</h3>${decisionsHtml(v, o)}
 <h3>Action history</h3>${actionsHistory(v, o)}
-<h3>Change window</h3>${windowsHtml(v, o)}
-${actionForms(v, o)}
+<h3>Change window</h3>${windowsHtml(v, o)}`;
+}
+
+const objectKicker = (o: SettingObject): string => (o.kind === "file" ? `file on ${o.host ?? "-"} · ${o.surface}` : `record in ${o.group.replace(/^zone /, "zone ")} · ${o.surface}`);
+
+/** One object's detail in the drawer a Settings row opens: its actions are buttons aimed at the popovers of the row. */
+function drawerTemplate(v: View, o: SettingObject, id: string, actions: readonly Action[]): string {
+  return `<template id="t-${id}" data-key="${escapeHtml(encodeKey(o.key))}">
+<div class="dr-head"><div><p class="kicker">${v.t(objectKicker(o))}</p><h2 id="dr-title">${v.t(o.kind === "file" ? o.object_id : o.name)}</h2><p class="badges">${statusBadge(o.status)} ${lockBadge(v, o)}${o.rule ? ` <a class="pill" href="/policy#${escapeHtml(o.rule.rule_id)}">${v.t(o.rule.rule_id)}</a>` : ""}</p></div><span class="dr-tools"><a class="btn" href="${objectHref(o)}">Open page</a><button type="button" class="btn x" data-close>Close</button></span></div>
+<div class="dr-body">
+${objectSummary(v, o, actions)}
+<div class="wf"><h3>Change it</h3><div class="acts">${actionSet(v, o, "/settings", id, false)}</div></div>
+${detailSections(v, o)}
 </div>
 </template>`;
+}
+
+/** An object on a page of its own: the facts, the actions, then the sections the drawer holds. */
+export function objectPage(v: View, o: SettingObject): { body: string } {
+  const actions = (v.snapshot.doc.data.actions ?? []) as unknown as Action[];
+  return {
+    body: `<p class="crumb"><a href="/work">Work queue</a> <span aria-hidden="true">›</span> <a href="/settings">Settings</a></p>
+<div class="head obj-head"><div><p class="kicker">${v.t(objectKicker(o))}</p><h1 class="oname">${v.t(o.kind === "file" ? o.object_id : o.name)}</h1><p class="badges">${statusBadge(o.status)} ${lockBadge(v, o)}</p></div>
+<div class="acts">${actionSet(v, o, "/settings", "obj", true)}</div></div>
+<div class="detail">
+${objectSummary(v, o, actions)}
+${detailSections(v, o)}
+</div>`,
+  };
+}
+
+// ---- Work queue -------------------------------------------------------------------------------------------------
+
+/** A decision's status chip: a verb the technician owes (needs you), the agent's restore (drifted), a hold, an adoption. */
+function decisionChip(d: Pick<Decision, "verb" | "window_id">): string {
+  if (NEEDS.includes(d.verb)) return `<span class="b need">needs you</span>`;
+  if (d.verb === "ROLLBACK") return `<span class="b drifted">drifted</span>`;
+  if (d.verb === "HOLD") return isWindowHold(d) ? `<span class="b window">held · window</span>` : `<span class="b held">held</span>`;
+  return `<span class="b adopted">adopted</span>`;
+}
+
+/** A span of time in the page's words: "under 1 h", "5 h", "3 d". */
+function spanText(ms: number): string {
+  const h = Math.floor(Math.max(0, ms) / 3_600_000);
+  return h < 1 ? "under 1 h" : h < 48 ? `${thousands(h)} h` : `${thousands(Math.floor(h / 24))} d`;
+}
+
+/**
+ * Since when each current finding has been raised without a break, in ms: walking back over the instants the tenant's
+ * passes decided at (every disposition's decided_at and the decisions shown; every finding of one pass carries its
+ * pass's instant), the earliest of the run of consecutive passes that raised it, ending at its current decision. A pass
+ * that raised nothing for the tenant leaves no row, so it cannot break a run. NaN when the decision names no instant.
+ */
+function openSince(v: View): Map<string, number> {
+  const instants = new Set<number>();
+  const raised = new Map<string, Set<number>>();
+  const add = (id: string, at: string | null | undefined): void => {
+    const ms = at ? Date.parse(at) : NaN;
+    if (Number.isNaN(ms)) return;
+    instants.add(ms);
+    const mine = raised.get(id) ?? new Set<number>();
+    raised.set(id, mine.add(ms));
+  };
+  for (const x of v.snapshot.dispositions) add(x.finding_id, x.decided_at);
+  for (const d of v.decisions) add(d.finding_id, d.decided_at);
+  const newestFirst = [...instants].sort((a, b) => b - a);
+  const out = new Map<string, number>();
+  for (const d of v.decisions) {
+    const now = Date.parse(d.decided_at);
+    const mine = raised.get(d.finding_id);
+    let since = now;
+    if (mine && !Number.isNaN(now)) for (let i = newestFirst.indexOf(now) + 1; i < newestFirst.length && mine.has(newestFirst[i]); i++) since = newestFirst[i];
+    out.set(d.finding_id, since);
+  }
+  return out;
+}
+
+/** The live and the approved value of an object as a row shows them, as Settings does: a file's hash or a record's content; the approved one as the same hash, or none, or the live one. */
+function valuePair(o: SettingObject): { live: string; approved: string; differs: boolean; none: boolean } {
+  return { live: o.live.text, approved: !o.approved ? "none" : o.differs ? h12(o.approved.value_hash) : "same as live", differs: Boolean(o.approved) && o.differs, none: !o.approved };
+}
+
+/** One row of a work table: the object, live against approved, why (the rule), the age or the expiry, the status, the actions. */
+function queueRow(v: View, d: Decision, o: SettingObject | undefined, uid: string, withActions: boolean, since: number | null): string {
+  const pair = o ? valuePair(o) : null;
+  const object = o ? `${objectName(v, o)}${d.setting_path && d.setting_path !== o.main ? `<span class="q">${v.t(d.setting_path)}</span>` : ""}` : `<span class="on">${v.t(whereOf(v, d))}</span>`;
+  // a table of findings that wait on a person shows how long they have; a table of held or adopted ones when they end
+  const rel = d.expires_at ? untilPhrase(d.expires_at, v.now) : null;
+  const when = since !== null
+    ? Number.isNaN(since) ? `<span class="muted">-</span>` : `<span class="nw" title="raised by every pass since ${v.t(utc(new Date(since).toISOString()))}">${spanText(Date.parse(v.now) - since)}</span><span class="q">since ${v.t(shortUtc(new Date(since).toISOString()))}</span>`
+    : d.expires_at ? `<span>${v.t(shortUtc(d.expires_at))}</span><span class="q${rel && /overdue/.test(rel) ? " late" : ""}">${v.t(rel ?? "")}</span>` : `<span class="muted">no expiry</span>`;
+  const why = `<span class="cls">${v.t(classLabel(d.class))}</span><span class="rs" title="${v.t(timesIn(d.reason))}">${v.t(timesIn(d.reason))}</span><span class="q">${d.rule_id ? `rule ${ruleLink(v, d.rule_id)}` : `decided by ${v.t(d.decided_by)}`}</span>`;
+  const status = `${decisionChip(d)}${o && o.lock !== "open" ? lockBadge(v, o) : ""}`;
+  const actions = withActions && o ? `<div class="acts">${actionSet(v, o, "/work", uid, true)}<a class="btn sm" href="${objectHref(o)}" title="Open the object's page">Open</a></div>` : o ? `<a class="btn sm" href="${objectHref(o)}">Open</a>` : "";
+  return `<tr id="w-${v.t(d.finding_id)}">
+<td data-label="Object" title="${v.t(whereOf(v, d))}">${object}</td>
+${withActions ? `<td data-label="Live">${pair ? `<code>${v.t(pair.live)}</code>` : ""}</td>
+<td data-label="Approved">${pair ? (pair.none || pair.approved === "same as live" ? `<span class="muted">${v.t(pair.approved)}</span>` : `<code class="${pair.differs ? "chg" : ""}">${v.t(pair.approved)}</code>`) : ""}</td>` : ""}
+<td data-label="Why">${why}</td>
+<td data-label="${since !== null ? "Age" : "Expires"}">${when}</td>
+<td data-label="Status" class="st">${status}</td>
+<td data-label="Actions" class="acts-c">${actions}</td>
+</tr>`;
+}
+
+/** The work queue: what needs a person, what is held, what the agent restores, what is adopted. */
+export function workPage(v: View): { body: string } {
+  const byKey = new Map(v.objects.map((o) => [o.key, o]));
+  const objectOf = (d: Decision): SettingObject | undefined => byKey.get(objectKey(d.surface, d.host, d.object_id));
+  const pick = (verbs: readonly Verb[]): Decision[] => v.decisions.filter((d) => verbs.includes(d.verb));
+  const since = openSince(v);
+  const ms = (x: number | undefined): number => (x === undefined || Number.isNaN(x) ? Infinity : x);
+  const at = (iso: string | null): number => ms(iso ? Date.parse(iso) : undefined);
+  const oldest = (a: Decision, b: Decision): number => ms(since.get(a.finding_id)) - ms(since.get(b.finding_id)) || cmp(a.class, b.class) || cmp(a.finding_id, b.finding_id);
+  const soonest = (a: Decision, b: Decision): number => at(a.expires_at) - at(b.expires_at) || cmp(a.class, b.class) || cmp(a.finding_id, b.finding_id);
+  let n = 0;
+  const table = (ds: Decision[], withActions: boolean, when: "Age" | "Expires"): string => {
+    const head = (label: string): string => `<th scope="col">${label}</th>`;
+    return `<div class="tbl flush"><table class="wq rt${withActions ? "" : " lean"}">
+<thead><tr>${head("Object")}${withActions ? `${head("Live")}${head("Approved")}` : ""}${head("Why")}${head(when)}${head("Status")}${head(withActions ? "Actions" : "Detail")}</tr></thead>
+<tbody>
+${ds.map((d) => queueRow(v, d, objectOf(d), `q${n++}`, withActions, when === "Age" ? since.get(d.finding_id) ?? NaN : null)).join("\n")}
+</tbody>
+</table></div>`;
+  };
+  const section = (id: string, title: string, ds: Decision[], empty: string, body: () => string): string =>
+    `<section id="${id}"><h2>${title}<span class="cnt">${thousands(ds.length)}</span></h2>${ds.length ? body() : `<p class="muted">${empty}</p>`}</section>`;
+  const needs = pick(NEEDS).sort(oldest);
+  const restore = pick(["ROLLBACK"]).sort(oldest);
+  const held = pick(["HOLD"]).sort(soonest);
+  const adopted = pick(["ADOPT"]).sort(soonest);
+  return { body: `<div class="head"><div><h1>Work queue</h1>
+${ledeHtml("What needs a person first, then what is held. Approve accepts the live value, Unlock opens a change window, Lock closes it.",
+    `<p>The rows are the current decisions of ${v.t(v.tenant)}: ${v.source === "pass" ? "from the pass this console ran" : "from the ledger"}, each with the Decider's own reason. Approve makes the live value the approved one; a drift is then no drift. Unlock holds a drift on the object until the window ends instead of restoring it; Lock ends the window. Open shows the object with its restore proof and history. Record exception is on <a href="/findings">Findings</a>.</p>`)}</div></div>
+${needs.length ? "" : `<p class="calm">Nothing needs you: no finding is escalated or waiting on a fix.</p>`}
+${section("needs", "Needs you", needs, "No finding is escalated or waiting on a fix.", () => table(needs, true, "Age"))}
+${restore.length ? section("restore", "The agent restores at the next act", restore, "", () => table(restore, true, "Age")) : ""}
+${section("held", "Held", held, "No finding is held.", () => table(held, true, "Expires"))}
+${section("adopted", "Adopted", adopted, "No finding is adopted.", () => `<details class="fold"><summary>${plural(adopted.length, "finding")} adopted under exceptions</summary>${table(adopted, false, "Expires")}</details>`)}` };
 }
 
 // ---- Executive --------------------------------------------------------------------------------------------------
@@ -557,7 +755,8 @@ ${rows.length ? `<div class="tbl"><table class="rt tpl-t"><thead><tr><th scope="
     ? `<div class="alert" role="alert"><b>${plural(duplicates.length, "rule family", "rule families")} of the policy ${duplicates.length === 1 ? "has" : "have"} more than one rule at the highest version</b><ul>${duplicates.map((d) => `<li>${v.t(duplicateText(d))}</li>`).join("")}</ul></div>\n`
     : "";
   return `<div class="head"><div><h1>Templates</h1>
-<p class="lede">The ${plural(settings, "setting")} of ${v.t(v.tenant)}'s latest passing runs, grouped by the policy rule that governs each (the policy_rule rows the store holds, loaded from the policy file; the most specific match governs, as on the <a href="/policy">policy</a> page). Per template: its rule, the objects whose settings follow it, each one's lock under it and its status, and the deviations, the objects whose findings are open under the rule. Select an object for its Settings drawer.</p></div></div>
+${ledeHtml(`The ${plural(settings, "setting")} of ${v.t(v.tenant)}'s latest passing runs, grouped by the policy rule that governs each.`,
+    `<p>The policy_rule rows the store holds, loaded from the policy file; the most specific match governs, as on the <a href="/policy">policy</a> page. Per template: its rule, the objects whose settings follow it, each one's lock under it and its status, and the deviations, the objects whose findings are open under the rule. Select an object for its Settings drawer.</p>`)}</div></div>
 ${dup}<div class="tpls">
 ${cards.join("\n")}
 </div>`;
@@ -611,10 +810,13 @@ export function findingsPage(v: View): string {
   };
   const p = v.pass;
   const lead = v.source === "pass" && p
-    ? `From the ${p.recorded ? "pass" : "dry pass"} this console ran, decided at ${v.t(utc(p.decidedAt))} in ${(p.ms / 1000).toFixed(1)} s over ${plural(p.queries.queries, "query", "queries")} through ${v.t(v.datasource)}${p.recorded ? ", recorded in the ledger" : ", nothing recorded"}${p.trace ? `; <a href="/traces/view?f=${encodeURIComponent(`logs/${p.trace.id}.jsonl`)}">trace ${v.t(p.trace.id)}</a>` : ""}.`
-    : `From the ledger: the latest disposition of each finding on the latest passing runs, decided at ${v.t(utc(v.snapshot.doc.data.decidedAt))}${v.passRunning ? `; a pass is running since ${v.t(utc(v.passRunning))}` : ""}.`;
+    ? `From the ${p.recorded ? "pass" : "dry pass"} this console ran, decided at ${v.t(utc(p.decidedAt))}.`
+    : `From the ledger, decided at ${v.t(utc(v.snapshot.doc.data.decidedAt))}${v.passRunning ? `; a pass is running since ${v.t(utc(v.passRunning))}` : ""}.`;
+  const how = v.source === "pass" && p
+    ? `<p>The pass took ${(p.ms / 1000).toFixed(1)} s over ${plural(p.queries.queries, "query", "queries")} through ${v.t(v.datasource)}${p.recorded ? ", recorded in the ledger" : ", nothing recorded"}${p.trace ? `; <a href="/traces/view?f=${encodeURIComponent(`logs/${p.trace.id}.jsonl`)}">trace ${v.t(p.trace.id)}</a>` : ""}. Every disposition's reason is the Decider's own sentence (<a href="/policy">policy</a>, <a href="/document#findings-open">document</a>).</p>`
+    : `<p>The latest disposition of each finding on the latest passing runs. Every disposition's reason is the Decider's own sentence (<a href="/policy">policy</a>, <a href="/document#findings-open">document</a>).</p>`;
   const needs = by(NEEDS);
-  return `<div class="head"><div><h1>Findings</h1><p class="lede">${lead} Every disposition's reason is the Decider's own sentence (<a href="/policy">policy</a>, <a href="/document#findings-open">document</a>).</p></div>
+  return `<div class="head"><div><h1>Findings</h1>${ledeHtml(lead, how)}</div>
 ${passForm(v, "page")}</div>
 ${needs.length ? "" : `<p class="calm">Nothing needs a person: no finding is escalated or waiting on a fix.</p>`}
 ${section("needs", "Needs a person", needs, "No finding is escalated or waiting on a fix.")}
@@ -636,7 +838,7 @@ export function actionsPage(v: View): string {
   };
   const aRows = actions.map((a) => `<tr><td data-label="Time (UTC)" class="nw">${v.t(utc(a.started_at))}</td><td data-label="Action"><b>${v.t(a.kind)}</b><span class="q">${v.t(a.action_id)}</span></td><td data-label="Target"><code>${v.t(a.target)}</code></td><td data-label="Status">${v.t(a.status)}</td><td data-label="Verification">${v.t(a.verification || "none")}</td><td data-label="Models and receipts">${receiptsOf(v, a)}</td><td data-label="Reason">${v.t(a.reason || "-")}</td></tr>`);
   const tRows = tickets.map((x) => `<tr><td data-label="Ticket">${ticketRef(v, x)}<span class="q">${v.t(x.psa)}</span></td><td data-label="Type">${v.t(x.type)}</td><td data-label="Priority">${v.t(x.priority)}</td><td data-label="Status">${v.t(x.status)}</td><td data-label="Labels">${labelsOf(x.type as "change" | "incident", x.priority as "P1", classOf(x.finding_id), verbOf(x)).map((l) => `<span class="pill">${v.t(l)}</span>`).join(" ")}</td><td data-label="Finding"><a href="/findings#f-${v.t(x.finding_id)}" class="mono">${v.t(x.finding_id)}</a></td><td data-label="Updated" class="nw">${v.t(utc(x.updated_at))}</td></tr>`);
-  return `<div class="head"><div><h1>Actions and tickets</h1><p class="lede">The action ledger of ${v.t(v.tenant)}, newest first: what the Actor did behind --apply, how it was verified, which models served it and on which receipts; then the tickets the ticket step opened (<a href="/document#work">document</a>).</p></div></div>
+  return `<div class="head"><div><h1>Actions and tickets</h1>${ledeHtml(`The action ledger and the tickets of ${v.t(v.tenant)}, newest first.`, `<p>What the Actor did behind --apply, how it was verified, which models served it and on which receipts; then the tickets the ticket step opened (<a href="/document#work">document</a>).</p>`)}</div></div>
 <h2>Actions<span class="cnt">${thousands(actions.length)}</span></h2>
 ${actions.length ? `<div class="tbl"><table class="rt"><thead><tr><th scope="col">Time (UTC)</th><th scope="col">Action</th><th scope="col">Target</th><th scope="col">Status</th><th scope="col">Verification</th><th scope="col">Models and receipts</th><th scope="col">Reason</th></tr></thead><tbody>${aRows.join("\n")}</tbody></table></div>` : `<p class="muted">No action is recorded for ${v.t(v.tenant)}.</p>`}
 <h2>Tickets<span class="cnt">${thousands(tickets.length)}</span></h2>
@@ -647,7 +849,7 @@ ${tickets.length ? `<div class="tbl"><table class="rt"><thead><tr><th scope="col
 
 export function tracesPage(v: View): string {
   const rows = v.traces.map((f) => `<tr><td data-label="Trace"><a href="/traces/view?f=${encodeURIComponent(f.ref)}" class="mono">${v.t(f.id)}</a></td><td data-label="Where">${v.t(f.dir)}</td><td data-label="First event" class="nw">${v.t(utc(f.first))}</td><td data-label="Size" class="num">${thousands(Math.round(f.size / 1024))} KB</td></tr>`);
-  return `<div class="head"><div><h1>Traces</h1><p class="lede">One JSON line per agent action, read from disk: the run traces in logs/ (gitignored) and the committed traces in examples/traces/ of ${v.t(v.tenant)}, the ones whose cycle, pass or receipts name it, newest first. Each opens as a table with a filter by agent.</p></div></div>
+  return `<div class="head"><div><h1>Traces</h1>${ledeHtml(`The traces of ${v.t(v.tenant)}, newest first; each opens as a table with a filter by agent.`, `<p>One JSON line per agent action, read from disk: the run traces in logs/ (gitignored) and the committed traces in examples/traces/, the ones whose cycle, pass or receipts name the tenant.</p>`)}</div></div>
 ${rows.length ? `<div class="tbl"><table class="rt"><thead><tr><th scope="col">Trace</th><th scope="col">Where</th><th scope="col">First event</th><th scope="col" class="num">Size</th></tr></thead><tbody>${rows.join("\n")}</tbody></table></div>` : `<p class="muted">No trace of ${v.t(v.tenant)} in logs/ or examples/traces/.</p>`}`;
 }
 
@@ -656,7 +858,7 @@ export interface TraceEventRow { ts: string; agent: string; action: string; stat
 export function traceViewPage(v: View, f: TraceFile, events: readonly TraceEventRow[], skipped: number): string {
   const agents = [...new Set(events.map((e) => e.agent))].sort(cmp);
   const rows = events.map((e) => `<tr data-agent="${v.t(e.agent)}"><td data-label="Time" class="nw mono">${v.t(e.ts.slice(11, 23))}</td><td data-label="Agent">${v.t(e.agent)}</td><td data-label="Action">${v.t(e.action)}</td><td data-label="Status">${v.t(e.status)}</td><td data-label="Summary">${v.t(e.summary)}${e.input && e.input !== e.summary ? `<span class="q">${v.t(e.input)}</span>` : ""}${e.detail ? `<span class="q">${v.t(e.detail.slice(0, 400))}</span>` : ""}</td></tr>`);
-  return `<div class="head"><div><h1>Trace ${v.t(f.id)}</h1><p class="lede">${v.t(f.dir)}/${v.t(f.name)}, ${plural(events.length, "event")} from ${v.t(utc(events[0]?.ts))} to ${v.t(utc(events.at(-1)?.ts))}${skipped ? `, ${plural(skipped, "line")} that did not parse left out` : ""}. Every free-text field passes the redactor as the trace did when it was written, and a ticket's URL reads as its number. <a href="/traces">All traces</a></p></div></div>
+  return `<div class="head"><div><h1>Trace ${v.t(f.id)}</h1>${ledeHtml(`${v.t(f.dir)}/${v.t(f.name)}, ${plural(events.length, "event")} from ${v.t(utc(events[0]?.ts))} to ${v.t(utc(events.at(-1)?.ts))}${skipped ? `, ${plural(skipped, "line")} that did not parse left out` : ""}. <a href="/traces">All traces</a>`, `<p>Every free-text field passes the redactor as the trace did when it was written, and a ticket's URL reads as its number.</p>`)}</div></div>
 <div class="filters"><label>Agent<select id="agent"><option value="">every agent</option>${agents.map((a) => `<option value="${v.t(a)}">${v.t(a)} (${events.filter((e) => e.agent === a).length})</option>`).join("")}</select></label><span class="count" id="tcount">${plural(events.length, "event")}</span></div>
 <div class="tbl"><table class="rt"><thead><tr><th scope="col">Time (UTC)</th><th scope="col">Agent</th><th scope="col">Action</th><th scope="col">Status</th><th scope="col">Summary</th></tr></thead><tbody>
 ${rows.join("\n")}
@@ -708,7 +910,7 @@ export function sourcesPage(v: View, counts: readonly SourceCount[]): string {
   const last = p
     ? `The console's last ${p.recorded ? "pass" : "dry pass"}, decided at ${v.t(utc(p.decidedAt))}: <b>${plural(p.queries.queries, "query", "queries")}</b> through ${v.t(v.datasource)}, ${thousands(p.queries.rows)} rows, ${thousands(p.queries.failed)} failed, ${(p.ms / 1000).toFixed(1)} s${p.trace ? ` (<a href="/traces/view?f=${encodeURIComponent(`logs/${p.trace.id}.jsonl`)}">trace</a>)` : ""}.`
     : v.passRunning ? `A pass is running since ${v.t(utc(v.passRunning))}.` : "No pass from this console yet: Run a pass counts its queries.";
-  return `<div class="head"><div><h1>Sources</h1><p class="lede">What the console and the agent read for ${v.t(v.tenant)}: ${v.mode === "live" ? "the app Postgres as the DRIFT datasource, and the technician's memory store and the policy file as LESSONS and RULES, all through Zetaris" : "the recorded bundle and the committed lesson store and policy file, loaded into sql.js"} (<a href="/document#where-each-answer-comes-from">where each answer comes from</a>).</p></div></div>
+  return `<div class="head"><div><h1>Sources</h1>${ledeHtml(`What the console and the agent read for ${v.t(v.tenant)}, and what each source holds.`, `<p>${v.mode === "live" ? "The app Postgres as the DRIFT datasource, and the technician's memory store and the policy file as LESSONS and RULES, all through Zetaris" : "The recorded bundle and the committed lesson store and policy file, loaded into sql.js"} (<a href="/document#where-each-answer-comes-from">where each answer comes from</a>).</p>`)}</div></div>
 <p class="note">${last}</p>
 <h2>Tables</h2>
 <div class="tbl"><table class="rt"><thead><tr><th scope="col">Datasource</th><th scope="col">Table</th><th scope="col" class="num">Rows</th><th scope="col">Counted</th></tr></thead><tbody>${rows.join("\n")}</tbody></table></div>
@@ -724,7 +926,7 @@ export function policyPage(v: View): string {
   for (const r of v.snapshot.doc.data.rules) if (!latest.has(r.rule_id) || Number(latest.get(r.rule_id)!.version) < Number(r.version)) latest.set(r.rule_id, r);
   const rules = [...latest.values()].sort((a, b) => Number(b.version) - Number(a.version) || cmp(a.surface, b.surface) || cmp(a.object_glob, b.object_glob));
   const rows = rules.map((r) => `<tr id="${escapeHtml(r.rule_id)}"><td data-label="Rule"><code>${v.t(r.rule_id)}</code><span class="q">version ${v.t(r.version)}</span></td><td data-label="Surface">${v.t(r.surface)}</td><td data-label="Object · setting"><code>${v.t(r.object_glob)}</code> · <code>${v.t(r.setting_glob)}</code></td><td data-label="Lock">${Number(r.lock) === 1 ? `<span class="b locked">locked</span>` : `<span class="b open">open</span>`}</td><td data-label="On drift">${v.t(r.on_drift)}<span class="q">no copy: ${v.t(r.on_no_copy)}</span></td><td data-label="Hold" class="num">${v.t(r.hold_max_hours)} h</td><td data-label="Alert">${v.t(r.alert)} · ${v.t(r.psa_priority)}</td><td data-label="Note">${v.t(r.note ?? "")}</td></tr>`);
-  return `<div class="head"><div><h1>Policy</h1><p class="lede">The rules that can govern ${v.t(v.tenant)}'s settings, as the policy_rule rows hold them: the most specific match governs (src/policy/resolve.ts). A locked rule rolls a drift back at the next cycle; a change window holds it instead until the window ends.</p></div></div>
+  return `<div class="head"><div><h1>Policy</h1>${ledeHtml(`The rules that can govern ${v.t(v.tenant)}'s settings; the most specific match governs.`, `<p>As the policy_rule rows hold them (src/policy/resolve.ts). A locked rule rolls a drift back at the next cycle; a change window holds it instead until the window ends.</p>`)}</div></div>
 <div class="tbl"><table class="rt"><thead><tr><th scope="col">Rule</th><th scope="col">Surface</th><th scope="col">Object · setting</th><th scope="col">Lock</th><th scope="col">On drift</th><th scope="col" class="num">Hold</th><th scope="col">Alert</th><th scope="col">Note</th></tr></thead><tbody>${rows.join("\n")}</tbody></table></div>`;
 }
 
@@ -739,10 +941,10 @@ export function documentPage(v: View): string {
     if (!m) return i === 0 ? `<pre>${v.t(p.replace(/^# .*\n/, ""))}</pre>` : `<pre>${v.t(p)}</pre>`;
     return `<h2 id="${slug(m[1])}">${v.t(m[1])}</h2><pre>${v.t(m[2].trim())}</pre>`;
   }).join("\n");
-  return `<div class="head"><div><h1>The owner's document</h1><p class="lede">One page for ${v.t(v.tenant)} rendered from SQL through the same data layer when this snapshot was read; every number is a count of the rows its queries return (src/document/render.ts).</p></div></div>
+  return `<div class="head"><div><h1>The owner's document</h1>${ledeHtml(`One page for ${v.t(v.tenant)}, rendered from SQL when this snapshot was read.`, `<p>Every number is a count of the rows its queries return (src/document/render.ts).</p>`)}</div></div>
 ${html}`;
 }
 
 export function errorPage(message: string): string {
-  return `<h1>The console could not render this page</h1><p class="alert">${escapeHtml(message)}</p><p><a href="/overview">Overview</a></p>`;
+  return `<h1>The console could not render this page</h1><p class="alert">${escapeHtml(message)}</p><p><a href="/work">Work queue</a></p>`;
 }
