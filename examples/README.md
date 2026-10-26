@@ -18,7 +18,7 @@ and `test/export.test.ts` holds equal to the files on disk; the prose names none
 | `proxy-split/` | 176 rows in 9 tables; 1 finding: ESCALATE 1 |
 | `wildcard-no-real-ip/` | 942 rows in 9 tables; 1 finding: ADOPT 1 |
 | `orphans/` | 3,918 rows in 12 tables; 7 findings: ADOPT 3, HOLD 3, ESCALATE 1 |
-| policy | 26 `policy_rule` rows in each slice; with the shipped `policy/hackathon.json` loaded, version 2's 16 rules govern |
+| policy | 26 `policy_rule` rows in each slice; with the shipped `policy/hackathon.json` loaded, version 2's 17 rules govern |
 | `memory/` | 23 lessons |
 | `document.md` | 199 lines, 23,074 bytes |
 | `report.html` | 31,328 bytes |

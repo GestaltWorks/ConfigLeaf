@@ -144,7 +144,7 @@ Zetaris also reads one source itself, live: the Cloudflare DNS API, which `npm r
 | source | Zetaris datasource | tables | rows | what it holds |
 |---|---|---|---|---|
 | technician memory store (`examples/memory`) | `LESSONS` | `LESSONS.lesson`, `LESSONS.ledger` | 23 lessons, 23 ledger entries | the lessons the technician taught, in the Meterless H-MEM store, each with its tenant, scope key, expiry and provenance; the Decider recalls them, and an accepted exception makes its finding ADOPT until it expires |
-| policy rules (`policy/hackathon.json`) | `RULES` | `RULES.rule` | 16 rules, version 2 | the MSP's policy, one row per rule under the rule id every disposition decided by policy names |
+| policy rules (`policy/hackathon.json`) | `RULES` | `RULES.rule` | 17 rules, version 2 | the MSP's policy, one row per rule under the rule id every disposition decided by policy names |
 | Cloudflare live (`api.cloudflare.com/client/v4/zones/<zone id>/dns_records`) | `CLOUDFLARE` | `CLOUDFLARE.zone_<zone id>` | 58 records in 6 zones on 26 Oct 2026 | every DNS record at the provider now, which Zetaris fetches itself under the read token at each query; drift_usl.dns_live holds each to the last complete DNS collection run by record id, type and proxied flag |
 
 ## Work
@@ -186,7 +186,7 @@ The failing names:
 - DOC_INVENTORY_SQL: 2 runs, 2 rows
 - DOC_COPIES_SQL: 1 run, 112 rows
 - LATEST_APPROVALS_SQL: 1 run, 333 rows
-- POLICY_RULES_SQL: 1 run, 27 rows
+- POLICY_RULES_SQL: 1 run, 28 rows
 - DOC_UNAPPROVED_SQL: 3 runs, 1019 rows
 - DOC_DISPOSITIONS_OF_RUN_SQL: 3 runs, 27 rows
 - CAUSES_SQL: 1 run, 1 row

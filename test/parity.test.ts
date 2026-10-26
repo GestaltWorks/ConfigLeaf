@@ -29,6 +29,8 @@ import {
 } from "../src/data/queries.ts";
 // the ticket step's reads (src/psa/step.ts) and the eval's (src/eval/queries.ts)
 import { TICKETS_SQL, TICKET_ACTIONS_SQL, TICKET_ZONES_SQL } from "../src/data/queries.ts";
+// Microsoft 365's mail records against the zones (src/m365.ts)
+import { MAIL_RECORDS_SQL } from "../src/data/queries.ts";
 import { COLUMNS } from "../src/data/rows.ts";
 import { SCHEMA_TABLES } from "../src/data/schema.ts";
 import { fileRows } from "../src/data/file-rows.ts";
@@ -379,6 +381,47 @@ const TICKET_CASES: Case[] = [
   { name: "ticket zones", sql: TICKET_ZONES_SQL, params: { tenant_id: T, dns_run_id: DNS_RUN }, rows: bundle.dns_record.filter((r) => r.run_id === DNS_RUN).length },
 ];
 
+/**
+ * m365_mail_record over a Microsoft 365 run added as derived observation rows (the bundle records none): four rows per
+ * required record, as src/collectors/m365.ts writes them, built from the DNS run's own records so the names join. On a zone
+ * with an apex MX and an SPF record carrying an include: the MX it serves and that include (served as required, no row),
+ * an MX it does not serve (different, one row per MX at the apex), an autodiscover CNAME at a name with no record (missing,
+ * one row), and a domain that is no zone (no row). Each row comes off the DNS run's collection_run row, so every SELECT has
+ * a FROM on both engines.
+ */
+const MAIL_RUN = "run-m365-parity";
+const MAIL_ZONE = (bundle.dns_record as { run_id: string; zone: string; name: string; type: string; content: string }[])
+  .filter((d) => d.run_id === DNS_RUN && d.type === "MX" && d.name === d.zone)
+  .map((d) => d.zone).sort()
+  .find((z) => bundle.dns_record.some((d) => d.run_id === DNS_RUN && d.name === z && d.type === "TXT" && /^"v=spf1 [^"]*include:/.test(d.content)))!;
+const MAIL_MX = bundle.dns_record.filter((d) => d.run_id === DNS_RUN && d.name === MAIL_ZONE && d.type === "MX");
+const MAIL_INCLUDE = /include:[^\s"]+/.exec(bundle.dns_record.find((d) => d.run_id === DNS_RUN && d.name === MAIL_ZONE && d.type === "TXT" && d.content.startsWith('"v=spf1 '))!.content)![0];
+const MAIL_EXPECTED: Overlays = (() => {
+  const records: [domain: string, type: string, label: string, name: string, content: string][] = [
+    [MAIL_ZONE, "MX", "@", MAIL_ZONE, MAIL_MX[0].content],
+    [MAIL_ZONE, "TXT", "@", MAIL_ZONE, MAIL_INCLUDE],
+    [MAIL_ZONE, "MX", "@#2", MAIL_ZONE, "host-000000.com"],
+    [MAIL_ZONE, "CNAME", "autodiscover", "host-ffffff.com", "host-111111.com"],
+    ["host-999999.com", "MX", "@", "host-999999.com", "host-222222.com"],
+  ];
+  const lit = (s: string): string => `'${s.replace(/'/g, "''")}'`;
+  const rows = records.flatMap(([domain, type, label, name, content]) => {
+    const object = `${domain}/${type}/${label}`;
+    return ([["domain", domain, ""], ["type", type, ""], ["name", name, name], ["content", content, ""]] as const).map(([setting, value, refers]) =>
+      `SELECT ${lit(`obs-${object}-${setting}`)} AS obs_id, ${lit(MAIL_RUN)} AS run_id, ${lit(T)} AS tenant_id, 'm365.dns' AS surface, host, ${lit(object)} AS object_id, ${lit(setting)} AS setting_path,
+       'sha256:${"0".repeat(64)}' AS value_hash, ${lit(value)} AS value_redacted, 'dns_name' AS refers_to_type, ${lit(refers)} AS refers_to_id, started_at AS observed_at, 'm365' AS source, 100 AS authority
+FROM {{t:collection_run}} WHERE run_id = ${lit(DNS_RUN)}`);
+  });
+  return {
+    observation: [`SELECT obs_id, run_id, tenant_id, surface, host, object_id, setting_path, value_hash, value_redacted, refers_to_type, refers_to_id, observed_at, source, authority FROM {{t:observation}}`, ...rows].join("\nUNION ALL\n"),
+  };
+})();
+const MAIL_CASES: Case[] = [
+  { name: "m365_mail_record (the bundle holds no Microsoft 365 run)", sql: MAIL_RECORDS_SQL, params: { tenant_id: T, run_id: MAIL_RUN, dns_run_id: DNS_RUN }, rows: 0 },
+  { name: "m365_mail_record (a run over the DNS run's own records: served, different, missing, outside the zones)", sql: MAIL_RECORDS_SQL, params: { tenant_id: T, run_id: MAIL_RUN, dns_run_id: DNS_RUN }, overlays: MAIL_EXPECTED, rows: MAIL_MX.length + 1 },
+  { name: "m365_mail_record (the same run against another tenant)", sql: MAIL_RECORDS_SQL, params: { tenant_id: "client-2", run_id: MAIL_RUN, dns_run_id: DNS_RUN }, overlays: MAIL_EXPECTED, rows: 0 },
+];
+
 const CASES: Case[] = [
   { name: "hero (confd host)", sql: HERO_SQL, params: confd, rows: 0 },
   { name: "hero (sites host)", sql: HERO_SQL, params: sites, rows: 0 },
@@ -424,6 +467,7 @@ const CASES: Case[] = [
   { name: "actions (one per sites file, one of another tenant)", sql: ACTIONS_SQL, params: { tenant_id: T }, overlays: ACTIONS, rows: rowsOf("action").filter((a) => a.tenant_id === T).length + bundle.observation.filter((o) => o.run_id === SITES_RUN && o.setting_path === "file").length },
   ...BUILD_B_CASES,
   ...TICKET_CASES,
+  ...MAIL_CASES,
   ...EVAL_PARITY_CASES.map((c) => ({ ...c, mask: noEvidenceBodies })),
   ...CATALOGUE.map((t) => ({ name: `template ${t.id}`, sql: t.sql, params: SAMPLE[t.id], rows: t.id === "setting_matches_approved" ? QUEST_APPROVALS : t.id === "backup_recent" ? RECENT_BACKUPS : SAMPLE_ROWS[t.id] })),
   // The file tables, Zetaris's LESSONS.lesson and RULES.rule, and the cross-source read over them (src/data/files.ts).
@@ -538,12 +582,12 @@ describe("the file tables over the committed store and policy, on sql.js: except
   it("the ADOPT under a lesson in force joins it; one naming no lesson, one after the expiry and one of another tenant do not; the HOLD is left out", async () => {
     const files = fileRows({ memoryDir: SAMPLE_MEMORY_DIR, policyFile: "policy/hackathon.json" });
     expect(files.lesson).toHaveLength(23);
-    expect(files.rule).toHaveLength(16);
+    expect(files.rule).toHaveLength(17);
     const lesson = files.lesson[0];
     expect(lesson).toMatchObject({ lesson_id: "mem-1", tenant_id: "client-1", kind: "exception", finding_class: "proxied_without_real_ip", expires_at: "2026-11-30T00:00:00.000Z" });
     const engine = await SqlJsEngine.create();
     engine.loadBundle(bundle);
-    expect(engine.loadFileTables(files)).toEqual({ lesson: 23, rule: 16 });
+    expect(engine.loadFileTables(files)).toEqual({ lesson: 23, rule: 17 });
     const layer = new DataLayer(engine).withOverlays(adoptionsOf(lesson));
     const rows = objects(await layer.run(`${ADOPTION_SQL} ORDER BY disposition_id`, {}));
     expect(rows.map((r) => [r.disposition_id, r.lesson_id, r.lesson_expires_at])).toEqual([

@@ -391,10 +391,11 @@ describe("the console over sample/bundle.json, client-1", SERVER, () => {
     const html = (await get(server, "/templates")).body;
     const cards = [...html.matchAll(/<details class="card tpl" id="tpl-([^"]+)"[^>]*>\n<summary><span class="tpl-name">([^<]+)<\/span> <span class="b (?:locked|open)">[^<]+<\/span> <span class="tpl-n">([\d,]+) settings? in (\d+) objects? · <span[^>]*>(\d+) deviations?<\/span><\/span><\/summary>([\s\S]*?)<\/details>/g)]
       .map((m) => ({ id: m[1], name: m[2], settings: Number(m[3].replace(/,/g, "")), objects: Number(m[4]), deviations: Number(m[5]), body: m[6] }));
-    // the rules in force, the 16 of version 2 of policy/hackathon.json (the sample loads the shipped file before its passes), each once: the settings no rule governs would be a card of their own
-    expect(cards).toHaveLength(16);
+    // the rules in force, the 17 of version 2 of policy/hackathon.json (the sample loads the shipped file before its passes), each once: the settings no rule governs would be a card of their own
+    expect(cards).toHaveLength(17);
     expect(cards.reduce((n, c) => n + c.settings, 0)).toBe(1352);
-    // zetaris.control, the 16th rule, governs no setting of the sample's runs: its card says so
+    // zetaris.control and m365.dns, the rules main added since the recording, govern no setting of the sample's runs: their cards say so
+    expect(cards.find((c) => c.name === "every m365.dns setting")).toMatchObject({ settings: 0, objects: 0, deviations: 0 });
     expect(cards.find((c) => c.id === "rule-8bcb3a03ffcee62e")).toMatchObject({ name: "every zetaris.control setting", settings: 0, objects: 0, deviations: 0 });
     expect(html).not.toContain('class="alert" role="alert"');
     expect(cards[0]).toMatchObject({ name: "everything else (catch-all)", deviations: 3 });

@@ -270,8 +270,8 @@ describe("the report over sample/bundle.json for client-1", () => {
     expect(Buffer.byteLength(s.html)).toBeLessThan(REPORT_MAX_BYTES);
     const foot = /<footer>[\s\S]*<\/footer>/.exec(s.html)![0];
     expect(foot).toContain("<p>Report by ConfigLeaf.</p>");
-    // the 16 rules of version 2: the sample loads the shipped file, zetaris.control with them, before its passes
-    expect(foot).toContain("Policy policy/hackathon.json, version 2 (16 rules).");
+    // the 17 rules of version 2: the sample loads the shipped file, zetaris.control and m365.dns with them, before its passes
+    expect(foot).toContain("Policy policy/hackathon.json, version 2 (17 rules).");
     expect(foot).toContain(`${STACK_LINE}.`);
     expect(foot).toContain(`Rendered in sample mode from sample/bundle.json (sha256 ${textSha256(SAMPLE_TEXT).slice(7, 19)})`);
   });

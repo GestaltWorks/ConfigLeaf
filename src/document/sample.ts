@@ -45,7 +45,7 @@ export interface SampleRender {
  * The shipped policy file's rules (DRIFT_POLICY_FILE, default policy/hackathon.json) into a sample engine before its
  * passes, for each tenant the recording holds runs of, as the eval runner loads them (src/eval/policy.ts
  * loadEvalPolicy), under BUNDLE_REDACTOR so every machine loads the same rows. A rule the recording holds already
- * stays as recorded; a rule the file added since the recording goes in (zetaris.control, the 16th rule of version 2,
+ * stays as recorded; a rule the file added since the recording goes in (zetaris.control and m365.dns, which main added to version 2
  * from 26 Oct 2026). Returns the rows inserted. Every sample setup path calls it: renderSample, sampleExecutive, the
  * console's sampleBackend, npm run sample, the example slices and the replay page's cross-check pass.
  */
