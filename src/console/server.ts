@@ -57,7 +57,7 @@ import type { FindingCause } from "../data/rows.ts";
 import { LAYER_TABLES } from "../data/layer.ts";
 import { SCHEMA_TABLES } from "../data/schema.ts";
 import { FILE_DATASOURCES, FILE_TABLES } from "../data/files.ts";
-import { evalReceipts, isPeriod, readExecutive, renderExecutive, type Executive, type ExecutiveContext, type Period } from "../document/executive.ts";
+import { PERIODS, evalReceipts, isPeriod, readExecutive, renderExecutive, type Executive, type ExecutiveContext, type Period } from "../document/executive.ts";
 import { REPORT_MODE, renderReport, repoTip, utc } from "../document/report.ts";
 import { policyFileShown } from "../document/sample.ts";
 import { MemoryError, TechnicianMemory, scopeValuesOf, type ScopeType } from "../engine/memory.ts";
@@ -236,7 +236,9 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
         const period = periodOf(query);
         const { x, ctx } = await executive(tenant, period);
         const file = renderExecutive(x, ctx);
-        return { status: 200, type: "text/html; charset=utf-8", body: file, headers: { "content-disposition": `attachment; filename="executive-${tenant}-${period}.html"`, "content-security-policy": fileCsp(file) } };
+        // the tenant is an id src/policy/schema.ts TENANT reads (state.ts tenantIds); the name keeps its characters only, whatever reaches here
+        const name = `executive-${tenant.replace(/[^A-Za-z0-9._-]/g, "_")}-${period}.html`;
+        return { status: 200, type: "text/html; charset=utf-8", body: file, headers: { "content-disposition": `attachment; filename="${name}"`, "content-security-policy": fileCsp(file) } };
       }
       case "/templates": return html(await page(tenant, "templates", "Templates", (v) => ({ body: templatesPage(v) }), { toast }));
       case "/settings": {
@@ -444,7 +446,7 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
       if (wantsJson) return send(res, status, "application/json; charset=utf-8", JSON.stringify({ ok: toast.ok, title: toast.title, lines: toast.lines }));
       const back = form.get("return") ?? "/overview";
       // a switch answers with the page it came from, read again for the new tenant: a reload then asks for nothing twice
-      if (m[1] === "tenant" && toast.ok) { res.writeHead(303, { location: RETURN.test(back) ? back : "/overview", ...SECURITY }); res.end(); return; }
+      if (m[1] === "tenant" && toast.ok) { res.writeHead(303, { location: RETURN_PATHS.has(back) ? back : "/overview", ...SECURITY }); res.end(); return; }
       const r = await render(current, ["/settings", "/findings", "/overview"].includes(back) ? back : "/overview", new URLSearchParams(), toast);
       return send(res, status, "text/html; charset=utf-8", r!.body);
     };
@@ -520,25 +522,29 @@ export const csp = (nonce: string): string =>
 
 const SECURITY = { "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" } as const;
 
+/**
+ * One answer. `headers` may set the attachment and replace the CSP (the executive report's download does both); the
+ * two security headers come last, so no route can drop them.
+ */
 function send(res: http.ServerResponse, status: number, type: string, body: string, nonce = "", headers: Record<string, string> = {}): void {
-  res.writeHead(status, { "content-type": type, "cache-control": "no-store", ...SECURITY, "content-security-policy": csp(nonce), ...headers });
+  res.writeHead(status, { "content-type": type, "cache-control": "no-store", "content-security-policy": csp(nonce), ...headers, ...SECURITY });
   res.end(body);
 }
 
-/** A page's path for a switch to return to: a page of the nav, and the executive report with its period; nothing else. */
-const RETURN = /^\/(?:overview|executive(?:\?period=(?:7d|30d|all))?|settings|templates|findings|actions|traces|sources|policy|document)$/;
 /** Where each page's switch returns. */
 const PAGE_PATH: Readonly<Record<Shell["page"], string>> = {
   overview: "/overview", executive: "/executive", settings: "/settings", templates: "/templates", findings: "/findings", actions: "/actions",
   traces: "/traces", sources: "/sources", policy: "/policy", document: "/document",
 };
+/** The paths a switch may return to, read off PAGE_PATH and the periods: a page of the nav, the executive report with its period; nothing else. */
+const RETURN_PATHS: ReadonlySet<string> = new Set([...Object.values(PAGE_PATH), ...PERIODS.map((p) => `/executive?period=${p}`)]);
 /** The period a request names; the last 7 days for none or another. */
 const periodOf = (q: URLSearchParams): Period => { const p = q.get("period"); return isPeriod(p) ? p : "7d"; };
 
-/** The CSP of the downloaded executive report: its one style block by hash, nothing else; no script runs in it. */
+/** The CSP of the downloaded executive report: each of its style blocks by hash (the file has one), nothing else; no script runs in it. */
 export function fileCsp(file: string): string {
-  const style = /<style>([\s\S]*?)<\/style>/.exec(file)?.[1] ?? "";
-  return `default-src 'none'; style-src 'sha256-${createHash("sha256").update(style).digest("base64")}'; img-src data:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'`;
+  const hashes = [...file.matchAll(/<style>([\s\S]*?)<\/style>/g)].map((m) => `'sha256-${createHash("sha256").update(m[1]).digest("base64")}'`);
+  return `default-src 'none'; style-src ${hashes.join(" ") || "'none'"}; img-src data:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'`;
 }
 
 /** A static part of the shell: its path names its hash, so it is cached for a year and never revalidated; an If-None-Match on its ETag is 304. */

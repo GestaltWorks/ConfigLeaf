@@ -24,7 +24,7 @@ import { SAMPLE_MEMORY_DIR } from "../src/config.ts";
 import { ASSETS, CSS, SCRIPT } from "../src/console/html.ts";
 import { encodeKey, plainUrls, timesIn } from "../src/console/pages.ts";
 import { fileCsp, nonceReport, startConsole, type ConsoleServer } from "../src/console/server.ts";
-import { objectKey, sampleBackend, zetarisGaps, type Backend } from "../src/console/state.ts";
+import { objectKey, sampleBackend, tenantIds, zetarisGaps, type Backend } from "../src/console/state.ts";
 import { DataLayer, type Engine } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { objects, priorHolds } from "../src/data/queries.ts";
@@ -356,6 +356,12 @@ describe("the console over sample/bundle.json, client-1", SERVER, () => {
     const style = /<style>([\s\S]*?)<\/style>/.exec(r.body)![1];
     expect(r.headers.get("content-security-policy")).toBe(`default-src 'none'; style-src 'sha256-${createHash("sha256").update(style).digest("base64")}'; img-src data:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'`);
     expect(fileCsp(r.body)).toBe(r.headers.get("content-security-policy"));
+    // the two security headers stand on the download too: no route's own headers replace them
+    expect([r.headers.get("x-content-type-options"), r.headers.get("referrer-policy")]).toEqual(["nosniff", "no-referrer"]);
+    // a file with two style blocks has both hashes, one with none allows no style
+    const hash = (x: string): string => `'sha256-${createHash("sha256").update(x).digest("base64")}'`;
+    expect(fileCsp("<style>a{}</style><p></p><style>b{}</style>")).toBe(`default-src 'none'; style-src ${hash("a{}")} ${hash("b{}")}; img-src data:; form-action 'none'; base-uri 'none'; frame-ancestors 'none'`);
+    expect(fileCsp("<p>no style</p>")).toContain("style-src 'none';");
     expect(r.body.match(/<script|<link\b|<img\b|<iframe\b|@import|url\(\s*["']?https?:/gi)).toBeNull();
     expect(r.body.split("<style>").length - 1).toBe(1);
     expect(r.body).toContain("<h1>client-1 · executive report</h1>");
@@ -401,6 +407,10 @@ describe("the tenant switcher over sample/bundle.json: client-1 and lab-1", SERV
   afterAll(async () => { await server?.close(); });
   const tenantPost = (fields: Record<string, string>, headers: Record<string, string> = {}) =>
     fetch(`${server.url}/do/tenant`, { method: "POST", redirect: "manual", body: new URLSearchParams({ csrf: server.csrf, ...fields }), headers });
+
+  it("lists tenant ids only, once each and sorted: never \"*\", nothing a header or a file name could not carry", () => {
+    expect(tenantIds(["lab-1", "client-1", "lab-1", "*", "bad\"id", "two words", "x\r\ny", "", "a".repeat(65)])).toEqual(["client-1", "lab-1"]);
+  });
 
   it("lists the bundle's tenants on every page; a switch answers 303 to the page it came from, and every page reads lab-1 from then on, its first pass run at the sample's instant", async () => {
     expect(backend.tenants).toEqual(["client-1", "lab-1"]);

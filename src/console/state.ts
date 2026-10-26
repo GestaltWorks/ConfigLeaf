@@ -47,6 +47,7 @@ import { FileTracer } from "../loop/trace.ts";
 import type { Finding, Verb } from "../pipeline.ts";
 import { openWindow } from "../policy/decide.ts";
 import { resolvePolicy } from "../policy/resolve.ts";
+import { TENANT } from "../policy/schema.ts";
 import { MemoryWindows, PgWindows, WINDOW_SURFACES, type WindowStore } from "../policy/window.ts";
 import { Redactor } from "../redactor.ts";
 import type { Tracer } from "../trace.ts";
@@ -68,8 +69,10 @@ export interface Backend {
   mode: ConsoleMode;
   /** The tenant the pages and the actions are of; withTenant gives the same backend for another. */
   tenant: string;
-  /** The tenants the store holds runs of, in code-unit order: the header's switcher lists them. */
+  /** The tenants the store holds runs of, in code-unit order, each a tenant id as src/policy/schema.ts TENANT reads one: the header's switcher lists them. */
   tenants: readonly string[];
+  /** Why the store's tenants were not read (live); the switcher then lists the tenant the console started with. */
+  tenantsError?: string | null;
   layer: DataLayer;
   counting: CountingEngine;
   /** The sql.js engine in sample mode; null live. */
@@ -156,7 +159,7 @@ export async function sampleBackend(o: { tenant: string; bundle: Record<string, 
   const lessons = new TechnicianMemory({ storage: "read", directory: o.memoryDir }).lessons().map((l) => l.recordedAt);
   let sha = "";
   try { sha = textSha256(readFileSync(o.bundlePath, "utf8")); } catch { sha = textSha256(JSON.stringify(o.bundle)); }
-  const tenants = [...new Set(((o.bundle.collection_run ?? []) as { tenant_id: string }[]).map((r) => r.tenant_id))].sort(cmp);
+  const tenants = tenantIds(((o.bundle.collection_run ?? []) as { tenant_id: string }[]).map((r) => r.tenant_id));
   return {
     mode: "sample", tenant: o.tenant, tenants: tenants.includes(o.tenant) ? tenants : [...tenants, o.tenant].sort(cmp), layer, counting, engine, redactor: BUNDLE_REDACTOR, windows: new MemoryWindows(engine), approvals: new LayerApprovals(layer, engine),
     ledger: new MemoryLedger(engine), vault: null, memoryDir: o.memoryDir, memoryWritable: o.write,
@@ -169,6 +172,9 @@ export async function sampleBackend(o: { tenant: string; bundle: Record<string, 
 const TENANTS_SQL = `SELECT DISTINCT tenant_id
 FROM {{t:collection_run}}
 ORDER BY tenant_id`;
+
+/** The tenant ids among `ids`, once each and in code-unit order: an id TENANT reads, never "*", so a page, a header and a file name can carry it as it is. */
+export const tenantIds = (ids: readonly string[]): string[] => [...new Set(ids.filter((x) => typeof x === "string" && x !== "*" && TENANT.test(x)))].sort(cmp);
 
 /** The same backend for another of its tenants: one store, one engine, one redactor; the pages, the passes and the actions read and write that tenant's rows. */
 export const withTenant = (b: Backend, tenant: string): Backend => (b.tenant === tenant ? b : { ...b, tenant });
@@ -207,10 +213,14 @@ export async function liveBackend(o: { tenant: string }): Promise<Backend> {
   const redactor = new Redactor(config.redactSalt, config.redactWords);
   const counting = new CountingEngine(new ZetarisEngine());
   const layer = new DataLayer(counting);
-  // the tenants the store holds runs of; a read that fails leaves the one the console was started for
-  const tenants = await layer.run(TENANTS_SQL, {}, { agent: "console", limit: 1000 }).then((r) => objects(r).map((x) => x.tenant_id).filter((x) => x && x !== "*"), () => [] as string[]);
+  // the tenants the store holds runs of; a read that fails leaves the one the console was started for, and says why
+  let tenantsError: string | null = null;
+  const tenants = await layer.run(TENANTS_SQL, {}, { agent: "console", limit: 1000 }).then((r) => objects(r).map((x) => x.tenant_id), (e: Error) => {
+    tenantsError = redactor.text(e.message).split("\n")[0].slice(0, 200);
+    return [] as string[];
+  });
   return {
-    mode: "live", tenant: o.tenant, tenants: [...new Set([...tenants, o.tenant])].sort(cmp), layer, counting, engine: null, redactor, windows: new PgWindows(store), approvals: store,
+    mode: "live", tenant: o.tenant, tenants: tenantIds([...tenants, o.tenant]), tenantsError, layer, counting, engine: null, redactor, windows: new PgWindows(store), approvals: store,
     ledger: null, vault: Vault.fromEnv({ redactor }), memoryDir: config.memoryDir, memoryWritable: true,
     source: `Zetaris over the ${config.zetaris.datasource} datasource`, bundle: null, sampleInstant: null,
     refreshFiles: () => refreshFileTables(), close: () => store.close(),

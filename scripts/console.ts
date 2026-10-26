@@ -87,6 +87,7 @@ try {
 }
 console.log(`console: ${backend.mode === "sample" ? "sample mode" : "live"}, tenant ${backend.tenant}, ${backend.source}${backend.mode === "sample" ? `, the sample's pass decided at ${backend.sampleInstant}` : ", the first dry pass running"}; ${((Date.now() - t0) / 1000).toFixed(1)} s`);
 console.log(`console: ${server.url}/  (Ctrl+C stops it)`);
+if (backend.tenantsError) console.log(`console: the store's tenants were not read (${backend.tenantsError}); the switcher lists ${backend.tenant} alone`);
 if (backend.mode === "live") {
   const gaps = await zetarisGaps(backend).catch(() => [] as string[]);
   if (gaps.length) console.log(`console: Zetaris does not read ${gaps.join(" or ")}; npm run zetaris:setup registers the table and refreshes the columns, and until it runs Unlock is refused`);
