@@ -18,6 +18,7 @@ import { writeFileSync } from "node:fs";
 import { config, redact } from "../src/config.ts";
 import { HOSTS, collectHost, printable, storeRows } from "../src/collectors/linux.ts";
 import { Store } from "../src/data/store.ts";
+import { TENANT_ID, TENANT_ID_SHAPE } from "../src/policy/schema.ts";
 import { Redactor } from "../src/redactor.ts";
 import { Tracer } from "../src/trace.ts";
 import { hookSummary, vaultLinuxRun } from "../src/vault/hook.ts";
@@ -34,6 +35,10 @@ const out = arg("--out");
 
 if (!alias || !tenant || flag("--help")) {
   console.error(`usage: npm run collect:linux -- --host <${Object.keys(HOSTS).join("|") || "alias"}> --tenant <id> [--dry-run] [--out <file>]`);
+  process.exit(2);
+}
+if (!TENANT_ID.test(tenant)) {
+  console.error(`--tenant must be ${TENANT_ID_SHAPE}, got ${tenant}`);
   process.exit(2);
 }
 if (!Object.keys(HOSTS).length) {

@@ -1,28 +1,37 @@
 // The published receipt bundle (src/receipts/bundle.ts): the offline check over call records and signed receipts,
 // the probe that withholds a receipt whole, and the reading of a results directory. Receipts are signed here with
-// one throwaway Ed25519 key, as the runtime signs with one; test/fixtures/signed-receipt.ts gives a receipt under a
-// fresh key; the two committed probe receipts of 23 Oct (test/fixtures/receipt-lightning.json, receipt-ultra.json)
-// carry the runtime's own key and signature.
+// one throwaway Ed25519 key (BUNDLE_KEY), as the runtime signs with one; test/fixtures/signed-receipt.ts gives a
+// receipt under a second key (TEST_KEY); the two committed probe receipts of 23 Oct (test/fixtures/receipt-lightning.json,
+// receipt-ultra.json) carry the runtime's own key (RECEIPT_KEY) and signature. The check trusts pinned keys only, so
+// each bundle here names the keys it trusts; the pinned-key tests run on the default pin, RECEIPT_KEY alone.
+import { execFileSync, spawnSync } from "node:child_process";
 import { generateKeyPairSync, sign } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { canonicalReceiptBody, type SignedReceipt } from "../src/adapters/nightshift.ts";
+import { RECEIPT_KEY, canonicalReceiptBody, receiptKeyFingerprint, type SignedReceipt } from "../src/adapters/nightshift.ts";
 import { probe, readReceipts, receiptsText, select, verify, verifyBundle, type RecordLite, type WithheldFile } from "../src/receipts/bundle.ts";
 import lightningJson from "./fixtures/receipt-lightning.json" with { type: "json" };
 import ultraJson from "./fixtures/receipt-ultra.json" with { type: "json" };
-import { signed, ULTRA_MODEL } from "./fixtures/signed-receipt.ts";
+import { signed, TEST_KEY, ULTRA_MODEL } from "./fixtures/signed-receipt.ts";
 
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const LIGHTNING = lightningJson as unknown as SignedReceipt;
 const ULTRA = ultraJson as unknown as SignedReceipt;
 const RUNTIME_KEY = LIGHTNING.pubkey_b64;
 
 const KEY = generateKeyPairSync("ed25519");
+const BUNDLE_PUBKEY = KEY.publicKey.export({ type: "spki", format: "der" }).subarray(12).toString("base64");
+/** The fingerprint of the key signWith signs with. */
+const BUNDLE_KEY = receiptKeyFingerprint(BUNDLE_PUBKEY);
+/** The keys a bundle here trusts: the runtime's, for the committed probe receipts, and this file's. */
+const KEYS = [RECEIPT_KEY, BUNDLE_KEY];
 function signWith(receipt: Record<string, unknown>): SignedReceipt {
   const body = { llama_cpp_ref: "08659901c43b51de735740f1cf61bb82fbe0c4e4", manifest_hash: "25fa6ff31f0db5e0d043148b370615205fc2f176b65874069539226a35fbf909", receipt };
   const sig = sign(null, Buffer.from(canonicalReceiptBody(body), "utf8"), KEY.privateKey);
-  return { body, pubkey_b64: KEY.publicKey.export({ type: "spki", format: "der" }).subarray(12).toString("base64"), sig_b64: sig.toString("base64") };
+  return { body, pubkey_b64: BUNDLE_PUBKEY, sig_b64: sig.toString("base64") };
 }
 
 const TENANT = "t1";
@@ -41,7 +50,7 @@ const record = (id: string, over: Partial<RecordLite> = {}): RecordLite => ({
 });
 
 const bundle = (records: RecordLite[], receipts: SignedReceipt[], over: Partial<Parameters<typeof verifyBundle>[0]> = {}) =>
-  verifyBundle({ tenant: TENANT, records, receipts, withheld: [], fixtureKey: RUNTIME_KEY, ...over });
+  verifyBundle({ tenant: TENANT, records, receipts, withheld: [], fixtureKey: RUNTIME_KEY, keys: KEYS, ...over });
 
 describe("the offline check of a receipt bundle", () => {
   it("a whole bundle under one key verifies: each record's receipt present, signed, under the tenant's app, saying what the record says", () => {
@@ -90,7 +99,7 @@ describe("the offline check of a receipt bundle", () => {
 
   it("a fresh key shows as a second key", () => {
     const fresh = signed({ receipt_id: "rcpt_fresh", request_id: "chatcmpl-fresh", app: APP, routing: { winner: ULTRA_MODEL }, cache: { status: "miss" }, prompt_preview: PREVIEW });
-    const r = bundle([record("rcpt_a"), record("rcpt_fresh")], [receiptFor("rcpt_a"), fresh]);
+    const r = bundle([record("rcpt_a"), record("rcpt_fresh")], [receiptFor("rcpt_a"), fresh], { keys: [...KEYS, TEST_KEY] });
     expect(r.ok).toBe(true);
     expect(r.keys.map((k) => k.receipts)).toEqual([1, 1]);
     expect(new Set(r.keys.map((k) => k.fingerprint)).size).toBe(2);
@@ -109,6 +118,70 @@ describe("the offline check of a receipt bundle", () => {
     const custodyButMatching = bundle([discarded], [receiptFor("rcpt_d")]);
     expect(custodyButMatching.failures).toEqual([{ receipt_id: "rcpt_d", check: "custody", file: "C3-run1.json" }]);
   });
+});
+
+describe("the pinned signing key", () => {
+  /** A results directory of one run file holding `recs`, receipts.json holding `receipts` and an empty withheld list; the caller removes it. */
+  function writeDir(recs: RecordLite[], receipts: SignedReceipt[]): string {
+    const dir = mkdtempSync(path.join(os.tmpdir(), "receipts-pin-"));
+    writeFileSync(path.join(dir, "C3-run1.json"), JSON.stringify({ tenant: TENANT, calls: recs.map(({ file: _f, ...c }) => c) }));
+    writeFileSync(path.join(dir, "receipts.json"), receiptsText(receipts));
+    writeFileSync(path.join(dir, "receipts-withheld.json"), JSON.stringify({ tenant: TENANT, withheld: [] } satisfies WithheldFile));
+    return dir;
+  }
+  const receiptsVerify = (dir: string) => spawnSync(process.execPath, ["--import", "tsx", "scripts/receipts-verify.ts", dir], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
+
+  it("under the default pin, a receipt signed correctly by any other key fails on signing_key, never on signature; each key line says whether it is pinned", () => {
+    const ids = ["rcpt_a", "rcpt_b"];
+    const pinOnly = bundle(ids.map((id) => record(id)), ids.map((id) => receiptFor(id)), { keys: undefined });
+    expect(pinOnly.pinned).toEqual([RECEIPT_KEY]);
+    expect(pinOnly.failures).toEqual([
+      { receipt_id: "rcpt_a", check: "signing_key" }, { receipt_id: "rcpt_b", check: "signing_key" },
+      { receipt_id: "rcpt_a", check: "signature_ok", file: "C3-run1.json" }, { receipt_id: "rcpt_b", check: "signature_ok", file: "C3-run1.json" },
+    ]);
+    expect([pinOnly.verified, pinOnly.ok]).toEqual([0, false]);
+    expect(pinOnly.keys).toEqual([{ fingerprint: BUNDLE_KEY, pubkey_b64: BUNDLE_PUBKEY, receipts: 2, pinned: false, fixture: false }]);
+
+    // pinned to this file's key: its receipts verify, the fixture's receipt under TEST_KEY fails on signing_key alone
+    const fresh = signed({ receipt_id: "rcpt_fresh", request_id: "chatcmpl-fresh", app: APP, routing: { winner: ULTRA_MODEL }, cache: { status: "miss" }, prompt_preview: PREVIEW });
+    const mixed = bundle([record("rcpt_a"), record("rcpt_fresh")], [receiptFor("rcpt_a"), fresh], { keys: [BUNDLE_KEY] });
+    expect(mixed.failures).toEqual([{ receipt_id: "rcpt_fresh", check: "signing_key" }, { receipt_id: "rcpt_fresh", check: "signature_ok", file: "C3-run1.json" }]);
+    expect(mixed.keys.map((k) => [k.fingerprint, k.pinned])).toEqual([[BUNDLE_KEY, true], [TEST_KEY, false]]);
+    expect(mixed.verified).toBe(1);
+  });
+
+  it("npm run receipts:verify fails a bundle whose receipt is signed by a fresh key, with a signing_key line, and prints the pinned key", () => {
+    const dir = writeDir([record("rcpt_a")], [receiptFor("rcpt_a")]);
+    try {
+      const r = receiptsVerify(dir);
+      expect(r.status, r.stderr).toBe(1);
+      const lines = r.stdout.trim().split("\n");
+      expect(lines).toContain(`receipts: pinned signing key ${RECEIPT_KEY}`);
+      expect(lines).toContain(`receipts:   ${BUNDLE_KEY} (pubkey ${BUNDLE_PUBKEY}), 1 receipts, pinned: no, the 23 Oct fixture key: no`);
+      expect(lines).toContain("receipts: FAIL rcpt_a: signing_key");
+      expect(lines.find((l) => l.startsWith("receipts: signing key unpinned "))).toMatch(/^receipts: signing key unpinned 1, /);
+      expect(lines.at(-1)).toBe("receipts: FAIL, 2 mismatches");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it("every committed bundle verifies under the default pin, each of its keys pinned; npm run receipts:verify says so for the lab", () => {
+    const dirs = execFileSync("git", ["ls-files", "--", "*receipts.json"], { cwd: ROOT, encoding: "utf8" }).split("\n").filter(Boolean).map((f) => path.dirname(f));
+    expect(dirs).toEqual(expect.arrayContaining(["eval/results/2026-10-25T09-25-44Z", "eval/results/2026-10-25T23-34-17Z", "lab"]));
+    for (const d of dirs) {
+      const r = verify(path.join(ROOT, d));
+      expect(r.failures, d).toEqual([]);
+      expect(r.verified, d).toBe(r.receipts);
+      expect(r.keys.map((k) => [k.fingerprint, k.pinned]), d).toEqual([[RECEIPT_KEY, true]]);
+    }
+    const lab = receiptsVerify("lab");
+    expect(lab.status, lab.stderr).toBe(0);
+    const lines = lab.stdout.trim().split("\n");
+    expect(lines).toContain(`receipts: pinned signing key ${RECEIPT_KEY}`);
+    expect(lines.filter((l) => l.startsWith(`receipts:   ${RECEIPT_KEY} `))).toEqual([expect.stringMatching(/, pinned: yes, the 23 Oct fixture key: yes$/)]);
+    expect(lines.at(-1)).toMatch(/^receipts: OK, \d+ signatures verified, 0 mismatches$/);
+  }, 60_000);
 });
 
 describe("the probe that withholds a receipt whole", () => {
@@ -158,7 +231,7 @@ describe("a published directory", () => {
       writeFileSync(path.join(dir, "planted.json"), JSON.stringify({ claims: [{ calls: [strip(record("rcpt_b", { file: "planted.json" }))] }] }));
       writeFileSync(path.join(dir, "receipts.json"), receiptsText([receiptFor("rcpt_a"), receiptFor("rcpt_b")]));
       writeFileSync(path.join(dir, "receipts-withheld.json"), JSON.stringify({ tenant: TENANT, withheld: [] } satisfies WithheldFile));
-      const r = verify(dir, { fixtureKey: RUNTIME_KEY });
+      const r = verify(dir, { fixtureKey: RUNTIME_KEY, keys: KEYS });
       expect(r.failures).toEqual([]);
       expect([r.runFiles, r.records, r.receipted, r.planted, r.wanted, r.verified]).toEqual([1, 3, 2, 1, 2, 2]);
       expect(readReceipts(path.join(dir, "receipts.json"))).toHaveLength(2);
@@ -167,7 +240,7 @@ describe("a published directory", () => {
       try {
         writeFileSync(path.join(lab, "receipts.json"), receiptsText([receiptFor("rcpt_a"), receiptFor("rcpt_b")]));
         writeFileSync(path.join(lab, "receipts-withheld.json"), JSON.stringify({ tenant: TENANT, ids: ["rcpt_a", "rcpt_b", "rcpt_c"], withheld: [] } satisfies WithheldFile));
-        const l = verify(lab, { fixtureKey: null });
+        const l = verify(lab, { fixtureKey: null, keys: KEYS });
         expect(l.failures).toEqual([{ receipt_id: "rcpt_c", check: "missing" }]);
         expect(l.previewOk).toBe(2);
         expect(l.keys[0].fixture).toBeNull();

@@ -1,9 +1,10 @@
-// One assurance pass with no model: what SAMPLE_MODE runs over sample/bundle.json and what the live
-// pass grows from (same steps, with Lightning choosing checks and Ultra judging added). Every step is
+// One assurance pass: what SAMPLE_MODE runs over sample/bundle.json with no model, and what the live pass
+// runs with Nemotron 3 Ultra as the falsifier judge, the judge of the eval's C3 (the checks stay the class's
+// defaults; Lightning chooses checks in the eval and the Actor). Every step is
 // SQL through the DataLayer, or a World Model query over what that SQL returned; nothing maps an
 // input to an answer.
 //
-//   gate     runComplete for every collection run. A failing run is traced not_checked and feeds
+//   gate     failingRuns, one read per tenant, then a check line for every collection run. A failing run is traced not_checked and feeds
 //            nothing below: not the World Model, not the hero query, not a finding. The audit log has
 //            no run_id on its rows (audit_event is keyed by the vendor's event id so overlapping pulls
 //            dedupe), so its gate works on the checks instead: when a tenant's latest cloudflare.audit
@@ -76,8 +77,15 @@
 //            dispositionId), and, in the observe step, one referent_fingerprint per dns_name
 //            observation of each passing host run (src/data/fingerprint.ts). One decider line per pass
 //            counts the settings a locked rule governs that have no approved value, and the verbs.
-//   judge    skipped and traced as such: model: none; or "verdict cannot move" when the
-//            withdraw rule says no judge call would be worth spending, or when an exception settled it.
+//   judge    withheld and traced skipped, "verdict cannot move", when the withdraw rule says no judge call would be
+//            worth spending or an exception settled it. Otherwise, given a judge (opts.judge, live:
+//            src/agents/falsifier.ts liveJudge), the eval's C3 judge: the finding's summary and evidence rows to Nemotron
+//            3 Ultra through Nightshift, which writes one refuting SELECT; the guard holds it to one SELECT over known
+//            tables with LIMIT capped at 50 and the DataLayer runs it, rows striking the claim. The verdict counts only on
+//            a receipt the gate passes. A rule's or an exception's decision stands whatever it says; a default decision
+//            takes C3's (struck: ADOPT, the claim standing: the checks' verb), except that a strike never turns ESCALATE
+//            into ADOPT. A verdict that does not count leaves the decision as it was, traced "judge not counted: <reason>".
+//            With no judge, skipped and traced "model: none (sample)": SAMPLE_MODE, the eval's baseline and the tests.
 //
 // The steps run one after another and the reads inside a step run PASS_CONCURRENCY at a time (src/config.ts, default 4;
 // src/concurrency.ts): the tenants' rule reads and the gate's run_complete per run, the observe step's reads per run, the
@@ -86,8 +94,9 @@
 // a pass one task at a time runs it, and so do its trace lines, held until every line before them is written. A read
 // several findings need (a probe run's rows, a tenant's change windows, a record's exposure, a tenant's audit span, a DNS
 // run's observations) runs once, its lines where the first finding in order asks for it, under that ask's agent, and each
-// later ask is one line naming its own agent and the read it reused. A failure anywhere fails the pass: the dispositions go
-// to the ledger only after every step, so a pass that throws records none (the observe step's referent fingerprints,
+// later ask is one line naming its own agent and the read it reused. Every detector runs when another fails, and each
+// failure is one trace line, so a pass that several detectors fail names them all. A failure anywhere fails the pass: the
+// dispositions go to the ledger only after every step, so a pass that throws records none (the observe step's referent fingerprints,
 // written as it runs, are keyed, and the next pass writes none twice). The detectors read the World
 // Model's fingerprints, which the decide step's exposure edges never touch, so every detector runs before the first
 // finding is checked. At any PASS_CONCURRENCY the findings, dispositions, ledger rows and trace lines are those of 1,
@@ -101,15 +110,18 @@
 // at later instants write 11 rows each, and the first past the kept expiry records the found_but_different ESCALATE.
 
 import { createHash } from "node:crypto";
+// The live judge, the eval's C3 (src/agents/falsifier.ts).
+import { addToTally, capReached, judgeClause, judgeFinding, noJudgeClause, otherTenant, zeroTally, type JudgeTally, type PassJudge, type PassJudgement } from "./agents/falsifier.ts";
 import { defaultChecks, type FindingSummary, type RejectedCheck } from "./catalogue/select.ts";
 import { CATALOGUE, runCheck, type CheckResult, type FindingClass } from "./catalogue/templates.ts";
 import { HeldTracer, OrderedTrace, SharedReads, checkLimit, closing, inOrder, type Commit, type Task } from "./concurrency.ts";
 import { config } from "./config.ts";
+import { batchResolutions, surfaceObservations } from "./data/batch.ts";
 import { fingerprintRows } from "./data/fingerprint.ts";
 import { DataLayerError, type DataLayer } from "./data/layer.ts";
 import {
   approvedCopies, approvedMissing, auditSpan, changeWindows, changedSinceBackup, driftVsApproved, hero, latestApprovals, listRuns, objects, observationsOf, orphanRecords, orphanVhosts,
-  policyRules, priorHolds, probesOfRun, proxiedWithoutRealIp, proxySplit, resolutions, runComplete, wildcardWithoutRealIp,
+  failingRuns, policyRules, priorHolds, probesOfRun, proxiedWithoutRealIp, proxySplit, wildcardWithoutRealIp,
 } from "./data/queries.ts";
 import { dispositionId, type ChangeWindow, type DecidedBy, type Disposition, type DispositionVerb, type PolicyRule } from "./data/rows.ts";
 import type { ExceptionLesson, TechnicianMemory } from "./engine/memory.ts";
@@ -123,6 +135,7 @@ import {
 import { resolvePolicy } from "./policy/resolve.ts";
 import { PolicyRuleRow, issues } from "./policy/schema.ts";
 import type { Tracer } from "./trace.ts";
+import { absentBecause } from "./zetaris/control.ts";
 // The verifier's stop rule and the withdraw rule before the judge (src/stoprule.ts).
 import { VERDICT_CANNOT_MOVE, countersSummary, earlyStopSummary, shouldStop, shouldWithdraw, zeroCounters, type StopCounters, type StopPolicy } from "./stoprule.ts";
 
@@ -173,7 +186,8 @@ export interface Finding {
   checks: CheckOutcome[];
   /** Checks that did not run: a parameter the finding could not supply, or a check the data layer refused. */
   rejected: RejectedCheck[];
-  judge: "skipped";
+  /** The live judge's verdict (src/agents/falsifier.ts): struck, held or not counted, with its SELECT, rows, receipt and model; "skipped" when no judge ran on the finding. */
+  judge: "skipped" | PassJudgement;
   /** The stop rule ended checking early: why, and the templates it did not run. */
   earlyStop?: { reason: string; skipped: string[] };
   /** Why the judge call was not spent, when the withdraw rule said so. */
@@ -210,6 +224,8 @@ export interface PassResult {
   rules: number;
   /** Rows the ledger wrote this pass; null when the pass was given no ledger. */
   ledger: { dispositions: number; fingerprints: number } | null;
+  /** The judge's tally: findings judged, struck, held and not counted. Absent when the pass was given no judge. */
+  judge?: JudgeTally;
 }
 
 const nul = (s: string): string | null => (s === "" ? null : s);
@@ -264,6 +280,11 @@ export interface PassOptions {
   windowTable?: boolean;
   /** How many of the pass's reads run at a time (see the header); PASS_CONCURRENCY when absent, 1 for one at a time. */
   concurrency?: number;
+  /**
+   * The live judge (src/agents/falsifier.ts liveJudge): the eval's C3 judge on every finding the withdraw rule leaves open.
+   * Absent, the pass runs no model: what SAMPLE_MODE, the eval's baseline, the examples and the tests run.
+   */
+  judge?: PassJudge;
 }
 
 const h12 = (h: string): string => h.replace(/^sha256:/, "").slice(0, 12);
@@ -298,6 +319,30 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
   // Counters for the pass (sums, so the tasks add to them in any order); what was recalled.
   const verifier = zeroCounters();
   const recalled: MemoryCounters | null = memory ? { lessons: memory.lessons().length, applied: 0, lapsed: 0 } : null;
+  // The judge's tally, added to at each finding's commit; none when the pass runs no model.
+  const judged: JudgeTally | undefined = opts.judge ? zeroTally(opts.judge) : undefined;
+  // The judge's call cap (JUDGE_MAX_CALLS), counted in finding order at any PASS_CONCURRENCY: each finding's task takes a turn
+  // when it starts, learns how many calls the findings before it took once they know, and passes its own count on before its
+  // call goes out, so the calls still overlap; a task that ends without deciding passes the count on unchanged.
+  const maxCalls = opts.judge?.maxCalls ?? config.judgeMaxCalls;
+  let callsSoFar: Promise<number> = Promise.resolve(0);
+  const callTurn = () => {
+    const before = callsSoFar;
+    let pass!: (n: number) => void;
+    callsSoFar = new Promise<number>((resolve) => { pass = resolve; });
+    let passed = false;
+    return {
+      /** Whether this finding may call: `calling` false passes the count on as it is. */
+      take: async (calling: boolean): Promise<boolean> => {
+        const n = await before;
+        const ok = calling && n < maxCalls;
+        passed = true;
+        pass(n + (ok ? 1 : 0));
+        return ok;
+      },
+      done: () => { if (!passed) void before.then((n) => { passed = true; pass(n); }); },
+    };
+  };
   // Every disposition of the pass carries one decided_at; the rows go to the ledger at the end.
   const decidedAt = new Date(opts.decidedAt ?? Date.now()).toISOString();
   const dispositions: Disposition[] = [];
@@ -387,7 +432,7 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
    * its disposition, and stores its exposure edge. `approved` is the setting's latest approval, which a drift_vs_approved and an
    * approved_missing row carry.
    */
-  const assess = async (finding: FindingSummary, view: WorldView | undefined, approved: ApprovedValue | null, t: HeldTracer | undefined): Promise<Commit> => {
+  const assess = async (finding: FindingSummary, view: WorldView | undefined, approved: ApprovedValue | null, t: HeldTracer | undefined, turn: ReturnType<typeof callTurn>): Promise<Commit> => {
     // Recalled before the first await: the findings' tasks start in finding order, so the memory's ledger logs the recalls
     // in the order a pass one finding at a time makes them.
     const recall = memory?.recall(finding, opts.at);
@@ -483,7 +528,12 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     const windows = weigh && WINDOW_CLASSES.includes(cls) ? await windowsFor(finding.tenant_id, t) : null;
     const window = windows ? openWindow(windows.rows, finding, decidedAt) : null;
     const windowError = windows?.error ?? null;
-    const decision = decide({ finding, rule, exception: exceptionState, checks: { verb: policyVerb, why: policyWhy }, approved, copies, probes, serves, decidedAt, priorHold, window, windowError });
+    // An approved object the run lacks because a statement of the run was not checked says so (src/zetaris/control.ts).
+    const absent = cls === "approved_missing" ? absentBecause(finding.surface, finding.object_id, (obsByRun.get(finding.run_id) ?? []).map((o) => o.object_id)) : null;
+    const decision = decide({
+      finding: { ...finding, absent }, rule, exception: exceptionState, checks: { verb: policyVerb, why: policyWhy },
+      approved, copies, probes, serves, decidedAt, priorHold, window, windowError,
+    });
     const verb: Verb = decision.verb;
     const why = decision.reason;
     if (applied && recalled) recalled.applied += 1;
@@ -542,14 +592,31 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
         t?.emit({ agent: "checker", action: "critique", target_agent: "detector", status: "ok", input_summary: `${cls} ${setting}`, output_summary: withdraw.reason, detail: "model: none" });
         t?.emit({ agent: "detector", action: "revise", status: "ok", input_summary: `${cls} ${setting}`, output_summary: "finding withdrawn before judge", detail: withdraw.reason });
       }
-      t?.emit({ agent: "judge", action: "judge", status: "skipped", input_summary: finding.summary.slice(0, 160), detail: withdraw.withdraw ? withdraw.reason : "model: none (sample)" });
+      const decided: DispositionNote = {
+        verb, reason: why, expires_at: decision.expires_at, decided_by: decision.decided_by, rule_id: decision.rule_id, ...(decision.window_id ? { window_id: decision.window_id } : {}),
+      };
+      // The judge: live, the eval's C3 judge on a finding of the judge's tenant the withdraw rule leaves open
+      // (src/agents/falsifier.ts). Its lines, the evidence read, the model call, the gate and the refuting SELECT, then one
+      // judge line, go where the skipped line goes. A rule's or an exception's decision stands; a default one takes C3's
+      // verdict, a strike never turning ESCALATE into ADOPT; a verdict that does not count leaves the decision as it is.
+      let disposition = decided;
+      let judgement: PassJudgement | undefined;
+      const judge = opts.judge;
+      const mine = judge !== undefined && (judge.tenant === undefined || judge.tenant === finding.tenant_id);
+      const eligible = judge !== undefined && mine && !withdraw.withdraw;
+      // a model call goes out only when the judge has a Nightshift to call; past the cap the finding keeps its decision
+      const calls = Boolean(judge?.nightshift && judge.receipts);
+      const capped = eligible && calls && !(await turn.take(true));
+      if (!eligible || !calls) turn.done();
+      if (judge && eligible && !capped) ({ disposition, judgement } = await judgeFinding(layer, finding, decided, judge, t));
+      else {
+        const skipped = withdraw.withdraw ? withdraw.reason : capped ? capReached(maxCalls) : judge?.tenant !== undefined && !mine ? otherTenant(finding.tenant_id, judge.tenant) : "model: none (sample)";
+        t?.emit({ agent: "judge", action: "judge", status: "skipped", input_summary: finding.summary.slice(0, 160), detail: skipped });
+      }
       const exception: ExceptionNote | undefined = lesson
         ? { lesson: lesson.id, status: applied ? "applied" : "lapsed", expires_at: lesson.expiresAt, scope_key: lesson.scopeKey, reason: lesson.reason, accepted_by: lesson.provenance.by, accepted_at: lesson.recordedAt }
         : undefined;
       const id = shortFindingId(world.findingId(finding));
-      const disposition: DispositionNote = {
-        verb, reason: why, expires_at: decision.expires_at, decided_by: decision.decided_by, rule_id: decision.rule_id, ...(decision.window_id ? { window_id: decision.window_id } : {}),
-      };
       // One row per finding per pass, about the live value the decision is about.
       const row: Disposition = {
         disposition_id: dispositionId(finding.tenant_id, finding.surface, finding.host, finding.object_id, finding.setting_path, finding.value_hash, id, finding.run_id, decidedAt),
@@ -558,7 +625,7 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
       };
       const assessed: Finding = {
         id,
-        finding, verb, disposition, ...(view ? { world: view } : {}), checks, rejected, judge: "skipped",
+        finding, verb: disposition.verb, disposition, ...(view ? { world: view } : {}), checks, rejected, judge: judgement ?? "skipped",
         ...(earlyStop ? { earlyStop } : {}), ...(withdraw.withdraw ? { judgeWithheld: withdraw.reason } : {}), ...(exposure ? { exposure } : {}),
         ...(exception ? { exception } : {}),
       };
@@ -566,6 +633,7 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
         await storeEdge?.();
         dispositions.push(row);
         findings.push(assessed);
+        if (judged && judgement) addToTally(judged, judgement);
       });
     } catch (e) {
       edgeLines?.close();
@@ -603,21 +671,25 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     };
   };
 
-  // gate
+  // gate: one read per tenant (failingRuns), then each run's check line in run order, as one task
   const gatedOut = new Set<string>();
-  const gate = (r: Row): Task => async (t) => {
-    const g = await runComplete(layer, r.run_id, { tracer: t, agent: "observer" });
-    t?.emit({
-      agent: "observer", action: "check", status: g.total > 0 ? "not_checked" : "ok",
-      input_summary: `run_complete ${r.run_id}`,
-      output_summary: `${r.surface}${r.host ? ` ${r.host}` : ""}: ${r.observed_count}/${r.expected_count} ${r.status}`,
-      detail: g.total > 0 ? `run ${r.run_id} fails the DQ gate; its observations feed no finding` : undefined,
-    });
+  const tenantsOfRuns = [...new Set(runs.map((r) => r.tenant_id))].sort();
+  const gate: Task = async (t) => {
+    const failing = new Set<string>();
+    for (const tenant of tenantsOfRuns) for (const id of await failingRuns(layer, tenant, { tracer: t, agent: "observer" })) failing.add(id);
+    for (const r of runs) {
+      t?.emit({
+        agent: "observer", action: "check", status: failing.has(r.run_id) ? "not_checked" : "ok",
+        input_summary: `run_complete ${r.run_id}`,
+        output_summary: `${r.surface}${r.host ? ` ${r.host}` : ""}: ${r.observed_count}/${r.expected_count} ${r.status}`,
+        detail: failing.has(r.run_id) ? `run ${r.run_id} fails the DQ gate; its observations feed no finding` : undefined,
+      });
+    }
     return () => {
-      if (g.total > 0) gatedOut.add(r.run_id);
+      for (const r of runs) if (failing.has(r.run_id)) gatedOut.add(r.run_id);
     };
   };
-  await inTurn([...[...new Set(runs.map((r) => r.tenant_id))].sort().map(readRules), ...runs.map(gate)]);
+  await inTurn([...tenantsOfRuns.map(readRules), gate]);
   const passing = runs.filter((r) => !gatedOut.has(r.run_id));
   passingRuns = passing;
   // The audit surface's gate: audit_event rows carry no run_id, so a failing audit run withholds the audit templates per tenant.
@@ -634,29 +706,48 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
   const dnsFor = (r: Row): Row | undefined => nearestDns(passing, r);
   const gatedDnsFor = (r: Row): Row | undefined => nearestDns(runs.filter((x) => gatedOut.has(x.run_id)), r);
 
-  // observe: each run's reads a task, its observations into the World Model and its fingerprints into the ledger in run order
+  // observe: the passing host runs' reads as sets (src/data/batch.ts), each task one, keyset-paged: every observation of a tenant's
+  // surface in one read, what the runs that share a DNS run resolved to in one read per DNS run. Then each run in run order: its
+  // observations into the World Model in bulk, its fingerprints into the ledger, its observe line.
   const resByRun = new Map<string, Row[]>();
   let observed = 0;
-  await inTurn(passing.filter((x) => x.host !== "").map((r): Task => async (t) => {
-    const obs = objects(await observationsOf(layer, r.run_id, { tracer: t, agent: "observer" }));
+  const hostRuns = passing.filter((x) => x.host !== "");
+  const sources = [...new Map(hostRuns.map((r) => [`${r.tenant_id}\u001f${r.surface}`, r])).values()];
+  const runsByDns = new Map<string, string[]>();
+  for (const r of hostRuns) {
     const dns = dnsFor(r);
-    const res = dns ? objects(await resolutions(layer, { run_id: r.run_id, dns_run_id: dns.run_id }, { tracer: t, agent: "observer" })) : [];
-    return async () => {
-      obsByRun.set(r.run_id, obs);
-      resByRun.set(r.run_id, res);
-      const fp = new Map<string, string[]>();
-      for (const x of res) fp.set(x.obs_id, [...(fp.get(x.obs_id) ?? []), x.content]);
-      for (const o of obs) await world.observe(toObservation(o, fp.get(o.obs_id)?.sort().join(",") ?? null));
-      // The same fingerprints as rows: what each dns_name setting of the run resolved to in its DNS run.
-      if (opts.ledger && dns) fingerprints += await opts.ledger.recordFingerprints(fingerprintRows(obs, res, dns));
-      observed += obs.length;
-      t?.emit({
-        agent: "observer", action: "observe", status: "ok", input_summary: r.run_id,
-        output_summary: `${obs.length} observations recorded, ${fp.size} with a resolved referent${dns ? ` (DNS run ${dns.run_id})` : " (no DNS run of this pass passed the gate)"}`,
-        detail: "model: none",
-      });
-    };
-  }));
+    if (dns) runsByDns.set(dns.run_id, [...(runsByDns.get(dns.run_id) ?? []), r.run_id]);
+  }
+  const obsRead = new Map<string, Row[]>();
+  const resRead = new Map<string, Row[]>();
+  await inTurn([
+    ...sources.map((s): Task => async (t) => {
+      const got = await surfaceObservations(layer, s.tenant_id, s.surface, { tracer: t, agent: "observer" });
+      return () => { for (const [run, rows] of got) obsRead.set(run, rows); };
+    }),
+    ...[...runsByDns].map(([dnsRunId, runIds]): Task => async (t) => {
+      const got = await batchResolutions(layer, runIds, dnsRunId, { tracer: t, agent: "observer" });
+      return () => { for (const [run, rows] of got) resRead.set(run, rows); };
+    }),
+  ]);
+  for (const r of hostRuns) {
+    const obs = obsRead.get(r.run_id) ?? [];
+    const dns = dnsFor(r);
+    const res = dns ? (resRead.get(r.run_id) ?? []) : [];
+    obsByRun.set(r.run_id, obs);
+    resByRun.set(r.run_id, res);
+    const fp = new Map<string, string[]>();
+    for (const x of res) fp.set(x.obs_id, [...(fp.get(x.obs_id) ?? []), x.content]);
+    await world.observeAll(obs.map((o) => toObservation(o, fp.get(o.obs_id)?.sort().join(",") ?? null)));
+    // The same fingerprints as rows: what each dns_name setting of the run resolved to in its DNS run.
+    if (opts.ledger && dns) fingerprints += await opts.ledger.recordFingerprints(fingerprintRows(obs, res, dns));
+    observed += obs.length;
+    tracer?.emit({
+      agent: "observer", action: "observe", status: "ok", input_summary: r.run_id,
+      output_summary: `${obs.length} observations recorded, ${fp.size} with a resolved referent${dns ? ` (DNS run ${dns.run_id})` : " (no DNS run of this pass passed the gate)"}`,
+      detail: "model: none",
+    });
+  }
 
   // detect: every detector a task, in the order a pass one task at a time runs them (the hero query per host group, the survey,
   // the drift and backup detectors). A detector reports each finding it makes: the finding's lines take their place among the
@@ -916,24 +1007,40 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     for (const f of await mailRecords(layer, runs, (r) => ({ gated: gatedOut.has(r.run_id), dns: dnsFor(r) }), surveyOpts(t))) report(f);
   });
 
-  // The detectors' step. On a detector's failure the findings reported before it are still checked and decided, as a pass
-  // one task at a time had done by then, and the detector's error is thrown after them.
+  // The detectors' step. A detector that fails fails its own lines (the trace ends there) and every other detector still
+  // runs, so the same failures are known at any PASS_CONCURRENCY. The findings reported up to the first failure in order
+  // are still checked and decided, as a pass one task at a time had done by then; then each failure is one trace line, in
+  // detector order, and the first is thrown.
   const reported: Reported[][] = detectors.map(() => []);
-  let failedAt = detectors.length;
-  const detected = await inTurn(detectors.map((detect, d): Task => async (t) => {
+  const failures: { d: number; error: unknown }[] = [];
+  await inTurn(detectors.map((detect, d): Task => async (t) => {
     try {
       await detect(t, (finding, view, approved) => reported[d].push({ finding, view, approved: approved ?? null, lines: t?.hold() }));
-    } catch (err) {
-      failedAt = Math.min(failedAt, d);
-      throw err;
+    } catch (error) {
+      failures.push({ d, error });
+      t?.fail();
     }
     return () => {};
-  })).then(() => null, (error: unknown) => ({ error }));
+  }));
+  failures.sort((a, b) => a.d - b.d);
+  const failedAt = failures[0]?.d ?? detectors.length;
 
   // check, decide, judge: every finding a task, its lines where its detector reported it, its commit in the order reported.
   const queue = reported.slice(0, failedAt + 1).flat();
-  await inTurn(queue.map((q): Task => (t) => assess(q.finding, q.view, q.approved, t)), (i) => queue[i].lines);
-  if (detected) throw detected.error;
+  try {
+    await inTurn(queue.map((q): Task => (t) => {
+      const turn = callTurn();
+      return assess(q.finding, q.view, q.approved, t, turn).finally(turn.done);
+    }), (i) => queue[i].lines);
+  } finally {
+    for (const f of failures) {
+      tracer?.emit({
+        agent: "detector", action: "detect", status: "failed", input_summary: `detector ${f.d + 1} of ${detectors.length}`,
+        output_summary: `failed: ${((f.error as Error)?.message ?? String(f.error)).slice(0, 300)}`, detail: `${failures.length} detector(s) failed this pass; nothing is recorded`,
+      });
+    }
+  }
+  if (failures.length) throw failures[0].error;
 
   // The settings of the pass's latest passing runs that a locked rule governs and that have no approved value on
   // record: what a locked rule has nothing to roll back to. Counted, one line per pass, no finding.
@@ -981,10 +1088,10 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     detail: `${rulesRead} policy rule(s) read; verbs ${VERBS.filter((v) => verbs[v] > 0).map((v) => `${v} ${verbs[v]}`).join(", ") || "none"}; `
       + `decided by policy ${decidedBy("policy")}, operator ${decidedBy("operator")}, default ${decidedBy("default")}; `
       + `${probeRuns.length ? `probe run(s) ${probeRuns.join(", ")}` : NO_PROBE_RUN}; `
-      + `${written === null ? "no ledger" : `ledger: ${written} disposition(s) and ${fingerprints} referent fingerprint(s) written`}; model: none`,
+      + `${written === null ? "no ledger" : `ledger: ${written} disposition(s) and ${fingerprints} referent fingerprint(s) written`}; ${judged ? judgeClause(judged) : noJudgeClause()}`,
   });
   return {
     runs: runs.length, gatedOut: [...gatedOut], observed, findings, verifier, memory: recalled,
-    verbs, locked, rules: rulesRead, ledger: written === null ? null : { dispositions: written, fingerprints },
+    verbs, locked, rules: rulesRead, ledger: written === null ? null : { dispositions: written, fingerprints }, ...(judged ? { judge: judged } : {}),
   };
 }

@@ -18,9 +18,9 @@ const Schema = z.object({
   METERLESS_BASE_URL: z.string().default("http://127.0.0.1:8088/v1"),
   METERLESS_RUNTIME_TOKEN: z.string().default(""),
   METERLESS_APP_ID: z.string().default("drift-agent"),
-  // Nemotron through Nightshift, one endpoint. Measured 23 Oct: OpenRouter Nemotron answered 12/12
-  // at 1 to 2 s median; NVIDIA's free endpoint 4/6 at 7.5 s with empty responses
-  // (scripts/probe-openrouter-nemotron.ts). The agent requests
+  // Nemotron through Nightshift, one endpoint. The fast route calls NVIDIA's own endpoint first and the OpenRouter route
+  // as its fallback: measured 26 Oct 2026 04:05 UTC, six identical probes each (npm run probe:route), NVIDIA's endpoint
+  // answered 5 of 6 and the OpenRouter route 1 of 6, its others empty responses (eval/PROTOCOL.md). The agent requests
   // the primary; on failure the adapter walks the fallback list. A local lane
   // (local-runtime/nemotron-3.5-lightning-30b-a3b) joins the list when its weights are installed: on
   // 25 Oct it answered 503 local_runtime_not_ready on this machine, which holds none.
@@ -80,6 +80,12 @@ const Schema = z.object({
   // findings' checks and decisions, each finding's checks still one after another. Every decision, ledger row and trace line is
   // the same at any value; 1 runs the reads one after another, as the pass did before. At most 16 (MAX_PASS_CONCURRENCY).
   PASS_CONCURRENCY: z.string().default("4"),
+  // The live pass's judge (src/agents/falsifier.ts): on, the eval's C3 judge, Nemotron 3 Ultra through Nightshift, tries to
+  // refute each finding the withdraw rule leaves open; off, no model call, and each such finding is "judge not counted:
+  // judge off". Blank is on. Independent of --apply. Sample mode runs no model whatever this says.
+  DRIFT_JUDGE: z.string().default("on"),
+  // The most judge model calls one pass makes; the findings past it keep their decision, each traced with why. Default 64.
+  JUDGE_MAX_CALLS: z.string().default("64"),
   LOG_DIR: z.string().default("logs"),
 });
 
@@ -142,25 +148,40 @@ export function nginxTCommand(platform: NodeJS.Platform = process.platform, conf
 /** The most reads a pass runs at once: each one more is one more query in flight against the datasource. */
 export const MAX_PASS_CONCURRENCY = 16;
 
-/** PASS_CONCURRENCY as a number: a whole number from 1 to MAX_PASS_CONCURRENCY, blank for the default 4. Throws on any other value. */
-export function parsePassConcurrency(s: string): number {
-  const t = s.trim() || "4";
-  if (!/^[1-9]\d*$/.test(t)) throw new Error(`PASS_CONCURRENCY: a whole number of at least 1, got ${JSON.stringify(s)}`);
-  const n = Number(t);
+/** A configured value the process cannot run with: its message is the one plain line a CLI entry point prints before it exits 2 (src/cli.ts). */
+export class ConfigError extends Error {}
+
+/**
+ * The one check of a pass's concurrency, for PASS_CONCURRENCY and for runPass's own option (src/concurrency.ts
+ * checkLimit): a whole number from 1 to MAX_PASS_CONCURRENCY. Throws ConfigError on any other value.
+ */
+export function checkPassConcurrency(n: number): number {
+  if (!Number.isInteger(n) || n < 1) throw new ConfigError(`PASS_CONCURRENCY: a whole number of at least 1, got ${n}`);
   if (n > MAX_PASS_CONCURRENCY) {
-    throw new Error(`PASS_CONCURRENCY: at most ${MAX_PASS_CONCURRENCY}, got ${n}; each read in flight is one more query against the datasource at once`);
+    throw new ConfigError(`PASS_CONCURRENCY: at most ${MAX_PASS_CONCURRENCY}, got ${n}; each read in flight is one more query against the datasource at once`);
   }
   return n;
 }
 
-/** PASS_CONCURRENCY as every process reads it at startup: an invalid value is one plain line on stderr and exit 2, a usage error, never a stack trace. */
-function passConcurrencyOrExit(s: string): number {
-  try {
-    return parsePassConcurrency(s);
-  } catch (e) {
-    process.stderr.write(`${(e as Error).message}\n`);
-    process.exit(2);
-  }
+/** PASS_CONCURRENCY as a number: its digits, blank for the default 4, then checkPassConcurrency. Throws ConfigError on any other value. */
+export function parsePassConcurrency(s: string): number {
+  const t = s.trim() || "4";
+  if (!/^[1-9]\d*$/.test(t)) throw new ConfigError(`PASS_CONCURRENCY: a whole number of at least 1, got ${JSON.stringify(s)}`);
+  return checkPassConcurrency(Number(t));
+}
+
+/** DRIFT_JUDGE as a switch: "on" (or blank) or "off", any case. Throws on any other value. */
+export function parseJudgeSwitch(s: string): "on" | "off" {
+  const t = s.trim().toLowerCase() || "on";
+  if (t !== "on" && t !== "off") throw new ConfigError(`DRIFT_JUDGE: on or off, got ${JSON.stringify(s)}`);
+  return t;
+}
+
+/** JUDGE_MAX_CALLS as a number: a whole number, 0 for no judge call at all, blank for the default 64. Throws on any other value. */
+export function parseJudgeMaxCalls(s: string): number {
+  const t = s.trim() || "64";
+  if (!/^(0|[1-9]\d*)$/.test(t)) throw new ConfigError(`JUDGE_MAX_CALLS: a whole number, got ${JSON.stringify(s)}`);
+  return Number(t);
 }
 
 /** Where the technician's lessons live when DRIFT_MEMORY_DIR is blank: under .world/, which .gitignore keeps out of the repository. */
@@ -232,8 +253,21 @@ export const config = {
   nginxT: raw.DRIFT_NGINX_T.trim(),
   /** PROBE_TARGETS_OVERRIDE, parsed; [] = the probe population is the Cloudflare account's records. */
   probeOverride: parseProbeOverride(raw.PROBE_TARGETS_OVERRIDE),
-  /** PASS_CONCURRENCY, parsed; default 4, 1 = one read at a time. */
-  passConcurrency: passConcurrencyOrExit(raw.PASS_CONCURRENCY),
+  /**
+   * PASS_CONCURRENCY, parsed when read; default 4, 1 = one read at a time. An invalid value throws ConfigError at the
+   * read, so importing this module never ends the process; each CLI entry point checks it first (src/cli.ts).
+   */
+  get passConcurrency(): number {
+    return parsePassConcurrency(raw.PASS_CONCURRENCY);
+  },
+  /** DRIFT_JUDGE, parsed when read; default on: the live pass runs the eval's C3 judge. ConfigError as above. */
+  get judge(): "on" | "off" {
+    return parseJudgeSwitch(raw.DRIFT_JUDGE);
+  },
+  /** JUDGE_MAX_CALLS, parsed when read; default 64 judge model calls a pass. ConfigError as above. */
+  get judgeMaxCalls(): number {
+    return parseJudgeMaxCalls(raw.JUDGE_MAX_CALLS);
+  },
   logDir: raw.LOG_DIR,
 } as const;
 

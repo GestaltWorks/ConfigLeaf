@@ -64,6 +64,30 @@ describe("decide: precedence", () => {
     });
   });
 
+  it("on_drift escalate: ESCALATE whatever the lock, the copy or production, the reason naming the finding's class, its object and, for an approval class, the approved hash", () => {
+    const escalate = rule({ surface: "zetaris.control", object_glob: "**", setting_glob: "**", on_drift: "escalate", on_no_copy: "ticket", hold_max_hours: 0 });
+    const tail = "rule rule-00000000000000a1 (critical) sends it to a technician and the agent changes nothing";
+    const reasons = (["drift_vs_approved", "approved_missing", "proxy_split", "changed_since_backup", "found_but_different"] as const).map((cls) => {
+      const d = decide(input({ finding: { class: cls, object_id: "dq/run_complete" }, rule: escalate, copies: [copy()], probes: FAILING, approved: cls === "drift_vs_approved" || cls === "approved_missing" ? input().approved : null }));
+      expect(d).toMatchObject({ verb: "ESCALATE", decided_by: "policy", rule_id: escalate.rule_id, expires_at: null });
+      expect(d.reason, cls).toMatch(new RegExp(`^this ${cls} finding stands on dq/run_complete`));
+      return d.reason;
+    });
+    expect(reasons).toEqual([
+      `this drift_vs_approved finding stands on dq/run_complete: live value drifted from approved a1b2c3d4e5f6; ${tail}`,
+      `this approved_missing finding stands on dq/run_complete: approved a1b2c3d4e5f6 is absent from the run; ${tail}`,
+      `this proxy_split finding stands on dq/run_complete; ${tail}`,
+      `this changed_since_backup finding stands on dq/run_complete; ${tail}`,
+      `this found_but_different finding stands on dq/run_complete; ${tail}`,
+    ]);
+    // an approved object the run lacks because a statement was refused: the reason says which
+    const refused = decide(input({ finding: { class: "approved_missing", object_id: "grants", absent: "SHOW GRANT refused" }, rule: escalate }));
+    expect(refused.reason).toBe(`this approved_missing finding stands on grants: approved a1b2c3d4e5f6 is absent from the run (SHOW GRANT refused); ${tail}`);
+    // under a rollback rule the absence reads the same way
+    expect(decide(input({ finding: { class: "approved_missing", absent: "SHOW GRANT refused" }, copies: [copy()] })).reason)
+      .toMatch(/^approved a1b2c3d4e5f6 is absent from the run \(SHOW GRANT refused\); vault commit 5a14a89d holds the approved copy/);
+  });
+
   it("is pure: the same input gives the same decision, and the input is left as it was", () => {
     const i = input({ copies: [copy({ copy_id: "copy-b", taken_at: "2026-10-21T02:01:00.000Z" }), copy()] });
     const before = structuredClone(i);

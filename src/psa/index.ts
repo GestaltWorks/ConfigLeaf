@@ -43,6 +43,7 @@
 // per verb and alert, the updates in place and the closing rules over a fake GitHub, and the step over the policy
 // fixture through sql.js, a ROLLBACK's change opening only once its action is recorded.
 
+import type { PassJudgement } from "../agents/falsifier.ts";
 import type { CheckOutcome } from "../pipeline.ts";
 import type { FindingSummary, RejectedCheck } from "../catalogue/select.ts";
 import type { ExposureLine } from "../engine/world.ts";
@@ -133,6 +134,8 @@ export interface TicketFinding {
   checks: readonly CheckOutcome[];
   rejected: readonly Pick<RejectedCheck, "reason">[];
   exposure?: ExposureLine;
+  /** The live pass's judge (src/agents/falsifier.ts): its verdict, or "skipped" when no judge ran on the finding. */
+  judge?: "skipped" | PassJudgement;
 }
 
 /** An action row as TICKET_ACTIONS_SQL returns it: the action, the finding and the verb of its disposition. status is the Actor's (done, unverified, failed, refused, not_judged). */

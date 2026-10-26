@@ -30,7 +30,7 @@ import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sig
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { canonicalReceiptBody, verifyReceipt, type SignedReceipt } from "../adapters/nightshift.ts";
+import { canonicalReceiptBody, receiptKeyFingerprint, verifyReceipt, type SignedReceipt } from "../adapters/nightshift.ts";
 import type { ActionKind } from "../data/rows.ts";
 import { GUARD_VERSION } from "./scout.ts";
 
@@ -164,7 +164,7 @@ export class LocalContractAuthority implements ContractAuthority {
     if (!isObject(presented) || !isObject(presented.body) || !isObject(presented.body.receipt)) return refuse("unsigned", "no signed contract was presented");
     if (typeof presented.sig_b64 !== "string" || !presented.sig_b64 || typeof presented.pubkey_b64 !== "string" || !presented.pubkey_b64) return refuse("unsigned", "the contract carries no signature");
     if (presented.pubkey_b64 !== this.k.publicB64) return refuse("bad-signature", "the contract is signed by a key this deployment does not hold");
-    if (!verifyReceipt(presented as unknown as SignedReceipt)) return refuse("bad-signature", "the signature does not match the contract's bytes");
+    if (!verifyReceipt(presented as unknown as SignedReceipt, [receiptKeyFingerprint(this.k.publicB64)])) return refuse("bad-signature", "the signature does not match the contract's bytes");
     const c = presented.body.receipt;
     if (c.kind !== CONTRACT_KIND || c.signed_by !== "scout" || STRING_FIELDS.some((f) => typeof c[f] !== "string") || !Array.isArray(c.capabilities) || c.capabilities.some((x) => typeof x !== "string")) {
       return refuse("malformed", "the signed body is not an execution contract");

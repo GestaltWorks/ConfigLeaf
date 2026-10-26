@@ -76,6 +76,14 @@ export class DriftWorld {
   }
 
   /**
+   * Record a run's observations in bulk, in order. Idempotent as observe is: every entity, fact and edge is keyed on its
+   * content, so the same observations again change nothing (test/world.test.ts).
+   */
+  async observeAll(observations: readonly Observation[]): Promise<void> {
+    for (const o of observations) await this.observe(o);
+  }
+
+  /**
    * What did the target of this setting's reference look like at `at`?
    * Facts are the time-stamped record (the reference writes attrs only as a live cache and
    * does not replay them into snapshots), so the answer is the latest `fingerprint` fact

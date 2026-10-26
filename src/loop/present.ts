@@ -30,7 +30,10 @@
 //     "exception_in_force not read" when the read failed); "dns_inventory_current holds for <n> of <n> live records"
 //     when the pass read it (src/loop/pass.ts DnsInventoryCheck), under the same label, red when fewer hold than the
 //     DNS API returns (the provider changed since the last complete DNS run), yellow "dns_inventory_current not read"
-//     when the read failed. Then "classes", one class a line, its count right-aligned
+//     when the read failed. When the pass ran the judge (src/agents/falsifier.ts), "judge <model> · <n> judged · <n> struck
+//     · <n> held · <n> not counted", the model its last path segment, the not counted yellow above 0; yellow "not counted:
+//     judge off · <n> findings" with DRIFT_JUDGE off, "not counted: no model configured · <n> findings" with no runtime
+//     token, URL or judge model; no line when the pass ran no judge. Then "classes", one class a line, its count right-aligned
 //     in the counts' width, two spaces, its words, the most first. Then one block per ROLLBACK, FIX and ESCALATE, in
 //     that order, at most FINDING_LINES: the verb, coloured, and the class's words; the object on the next line; the
 //     copy a ROLLBACK restores, or why a FIX or an ESCALATE goes as it does, on the third.
@@ -80,6 +83,7 @@
 // the live screen is in scripts/cycle.ts.
 
 import type { ActResult } from "../actions/act.ts";
+import { unavailableLabel } from "../agents/falsifier.ts";
 import type { ActionOutcome, PlanItem } from "../actions/plan.ts";
 import type { FindingClass } from "../catalogue/templates.ts";
 import type { QueryTally } from "../data/engines/counting.ts";
@@ -396,7 +400,7 @@ export function probeView(o: { names: number; rows: readonly { kind: string; sta
 const RESULT_TEXT: Readonly<Record<string, string>> = { ok: "ok", ok_with_gaps: "ok with gaps", fail: "fail" };
 const resultSeg = (r: string): Seg => (r === "fail" ? { text: "fail", tone: "red" } : RESULT_TEXT[r] ?? r);
 
-/** validate: the repository heads; nginx-t once per host repository, cf-schema once per record. */
+/** validate: the repository heads; nginx-t once per host repository, cf-schema once per record, zetaris-json once per object. */
 export function validateView(o: { heads: number; nginx: readonly string[]; rows: readonly { validator: string; result: string }[]; errors: number } | null): StepView {
   if (!o) return { parts: ["no new vault commit", "nothing validated"] };
   const groups = (xs: readonly string[]): [string, number][] =>
@@ -404,8 +408,10 @@ export function validateView(o: { heads: number; nginx: readonly string[]; rows:
   const parts: Phrase[] = [];
   const nginx = groups(o.nginx);
   if (nginx.length) parts.push(["nginx-t ", ...nginx.flatMap(([r, k], i) => [...(i ? [", "] : []), resultSeg(r), k > 1 ? ` ×${k}` : ""])]);
-  const cf = groups(o.rows.filter((r) => r.validator === "cf-schema").map((r) => r.result));
-  if (cf.length) parts.push(["cf-schema ", ...cf.flatMap(([r, k], i) => [...(i ? [", "] : []), `${thousands(k)} `, r === "ok_with_gaps" ? "with gaps" : resultSeg(r)])]);
+  for (const validator of ["cf-schema", "zetaris-json"]) {
+    const by = groups(o.rows.filter((r) => r.validator === validator).map((r) => r.result));
+    if (by.length) parts.push([`${validator} `, ...by.flatMap(([r, k], i) => [...(i ? [", "] : []), `${thousands(k)} `, r === "ok_with_gaps" ? "with gaps" : resultSeg(r)])]);
+  }
   if (o.errors) parts.push([{ text: `${count(o.errors, "repository", "repositories")} not validated`, tone: "red" }]);
   return { subject: count(o.heads, "copy", "copies"), parts: parts.length ? parts : ["no copy validated"] };
 }
@@ -496,7 +502,7 @@ function classLines(fs: readonly Pick<Finding, "finding">[]): SubLine[] {
  * over the live records, each on a line; then the classes in plain words, one a line; then one block per ROLLBACK, FIX
  * and ESCALATE.
  */
-export function passView(p: Pick<PassStep, "findings"> & Partial<Pick<PassStep, "adoptions" | "dns" | "files" | "schema" | "notChecked">>, zetaris?: ZetarisFacts): StepView {
+export function passView(p: Pick<PassStep, "findings"> & Partial<Pick<PassStep, "adoptions" | "dns" | "files" | "schema" | "notChecked">> & { pass?: Pick<PassStep["pass"], "judge"> }, zetaris?: ZetarisFacts): StepView {
   const fs = p.findings;
   const parts: Phrase[] = VERB_ORDER.map((v) => [v, fs.filter((f) => f.verb === v).length] as const).filter(([, n]) => n > 0).map(([v, n]) => [verbSpan(v), ` ${thousands(n)}`]);
   const sub: SubLine[] = [];
@@ -515,6 +521,12 @@ export function passView(p: Pick<PassStep, "findings"> & Partial<Pick<PassStep, 
     if (files) sub.push({ label: "files", parts: [[files]] });
     if (p.adoptions) sub.push({ label: "DQ", parts: [[adoptionSeg(p.adoptions)]] });
     if (p.dns) sub.push({ label: p.adoptions ? "" : "DQ", parts: [[dnsSeg(p.dns)]] });
+  }
+  const j = p.pass?.judge;
+  if (j?.unavailable) sub.push({ label: "judge", parts: [[{ text: `not counted: ${unavailableLabel(j.unavailable)}`, tone: "yellow" }], count(j.not_counted, "finding")] });
+  else if (j) {
+    const notCounted = `${thousands(j.not_counted)} not counted`;
+    sub.push({ label: "judge", parts: [shortModel(j.model), `${thousands(j.judged)} judged`, `${thousands(j.struck)} struck`, `${thousands(j.held)} held`, [j.not_counted > 0 ? { text: notCounted, tone: "yellow" } : notCounted]] });
   }
   sub.push(...classLines(fs));
   const moving = MOVING.flatMap((v) => fs.filter((f) => f.verb === v));

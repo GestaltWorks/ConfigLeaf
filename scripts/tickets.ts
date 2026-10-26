@@ -30,13 +30,16 @@ import { Store } from "../src/data/store.ts";
 import { DriftWorld } from "../src/engine/world.ts";
 import { MemoryLedger } from "../src/ledger.ts";
 import { runPass } from "../src/pipeline.ts";
-import { TENANT } from "../src/policy/schema.ts";
+import { TENANT_ID, TENANT_ID_SHAPE } from "../src/policy/schema.ts";
 import { MODE, Table, presentOptions, ticketsView } from "../src/loop/present.ts";
 import { labelledRows } from "../src/loop/steps.ts";
 import { FileTracer, LabelTracer } from "../src/loop/trace.ts";
 import { GithubIssues } from "../src/psa/github.ts";
 import { storeTicketRows, ticketStep } from "../src/psa/step.ts";
 import { Redactor } from "../src/redactor.ts";
+import { exitOnConfigError } from "../src/cli.ts";
+
+exitOnConfigError();
 
 const USAGE = "usage: npm run tickets -- --tenant <id> [--dry-run] [--bundle <file>] [--schema <name>] [--verbose|--quiet] [--help]";
 
@@ -58,7 +61,7 @@ if (args.help) {
   console.log("Opens, comments on and closes PSA tickets (GitHub Issues) for the tenant's dispositions and actions. --dry-run prints the plan and sends nothing; SAMPLE_MODE=true plans over sample/bundle.json (or --bundle) and is always a dry run.");
   process.exit(0);
 }
-if (!args.tenant || !TENANT.test(args.tenant)) usage("--tenant is required: a tenant id");
+if (!args.tenant || !TENANT_ID.test(args.tenant)) usage(`--tenant is required: ${TENANT_ID_SHAPE}`);
 if (args.verbose && args.quiet) usage("--verbose and --quiet exclude each other");
 if (args.bundle !== undefined && !config.sampleMode) usage("--bundle needs SAMPLE_MODE=true");
 const tenant = args.tenant;

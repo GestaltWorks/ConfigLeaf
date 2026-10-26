@@ -4,7 +4,7 @@ import { DataLayer, assertSelectOnly, literal, type Engine } from "../src/data/l
 import { fingerprintRows, referentFingerprint } from "../src/data/fingerprint.ts";
 import {
   HERO_SQL, auditSpan, changedSinceBackup, driftVsApproved, foundButDifferentSql, hero, listRuns, objects, observationsOf, orphanRecords, orphanVhosts,
-  proxiedWithoutRealIp, proxySplit, resolutions, runComplete, wildcardWithoutRealIp,
+  failingRuns, proxiedWithoutRealIp, proxySplit, resolutions, runComplete, wildcardWithoutRealIp,
 } from "../src/data/queries.ts";
 import { SCHEMA_TABLES, TABLE_NAMES } from "../src/data/schema.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
@@ -184,6 +184,31 @@ describe("catalogue queries on the recorded bundle (sql.js)", () => {
     expect((await runComplete(l, "r-short")).rows).toEqual([["r-short", "t", "linux.etc", "h", "2", "2", "complete"]]);
     // a DNS run's rows live in dns_record, so the stored-count condition is host surfaces only
     expect((await runComplete(l, "r-dns")).rows).toEqual([]);
+  });
+
+  it("failingRuns: one read per tenant gives exactly the runs runComplete fails one by one, and only that tenant's", async () => {
+    const fresh = await SqlJsEngine.create();
+    fresh.loadBundle({
+      collection_run: [
+        { run_id: "r-null", tenant_id: "t", surface: "linux.etc", started_at: "2026-10-23T00:00:00.000Z", status: "complete" },
+        { run_id: "r-short", tenant_id: "t", surface: "linux.etc", host: "h", started_at: "2026-10-23T00:00:00.000Z", expected_count: 2, observed_count: 2, status: "complete" },
+        { run_id: "r-dns", tenant_id: "t", surface: "cloudflare.dns", started_at: "2026-10-23T00:00:00.000Z", expected_count: 2, observed_count: 2, status: "complete" },
+        { run_id: "r-partial", tenant_id: "u", surface: "cloudflare.dns", started_at: "2026-10-23T00:00:00.000Z", expected_count: 2, observed_count: 1, status: "partial" },
+      ],
+    });
+    const l = new DataLayer(fresh);
+    expect([...(await failingRuns(l, "t"))].sort()).toEqual(["r-null", "r-short"]);
+    expect([...(await failingRuns(l, "u"))]).toEqual(["r-partial"]);
+    expect([...(await failingRuns(l, "nobody"))]).toEqual([]);
+    // over the recorded bundle: the set equals runComplete asked run by run
+    const b = structuredClone(bundle) as B;
+    const run = b.collection_run.find((r) => r.run_id === SITES_RUN)!;
+    run.status = "partial";
+    const lb = await layerOf(b);
+    const one: string[] = [];
+    for (const r of b.collection_run) if ((await runComplete(lb, r.run_id)).total > 0) one.push(r.run_id);
+    expect([...(await failingRuns(lb, T))].sort()).toEqual(one.sort());
+    expect(one).toEqual([SITES_RUN]);
   });
 
   it("loadBundle refuses a timestamp outside the canonical millisecond form; NULL stays allowed where the schema allows it", async () => {

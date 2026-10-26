@@ -5,7 +5,8 @@
 // Contract:
 //   - One EXPLAIN QUERY AS per query through the engine given (a CountingEngine counts it), then one trace line: agent
 //     zetaris, action explain, status ok, input "EXPLAIN QUERY AS <name>", output the plan's first line, detail the plan's
-//     text through the redactor the trace uses and cut to EXPLAIN_MAX (4,000) characters. A statement that fails (a key
+//     text through the trace's redactor (TRACE_REDACTOR: REDACT_SALT, one instance for the process, so the plan and every
+//     other trace line share one salt) and cut to EXPLAIN_MAX (4,000) characters. A statement that fails (a key
 //     that may not run it, a query Zetaris refuses) is traced not_checked with the error as the reason, never thrown.
 //   - planText joins the plan's rows, one cell a line; firstLine is its first line with text.
 //
@@ -13,16 +14,15 @@
 // drift_usl.dns_live returns one row, one column plan, the parsed, analysed and optimised logical plans and the
 // physical plan, its first line "== Parsed Logical Plan ==", in 2.7 s.
 
-import { randomBytes } from "node:crypto";
 import type { QueryResult } from "../adapters/zetaris.ts";
-import { config, redact } from "../config.ts";
+import { redact } from "../config.ts";
 import { assertSelectOnly, type Engine, type RunOptions } from "../data/layer.ts";
-import { Redactor } from "../redactor.ts";
-import type { Tracer } from "../trace.ts";
+import { TRACE_REDACTOR, type Tracer } from "../trace.ts";
 
 export const EXPLAIN_MAX = 4000;
 
-const redactor = new Redactor(config.redactSalt || randomBytes(16).toString("hex"), config.redactWords);
+/** The trace's own redactor (src/trace.ts): REDACT_SALT, the salt the stored rows carry, so a plan names the pseudonyms every other line names. */
+const redactor = TRACE_REDACTOR;
 
 export type PlanRead =
   | { query: string; status: "ok"; firstLine: string; chars: number; ms: number }
