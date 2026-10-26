@@ -1,6 +1,7 @@
 import { createHash, createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { Redactor, countLabels, describeRedactions } from "../src/redactor.ts";
+import { Redactor, ZETARIS_NAMES, countLabels, describeRedactions } from "../src/redactor.ts";
+import { LIGHTNING_DBS, NAMESPACE, REST_DB, USL, USL_NAME, USL_TABLES } from "../src/zetaris/setup.ts";
 
 const r = new Redactor("test-salt");
 const H6 = "[0-9a-f]{6}";
@@ -260,6 +261,36 @@ describe("Redactor", () => {
     expect(describeRedactions(before, r.text(before))).toEqual({ bearer: 1, ip: 2, host: 1 });
     expect(describeRedactions(nginx, nginx)).toEqual({});
     expect(describeRedactions(nginx, r.text(nginx))).toEqual({ bearer: 1, ip: 2, host: 6 });
+  });
+});
+
+describe("Zetaris object names", () => {
+  const r = new Redactor("salt-zetaris");
+
+  it("leaves the semantic layer's entities, the datasources' tables and the namespace as Zetaris names them", () => {
+    for (const e of USL_TABLES) {
+      expect(r.text(`RUN DQ TABLE ${USL}.${e}`), e).toBe(`RUN DQ TABLE ${USL}.${e}`);
+      expect(r.text(`SELECT COUNT(*) FROM ${USL_NAME}.${e}`), e).toBe(`SELECT COUNT(*) FROM ${USL_NAME}.${e}`);
+    }
+    const names = [
+      "REGISTER DQ copy_validated TABLE lightning.metastore.drift.drift_usl.copy AS validated = 1",
+      "DESCRIBE DATASOURCE TABLE DRIFT.probe", "SELECT * FROM DRIFT.disposition", "DESCRIBE LESSONS.lesson", "COUNT LESSONS.ledger",
+      "DESCRIBE RULES.rules", "DESCRIBE DATASOURCE TABLE CLOUDFLARE.zone_f4e22adaf388c10bfac5955e3def837b", `LOAD USL ${USL_NAME} NAMESPACE ${NAMESPACE}`,
+    ];
+    for (const s of names) expect(r.text(s)).toBe(s);
+  });
+
+  it("still pseudonymises a real hostname, one that shares a word with a Zetaris name included", () => {
+    for (const host of ["copy.kestrel-foods-zz9q.com", "drift.kestrel-foods-zz9q.com", "cloudflare.com", "lessons.kestrel-foods-zz9q.io", "rules.shop.kestrel-foods-zz9q.co", "metastore.kestrel-foods-zz9q.net"]) {
+      expect(r.text(`proxy_pass https://${host};`), host).toMatch(/^proxy_pass https:\/\/host-[0-9a-f]{6}\.[a-z]+;$/);
+    }
+    // a Zetaris name next to a real host in one line: the name stays, the host goes
+    expect(r.text(`SELECT * FROM ${USL_NAME}.ticket WHERE target = 'api.kestrel-foods-zz9q.com'`)).toMatch(new RegExp(`^SELECT \\* FROM ${USL_NAME}\\.ticket WHERE target = 'host-[0-9a-f]{6}\\.com'$`));
+  });
+
+  it("names the heads setup.ts gives the layer, the datasources and the namespace", () => {
+    // DRIFT is the app Postgres datasource as setup.ts's own SOURCE_TABLE pattern spells it
+    expect([...ZETARIS_NAMES]).toEqual([USL_NAME, "DRIFT", ...LIGHTNING_DBS.map((d) => d.name), REST_DB, NAMESPACE.split(".").slice(0, 2).join(".")]);
   });
 });
 

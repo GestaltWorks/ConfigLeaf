@@ -24,8 +24,11 @@
 //                   (server.location./.proxy_pass), a one- or two-character single label is a SQL
 //                   alias (o.host, e2.actor; no client hostname looks like t.co), and a tail in
 //                   VOCAB (collection surfaces, nginx block and directive names, the observation
-//                   table) is the agent's, not a TLD a client runs under. A setting path ending in a
-//                   directive outside VOCAB is over-redacted in trace text only; the stored row keeps it.
+//                   table) is the agent's, not a TLD a client runs under. A name that starts with a
+//                   Zetaris head in its exact case (ZETARIS_NAMES: drift_usl., DRIFT., LESSONS., RULES.,
+//                   CLOUDFLARE., lightning.metastore.) is an entity, a datasource table or the namespace
+//                   and is left alone too. A setting path ending in a directive outside VOCAB is
+//                   over-redacted in trace text only; the stored row keeps it.
 //   e  words     -> word-XXXXXX. The tenant's own labels (REDACT_WORDS: zone labels, product names)
 //                   wherever they stand on their own between non-alphanumerics: a vhost file named
 //                   <brand>-prod.conf, a timer unit, an export subfolder named after a zone. Measured 24
@@ -89,6 +92,15 @@ const ALIAS = /^[A-Za-z0-9_]{1,2}\.$/;
  * name ends in (DRIFT.observation). None is a delegated TLD except .events, and no client runs under it.
  */
 const VOCAB = new Set("etc nginx dns audit control http server location upstream events stream mail listen root index include observation metastore drift collection setting referent".split(" "));
+/**
+ * The heads of the Zetaris object names the agent writes in trace and setup text (src/zetaris/setup.ts): the semantic
+ * layer (drift_usl.<entity>), the datasources (DRIFT.<table>, LESSONS.<table>, RULES.<table>, CLOUDFLARE.<table>) and the
+ * lightning.metastore namespace. A dotted name that starts with one of them, in this exact case, names a Zetaris object
+ * and passes as it is. Upper case is Zetaris's own spelling of a datasource, so cloudflare.com and drift.<client>.com
+ * stay hosts and are pseudonymised.
+ */
+export const ZETARIS_NAMES = ["drift_usl", "DRIFT", "LESSONS", "RULES", "CLOUDFLARE", "lightning.metastore"] as const;
+const ZETARIS_HEAD = new RegExp(`^(?:${ZETARIS_NAMES.map((n) => n.replace(/\./g, "\\.")).join("|")})\\.`);
 /** Dotted names ending in these are files, not hosts. A few are also ccTLDs (sh, so, md, pl, py); in collected configs the file reading wins. */
 const EXT = new Set(
   "conf cfg ini env log access error json jsonl yaml yml toml txt md pem key crt cer csr pub pid sock socket service timer target mount slice sh bash py pl rb go js ts mjs cjs tf html htm css php so bak old orig dist default sample lock gz tgz tar zip xz bz2 zst deb rpm db sqlite sql csv xml types map list inc tmpl tpl j2 swp tmp save out sig asc gpg sum".split(" "),
@@ -223,7 +235,7 @@ export class Redactor {
         const stem = labels.slice(0, -1);
         return stem.includes(".") ? `${this.hosts(stem)}.${tld}` : m;
       }
-      if (VOCAB.has(tld.toLowerCase()) || ALIAS.test(labels)) return m;
+      if (VOCAB.has(tld.toLowerCase()) || ALIAS.test(labels) || ZETARIS_HEAD.test(labels)) return m;
       if (/^host-[0-9a-f]{6}\.$/.test(labels)) return m;
       const name = m.toLowerCase();
       return hostPassesThrough(name) ? m : `${this.pseudo("host", name)}.${tld}`;
