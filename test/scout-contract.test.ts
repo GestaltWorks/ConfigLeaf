@@ -16,7 +16,7 @@ import { act, type ActResult } from "../src/actions/act.ts";
 import { FIX_REFUSED } from "../src/actions/investigate.ts";
 import { liveActorDeps } from "../src/actions/live.ts";
 import { targetOf, type ActionOutcome } from "../src/actions/plan.ts";
-import { canonicalReceiptBody, verifyReceipt, type SignedReceipt } from "../src/adapters/nightshift.ts";
+import { canonicalReceiptBody, receiptKeyFingerprint, verifyReceipt, type SignedReceipt } from "../src/adapters/nightshift.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { DataLayer } from "../src/data/layer.ts";
 import { objects, tenantActions } from "../src/data/queries.ts";
@@ -28,6 +28,7 @@ import {
 import { GUARD_VERSION } from "../src/guard/scout.ts";
 import { Redactor } from "../src/redactor.ts";
 import { APP, BLOG, TENANT, buildBase, buildWorld, type Base, type World } from "./fixtures/actions/world.ts";
+/** verifyReceipt under the key the contract carries: the deployment's own key, not the pinned Nightshift key. */const selfVerify = (r: SignedReceipt): boolean => verifyReceipt(r, [receiptKeyFingerprint(r.pubkey_b64)]);
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const NOW = new Date("2026-10-23T03:04:00.000Z");
@@ -64,11 +65,11 @@ describe("the execution contract", () => {
   });
 
   it("is signed and checked by the receipt code: Nightshift's canonical body, verifyReceipt, and Ed25519 from node:crypto alone", () => {
-    expect(verifyReceipt(good as unknown as SignedReceipt)).toBe(true);
+    expect(selfVerify(good as unknown as SignedReceipt)).toBe(true);
     const spki = Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), Buffer.from(good.pubkey_b64, "base64")]);
     const pub = createPublicKey({ key: spki, format: "der", type: "spki" });
     expect(verify(null, Buffer.from(canonicalReceiptBody(good.body), "utf8"), pub, Buffer.from(good.sig_b64, "base64"))).toBe(true);
-    expect(verifyReceipt({ ...good, body: { receipt: { ...good.body.receipt, object: "other" } } } as unknown as SignedReceipt)).toBe(false);
+    expect(selfVerify({ ...good, body: { receipt: { ...good.body.receipt, object: "other" } } } as unknown as SignedReceipt)).toBe(false);
   });
 
   it("is deterministic for one scope and instant, and differs by instant", () => {
@@ -103,7 +104,7 @@ describe("the execution contract", () => {
     longer.body.receipt.expires_at = "2026-10-24T03:04:00.000Z";
     expect(refusalOf(auth.verify(longer, SCOPE, NOW))[0]).toBe("bad-signature");
     const foreign = LocalContractAuthority.ephemeral().issue(SCOPE, NOW);
-    expect(verifyReceipt(foreign as unknown as SignedReceipt)).toBe(true);
+    expect(selfVerify(foreign as unknown as SignedReceipt)).toBe(true);
     expect(refusalOf(auth.verify(foreign, SCOPE, NOW))).toEqual(["bad-signature", "the contract is signed by a key this deployment does not hold"]);
   });
 
@@ -172,7 +173,7 @@ describe("the execution contract", () => {
 
   it("refuses a capability set that is not exactly the action's, wider or narrower, though the signature is valid", () => {
     const wide = forge(key, good, { capabilities: [...CAPABILITIES.rollback_file, "shell:exec"] });
-    expect(verifyReceipt(wide as unknown as SignedReceipt)).toBe(true);
+    expect(selfVerify(wide as unknown as SignedReceipt)).toBe(true);
     expect(refusalOf(auth.verify(wide, SCOPE, NOW))).toEqual(["scope-mismatch", "the contract grants capabilities host:write, nginx:reload, probe:run, vault:read, shell:exec; rollback_file takes exactly host:write, nginx:reload, probe:run, vault:read"]);
     expect(refusalOf(auth.verify(forge(key, good, { capabilities: ["host:write"] }), SCOPE, NOW))[0]).toBe("scope-mismatch");
     expect(refusalOf(auth.verify(forge(key, good, { capabilities: [] }), SCOPE, NOW))[1]).toContain("grants capabilities none");
