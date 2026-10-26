@@ -888,13 +888,6 @@ const dated = (iso: string): string => {
 export function headlineTile(v: NemotronView): string {
   const h = v.headline;
   if (!h) return "";
-  const runsText = (xs: { run: number }[]): string => {
-    const ns = xs.map((x) => x.run);
-    return ns.length === 1 ? `run ${ns[0]}` : `runs ${ns.slice(0, -1).join(", ")} and ${ns[ns.length - 1]}`;
-  };
-  // "6, 5, 6 of 9" when every run has the same total, else each run's own
-  const perRun = (xs: [number, number][]): string =>
-    !xs.length ? "-" : xs.every(([, d]) => d === xs[0][1]) ? `${xs.map(([k]) => k).join(", ")} of ${xs[0][1]}` : xs.map(([k, d]) => `${k} of ${d}`).join(", ");
   const li = (b: string, label: string): string => `<li><b>${escapeText(b)}</b>${escapeText(label)}</li>`;
   const invalid = [h.alone, h.checks].flatMap((c) => c.runs.filter((r) => !r.valid).map((r) => `${c.config} run ${r.run}`));
   const span = h.started && h.finished ? `, ${dated(h.started)} to ${dated(h.finished)}` : "";
@@ -1294,10 +1287,6 @@ function documentFacts(text: string, file: string) {
   };
 }
 
-/** "6, 5, 6 of 9" when every run has the same total, else each run's own "k of d". */
-const perRun = (xs: [number, number][]): string =>
-  xs.every(([, d]) => d === xs[0][1]) ? `${xs.map(([k]) => k).join(", ")} of ${xs[0][1]}` : xs.map(([k, d]) => `${k} of ${d}`).join(", ");
-const runsText = (xs: { run: number }[]): string => (xs.length === 1 ? `run ${xs[0].run}` : `runs ${xs.slice(0, -1).map((x) => x.run).join(", ")} and ${xs[xs.length - 1].run}`);
 
 /** One row of dots per run: k filled (b) of d, then "k of d". */
 const dotRows = (xs: { run: number; k: number; d: number }[]): string =>
@@ -1368,6 +1357,8 @@ export function renderSiteHtml(input: SiteInput, template: string = readFileSync
 
   // the acts: README words, and for a cycle the repository holds as a trace, the lines its selector takes
   const actOne = span("a `rollback_file` on a vhost at", "closed its ticket, #5)");
+  const actOneKind = /`(\w+)`/.exec(actOne)?.[1];
+  if (!actOneKind) throw new SiteError("refusing to publish: README.md's sentence on the vhost rollback names no action in code; act one's badge reads it");
   const actOneDay = /\b(\d{1,2} [A-Z][a-z]{2} \d{4})\b/.exec(span("On the operator's own estate the Actor ran", "in the operator's rehearsal"))?.[1];
   if (!actOneDay) throw new SiteError("refusing to publish: README.md's sentence on the Actor's actions on the operator's estate names no day; the timeline's title reads it");
   const traced = [
@@ -1396,6 +1387,7 @@ export function renderSiteHtml(input: SiteInput, template: string = readFileSync
   };
   const traceLine = (l: string): string => {
     const [head, status, ...rest] = l.split(" · ");
+    if (!/^\w+$/.test(status ?? "")) return `<b>${escapeHtml(head)}</b>${l.length > head.length ? escapeHtml(l.slice(head.length)) : ""}`;
     return `<b>${escapeHtml(head)}</b> · <i${status === "ok" ? "" : ' class="w"'}>${escapeHtml(status)}</i>${rest.length ? ` · ${escapeHtml(rest.join(" · "))}` : ""}`;
   };
   const traceFigure = (x: (typeof traced)[number]): string =>
@@ -1404,7 +1396,7 @@ export function renderSiteHtml(input: SiteInput, template: string = readFileSync
   const actThreeText = span("an `investigate` with Nemotron Lightning and Ultra followed by", "which opened incident #7.");
   const labText = span("On 25 Oct 2026 on the lab estate", "the trace in examples/traces/).");
   const acts = [
-    { lab: false, title: "A locked vhost, broken and rolled back", time: timeOf(actOne, "the vhost rollback"), text: prose(span("A config lock on a setting class", "at the next cycle."), actOne), more: `<span class="kind">${escapeHtml(/`(\w+)`/.exec(actOne)?.[1] ?? "")}</span>` },
+    { lab: false, title: "A locked vhost, broken and rolled back", time: timeOf(actOne, "the vhost rollback"), text: prose(span("A config lock on a setting class", "at the next cycle."), actOne), more: `<span class="kind">${escapeHtml(actOneKind)}</span>` },
     { lab: false, title: "A record pointed outside the inventory and reverted", time: timeOf(actTwoText[0], "FOUND-BUT-DIFFERENT"), text: prose(...actTwoText), more: traceFigure(two) },
     { lab: false, title: "A no-copy case, investigated and ticketed", time: timeOf(actThreeText, "the investigation"), text: prose(actThreeText), more: traceFigure(three) },
     { lab: true, title: "Why it changed", time: timeOf(labText, "the lab chain"), text: prose(labText), more: traceFigure(lab) },
@@ -1441,7 +1433,8 @@ export function renderSiteHtml(input: SiteInput, template: string = readFileSync
   // the stack and the layer
   const stack = readmeBullets(readmeText, null, /\*\*(.+?)\*\*/).map((b) => ({ lead: b.lead, text: b.text.replace(/\s*\(\[[^\]]*\]\(#[^)]*\)\)(?=\.?$)/, "") }));
   const stackTitle = stack.length > 1 ? `${stack.slice(0, -1).map((b) => b.lead).join(", ")} and ${stack[stack.length - 1].lead}` : stack[0].lead;
-  const lanes = datasources.map((ds) => ({ ds, rows: usl.filter((r) => sourceOf(r.builtFrom[0]) === ds) }));
+  const lanes = datasources.map((ds) => ({ ds, rows: usl.filter((r) => sourceOf(r.builtFrom[0] ?? DATASOURCE) === ds) })).filter((l) => l.rows.length);
+  for (const l of lanes) if (!described.has(l.ds)) throw new SiteError(`refusing to publish: uslMarkdown() describes no datasource ${l.ds}; the landing page's lane names it with the semantic layer's own words`);
   const uslHtml = `<div class="lanes" style="grid-template-columns:${lanes.map((l) => `minmax(0,${Math.max(1, Math.ceil(l.rows.length / 4))}fr)`).join(" ")}">${lanes.map((l) => `
 <div class="lane"><div class="lane-h"><b>${escapeHtml(l.ds)}</b><span>${escapeHtml(described.get(l.ds) ?? "")}</span></div><ul class="ents">${l.rows.map((r) => `<li><code>${escapeHtml(r.entity)}</code>${escapeHtml(r.builtFrom.join(", "))}${r.rule ? `<br><em>${escapeHtml(r.rule.name)}</em>` : ""}</li>`).join("")}</ul></div>`).join("")}
 </div>
@@ -1480,13 +1473,13 @@ ${receipts ? ring(receipts.verified, receipts.receipts, `published receipts whos
     ...traced.map((x) => ({ file: x.file, feeds: `the lines ${x.act} quotes`, meta: `${short(x.sha256)} · ${figure(x.events)} lines` })),
     { file: input.nemotron.dir, feeds: "the headline, the eval line, the rings and the receipts lines", meta: `${input.nemotron.runs.length} run files, planted.json${receipts ? ", receipts.json" : ""}` },
     ...(input.index.sample ? [{ file: input.index.sample.bundle, feeds: "the sample line, from this build's own pass", meta: short(input.index.sample.sha256) }] : []),
-    { file: "docs/data/index.json", feeds: "the checks ring", meta: "written by the same build" },
+    { file: "data/index.json", feeds: "the checks ring", meta: "beside this page, written by the same build" },
   ];
   const provHtml = `<ul class="prov">${prov.map((p) => `<li><code>${escapeHtml(p.file)}</code><span>${escapeHtml(p.feeds)}</span><small>${escapeHtml(p.meta)}</small></li>`).join("")}</ul>`;
 
   const repo = repositoryUrl();
   const headline = headlineSection(input.nemotron);
-  const sections: [string, string][] = [...(headline ? [["nemotron", "Nemotron"] as [string, string]] : []), ["sources", "Sources"], ["layer", "Layer"], ["decide", "Decide"], ["acts", "Acts"], ["proof", "Proof"]];
+  const sections: [string, string][] = [...(headline ? [["nemotron", "Nemotron"] as [string, string]] : []), ["sources", "Sources"], ["stack", "Stack"], ["layer", "Layer"], ["decide", "Decide"], ["acts", "Acts"], ["proof", "Proof"], ["provenance", "Provenance"]];
   const tokens: Record<string, string | null> = {
     META_DESCRIPTION: escapeHtml(`${heroOne} ${heroTwo}`.replace(/`/g, "")),
     NAV_SECTIONS: sections.map(([id, label]) => `<a href="#${id}">${label}</a>`).join(""),
@@ -1533,6 +1526,13 @@ ${receipts ? ring(receipts.verified, receipts.receipts, `published receipts whos
 }
 
 // ---- the build --------------------------------------------------------------------------------------------------
+
+/** "6, 5, 6 of 9" when every run has the same total, else each run's own "k of d"; "-" for no run. The replay page's tile and the landing page's headline share it. */
+const perRun = (xs: [number, number][]): string =>
+  !xs.length ? "-" : xs.every(([, d]) => d === xs[0][1]) ? `${xs.map(([k]) => k).join(", ")} of ${xs[0][1]}` : xs.map(([k, d]) => `${k} of ${d}`).join(", ");
+/** "run 1", "runs 1, 2 and 3"; "no run" for none. */
+const runsText = (xs: { run: number }[]): string =>
+  !xs.length ? "no run" : xs.length === 1 ? `run ${xs[0].run}` : `runs ${xs.slice(0, -1).map((x) => x.run).join(", ")} and ${xs[xs.length - 1].run}`;
 
 /** The key the header counts a finding by: the pass's finding id, or the row's own id for an older record that has none. */
 const findingKey = (f: FindingView): string => f.fields.find(([k]) => k === "finding id")?.[1] ?? f.id;

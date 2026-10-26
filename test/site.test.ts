@@ -817,7 +817,7 @@ describe("the landing page, docs/site.html", () => {
 
   it("names each file it reads, with the hash of each file it quotes", () => {
     const rows = [...section("provenance").matchAll(/<li><code>([^<]*)<\/code><span>[^<]*<\/span><small>([^<]*)<\/small><\/li>/g)].map((m) => [m[1], plain(m[2])]);
-    expect(rows.map((r) => r[0])).toEqual(["README.md", "examples/document.md", "src/zetaris/setup.ts", ...built.site.traces.map((t) => t.file), built.nemotron.dir, "sample/bundle.json", "docs/data/index.json"]);
+    expect(rows.map((r) => r[0])).toEqual(["README.md", "examples/document.md", "src/zetaris/setup.ts", ...built.site.traces.map((t) => t.file), built.nemotron.dir, "sample/bundle.json", "data/index.json"]);
     for (const [file, meta] of rows) {
       const shown = /^(sha256:[0-9a-f]+)…/.exec(meta)?.[1];
       if (!shown) continue;
