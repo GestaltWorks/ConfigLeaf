@@ -14,7 +14,7 @@
 // the pass runs over the same layer with no ledger and no memory for the class of each finding they name; default out
 // document.md and report.html at the repository root, the report through the tenant's redactor with this run's trace
 // and the repository's tip.
-// The page and the report pass the deny-list probe (redactor.ts countLabels over REDACT_WORDS and EXPORT_DENY_WORDS)
+// The page and the report pass the deny-list probe (src/document/export.ts probeExport: REDACT_WORDS, EXPORT_DENY_WORDS)
 // before either is written; one match and nothing is written. Prints the trace (one JSON line per step, also in logs/)
 // and one summary line. Exit 0 when both are written; 1 when a query fails or the probe refuses; 2 on a usage error.
 // Measured 25 Oct 2026: over sample/bundle.json at 02:07 UTC, examples/document.md, 178 lines with "Where each answer
@@ -39,7 +39,8 @@ import { TechnicianMemory } from "../src/engine/memory.ts";
 import { DriftWorld } from "../src/engine/world.ts";
 import { runPass } from "../src/pipeline.ts";
 import { TENANT_ID, TENANT_ID_SHAPE } from "../src/policy/schema.ts";
-import { Redactor, countLabels } from "../src/redactor.ts";
+import { Redactor } from "../src/redactor.ts";
+import { probeExport } from "../src/document/export.ts";
 import { Tracer } from "../src/trace.ts";
 import { exitOnConfigError } from "../src/cli.ts";
 
@@ -94,17 +95,10 @@ try {
       zetaris: { datasource: config.zetaris.datasource, queries: sent.queries, rows: sent.rows, failed: sent.failed },
     });
   }
-  const labels = [...config.redactWords, ...config.exportDenyWords];
-  for (const [what, text] of [["page", doc.markdown], ["report", html]] as const) {
-    const hits = countLabels(text, labels);
-    if (Object.keys(hits).length) {
-      console.error(`document: deny-list probe: ${Object.keys(hits).length} of ${labels.length} configured label(s) appear in the ${what}; nothing written`);
-      process.exit(1);
-    }
-  }
+  const labelCount: number = probeExport([["page", doc.markdown], ["report", html]]);
   writeFileSync(out, doc.markdown);
   writeFileSync(reportOut, html);
-  console.log(`document: ${rel(out)} written for ${tenant}, ${doc.markdown.split("\n").length - 1} lines, ${doc.open} finding(s) open, ${doc.queries.reduce((n, c) => n + c.runs, 0)} queries; ${rel(reportOut)} ${Buffer.byteLength(html)} bytes; deny-list probe 0 of ${labels.length} label(s); ${doc.decidedAt ? `decided at ${doc.decidedAt}` : "no decision on the latest passing runs"}`);
+  console.log(`document: ${rel(out)} written for ${tenant}, ${doc.markdown.split("\n").length - 1} lines, ${doc.open} finding(s) open, ${doc.queries.reduce((n, c) => n + c.runs, 0)} queries; ${rel(reportOut)} ${Buffer.byteLength(html)} bytes; deny-list probe 0 of ${labelCount} label(s); ${doc.decidedAt ? `decided at ${doc.decidedAt}` : "no decision on the latest passing runs"}`);
 } catch (e) {
   console.error(`document: ${redact((e as Error).message ?? String(e))}`);
   process.exitCode = 1;

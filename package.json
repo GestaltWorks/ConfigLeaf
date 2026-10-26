@@ -49,6 +49,7 @@
     "cycle": "tsx scripts/cycle.ts",
     "watch": "tsx scripts/watch.ts",
     "console": "tsx scripts/console.ts",
+    "report:executive": "tsx scripts/executive.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

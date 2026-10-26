@@ -186,7 +186,7 @@ The failing names:
 - DOC_INVENTORY_SQL: 2 runs, 2 rows
 - DOC_COPIES_SQL: 1 run, 112 rows
 - LATEST_APPROVALS_SQL: 1 run, 333 rows
-- POLICY_RULES_SQL: 1 run, 26 rows
+- POLICY_RULES_SQL: 1 run, 28 rows
 - DOC_UNAPPROVED_SQL: 3 runs, 1019 rows
 - DOC_DISPOSITIONS_OF_RUN_SQL: 3 runs, 27 rows
 - CAUSES_SQL: 1 run, 1 row

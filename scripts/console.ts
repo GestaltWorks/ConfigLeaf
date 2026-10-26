@@ -14,6 +14,9 @@
 //                      when either is missing. A dry pass starts in the background; Run a pass runs another. The
 //                      console never runs act.
 //
+// The header's switcher lists the tenants the store holds runs of (in sample mode the bundle's) and turns every page
+// to the one it names; --tenant or CONSOLE_TENANT names the first.
+//
 // Prints one line when it listens (and, live, one more when Zetaris lacks what the windows need) and one per action;
 // stops on SIGINT or SIGTERM.
 // Exit 2 on a usage error or when live mode lacks REDACT_SALT, DATABASE_URL or ZETARIS_API_KEY; 1 when it cannot start.
@@ -24,6 +27,7 @@ import { config, redact } from "../src/config.ts";
 import { DEFAULT_PORT, startConsole } from "../src/console/server.ts";
 import { liveBackend, liveRefusal, sampleBackend, zetarisGaps, type Backend } from "../src/console/state.ts";
 import { TENANT_ID, TENANT_ID_SHAPE } from "../src/policy/schema.ts";
+import { FileTracer, traceIdOf } from "../src/loop/trace.ts";
 import { exitOnConfigError } from "../src/cli.ts";
 
 exitOnConfigError();
@@ -43,7 +47,7 @@ try {
 }
 if (args.help) {
   console.log(USAGE);
-  console.log("Serves the technician's console on 127.0.0.1: the owner's report, every setting with its lock and approval, the findings, the actions and tickets, the traces and the sources; Unlock, Approve, Lock, Record exception and Run a pass. SAMPLE_MODE=true reads the recorded bundle on sql.js.");
+  console.log("Serves the technician's console on 127.0.0.1: the owner's report, the executive report, every setting with its lock and approval, the templates, the findings, the actions and tickets, the traces and the sources; Unlock, Approve, Lock, Record exception and Run a pass; a tenant switcher in the header. SAMPLE_MODE=true reads the recorded bundle on sql.js.");
   process.exit(0);
 }
 const portText = args.port ?? process.env.CONSOLE_PORT ?? String(DEFAULT_PORT);
@@ -68,7 +72,8 @@ try {
     if (!tenantGiven) usage("live mode needs a tenant: --tenant <id> or CONSOLE_TENANT");
     const refused = liveRefusal();
     if (refused) usage(refused);
-    backend = await liveBackend({ tenant: tenantGiven });
+    // the start's own findings (a tenants read that failed) go to logs/console_start_*.jsonl, written at the first line only
+    backend = await liveBackend({ tenant: tenantGiven, tracer: new FileTracer(traceIdOf("console_start"), { model: "none" }) });
   }
 } catch (e) {
   console.error(`console: ${redact((e as Error).message ?? String(e))}`);
@@ -87,6 +92,7 @@ try {
 }
 console.log(`console: ${backend.mode === "sample" ? "sample mode" : "live"}, tenant ${backend.tenant}, ${backend.source}${backend.mode === "sample" ? `, the sample's pass decided at ${backend.sampleInstant}` : ", the first dry pass running"}; ${((Date.now() - t0) / 1000).toFixed(1)} s`);
 console.log(`console: ${server.url}/  (Ctrl+C stops it)`);
+if (backend.tenantsError) console.log(`console: the store's tenants were not read (${backend.tenantsError}); the switcher lists ${backend.tenant} alone`);
 if (backend.mode === "live") {
   const gaps = await zetarisGaps(backend).catch(() => [] as string[]);
   if (gaps.length) console.log(`console: Zetaris does not read ${gaps.join(" or ")}; npm run zetaris:setup registers the table and refreshes the columns, and until it runs Unlock is refused`);
