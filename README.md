@@ -1,7 +1,7 @@
 # ConfigLeaf
 
 ConfigLeaf, package `drift-agent`, is a configuration assurance agent for an MSP. An MSP's knowledge of one setting
-could live in eight different places, and whether that setting is: Correct, Documented, Backed-Up, Restorable, and
+could live in eight different places, and whether that setting is Correct, Documented, Backed-Up, Restorable, and
 Relevant takes an awareness of many sources at once. ConfigLeaf reads the eight as one through one Zetaris layer and
 decides each finding under the MSP's policy: ROLLBACK, FIX, ESCALATE, HOLD with an expiry, or ADOPT.
 
@@ -10,29 +10,122 @@ The eight places: the live host (over SSH), the nightly export (the backup tarba
 audit log and each host's journal, the asset inventory, what the site answers from outside (the probes), and the PSA
 (the tickets).
 
-The estate is the operator's own two production hosts and six zones, run as one MSP tenant named `client-1`, and the
-23 adoptions are his accepted exceptions for it.
+ConfigLeaf runs on a live estate: the operator's own two production hosts and six Cloudflare zones, and the mail
+records of his Microsoft 365 tenant, run as one MSP tenant named `client-1`; the 23 adoptions are his accepted
+exceptions for it. A live pass reads every source through Zetaris, decides each finding and writes the ledger. Sample
+mode replays a redacted recording of the same estate, so the real pass runs on a clean clone with no credentials
+([Quick start](#quick-start-no-credentials)).
 
-Three commands need no credentials, no model and no `.env` (Node 22 or later, after `npm install`); on 25 Oct 2026 the
-first gives 27 findings, ADOPT 23, HOLD 3 and ESCALATE 1:
+![Eight places a setting lives, read as one through Zetaris; the pass gates each run, detects, runs the SQL checks, has Nemotron Lightning pick checks and Nemotron Ultra try to refute each claim, counts a verdict only on a signed receipt, and decides one of five verbs](assets/pipeline.svg)
 
-```bash
-SAMPLE_MODE=true npm run sample                         # the whole pass over the recorded rows
-npm run site                                            # the replay page in docs/, every check re-run to its recorded count
-SAMPLE_MODE=true npm run document -- --tenant client-1  # the owner's document and report: examples/document.md, examples/report.html
-```
+On the pre-registered development set, the SQL checks alone agree with the operator's labels on every item they judge
+and raise no false alarm. Nemotron 3 Ultra alone, reading the same rows with no SQL, agrees on 3 or 4 of 9 and raises a
+false alarm on 5 or 6 of 9. Inside the system as the falsifier, Ultra keeps the SQL's record and strikes 9, 8 and 8 of
+10 deliberately false test claims, where no falsifier strikes none and Lightning strikes 3, 2 and 2. Every model call
+carries a signed receipt, verified offline.
 
-| Development set, three runs of each configuration | Current: per-call scope, `eval/results/2026-10-25T23-34-17Z`, 25 Oct 2026 23:34 UTC | Shared scope, `eval/results/2026-10-25T09-25-44Z`, 25 Oct 2026 09:25 UTC |
-|---|---|---|
-| Nemotron 3 Ultra alone (C4) | agrees on 3, 4 and 3 of 9; reads yes on 6, 5 and 6 of the 9 labelled no | agrees on 3 of 9; reads yes on 6 of the 9 labelled no |
-| The SQL checks with Ultra as the falsifier (C3) | agrees on 9 of 9, 8 of 8 and 8 of 8; reads yes on 0 of 9 | agrees on 9 of 9, 9 of 9 and 8 of 8; reads yes on 0 of 9 |
-| Planted false claims the falsifier strikes (C3) | 9, 8 and 8 of 10 | 9 of 10 in each run |
-| Model calls | 390, all receipted, 384 receipts published and verified offline | 389, 383 of them receipted, 380 receipts published and verified offline |
-| Nightshift's own memory in the prompt (`hmem` on the published receipts) | 0 of 384 | 281 of 380 |
+| Development set, 15 items, three runs each (`eval/results/2026-10-25T23-34-17Z`) | Agrees with the labels | False alarms: labelled no, read yes | Deliberately false test claims struck |
+|---|---|---|---|
+| C0: the SQL checks alone, no model (what sample mode runs) | 9 of 9 in each run | 0 of 9 | 0 of 10: no falsifier |
+| C1: C0, with Nemotron 3.5 Lightning choosing the checks | 9 of 9 in each run | 0 of 9 | 0 of 10: no falsifier |
+| C2: C1, with Lightning as the falsifier | 0 of 0, 1 of 1 and 1 of 1 (9, 8 and 10 items not judged) | 0 of 9 | 3, 2 and 2 of 10 |
+| C3: C1, with Nemotron 3 Ultra as the falsifier | 9 of 9, 8 of 8 and 8 of 8 (0, 1 and 1 not judged) | 0 of 9 | 9, 8 and 8 of 10 |
+| C4: Nemotron 3 Ultra alone, no SQL | 3, 4 and 3 of 9 (2 not judged) | 6, 5 and 6 of 9 | not asked |
+
+HELD_OUT_RESULTS
 
 - **Zetaris**: every query of a live pass runs through Lightning SQL over the `DRIFT` datasource, with the `drift_usl` semantic layer and its DQ rules over it ([Zetaris](#zetaris)).
 - **Meterless**: the World Model holds the observations and the fingerprints FOUND-BUT-DIFFERENT compares, H-MEM holds the technician's lessons, and Nightshift serves Nemotron and signs a receipt for every call ([Meterless](#meterless)).
 - **NVIDIA Nemotron**: 3.5 Lightning selects the checks and 3 Ultra writes the SELECT that refutes a false claim, each verdict counted through the receipt gate ([Nemotron](#nemotron)).
+
+## Quick start, no credentials
+
+Node 22 or later, no `.env`:
+
+```bash
+npm ci
+SAMPLE_MODE=true npm run sample
+```
+
+The real pass over `sample/bundle.json`, the redacted recording of the live estate, in about five seconds:
+
+```text
+ConfigLeaf · sample · tenant client-1 · recorded estate, no credentials
+  load      sample/bundle.json · 80 runs of 2 tenants · 25,450 rows in 16 tables
+  gate      80 of 80 runs pass the DQ gate
+  observe   14,174 observations in the World Model
+  detect    27 findings in 4 classes
+            20  proxied name, origin trusts no Cloudflare range
+             3  DNS record with no site behind it
+             3  site with no DNS record
+             1  name and its www treated differently by the proxy
+  decide    ADOPT 23 · HOLD 3 · ESCALATE 1
+            memory    23 lessons · 23 exceptions applied · 0 lapsed
+            DQ        exception_in_force holds for 23 of 23 ADOPT under an exception
+            ESCALATE  name and its www treated differently by the proxy
+                      the hold ran out at 25 Oct 03:21 UTC, a technician owns it
+  explain   1 cause · unknown 1
+  document  examples/document.md · same bytes as on disk
+  report    examples/report.html · 27 findings open · same bytes as on disk
+```
+
+Then:
+
+```bash
+SAMPLE_MODE=true npm run console                          # the technician's console on http://127.0.0.1:8090/
+SAMPLE_MODE=true npm run document -- --tenant client-1    # the owner's document and report: examples/document.md, examples/report.html
+npm run site                                              # the replay page in docs/, every check re-run to its recorded count
+npm test
+```
+
+A live-only command run with no `.env` prints one line naming what it needs and exits 2. [Run it](#run-it) lists every
+command, live mode included.
+
+## Where it sits in an MSP's stack
+
+ConfigLeaf reads the tools an MSP already runs and writes back to the ones a technician works in.
+
+| The MSP's tool | What ConfigLeaf reads or writes | In this build |
+|---|---|---|
+| Documentation platform (IT Glue, Hudu) | each setting's approved value, the documentation of record | `approved_setting`, written by `npm run approve` and the console's Approve |
+| Backup | the nightly export, every member of the newest tarball, and whether it restores | the vault, one git repository per host and account, and `npm run validate:copies` |
+| RMM and remote access | each setting as the live host answers it | one SSH session of fixed reads per host |
+| DNS provider | the records and the provider's audit log | Cloudflare, read by the collector and by Zetaris itself as a live REST datasource |
+| Microsoft 365 | the mail records each domain needs | Microsoft Graph, read only, held to what DNS serves |
+| Monitoring | what each served name answers from outside | `npm run probe`: http, dns and tls |
+| Asset inventory | the hosts' addresses | `inventory_asset` |
+| PSA (HaloPSA, ConnectWise, Autotask) | a ticket per finding that needs a person, opened, commented on and closed | GitHub Issues; each PSA is a field map |
+
+## How it scales
+
+A pass is per tenant: it reads every source of that tenant as one through Zetaris, so a new source is a collector and
+its tables, and no new agent. Collectors run per source and commit complete runs, and passes for different tenants share
+nothing but the Zetaris layer, so they run side by side. Inside a pass, reads go to Zetaris `PASS_CONCURRENCY` at a time
+(default 4, at most 16), and the reads that grow with history are sets: the DQ gate reads a tenant's runs in one query,
+and the observe step reads a tenant's observations in pages of 5,000 rows keyed on `obs_id`.
+
+| Live pass, tenant `client-1`, read only, `PASS_CONCURRENCY` 4, 26 Oct 2026 | Zetaris queries | Time | Findings |
+|---|---|---|---|
+| One read per run, straight off the tables | 552 | 69.5 s | 27 |
+| Every read through the semantic layer, the observe step as sets | 401 | 76.4 s | 27 |
+| Every read through the semantic layer, the gate and the observe step as sets | 235 | 47.6 s | 27 |
+
+Each row decides the same 27 findings the same way. A read through the semantic layer takes about twice as long as the
+same read off the table on the local 2.4.3.1 bundle, and the sets more than pay it back. The checker's precondition
+checks, 105 of the 235 queries, run one query per template per finding; one query per template across findings is the
+next step.
+
+## Deviations and measured limits
+
+| Planned | What runs | Why |
+|---|---|---|
+| A least-privilege Zetaris API key | the admin key, every query SELECT-only through the SQL guard | on the local 2.4.3.1 bundle, API tokens are admin-only |
+| Filters pushed down as written | an OR over one table is read through a fence, `fencedOr()` with `LIMIT 2147483647` | Zetaris 2.4.3.1 drops the parentheses around a pushed-down OR: a filter that should return 0 rows returned 6,090 |
+| Reads straight off the tables | every read through the `drift_usl` semantic layer | the semantic layer carries the DQ rules and the cross-source joins; each read costs about twice as much, measured above |
+| The whole evidence in each prompt | evidence cells cut to 240 characters when a prompt would pass 4,000; the Scout guard blocks a text over 64 KiB unread | Nightshift 1.2.7 sends only the last 4,000 characters of a prompt (`egress.sent.prompt_chars`); 2 of C4's items went unjudged for it |
+| DKIM on Microsoft 365 | MX, SPF and autodiscover held to DNS | Graph lists no DKIM selectors |
+| A PSA | GitHub Issues in the `drift-tickets` repository | HaloPSA, ConnectWise and Autotask are a field map |
+| A documentation platform's API | the `approved_setting` table | IT Glue and Hudu map onto its rows |
 
 ## What it is
 
@@ -169,7 +262,7 @@ Live mode starts with `cp .env.example .env` and its keys filled in, each descri
 Nightshift and GitHub tokens are read at run time. In cycle order, after the one-time setup:
 
 ```bash
-npm run zetaris:setup                                   # once: the DRIFT, LESSONS and RULES datasources, the fourteen-entity USL, five DQ rules
+npm run zetaris:setup                                   # once: the DRIFT, LESSONS and RULES datasources, the 25-entity semantic layer, six DQ rules
 npm run policy:load -- --tenant <id>                    # once per policy version: the policy file -> policy_rule rows
 npm run collect:cloudflare -- --tenant <id>             # DNS records and the audit log -> Postgres and the vault
 npm run collect:linux -- --host <alias> --tenant <id>   # one SSH session of fixed reads, per LINUX_HOSTS alias
@@ -214,7 +307,7 @@ Measured on the operator's estate, tenant `client-1`, and the writes on the lab 
 | `npm run site` | The replay page, built from [examples/](examples/), the committed lessons in `examples/memory`, the repository's SQL and the newest [eval/results/](eval/results/) (`--results` names another): every finding with every check re-run to its recorded count before anything is published, the owner's document as its Document tab, "Where each answer comes from" as its Sources tab, both rendered to HTML at build time, and the [Nemotron tab](docs/index.html#nemotron): the eval's calls, requested and served, and every judge SELECT recorded with a row count re-guarded and re-run over the recording, the build refused on any count that differs. The header counts each finding once by its finding id, and a tile above its counts sets Ultra alone beside the checks with Ultra as the falsifier, per run, from the same results. | 8 findings by finding id (ADOPT 4, HOLD 3, ESCALATE 1), 9 rows over the three slices with the one `proxy_split` in two, 33 checks re-run equal, the 196-line document decided at 2026-10-25T14:17:53.416Z, the 9 class rows; the tile over `eval/results/2026-10-25T23-34-17Z`: items labelled no read as yes 6, 5 and 6 of 9 for Ultra alone (C4) and 0 of 9 in each run for C3, planted claims struck by C3 9, 8 and 8 of 10; the Nemotron tab over the same run (dev): 390 calls, 390 receipts verified at run time (384 published and verified offline, 6 withheld), 0 substitutions, 134 judge SELECTs, 130 re-run equal and the recorded text of 4 (C3 run 1, P09 and E24; C3 run 3, E17 and E24) refused by the engine; 315,407 bytes of the 350,000-byte budget, a rebuild byte-identical, 26 Oct 2026. |
 | `npm run conformance`, `npm run conformance:hmem` | The vendored Meterless suites pass: the World Model suite runs through `src/engine/world.ts`, and the H-MEM suite runs through the reference class that `src/engine/memory.ts` re-exports. | World Model 8 of 8; H-MEM 13 of 13 and the `TechnicianMemory` wrapper check, 25 Oct 2026; and in CI on every push to main and every pull request ([ci.yml](.github/workflows/ci.yml)). |
 | `npm run spike:nightshift` | Nightshift serves Lightning and Ultra by explicit id, signs a receipt for each call that verifies offline, and tracks the app as a job whose event stream replays its turns. | 9 of 9 PASS: 142 model ids listed, Lightning in 3,107 ms and Ultra in 1,625 ms on their OpenRouter routes, 100 of 100 listed receipts verified, this run's 2 receipts in the list, 65 turn events replayed, 25 Oct 2026. |
-| `npm run zetaris:setup` | The idempotent setup of the `DRIFT` datasource, the `LESSONS` and `RULES` file sources, the fourteen-entity USL and its five DQ rules. | 71 statements, 0 failed; `run_complete` 140 of 140 runs valid, `exception_in_force` 184 of 184 adoptions valid, 25 Oct 2026 22:57 UTC. |
+| `npm run zetaris:setup` | The idempotent setup of the `DRIFT` datasource, the `LESSONS` and `RULES` file sources, the 25-entity semantic layer and its six DQ rules, and the `CLOUDFLARE` REST datasource. | 111 statements, 82 ok, 29 skipped, 0 failed in 49.2 s, the 25 entities and the six DQ rules as compiled, and the control-plane run 40 of 40 objects, all approved, 26 Oct 2026 07:49 UTC. |
 | `npm run collect:zetaris -- --tenant client-1` | Zetaris's own control plane is a collected surface, `zetaris.control`: the semantic layer's entities, the DQ rules, the grants, the datasources and the server version, read only, one observation per object of its canonical JSON with the population asserted, committed to the vault; once approved, the pass holds it to the approval, and an edited rule, a dropped entity or a widened grant is `drift_vs_approved` ESCALATE with its diff (`test/zetaris-control.test.ts`). | Run 30 of 30 objects complete (16 for the USL, 6 DQ rules, 2 for the grants, 5 for the datasources, the server), 30 rows written, its vault commit changing no file since the setup's run of 04:55 UTC; `npm run approve -- --tenant client-1 --surface zetaris.control` wrote 30 approvals; the read-only pass after it raised 0 findings on the surface, 26 Oct 2026. |
 | `npm run pass` (the schema guard) | Before every live pass reads a row, the columns of the fourteen `DRIFT` tables it reads and of each `CLOUDFLARE` REST table are held to sql/schema.sql and to the fields `dns_live` reads; a missing or retyped column fails the surfaces that read it closed, their findings not checked and kept from the ledger (`test/schema-guard.test.ts`). | "schema 20 tables as expected" on the pass row for client-1 at 04:55 UTC, 21 statements, 0.96 s when the guard runs alone; the pass's EXPLAIN QUERY AS of the hero join and the `dns_live` read traced once each, 26 Oct 2026. |
 | `npm run zetaris:queries` | The hero query, the survey and the detectors run through Zetaris itself. | 0 hero rows, the 27 survey findings, 0 invalid runs, 24 Oct 2026. |
@@ -546,9 +639,7 @@ driver container with docker (through `wsl.exe -d Ubuntu-24.04` on Windows) and 
 files' sha256 in `.world/filestore-copy.json`, gitignored, and a live pass (before the Decider's DQ read) and
 `npm run answer` (after it writes the store) put the files again when their hash differs, so `LESSONS.lesson` holds
 the store the Decider recalls from; the setup's copy of the three files took 511 ms on 25 Oct 2026 at 23:24 UTC. The
-setup then builds the `drift_usl` semantic layer of fifteen entities (`collection`, `setting`, `referent`,
-`backup_copy`, `policy`, `copy`, `probe`, `disposition`, `action`, `ticket`, `cause`, `lesson`, `rule`, `adoption`,
-`dns_live`) and six DQ rules: `run_complete` on `collection`, `copy_validated` on `copy` (the copy's latest validation
+setup then builds the `drift_usl` semantic layer of twenty-five entities, one for each table a pass reads (the table under [The semantic layer](#the-semantic-layer) lists each), and six DQ rules: `run_complete` on `collection`, `copy_validated` on `copy` (the copy's latest validation
 is ok or ok_with_gaps), `action_verified` on `action` (a done rollback or revert names the probes that verified it),
 `cause_evidenced` on `cause` (a cause of any class but unknown names at least one evidence id), `exception_in_force`
 on `adoption` and `dns_inventory_current` on `dns_live`. The `adoption` entity is the cross-source join: every ADOPT

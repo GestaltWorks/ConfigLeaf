@@ -4,6 +4,10 @@
   "private": true,
   "description": "Config-drift assurance agent for MSPs: changed since backup, would a restore regress, drift vs golden.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/owner-redacted/ConfigLeaf"
+  },
   "type": "module",
   "engines": {
     "node": ">=22"
