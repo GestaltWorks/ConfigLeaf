@@ -9,7 +9,11 @@
 // --no-ledger, the latest recorded pass's), then the DQ rule dns_inventory_current over the records the Cloudflare DNS
 // API returns now through Zetaris's REST datasource CLOUDFLARE (for a tenant with a DNS run), the classes in plain
 // words and one line per ROLLBACK, FIX and ESCALATE, and the done
-// line naming the trace. Before anything else the pass runs the source-schema guard (src/zetaris/schema-guard.ts):
+// line naming the trace. The pass runs the eval's C3 judge (src/agents/falsifier.ts): Nemotron 3 Ultra through Nightshift
+// tries to refute each finding the withdraw rule leaves open with one guarded SELECT, run through the same DataLayer, its
+// verdict counted only on a receipt the gate passes; the rule's decision stands. The pass row's "judge" line counts the
+// findings judged, struck, held and not counted; with no runtime token or URL each is "judge not counted: no model
+// configured" and the pass decides as before. Before anything else the pass runs the source-schema guard (src/zetaris/schema-guard.ts):
 // its row's "schema" line reads "<n> tables as expected", or names each DRIFT or CLOUDFLARE table whose columns the pass
 // reads changed, and the findings on a surface it failed closed (not checked, nothing recorded). --verbose
 // adds the full output: one JSON object per finding of the tenant, one DISPOSITION line per finding as the ledger
@@ -33,6 +37,7 @@
 
 import { randomBytes } from "node:crypto";
 import { parseArgs } from "node:util";
+import { liveJudge, traceModel } from "../src/agents/falsifier.ts";
 import { config, redact } from "../src/config.ts";
 import { DataLayer } from "../src/data/layer.ts";
 import { CountingEngine } from "../src/data/engines/counting.ts";
@@ -89,7 +94,9 @@ if (record && !process.env.DATABASE_URL) needs("DATABASE_URL is blank: the ledge
 
 const tenant = args.tenant;
 const redactor = new Redactor(config.redactSalt || randomBytes(16).toString("hex"), config.redactWords);
-const tracer = new FileTracer(`pass_${Date.now().toString(36)}`, { model: "none" });
+// The eval's C3 judge on every finding the withdraw rule leaves open; with no runtime token or URL each is "judge not counted: no model configured".
+const judge = liveJudge();
+const tracer = new FileTracer(`pass_${Date.now().toString(36)}`, traceModel(judge));
 const trace = tracer.logFile.replace(/\\/g, "/");
 const present = presentOptions(args);
 const table = new Table(present, (s) => redactor.text(redact(s)));
@@ -100,7 +107,7 @@ try {
   store = record ? Store.fromEnv({ schema: args.schema }) : null;
   const engine = new CountingEngine(new ZetarisEngine());
   const layer = new DataLayer(engine);
-  const r = await passStep(layer, { tenant, ledger: store ? new PgLedger(store) : null, memory: new TechnicianMemory({ storage: "read" }), decidedAt, tracer, refreshFiles: () => refreshFileTables() });
+  const r = await passStep(layer, { tenant, ledger: store ? new PgLedger(store) : null, memory: new TechnicianMemory({ storage: "read" }), decidedAt, tracer, refreshFiles: () => refreshFileTables(), ...(judge ? { judge } : {}) });
   const ms = Date.now() - t0;
   if (!present.quiet) for (const l of table.row("pass", passView(r, { datasource: config.zetaris.datasource, ...engine.tally() }), ms)) console.log(l);
   if (present.verbose) {

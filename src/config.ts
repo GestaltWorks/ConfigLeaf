@@ -80,6 +80,12 @@ const Schema = z.object({
   // findings' checks and decisions, each finding's checks still one after another. Every decision, ledger row and trace line is
   // the same at any value; 1 runs the reads one after another, as the pass did before. At most 16 (MAX_PASS_CONCURRENCY).
   PASS_CONCURRENCY: z.string().default("4"),
+  // The live pass's judge (src/agents/falsifier.ts): on, the eval's C3 judge, Nemotron 3 Ultra through Nightshift, tries to
+  // refute each finding the withdraw rule leaves open; off, no model call, and each such finding is "judge not counted:
+  // judge off". Blank is on. Independent of --apply. Sample mode runs no model whatever this says.
+  DRIFT_JUDGE: z.string().default("on"),
+  // The most judge model calls one pass makes; the findings past it keep their decision, each traced with why. Default 64.
+  JUDGE_MAX_CALLS: z.string().default("64"),
   LOG_DIR: z.string().default("logs"),
 });
 
@@ -164,6 +170,20 @@ export function parsePassConcurrency(s: string): number {
   return checkPassConcurrency(Number(t));
 }
 
+/** DRIFT_JUDGE as a switch: "on" (or blank) or "off", any case. Throws on any other value. */
+export function parseJudgeSwitch(s: string): "on" | "off" {
+  const t = s.trim().toLowerCase() || "on";
+  if (t !== "on" && t !== "off") throw new ConfigError(`DRIFT_JUDGE: on or off, got ${JSON.stringify(s)}`);
+  return t;
+}
+
+/** JUDGE_MAX_CALLS as a number: a whole number, 0 for no judge call at all, blank for the default 64. Throws on any other value. */
+export function parseJudgeMaxCalls(s: string): number {
+  const t = s.trim() || "64";
+  if (!/^(0|[1-9]\d*)$/.test(t)) throw new ConfigError(`JUDGE_MAX_CALLS: a whole number, got ${JSON.stringify(s)}`);
+  return Number(t);
+}
+
 /** Where the technician's lessons live when DRIFT_MEMORY_DIR is blank: under .world/, which .gitignore keeps out of the repository. */
 export const DEFAULT_MEMORY_DIR = ".world/memory";
 
@@ -239,6 +259,14 @@ export const config = {
    */
   get passConcurrency(): number {
     return parsePassConcurrency(raw.PASS_CONCURRENCY);
+  },
+  /** DRIFT_JUDGE, parsed when read; default on: the live pass runs the eval's C3 judge. ConfigError as above. */
+  get judge(): "on" | "off" {
+    return parseJudgeSwitch(raw.DRIFT_JUDGE);
+  },
+  /** JUDGE_MAX_CALLS, parsed when read; default 64 judge model calls a pass. ConfigError as above. */
+  get judgeMaxCalls(): number {
+    return parseJudgeMaxCalls(raw.JUDGE_MAX_CALLS);
   },
   logDir: raw.LOG_DIR,
 } as const;

@@ -22,7 +22,8 @@
 //                       when the collect steps made a new commit, else nothing; ok when every repository validated,
 //                       whatever each result.
 //   pass                passStep with the PgLedger, the Zetaris copy of the lessons and the rules refreshed first when
-//                       stale (refreshFileTables); its row names the queries the pass sent through Zetaris, the
+//                       stale (refreshFileTables), and the context's judge (the eval's C3 judge, src/agents/falsifier.ts)
+//                       when it has one; its row names the queries the pass sent through Zetaris, the
 //                       context's query tally (LiveContext queries) read before and after it, with the datasource.
 //   explain             explainPass (src/explain/explain.ts) over the pass's findings: one finding_cause row per
 //                       ROLLBACK, FIX, ESCALATE and explained HOLD into the Store, a dry run included; ok always, an
@@ -49,6 +50,7 @@
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { act, actSummary, type ActorDeps } from "../actions/act.ts";
+import type { PassJudge } from "../agents/falsifier.ts";
 import { liveActorDeps } from "../actions/live.ts";
 import { Cloudflare, collectCloudflare } from "../collectors/cloudflare.ts";
 import { collectHost, storeRows, type CollectResult } from "../collectors/linux.ts";
@@ -301,6 +303,8 @@ export interface LiveContext {
   layer: DataLayer;
   tracer: Tracer;
   memory?: TechnicianMemory;
+  /** The pass's judge (src/agents/falsifier.ts liveJudge): the eval's C3 judge on every finding the withdraw rule leaves open; absent, the pass runs no model. */
+  judge?: PassJudge | null;
   /** The layer's query tally so far (src/data/engines/counting.ts); the pass row names the queries the pass sent when given. */
   queries?: () => QueryTally;
   /** The document's path, and the root it is shown relative to; the report goes beside it. */
@@ -328,7 +332,7 @@ export function liveSteps(ctx: LiveContext): CycleSteps {
     validate: (commits) => validateStep(commits, { tenant, vaultDir: ctx.vaultDir, store: storeCopies(store), redactor }),
     pass: async (): Promise<PassReport> => {
       const before = ctx.queries?.();
-      const r = await passStep(layer, { tenant, ledger: new PgLedger(store), memory: ctx.memory, tracer, refreshFiles: () => refreshFileTables() });
+      const r = await passStep(layer, { tenant, ledger: new PgLedger(store), memory: ctx.memory, tracer, refreshFiles: () => refreshFileTables(), ...(ctx.judge ? { judge: ctx.judge } : {}) });
       const sent = before && ctx.queries ? { datasource: config.zetaris.datasource, ...tallySince(before, ctx.queries()) } : undefined;
       return { ok: true, summary: redactor.text(r.summary), pass: r, view: passView(r, sent) };
     },

@@ -8,6 +8,8 @@ import { ConfigError, config } from "./config.ts";
 export function exitOnConfigError(): void {
   try {
     void config.passConcurrency;
+    void config.judge;
+    void config.judgeMaxCalls;
   } catch (e) {
     if (!(e instanceof ConfigError)) throw e;
     process.stderr.write(`${e.message}\n`);

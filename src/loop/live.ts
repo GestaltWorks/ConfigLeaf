@@ -6,7 +6,8 @@
 //   - liveRefusal names the first missing piece the requested cycle needs, or returns null: SAMPLE_MODE off,
 //     REDACT_SALT, DATABASE_URL and ZETARIS_API_KEY set; CLOUDFLARE_API_TOKEN when collect or probe runs or --apply
 //     is given; LINUX_HOSTS when collect runs; DRIFT_TICKETS_REPO when the tickets step sends.
-//   - liveCycle builds a FileTracer (logs/cycle_<base36 ms>.jsonl, model_requested none on a dry run), the DataLayer
+//   - liveCycle builds the pass's judge (src/agents/falsifier.ts liveJudge, the eval's C3 judge), a FileTracer
+//     (logs/cycle_<base36 ms>.jsonl, model_requested none on a dry run with no Nightshift client), the DataLayer
 //     over ZetarisEngine inside a CountingEngine (src/data/engines/counting.ts), the technician's lessons read from
 //     the store DRIFT_MEMORY_DIR names (read only, so a cycle leaves a committed store as committed), and runs
 //     src/loop/cycle.ts over liveSteps with the hosts of LINUX_HOSTS in their configured order. The document goes to
@@ -17,6 +18,7 @@
 
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { liveJudge, traceModel } from "../agents/falsifier.ts";
 import { HOSTS } from "../collectors/linux.ts";
 import { config, redact } from "../config.ts";
 import { DataLayer } from "../data/layer.ts";
@@ -72,7 +74,9 @@ export function liveShared(): LiveShared {
 
 /** One live cycle with its own trace file. */
 export async function liveCycle(o: LiveCycleOptions, shared: LiveShared): Promise<{ result: CycleResult; traceFile: string; traceLines: number }> {
-  const tracer = new FileTracer(`cycle_${Date.now().toString(36)}`, o.apply ? {} : { model: "none" });
+  // The pass's judge: Nemotron 3 Ultra through Nightshift, as the eval's C3; with no runtime token or URL, a judge that counts nothing.
+  const judge = liveJudge();
+  const tracer = new FileTracer(`cycle_${Date.now().toString(36)}`, traceModel(judge, o.apply));
   const { redactor } = shared;
   const deny = [...new Set([...config.redactWords, ...config.exportDenyWords])];
   const counting = new CountingEngine(new ZetarisEngine());
@@ -80,7 +84,7 @@ export async function liveCycle(o: LiveCycleOptions, shared: LiveShared): Promis
   const traceFile = tracer.logFile.replace(/\\/g, "/");
   const steps = liveSteps({
     tenant: o.tenant, apply: o.apply, ticketsDryRun: o.ticketsDryRun, redactor, labels: new Redactor(config.redactSalt, deny), deny, store: shared.store, vault: shared.vault, vaultDir: config.vaultDir,
-    layer: new DataLayer(counting), tracer, memory: new TechnicianMemory({ storage: "read" }), queries,
+    layer: new DataLayer(counting), tracer, memory: new TechnicianMemory({ storage: "read" }), judge, queries,
     out: path.join(ROOT, "document.md"), root: ROOT, source: `Zetaris over the ${config.zetaris.datasource} datasource`,
     traceFile: path.relative(ROOT, tracer.logFile).replace(/\\/g, "/"), tip: repoTip(ROOT),
   });

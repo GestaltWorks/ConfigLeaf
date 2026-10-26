@@ -405,7 +405,7 @@ describe("pass over the recorded bundle (the real estate, redacted), model: none
     expect(ev.filter((e) => e.action === "decide").every((e) => e.detail === DEFAULT_POLICY_DETAIL)).toBe(true);
     expect(ev.filter((e) => e.input_summary === "policy").map((e) => [e.agent, e.action, e.output_summary, e.detail])).toEqual([[
       "decider", "triage", "locked settings without an approved value: 0",
-      "0 policy rule(s) read; verbs ADOPT 5, ESCALATE 33; decided by policy 0, operator 0, default 38; no probe run in this pass; no ledger; model: none",
+      "0 policy rule(s) read; verbs ADOPT 5, ESCALATE 33; decided by policy 0, operator 0, default 38; no probe run in this pass; no ledger; model: none (no judge wired)",
     ]]);
   });
 
@@ -790,7 +790,7 @@ describe("the Decider under the MSP's policy (test/fixtures/policy-bundle.json)"
     expect(decide[5].detail).toContain(`production affected (1 failing probe in ${PROBE_RUN}: http shop.example.invalid); approved ${h12(approvedOf(SHOP))}, 1 copy row(s), no valid copy`);
     expect(tracer.events.filter((e) => e.input_summary === "policy").map((e) => [e.output_summary, e.detail])).toEqual([[
       "locked settings without an approved value: 1",
-      `17 policy rule(s) read; verbs ADOPT 2, HOLD 4, ESCALATE 1, ROLLBACK 3, FIX 1; decided by policy 11, operator 0, default 0; probe run(s) ${PROBE_RUN}; ledger: 11 disposition(s) and 6 referent fingerprint(s) written; model: none`,
+      `17 policy rule(s) read; verbs ADOPT 2, HOLD 4, ESCALATE 1, ROLLBACK 3, FIX 1; decided by policy 11, operator 0, default 0; probe run(s) ${PROBE_RUN}; ledger: 11 disposition(s) and 6 referent fingerprint(s) written; model: none (no judge wired)`,
     ]]);
     expect(tracer.events.every((e) => e.model_requested === "none") && tracer.events.every((e) => !(e.action === "query" && e.status === "failed"))).toBe(true);
   });

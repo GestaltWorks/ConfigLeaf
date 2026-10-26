@@ -1,5 +1,6 @@
-// One assurance pass with no model: what SAMPLE_MODE runs over sample/bundle.json and what the live
-// pass grows from (same steps, with Lightning choosing checks and Ultra judging added). Every step is
+// One assurance pass: what SAMPLE_MODE runs over sample/bundle.json with no model, and what the live pass
+// runs with Nemotron 3 Ultra as the falsifier judge, the judge of the eval's C3 (the checks stay the class's
+// defaults; Lightning chooses checks in the eval and the Actor). Every step is
 // SQL through the DataLayer, or a World Model query over what that SQL returned; nothing maps an
 // input to an answer.
 //
@@ -76,8 +77,15 @@
 //            dispositionId), and, in the observe step, one referent_fingerprint per dns_name
 //            observation of each passing host run (src/data/fingerprint.ts). One decider line per pass
 //            counts the settings a locked rule governs that have no approved value, and the verbs.
-//   judge    skipped and traced as such: model: none; or "verdict cannot move" when the
-//            withdraw rule says no judge call would be worth spending, or when an exception settled it.
+//   judge    withheld and traced skipped, "verdict cannot move", when the withdraw rule says no judge call would be
+//            worth spending or an exception settled it. Otherwise, given a judge (opts.judge, live:
+//            src/agents/falsifier.ts liveJudge), the eval's C3 judge: the finding's summary and evidence rows to Nemotron
+//            3 Ultra through Nightshift, which writes one refuting SELECT; the guard holds it to one SELECT over known
+//            tables with LIMIT capped at 50 and the DataLayer runs it, rows striking the claim. The verdict counts only on
+//            a receipt the gate passes. A rule's or an exception's decision stands whatever it says; a default decision
+//            takes C3's (struck: ADOPT, the claim standing: the checks' verb), except that a strike never turns ESCALATE
+//            into ADOPT. A verdict that does not count leaves the decision as it was, traced "judge not counted: <reason>".
+//            With no judge, skipped and traced "model: none (sample)": SAMPLE_MODE, the eval's baseline and the tests.
 //
 // The steps run one after another and the reads inside a step run PASS_CONCURRENCY at a time (src/config.ts, default 4;
 // src/concurrency.ts): the tenants' rule reads and the gate's run_complete per run, the observe step's reads per run, the
@@ -102,6 +110,8 @@
 // at later instants write 11 rows each, and the first past the kept expiry records the found_but_different ESCALATE.
 
 import { createHash } from "node:crypto";
+// The live judge, the eval's C3 (src/agents/falsifier.ts).
+import { addToTally, capReached, judgeClause, judgeFinding, noJudgeClause, otherTenant, zeroTally, type JudgeTally, type PassJudge, type PassJudgement } from "./agents/falsifier.ts";
 import { defaultChecks, type FindingSummary, type RejectedCheck } from "./catalogue/select.ts";
 import { CATALOGUE, runCheck, type CheckResult, type FindingClass } from "./catalogue/templates.ts";
 import { HeldTracer, OrderedTrace, SharedReads, checkLimit, closing, inOrder, type Commit, type Task } from "./concurrency.ts";
@@ -176,7 +186,8 @@ export interface Finding {
   checks: CheckOutcome[];
   /** Checks that did not run: a parameter the finding could not supply, or a check the data layer refused. */
   rejected: RejectedCheck[];
-  judge: "skipped";
+  /** The live judge's verdict (src/agents/falsifier.ts): struck, held or not counted, with its SELECT, rows, receipt and model; "skipped" when no judge ran on the finding. */
+  judge: "skipped" | PassJudgement;
   /** The stop rule ended checking early: why, and the templates it did not run. */
   earlyStop?: { reason: string; skipped: string[] };
   /** Why the judge call was not spent, when the withdraw rule said so. */
@@ -213,6 +224,8 @@ export interface PassResult {
   rules: number;
   /** Rows the ledger wrote this pass; null when the pass was given no ledger. */
   ledger: { dispositions: number; fingerprints: number } | null;
+  /** The judge's tally: findings judged, struck, held and not counted. Absent when the pass was given no judge. */
+  judge?: JudgeTally;
 }
 
 const nul = (s: string): string | null => (s === "" ? null : s);
@@ -267,6 +280,11 @@ export interface PassOptions {
   windowTable?: boolean;
   /** How many of the pass's reads run at a time (see the header); PASS_CONCURRENCY when absent, 1 for one at a time. */
   concurrency?: number;
+  /**
+   * The live judge (src/agents/falsifier.ts liveJudge): the eval's C3 judge on every finding the withdraw rule leaves open.
+   * Absent, the pass runs no model: what SAMPLE_MODE, the eval's baseline, the examples and the tests run.
+   */
+  judge?: PassJudge;
 }
 
 const h12 = (h: string): string => h.replace(/^sha256:/, "").slice(0, 12);
@@ -301,6 +319,30 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
   // Counters for the pass (sums, so the tasks add to them in any order); what was recalled.
   const verifier = zeroCounters();
   const recalled: MemoryCounters | null = memory ? { lessons: memory.lessons().length, applied: 0, lapsed: 0 } : null;
+  // The judge's tally, added to at each finding's commit; none when the pass runs no model.
+  const judged: JudgeTally | undefined = opts.judge ? zeroTally(opts.judge) : undefined;
+  // The judge's call cap (JUDGE_MAX_CALLS), counted in finding order at any PASS_CONCURRENCY: each finding's task takes a turn
+  // when it starts, learns how many calls the findings before it took once they know, and passes its own count on before its
+  // call goes out, so the calls still overlap; a task that ends without deciding passes the count on unchanged.
+  const maxCalls = opts.judge?.maxCalls ?? config.judgeMaxCalls;
+  let callsSoFar: Promise<number> = Promise.resolve(0);
+  const callTurn = () => {
+    const before = callsSoFar;
+    let pass!: (n: number) => void;
+    callsSoFar = new Promise<number>((resolve) => { pass = resolve; });
+    let passed = false;
+    return {
+      /** Whether this finding may call: `calling` false passes the count on as it is. */
+      take: async (calling: boolean): Promise<boolean> => {
+        const n = await before;
+        const ok = calling && n < maxCalls;
+        passed = true;
+        pass(n + (ok ? 1 : 0));
+        return ok;
+      },
+      done: () => { if (!passed) void before.then((n) => { passed = true; pass(n); }); },
+    };
+  };
   // Every disposition of the pass carries one decided_at; the rows go to the ledger at the end.
   const decidedAt = new Date(opts.decidedAt ?? Date.now()).toISOString();
   const dispositions: Disposition[] = [];
@@ -390,7 +432,7 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
    * its disposition, and stores its exposure edge. `approved` is the setting's latest approval, which a drift_vs_approved and an
    * approved_missing row carry.
    */
-  const assess = async (finding: FindingSummary, view: WorldView | undefined, approved: ApprovedValue | null, t: HeldTracer | undefined): Promise<Commit> => {
+  const assess = async (finding: FindingSummary, view: WorldView | undefined, approved: ApprovedValue | null, t: HeldTracer | undefined, turn: ReturnType<typeof callTurn>): Promise<Commit> => {
     // Recalled before the first await: the findings' tasks start in finding order, so the memory's ledger logs the recalls
     // in the order a pass one finding at a time makes them.
     const recall = memory?.recall(finding, opts.at);
@@ -550,14 +592,31 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
         t?.emit({ agent: "checker", action: "critique", target_agent: "detector", status: "ok", input_summary: `${cls} ${setting}`, output_summary: withdraw.reason, detail: "model: none" });
         t?.emit({ agent: "detector", action: "revise", status: "ok", input_summary: `${cls} ${setting}`, output_summary: "finding withdrawn before judge", detail: withdraw.reason });
       }
-      t?.emit({ agent: "judge", action: "judge", status: "skipped", input_summary: finding.summary.slice(0, 160), detail: withdraw.withdraw ? withdraw.reason : "model: none (sample)" });
+      const decided: DispositionNote = {
+        verb, reason: why, expires_at: decision.expires_at, decided_by: decision.decided_by, rule_id: decision.rule_id, ...(decision.window_id ? { window_id: decision.window_id } : {}),
+      };
+      // The judge: live, the eval's C3 judge on a finding of the judge's tenant the withdraw rule leaves open
+      // (src/agents/falsifier.ts). Its lines, the evidence read, the model call, the gate and the refuting SELECT, then one
+      // judge line, go where the skipped line goes. A rule's or an exception's decision stands; a default one takes C3's
+      // verdict, a strike never turning ESCALATE into ADOPT; a verdict that does not count leaves the decision as it is.
+      let disposition = decided;
+      let judgement: PassJudgement | undefined;
+      const judge = opts.judge;
+      const mine = judge !== undefined && (judge.tenant === undefined || judge.tenant === finding.tenant_id);
+      const eligible = judge !== undefined && mine && !withdraw.withdraw;
+      // a model call goes out only when the judge has a Nightshift to call; past the cap the finding keeps its decision
+      const calls = Boolean(judge?.nightshift && judge.receipts);
+      const capped = eligible && calls && !(await turn.take(true));
+      if (!eligible || !calls) turn.done();
+      if (judge && eligible && !capped) ({ disposition, judgement } = await judgeFinding(layer, finding, decided, judge, t));
+      else {
+        const skipped = withdraw.withdraw ? withdraw.reason : capped ? capReached(maxCalls) : judge?.tenant !== undefined && !mine ? otherTenant(finding.tenant_id, judge.tenant) : "model: none (sample)";
+        t?.emit({ agent: "judge", action: "judge", status: "skipped", input_summary: finding.summary.slice(0, 160), detail: skipped });
+      }
       const exception: ExceptionNote | undefined = lesson
         ? { lesson: lesson.id, status: applied ? "applied" : "lapsed", expires_at: lesson.expiresAt, scope_key: lesson.scopeKey, reason: lesson.reason, accepted_by: lesson.provenance.by, accepted_at: lesson.recordedAt }
         : undefined;
       const id = shortFindingId(world.findingId(finding));
-      const disposition: DispositionNote = {
-        verb, reason: why, expires_at: decision.expires_at, decided_by: decision.decided_by, rule_id: decision.rule_id, ...(decision.window_id ? { window_id: decision.window_id } : {}),
-      };
       // One row per finding per pass, about the live value the decision is about.
       const row: Disposition = {
         disposition_id: dispositionId(finding.tenant_id, finding.surface, finding.host, finding.object_id, finding.setting_path, finding.value_hash, id, finding.run_id, decidedAt),
@@ -566,7 +625,7 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
       };
       const assessed: Finding = {
         id,
-        finding, verb, disposition, ...(view ? { world: view } : {}), checks, rejected, judge: "skipped",
+        finding, verb: disposition.verb, disposition, ...(view ? { world: view } : {}), checks, rejected, judge: judgement ?? "skipped",
         ...(earlyStop ? { earlyStop } : {}), ...(withdraw.withdraw ? { judgeWithheld: withdraw.reason } : {}), ...(exposure ? { exposure } : {}),
         ...(exception ? { exception } : {}),
       };
@@ -574,6 +633,7 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
         await storeEdge?.();
         dispositions.push(row);
         findings.push(assessed);
+        if (judged && judgement) addToTally(judged, judgement);
       });
     } catch (e) {
       edgeLines?.close();
@@ -964,7 +1024,10 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
   // check, decide, judge: every finding a task, its lines where its detector reported it, its commit in the order reported.
   const queue = reported.slice(0, failedAt + 1).flat();
   try {
-    await inTurn(queue.map((q): Task => (t) => assess(q.finding, q.view, q.approved, t)), (i) => queue[i].lines);
+    await inTurn(queue.map((q): Task => (t) => {
+      const turn = callTurn();
+      return assess(q.finding, q.view, q.approved, t, turn).finally(turn.done);
+    }), (i) => queue[i].lines);
   } finally {
     for (const f of failures) {
       tracer?.emit({
@@ -1021,10 +1084,10 @@ export async function runPass(layer: DataLayer, opts: PassOptions = {}): Promise
     detail: `${rulesRead} policy rule(s) read; verbs ${VERBS.filter((v) => verbs[v] > 0).map((v) => `${v} ${verbs[v]}`).join(", ") || "none"}; `
       + `decided by policy ${decidedBy("policy")}, operator ${decidedBy("operator")}, default ${decidedBy("default")}; `
       + `${probeRuns.length ? `probe run(s) ${probeRuns.join(", ")}` : NO_PROBE_RUN}; `
-      + `${written === null ? "no ledger" : `ledger: ${written} disposition(s) and ${fingerprints} referent fingerprint(s) written`}; model: none`,
+      + `${written === null ? "no ledger" : `ledger: ${written} disposition(s) and ${fingerprints} referent fingerprint(s) written`}; ${judged ? judgeClause(judged) : noJudgeClause()}`,
   });
   return {
     runs: runs.length, gatedOut: [...gatedOut], observed, findings, verifier, memory: recalled,
-    verbs, locked, rules: rulesRead, ledger: written === null ? null : { dispositions: written, fingerprints },
+    verbs, locked, rules: rulesRead, ledger: written === null ? null : { dispositions: written, fingerprints }, ...(judged ? { judge: judged } : {}),
   };
 }

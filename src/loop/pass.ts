@@ -13,6 +13,10 @@
 //     pass's decided_at (rows.ts dispositionId), so a row already stored under it is an earlier pass's at the same
 //     instant over the same runs, and kept counts those. With no ledger the line carries the pass's own decision,
 //     marked as not recorded. summary: one line of counts.
+//   - Given a judge (src/agents/falsifier.ts liveJudge: scripts/pass.ts and the cycle pass one live), runPass runs the eval's
+//     C3 judge on every finding the withdraw rule leaves open, and the summary's judge clause is the tally: "judge:
+//     <model> judged <n>: <n> struck, <n> held, <n> not counted", or with no runtime token or URL "judge not counted: no
+//     model configured (<why>), <n> finding(s)". With no judge it reads "judge skipped (model: none)".
 //   - On Zetaris, after the Decider and the ledger write, one SELECT over drift_usl.adoption (adoptionCheckSql) reads
 //     the DQ rule exception_in_force for the tenant's ADOPTs under an exception: those decided at this pass's instant
 //     when it recorded them, else the latest recorded pass's. Read only; a failed read is carried, never thrown, and
@@ -52,6 +56,7 @@
 // disposition_id; a second pass at a later instant writes 12 rows of its own, and one at the same instant writes 0
 // and counts 12 kept; the first live pass with the PgLedger is in scripts/pass.ts.
 
+import { judgeClause, type PassJudge } from "../agents/falsifier.ts";
 import { EXCEPTION_IN_FORCE } from "../data/files.ts";
 import { DISPOSITIONS_SQL, HERO_SQL, listRuns, objects } from "../data/queries.ts";
 import { assertSelectOnly, literal, type DataLayer } from "../data/layer.ts";
@@ -95,6 +100,11 @@ export interface PassStepOptions {
    * last copy (src/zetaris/setup.ts refreshFileTables). Runs first, before the Decider and its DQ read.
    */
   refreshFiles?: () => Promise<Refresh>;
+  /**
+   * Live: the eval's C3 judge on every finding the withdraw rule leaves open (src/agents/falsifier.ts liveJudge); absent, the
+   * pass runs no model, as in sample mode.
+   */
+  judge?: PassJudge;
 }
 
 /**
@@ -249,7 +259,8 @@ export async function passStep(layer: DataLayer, opts: PassStepOptions): Promise
   const windowTable = live ? (await datasourceLists(layer.engine, "change_window", { tracer, agent: "loop" })) !== false : true;
   let pass: PassResult;
   try {
-    pass = await runPass(layer, { tracer, world: opts.world ?? new DriftWorld("pass"), memory: opts.memory, ledger, decidedAt, windowTable });
+    // The judge for this tenant's findings only: the pass reads every tenant's runs, and the step reports this tenant's.
+    pass = await runPass(layer, { tracer, world: opts.world ?? new DriftWorld("pass"), memory: opts.memory, ledger, decidedAt, windowTable, ...(opts.judge ? { judge: { ...opts.judge, tenant } } : {}) });
   } catch (e) {
     if (failsClosed) refuse(e);
     throw e;
@@ -317,8 +328,8 @@ export async function passStep(layer: DataLayer, opts: PassStepOptions): Promise
   const explained = plans.length ? `; ${plans.map((p) => `EXPLAIN ${p.query} ${p.status}`).join(", ")}` : "";
   const summary = `PASS: tenant ${tenant}, decided at ${decidedAt}: ${runs.length} collection run(s) of the tenant, ${gated.length} failed the DQ gate (${gated.join(", ") || "none"}), `
     + `${pass.observed} observations in the World Model, ${findings.length} finding(s) (${tally(findings.map((f) => f.finding.class))}); verbs: ${verbs}; decided by ${by}; `
-    + `judge skipped (model: none); ${mem}; policy rules ${pass.rules}, locked settings without an approved value ${pass.locked}; ${recorded}${dq}${guard}${explained}`;
-  tracer?.emit({ agent: "loop", action: "triage", status: "ok", input_summary: `pass ${tenant}`, output_summary: summary.slice(0, 1000), detail: "model: none" });
+    + `${pass.judge ? judgeClause(pass.judge) : "judge skipped (model: none)"}; ${mem}; policy rules ${pass.rules}, locked settings without an approved value ${pass.locked}; ${recorded}${dq}${guard}${explained}`;
+  tracer?.emit({ agent: "loop", action: "triage", status: "ok", input_summary: `pass ${tenant}`, output_summary: summary.slice(0, 1000), detail: pass.judge ? `judge ${pass.judge.model}` : "model: none" });
   return {
     tenant, decidedAt, pass, findings, runs: runs.length, kept, lines, summary, ...(adoptions ? { adoptions } : {}), ...(dns ? { dns } : {}), ...(files ? { files } : {}),
     ...(schema ? { schema, notChecked } : {}), ...(live ? { plans } : {}),
