@@ -18,6 +18,10 @@
 //   - Ultra: judgeClaim with the tenant id, the finding's summary as the claim and the finding's fields as the one
 //     evidence row. not_judged (the gate refused, or no judge answered) makes the action not_judged with the reason;
 //     any counted verdict (stands, refuted, invalid_output) makes it done.
+//   - The Scout guard (src/guard/) reads the finding's string fields before the selection prompt is built and the claim
+//     and evidence cells inside judgeClaim: a blocked field goes to the model as a marker, a blocked claim is not asked
+//     of Ultra (not_judged), and the record names each block or review by class and location, never by text. The
+//     record's first line carries the summary only when the guard allowed it. Rules still decide; the guard withholds.
 //   - receipts: every receipt id the calls returned, discarded ones included, in call order; verification: the ids of
 //     the probes recorded.
 //   - "Fix where allowed": a FIX names no valid copy under this policy (src/policy/decide.ts reaches FIX only without
@@ -39,6 +43,7 @@ import { listRuns, objects, probesOfRun, runComplete } from "../data/queries.ts"
 import type { Disposition } from "../data/rows.ts";
 import { SELECT_MAX_TOKENS } from "../eval/models.ts";
 import { gateWithCustody, tenantAppId, type ReceiptFinder } from "../gate.ts";
+import { guardFinding, noteLine } from "../guard/withhold.ts";
 import { PASS_WINDOW_MS, type Finding } from "../pipeline.ts";
 import type { Redactor } from "../redactor.ts";
 import type { Tracer } from "../trace.ts";
@@ -129,7 +134,11 @@ export async function investigate(d: Disposition, deps: InvestigateDeps): Promis
   } catch (e) {
     return end("not_judged", `${(e as Error).message}; no call made`);
   }
-  record.push(`finding ${found.id} (${f.class}): ${f.summary}`);
+  // The Scout guard reads the finding's text before a prompt or the record carries it: a field it blocks is replaced by
+  // a marker, and a record line says so (src/guard/withhold.ts).
+  const guard = guardFinding(f, { tracer: deps.tracer, agent: "actor", prompt: deps.model ? "Lightning selection" : "action record" });
+  record.push(`finding ${found.id} (${f.class}): ${guard.finding.summary}`);
+  for (const n of guard.notes) record.push(noteLine(n));
 
   // Lightning picks the checks; the class's defaults run when no gated selection holds a valid one.
   let picked: SelectedCheck[] = [];
@@ -137,7 +146,7 @@ export async function investigate(d: Disposition, deps: InvestigateDeps): Promis
   if (deps.model) {
     const model = deps.model;
     const call = async ({ nonce }: { nonce: string }): Promise<{ chat: ChatResult; prompt: string[] }> => {
-      const [system, user] = selectionPrompt(f);
+      const [system, user] = selectionPrompt(guard.finding);
       const messages: ChatMessage[] = [system, { ...user, content: `[request ${nonce}]\n${user.content}` }];
       const chat = await model.chatWithFallback({ models: [...deps.lightning], messages, maxTokens: SELECT_MAX_TOKENS, temperature: 0, appId, agent: "actor", tracer: deps.tracer });
       return { chat, prompt: messages.map((m) => m.content) };
@@ -183,6 +192,7 @@ export async function investigate(d: Disposition, deps: InvestigateDeps): Promis
   record.push(verdict
     ? `judge ${verdict.status} (receipt ${verdict.receiptId ?? "none"}, ${verdict.servedModel ?? "no model"}${verdict.custody ? `, cache ${verdict.custody.cacheStatus ?? "unknown"}` : ""}${verdict.route ? `, route ${verdict.route}` : ""}): ${verdict.reason}${verdict.rowCount !== null ? `, ${plural(verdict.rowCount, "row")}` : ""}`
     : "judge not called: no model is configured");
+  for (const n of verdict?.guard ?? []) record.push(noteLine(n));
 
   // The pass's evidence: the probes of the object's names and the exposure line.
   const names = await findingNames(f, deps.reads);

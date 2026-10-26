@@ -238,9 +238,10 @@ describe("the Actor's rules", () => {
 describe("the Actor over the policy fixture", () => {
   let w: World;
   let base: Base;
-  beforeAll(() => { base = buildBase(); });
+  // buildBase writes the fixture vault's git repositories on disk: seconds in the full parallel run
+  beforeAll(() => { base = buildBase(); }, 60_000);
   afterAll(() => base.cleanup());
-  beforeEach(async () => { w = await buildWorld(base); });
+  beforeEach(async () => { w = await buildWorld(base); }, 60_000);
   afterEach(() => w.cleanup());
 
   it("the pass leaves ROLLBACK on app.conf, on the missing blog.conf and on rec-c3's content, FIX on shop.conf, each ROLLBACK naming its vault commit", () => {

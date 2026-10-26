@@ -53,6 +53,12 @@ exitOnConfigError();
 const USAGE = "usage: npm run pass -- --tenant <id> [--decided-at <ISO 8601 UTC>] [--no-ledger] [--schema <name>] [--verbose|--quiet] [--help]";
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?Z$/;
 
+/** A live-only requirement unset (no .env): one plain line naming it, exit 2, no usage line. */
+function needs(msg: string): never {
+  console.error(`pass: ${msg}`);
+  process.exit(2);
+}
+
 function usage(msg: string): never {
   console.error(`pass: ${msg}\n${USAGE}`);
   process.exit(2);
@@ -76,10 +82,10 @@ if (args.verbose && args.quiet) usage("--verbose and --quiet exclude each other"
 const decidedAt = args["decided-at"];
 if (decidedAt !== undefined && (!ISO.test(decidedAt) || Number.isNaN(Date.parse(decidedAt)))) usage(`--decided-at takes an ISO 8601 UTC instant such as 2026-10-24T22:00:00.000Z, got ${decidedAt}`);
 if (config.sampleMode) usage("the pass reads the live datasource through Zetaris; SAMPLE_MODE=true npm run sample is the pass over the recorded bundle");
-if (!config.zetaris.apiKey) usage("ZETARIS_API_KEY is blank: the live pass reads through Zetaris");
+if (!config.zetaris.apiKey) needs("ZETARIS_API_KEY is blank: the live pass reads through Zetaris");
 const record = args["no-ledger"] !== true;
-if (record && !config.redactSalt) usage("REDACT_SALT is blank: the ledger's rows carry the tenant's pseudonyms under its salt (or run with --no-ledger)");
-if (record && !process.env.DATABASE_URL) usage("DATABASE_URL is blank: the ledger writes to the app Postgres (or run with --no-ledger)");
+if (record && !config.redactSalt) needs("REDACT_SALT is blank: the ledger's rows carry the tenant's pseudonyms under its salt (or run with --no-ledger)");
+if (record && !process.env.DATABASE_URL) needs("DATABASE_URL is blank: the ledger writes to the app Postgres (or run with --no-ledger)");
 
 const tenant = args.tenant;
 const redactor = new Redactor(config.redactSalt || randomBytes(16).toString("hex"), config.redactWords);

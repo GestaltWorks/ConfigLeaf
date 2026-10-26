@@ -1,7 +1,7 @@
 // The replay page (scripts/build-site.ts): built from the three committed examples into a throwaway
 // directory, it holds index.html and one data file per example; every check carries the SQL that ran,
 // rendered, non-empty and re-run to the recorded count, and with it the text a live pass sends to Zetaris (the same
-// SQL, each table <datasource>.<table>), which the lede, the Sources tab and the footer name; the output passes the
+// SQL, each table read as its drift_usl entity), which the lede, the Sources tab and the footer name; the output passes the
 // deny-list scan; a finding that cites a template the catalogue cannot render, or a count the re-run does not give, makes the build
 // throw and write nothing; the page carries the owner's document (Document) and "Where each answer comes from"
 // (Sources) as HTML the build renders from their markdown, escaped outside its subset; the Nemotron tab carries the
@@ -34,12 +34,24 @@ import {
 import { templateById } from "../src/catalogue/templates.ts";
 import { config } from "../src/config.ts";
 import { FILE_DATASOURCES } from "../src/data/files.ts";
-import { DataLayer } from "../src/data/layer.ts";
+import { DataLayer, LAYER_TABLES } from "../src/data/layer.ts";
 import { ZetarisEngine } from "../src/data/engines/zetaris.ts";
 import { fileSourceRows, sourceRows, sourcesMarkdown } from "../src/document/render.ts";
 import { VERBS } from "../src/pipeline.ts";
 import { Redactor } from "../src/redactor.ts";
-import { DQ_RULES, REST_DB, USL_NAME, USL_TABLES } from "../src/zetaris/setup.ts";
+import { DQ_RULES, NAMESPACE, REST_DB, USL, USL_NAME, USL_TABLES, uslRelation } from "../src/zetaris/setup.ts";
+
+/** Zetaris's text with each relation it reads a table as put back as the table's name: the text sql.js runs. */
+function asTables(sql: string): string {
+  let s = sql;
+  for (const t of LAYER_TABLES) {
+    for (const fence of [true, false]) {
+      const rel = uslRelation(t, { fence })!;
+      s = rel.startsWith("(") ? s.split(`${rel} ${t}`).join(t).split(rel).join(t) : s.replace(new RegExp(`${rel.replaceAll(".", "\\.")}(?!\\w)`, "g"), t);
+    }
+  }
+  return s;
+}
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const EXAMPLES = path.join(ROOT, "examples");
@@ -149,21 +161,22 @@ describe("the replay page", () => {
     expect(built.index.totals.checksRerun).toBe(checks);
   });
 
-  it("every detector query and check carries the text the live pass sends to Zetaris: the shown SQL with each table named <datasource>.<table>", () => {
+  it("every detector query and check carries the text the live pass sends to Zetaris: the shown SQL with each table read as its drift_usl entity", () => {
     const zetaris = new DataLayer(new ZetarisEngine());
     let queries = 0;
     for (const e of built.index.examples) {
       for (const f of example(e.dir).findings) {
         for (const q of [f.detection!, ...f.checks]) {
           queries++;
-          expect(q.zetarisSql).toMatch(new RegExp(`\\bFROM ${DS}\\.\\w+`));
-          expect(q.zetarisSql.replaceAll(`${DS}.`, "")).toBe(q.sql);
+          expect(q.zetarisSql).toContain(`FROM ${USL}.`);
+          expect(q.zetarisSql).not.toContain(`${DS}.`);
+          expect(asTables(q.zetarisSql)).toBe(q.sql);
         }
         for (const c of f.checks) {
           const t = templateById(c.template)!;
           expect(c.zetarisSql).toBe(zetaris.render(t.sql, c.params));
-          // one qualified name per {{t:table}} of the template
-          expect(c.zetarisSql.split(`${DS}.`).length - 1).toBe([...t.sql.matchAll(/\{\{t:\w+\}\}/g)].length);
+          // one entity per {{t:table}} of the template
+          expect(c.zetarisSql.split(`${USL}.`).length - 1).toBe([...t.sql.matchAll(/\{\{t:\w+\}\}/g)].length);
         }
         expect(f.judge).not.toHaveProperty("zetarisSql");
       }
@@ -176,11 +189,12 @@ describe("the replay page", () => {
     const lede = matchOf(/<p class="lede">([\s\S]*?)<\/p>/, html, "the replay page's lede")[1];
     for (const s of ["Zetaris Lightning SQL", `<code>${DS}</code> datasource`, "beside the technician's memory store, the policy file and the Cloudflare DNS API, which it reads live", `<code>${USL_NAME}</code> semantic layer`, "six DQ rules over the four", "<code>test/parity.test.ts</code>"]) expect(lede).toContain(s);
     const src = panel("sources");
-    expect(src).toContain(`Zetaris Lightning SQL over the <code>${DS}</code> datasource`);
+    expect(src).toContain(`Zetaris Lightning SQL over the <code>${USL_NAME}</code> semantic layer, each table read as the entity built from it, <code>${NAMESPACE}.${USL_NAME}.&lt;entity&gt;</code>, over the <code>${DS}</code> datasource`);
     expect(src).toContain(`Beside it Zetaris reads the technician's memory store as <code>LESSONS</code> and the policy file as <code>RULES</code>, both files in its filestore, and the Cloudflare DNS API as <code>${REST_DB}</code>, a REST datasource it fetches at each query.`);
-    expect(src).toContain(`holds fifteen entities (${USL_TABLES.map((t) => `<code>${t}</code>`).join(", ")})`);
+    expect(src).toContain(`holds ${word(USL_TABLES.length)} entities (${USL_TABLES.map((t) => `<code>${t}</code>`).join(", ")})`);
     expect(src).toContain(`six DQ rules (${DQ_RULES.map((r) => `<code>${r.name}</code> on <code>${r.table}</code>`).join(", ")})`);
-    expect(matchOf(/<footer>[\s\S]*?<\/footer>/, html, "the replay page's footer")[0]).toContain(`<code>${DS}.&lt;table&gt;</code>`);
+    expect(/<footer>[\s\S]*?<\/footer>/.exec(html)![0]).toContain(`each table read as its Zetaris semantic-layer entity (<code>${NAMESPACE}.${USL_NAME}.&lt;entity&gt;</code>) as the text a live pass sends`);
+    expect(html).not.toContain(`${DS}.&lt;table&gt;`);
     expect(html).toContain('"as the live pass sends it to Zetaris"');
   });
 

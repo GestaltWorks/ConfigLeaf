@@ -18,7 +18,7 @@ export const TRACE_REDACTOR = new Redactor(config.redactSalt || randomBytes(16).
 
 export type TraceAction =
   | "observe" | "detect" | "triage" | "hypothesise" | "check" | "judge" | "decide"
-  | "critique" | "revise" | "retry" | "fallback" | "escalate" | "query" | "model_call" | "spike" | "explain";
+  | "critique" | "revise" | "retry" | "fallback" | "escalate" | "query" | "model_call" | "spike" | "explain" | "guard";
 
 export interface TraceEvent {
   ts: string;
