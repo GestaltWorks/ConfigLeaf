@@ -19,6 +19,7 @@
     { "surface": "cloudflare.dns", "object_glob": "*", "setting_glob": "proxied", "criticality": "critical", "lock": 1, "on_drift": "rollback", "on_no_copy": "investigate_ticket", "hold_max_hours": 4, "alert": "always", "psa_priority": "P1" },
     { "surface": "cloudflare.dns", "object_glob": "*", "setting_glob": "ttl", "criticality": "normal", "lock": 0, "on_drift": "adopt", "on_no_copy": "adopt", "hold_max_hours": 0, "alert": "never", "psa_priority": "P4" },
     { "surface": "zetaris.control", "object_glob": "**", "setting_glob": "**", "criticality": "critical", "lock": 1, "on_drift": "escalate", "on_no_copy": "ticket", "hold_max_hours": 0, "alert": "always", "psa_priority": "P1", "note": "the data layer the agent reads through: a changed DQ rule, entity, grant, datasource or server version goes to a technician by ticket, and the agent changes nothing" },
-    { "surface": "*", "object_glob": "**", "setting_glob": "**", "criticality": "normal", "lock": 0, "on_drift": "hold", "on_no_copy": "ticket", "hold_max_hours": 72, "alert": "never", "psa_priority": "P3", "note": "everything else is held with an expiry" }
+    { "surface": "*", "object_glob": "**", "setting_glob": "**", "criticality": "normal", "lock": 0, "on_drift": "hold", "on_no_copy": "ticket", "hold_max_hours": 72, "alert": "never", "psa_priority": "P3", "note": "everything else is held with an expiry" },
+    { "surface": "m365.dns", "object_glob": "**", "setting_glob": "**", "criticality": "high", "lock": 0, "on_drift": "escalate", "on_no_copy": "ticket", "hold_max_hours": 0, "alert": "always", "psa_priority": "P2", "note": "mail DNS is never changed automatically: a record Microsoft 365 requires that the zone lacks or serves with another value goes to a technician by ticket" }
   ]
 }

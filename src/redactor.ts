@@ -17,7 +17,15 @@
 //                   mail-XXXXXX@domain-XXXXXX, or user-XXXXXX@<host> when the host passes through.
 //                   The suffix is the same hash for the same login, so a redacted fixture still
 //                   says which home directory belongs to which mail address.
-//   d  hostnames -> host-XXXXXX.<tld>; .invalid/.example/.test/.localhost and example.com|net|org
+//   d  M365      -> tenant-XXXXXX for every label before a Microsoft 365 suffix. A tenant's initial domain
+//                   is <label>.onmicrosoft.com, and its DKIM selectors are CNAMEs to selector<N>-<domain,
+//                   dots as dashes>._domainkey.<label>.onmicrosoft.com or to the same labels under
+//                   <p>-v1.dkim.mail.microsoft. The suffixes are Microsoft's and name no client; the labels
+//                   before them are the tenant's, whatever the tenant. A selector label keeps its
+//                   selector<N>- prefix and a _label (_domainkey) stays, and the host rule then leaves the
+//                   name alone, so a DKIM target reads as one under one pseudonym on either side: the
+//                   Cloudflare CNAME's content and Microsoft 365's expected value.
+//      hostnames -> host-XXXXXX.<tld>; .invalid/.example/.test/.localhost and example.com|net|org
 //                   pass through. A file extension is not a TLD; a dotted stem is still redacted.
 //                   Trace lines carry the agent's own dotted vocabulary next to real names, and it
 //                   is left alone: a name followed by "./" or ".word" is a dotted key path
@@ -80,6 +88,13 @@ const HOST = /(?<![\w.-])((?:[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?\.)
 // the star is redacted on its own and the star kept (test/redactor.test.ts "wildcard hostnames").
 const WILDCARD = /(?<![\w.-])\*\.((?:[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?\.)+[A-Za-z]{2,24})(?![\w-]|\.[\/\w])/g;
 const PASS_TLD = new Set(["invalid", "example", "test", "localhost"]);
+/** Microsoft's own suffixes under a tenant's labels: the initial domain, and the DKIM partition of 2025 (<p>-v1.dkim.mail.microsoft). */
+const M365_SUFFIX = String.raw`onmicrosoft\.com|[A-Za-z0-9]{1,8}-v\d{1,3}\.dkim\.mail\.microsoft`;
+/** A name under one of those suffixes: the tenant's labels, then the suffix. */
+const M365 = new RegExp(String.raw`(?<![\w.-])((?:[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?\.)+)(${M365_SUFFIX})(?![\w-]|\.[\/\w])`, "gi");
+/** One of those names after pass d: every label a pseudonym (a selector's with its prefix) or a _label. The host rule leaves it alone. */
+const M365_DONE = new RegExp(String.raw`^(?:(?:_[a-z0-9-]+|(?:selector\d{1,3}-)?tenant-[0-9a-f]{6})\.)+(?:${M365_SUFFIX})$`, "i");
+const TENANT_LABEL = /^(?:selector\d{1,3}-)?tenant-[0-9a-f]{6}$/;
 /** A one- or two-character single label before the tail: a SQL alias reference (o.host, d.name, e2.actor) in trace text. */
 const ALIAS = /^[A-Za-z0-9_]{1,2}\.$/;
 /**
@@ -216,7 +231,16 @@ export class Redactor {
     return this.words ? s.replace(this.words, (m) => this.pseudo("word", m.toLowerCase())) : s;
   }
 
+  /** One label before a Microsoft 365 suffix: a _label stays, a selector keeps its prefix, the rest is the tenant's. */
+  private tenantLabel(label: string): string {
+    const l = label.toLowerCase();
+    if (/^_[a-z0-9-]+$/.test(l) || TENANT_LABEL.test(l)) return l;
+    const sel = /^(selector\d{1,3})-(.+)$/.exec(l);
+    return sel ? `${sel[1]}-${this.pseudo("tenant", sel[2])}` : this.pseudo("tenant", l);
+  }
+
   private hosts(s: string): string {
+    s = s.replace(M365, (_m, labels: string, suffix: string) => `${labels.slice(0, -1).split(".").map((l) => this.tenantLabel(l)).join(".")}.${suffix.toLowerCase()}`);
     s = s.replace(WILDCARD, (_m, rest: string) => `*.${this.hosts(rest)}`);
     return s.replace(HOST, (m, labels: string, tld: string) => {
       if (EXT.has(tld.toLowerCase())) {
@@ -224,7 +248,7 @@ export class Redactor {
         return stem.includes(".") ? `${this.hosts(stem)}.${tld}` : m;
       }
       if (VOCAB.has(tld.toLowerCase()) || ALIAS.test(labels)) return m;
-      if (/^host-[0-9a-f]{6}\.$/.test(labels)) return m;
+      if (/^host-[0-9a-f]{6}\.$/.test(labels) || M365_DONE.test(m)) return m;
       const name = m.toLowerCase();
       return hostPassesThrough(name) ? m : `${this.pseudo("host", name)}.${tld}`;
     });
@@ -255,7 +279,7 @@ export function countLabels(text: string, words: readonly string[]): Record<stri
   return out;
 }
 
-const MARKS = /<secret:([a-z_]+):[0-9a-f]{8}>|\b(ip|user|mail|domain|host|word)-[0-9a-f]{6}\b/g;
+const MARKS = /<secret:([a-z_]+):[0-9a-f]{8}>|\b(ip|user|mail|domain|host|word|tenant)-[0-9a-f]{6}\b/g;
 
 /** Placeholders present in `after` but not in `before`, counted per kind, for the trace line. */
 export function describeRedactions(before: string, after: string): Record<string, number> {

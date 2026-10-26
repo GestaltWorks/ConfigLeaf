@@ -645,11 +645,11 @@ describe("the Decider under the MSP's policy (test/fixtures/policy-bundle.json)"
     const loaded = loadPolicyFile(fileURLToPath(new URL("../policy/hackathon.json", import.meta.url)), { tenant: "client-a", redactor: new Redactor("policy-fixture-salt") });
     expect(rules).toEqual([...loaded.rows].sort((a, b) => (a.rule_id < b.rule_id ? -1 : 1)));
     expect(new Set(rules.map((r) => r.tenant_id))).toEqual(new Set(["*"]));
-    expect(rules).toHaveLength(16);
+    expect(rules).toHaveLength(17);
     expect(new Set(rules.map((r) => r.version))).toEqual(new Set([2]));
     const committed = readFileSync(POLICY_FIXTURE, "utf8").replace(/\r\n/g, "\n");
     expect(policyBundleText(committed)).toBe(committed);
-    expect(policyBundle._note).toContain("the 16 rules of policy/hackathon.json (version 2)");
+    expect(policyBundle._note).toContain("the 17 rules of policy/hackathon.json (version 2)");
   });
 
   it("eleven findings, one disposition each: ROLLBACK the file and the record with a valid copy and the approved file the run lacks, FIX the file whose copy failed while its name fails a probe, HOLD the uncopied file whose names answer, ADOPT the .bak; the prior HOLD in force kept, the expired one ESCALATE", async () => {
@@ -668,7 +668,7 @@ describe("the Decider under the MSP's policy (test/fixtures/policy-bundle.json)"
       ["drift_vs_approved", "rec-c3", "content", "ROLLBACK", "policy", CONTENT, null],
     ]);
     expect(result.verbs).toEqual({ ADOPT: 2, HOLD: 4, ESCALATE: 1, ROLLBACK: 3, FIX: 1 });
-    expect([result.rules, result.locked, result.ledger]).toEqual([16, 1, { dispositions: 11, fingerprints: 6 }]);
+    expect([result.rules, result.locked, result.ledger]).toEqual([17, 1, { dispositions: 11, fingerprints: 6 }]);
     // every default check bound: the record's drift gets its record list, the files theirs, the absent file its own
     expect(result.findings.every((f) => f.rejected.length === 0 && f.verb === f.disposition.verb)).toBe(true);
     expect(of(result.findings, "drift_vs_approved", "rec-c3", "content").checks.map((c) => c.template)).toEqual(["run_complete", "actor_attributed", "previous_value_recoverable"]);
@@ -787,7 +787,7 @@ describe("the Decider under the MSP's policy (test/fixtures/policy-bundle.json)"
     expect(decide[5].detail).toContain(`production affected (1 failing probe in ${PROBE_RUN}: http shop.example.invalid); approved ${h12(approvedOf(SHOP))}, 1 copy row(s), no valid copy`);
     expect(tracer.events.filter((e) => e.input_summary === "policy").map((e) => [e.output_summary, e.detail])).toEqual([[
       "locked settings without an approved value: 1",
-      `16 policy rule(s) read; verbs ADOPT 2, HOLD 4, ESCALATE 1, ROLLBACK 3, FIX 1; decided by policy 11, operator 0, default 0; probe run(s) ${PROBE_RUN}; ledger: 11 disposition(s) and 6 referent fingerprint(s) written; model: none`,
+      `17 policy rule(s) read; verbs ADOPT 2, HOLD 4, ESCALATE 1, ROLLBACK 3, FIX 1; decided by policy 11, operator 0, default 0; probe run(s) ${PROBE_RUN}; ledger: 11 disposition(s) and 6 referent fingerprint(s) written; model: none`,
     ]]);
     expect(tracer.events.every((e) => e.model_requested === "none") && tracer.events.every((e) => !(e.action === "query" && e.status === "failed"))).toBe(true);
   });
@@ -933,8 +933,8 @@ describe("the Decider under the MSP's policy (test/fixtures/policy-bundle.json)"
       expect(objects(r).find((x) => x.rule_id === CONFD)).toMatchObject({ lock: "1", on_drift: "rollback", hold_max_hours: "24", version: "2", note: "a served vhost file is restored to its approved copy when it drifts" });
       expect(objects(r).find((x) => x.rule_id === CATCH_ALL)?.surface).toBe("*");
       const other = without((x) => { x.policy_rule = [...x.policy_rule, { ...x.policy_rule[0], rule_id: "rule-00000000000000ff", tenant_id: "client-b" }]; });
-      expect((await (await layer(other)).run(POLICY_RULES_SQL, { tenant_id: "client-a" })).rowCount).toBe(16);
-      expect((await (await layer(other)).run(POLICY_RULES_SQL, { tenant_id: "client-b" })).rowCount).toBe(17);
+      expect((await (await layer(other)).run(POLICY_RULES_SQL, { tenant_id: "client-a" })).rowCount).toBe(17);
+      expect((await (await layer(other)).run(POLICY_RULES_SQL, { tenant_id: "client-b" })).rowCount).toBe(18);
     });
 
     it("LATEST_APPROVALS_SQL: one row per setting key, the latest approval; an older approval of the same key is left out", async () => {
