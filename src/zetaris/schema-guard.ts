@@ -1,9 +1,11 @@
 // The source-schema guard a live pass runs before it reads anything (src/loop/pass.ts): the columns Zetaris reports for
-// every DRIFT table the pass reads and for every CLOUDFLARE REST table, against the columns the pass expects. A column
-// the pass reads that is missing or has changed type makes the pass fail closed on what reads it.
+// every DRIFT table under the drift_usl entities the pass reads and for every CLOUDFLARE REST table, against the columns
+// the pass expects. A column the pass reads that is missing or has changed type makes the pass fail closed on what reads it.
 //
 // Contract:
-//   - Tables: PASS_TABLES of DRIFT (the fourteen the pass's SQL reads: src/data/queries.ts and the catalogue), each
+//   - Tables: PASS_TABLES of DRIFT (the fourteen the pass's SQL reads, src/data/queries.ts and the catalogue, each
+//     through the drift_usl entity built from it alone: src/zetaris/setup.ts READ_AS; an entity's activation reads its
+//     table's columns, so the guard describes the table), each
 //     DESCRIBE DATASOURCE TABLE DRIFT.<table>; then SHOW LIGHTNING TABLES CLOUDFLARE and DESCRIBE DATASOURCE TABLE
 //     CLOUDFLARE.<table> for each REST table it lists. One statement per call through the engine given, so a
 //     CountingEngine counts them and the tracer traces them.

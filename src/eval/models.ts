@@ -41,6 +41,11 @@
 // (5 in the run's calls, 2 of them planted claims'), in calls[].reason, "every route of the ladder failed: <the
 // runtime's 503 text>", kept raw; that text names two local paths under the operator's login. One call to the local
 // lane after the run, the same day, gave the same text: 2 matches raw, 0 through evalRedactor.
+//
+// Guard. After the redactor, the Scout guard (src/guard/) reads the finding's fields of a selection prompt and the facts
+// and evidence cells of a C4 prompt; judgeClaim reads its own. A blocked field goes out as a marker and the facts of a
+// C4 prompt it blocks are not asked of any model. Over the recorded items it blocks nothing (test/scout-guard.test.ts),
+// so a measured prompt is the prompt the guard passes.
 
 import { Nightshift, freshScope, verifyReceipt, type ChatMessage, type ChatResult, type SignedReceipt } from "../adapters/nightshift.ts";
 import { judgeClaim, MAX_EVIDENCE_ROWS, modelInputRedactor, redactEvidence, type Evidence, type JudgeInput, type JudgeModel, type JudgeVerdict } from "../agents/judge.ts";
@@ -48,6 +53,7 @@ import { selectionPrompt, validateSelection, type FindingSummary, type Validated
 import { config, redact } from "../config.ts";
 import type { DataLayer } from "../data/layer.ts";
 import { gateWithCustody, memoryInjectedOf, servedModelOf, tenantAppId, tierOf, type GateResult, type ReceiptFinder, type Tier } from "../gate.ts";
+import { guardFinding, guardJudgePrompt } from "../guard/withhold.ts";
 import type { Redactor } from "../redactor.ts";
 import type { Tracer } from "../trace.ts";
 import type { ModelTier } from "./protocol.ts";
@@ -234,7 +240,8 @@ export const DIRECT_MAX_TOKENS = 8_192;
 
 /** The selecting tier chooses and parameterises checks for one finding; the reply goes through validateSelection. */
 export async function selectChecks(ctx: ModelCallContext, finding: FindingSummary, findingId: string, tier: ModelTier): Promise<GatedOutcome<ValidatedSelection>> {
-  const r = await gatedCall(ctx, "select", findingId, tier, selectionPrompt(ctx.redactor.json(finding)), SELECT_MAX_TOKENS, undefined);
+  const guarded = guardFinding(ctx.redactor.json(finding), { tracer: ctx.tracer, agent: "selector", prompt: "selection" });
+  const r = await gatedCall(ctx, "select", findingId, tier, selectionPrompt(guarded.finding), SELECT_MAX_TOKENS, undefined);
   if (!r.gate?.ok || !r.chat) return { ok: false, reason: r.reason, calls: r.calls };
   return { ok: true, value: validateSelection(r.chat.content), calls: r.calls };
 }
@@ -289,7 +296,13 @@ export function parseDirect(content: string): { verb: DirectVerb; reason: string
 /** The C4 baseline: one prompt, one verb, gated as every other call. */
 export async function directVerdict(ctx: ModelCallContext, cls: string, facts: string, evidence: Evidence, tier: ModelTier): Promise<GatedOutcome<{ verb: DirectVerb; reason: string }>> {
   const clean = scrubber(ctx.redactor);
-  const r = await gatedCall(ctx, "direct", null, tier, directMessages(clean(cls), clean(facts), redactEvidence(evidence, ctx.redactor)), DIRECT_MAX_TOKENS, true);
+  // The Scout guard reads the facts (raw input) and the shown rows (snippets) of the prompt; facts it blocks are not asked of any model.
+  const guarded = guardJudgePrompt(clean(facts), redactEvidence(evidence, ctx.redactor), MAX_EVIDENCE_ROWS, { tracer: ctx.tracer, agent: "judge", prompt: "direct" });
+  if (guarded.claimBlocked) {
+    const n = guarded.notes[0];
+    return { ok: false, reason: `guard blocked the facts (${n.class}, line ${n.line}): ${n.reason}; no call made`, calls: [] };
+  }
+  const r = await gatedCall(ctx, "direct", null, tier, directMessages(clean(cls), guarded.claim, guarded.evidence), DIRECT_MAX_TOKENS, true);
   if (!r.gate?.ok || !r.chat) return { ok: false, reason: r.reason, calls: r.calls };
   const parsed = parseDirect(r.chat.content);
   if (!parsed) return { ok: false, reason: "invalid output: the reply holds no {verb, reason} object with ADOPT, HOLD or ESCALATE", calls: r.calls };
