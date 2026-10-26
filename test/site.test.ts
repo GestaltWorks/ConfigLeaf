@@ -15,19 +15,21 @@
 // and the committed docs/ is exactly this build (rerun `npm run site` when not).
 //
 // The landing page, docs/site.html, comes out of the same build from scripts/site/landing.html: every token filled and
-// none left; no URL outside the repository but its repository link (no CDN, no font, no script); the README's first two
-// sentences, its eight places and its own words for each act, as written; the semantic layer's entities and DQ rules
-// as src/zetaris/setup.ts holds them; trace lines the replay page's redactor leaves as they are, each a line of the
-// committed trace its act names; the receipts lines npm run receipts:verify prints; and the page within the byte budget.
+// none left, and no digit in the template's own text; no script and no URL outside the repository but its repository
+// link; the README's track, first three sentences, eight places, opening bullets, policy and own words for each act, as
+// written; the estate tiles and the decision bar from the owner's document; Ultra alone beside the checks with Ultra as
+// the falsifier, each figure and row of dots its run's; the semantic layer as src/zetaris/setup.ts holds it; trace lines
+// the replay page's redactor leaves as they are, each a line of the committed trace its caption names; the rings, the
+// eval line and the receipts lines npm run receipts:verify prints; each quoted file's hash; and the page within the byte budget.
 import { spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  buildSite, DECK_URL, escapeHtml, EXECUTIVE_LINK, formatTraceLine, headerStats, headlineTile, markdownToHtml, MAX_BYTES, nemotronView, newestResults, readTrace, renderSiteHtml, REPORT_LINK, repositoryUrl, scanOutput, SITE_TEMPLATE, SiteError, word, type BuildResult, type ExampleView, type JudgeSelectView, type SiteInput,
+  buildSite, DECK_URL, escapeHtml, EXECUTIVE_LINK, formatTraceLine, headerStats, headlineTile, markdownToHtml, MAX_BYTES, nemotronView, newestResults, readTrace, renderSiteHtml, REPORT_LINK, repositoryUrl, SAMPLE_COMMAND, scanOutput, SITE_TEMPLATE, SiteError, word, type BuildResult, type ExampleView, type JudgeSelectView, type SiteInput,
 } from "../scripts/build-site.ts";
 import { templateById } from "../src/catalogue/templates.ts";
 import { config } from "../src/config.ts";
@@ -38,7 +40,7 @@ import { fileSourceRows, sourceRows, sourcesMarkdown } from "../src/document/ren
 import { VERBS } from "../src/pipeline.ts";
 import { Redactor } from "../src/redactor.ts";
 import { DQ_RULES, USL_NAME, USL_TABLES } from "../src/zetaris/setup.ts";
-import { MARK, ROOT_CSS } from "../src/design/theme.ts";
+import { MARK } from "../src/design/theme.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const EXAMPLES = path.join(ROOT, "examples");
@@ -576,33 +578,52 @@ describe("the replay page", () => {
 describe("the landing page, docs/site.html", () => {
   const site = (): string => built.files.get("site.html")!;
   const ENTITY: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" };
-  /** Element text as written before the build escaped it, inline code as the README's backticks. */
-  const plain = (s: string): string => s.replace(/<\/?code>/g, "`").replace(/&(amp|lt|gt|quot|#39);/g, (_, e: string) => ENTITY[e]);
+  /** Text as written before the build escaped it: inline code as the README's backticks, every other tag dropped. */
+  const plain = (s: string): string => s.replace(/<\/?code>/g, "`").replace(/<[^>]+>/g, "").replace(/&(amp|lt|gt|quot|#39);/g, (_, e: string) => ENTITY[e]);
+  const readmeRaw = (): string => readFileSync(path.join(ROOT, "README.md"), "utf8").replace(/\r\n/g, "\n");
   /** The README's paragraphs, each on one line, joined: the text the page quotes from. */
-  const readme = (): string => readFileSync(path.join(ROOT, "README.md"), "utf8").replace(/\r\n/g, "\n").split(/\n[ \t]*\n/).map((p) => p.replace(/\s+/g, " ").trim()).join("\n");
+  const readme = (): string => readmeRaw().split(/\n[ \t]*\n/).map((p) => p.replace(/\s+/g, " ").trim()).join("\n");
+  const doc = (): string => readFileSync(path.join(EXAMPLES, "document.md"), "utf8").replace(/\r\n/g, "\n");
   const input = (): SiteInput => ({
     index: built.index, nemotron: built.nemotron, resultsDir: path.join(ROOT, built.nemotron.dir),
-    documentText: readFileSync(path.join(EXAMPLES, "document.md"), "utf8").replace(/\r\n/g, "\n"), documentFile: "examples/document.md", sampleLine: null,
+    documentText: doc(), documentFile: "examples/document.md", sampleLine: null,
   });
+  /** The HTML of one section of the page, by id. */
+  const section = (id: string): string => {
+    const m = new RegExp(`<section class="band" id="${id}">[\\s\\S]*?</section>`).exec(site());
+    expect(m, `the page has no #${id} section`).not.toBeNull();
+    return m![0];
+  };
+  const all = (html: string, re: RegExp): string[] => [...html.matchAll(re)].map((m) => m[1]);
+  const sha = (s: string): string => `sha256:${createHash("sha256").update(s, "utf8").digest("hex")}`;
 
   it("is built with the replay page from scripts/site/landing.html, every token the template holds filled and none left", () => {
     const template = readFileSync(SITE_TEMPLATE, "utf8");
     const tokens = [...new Set([...template.matchAll(/\{\{([A-Z0-9_]+)\}\}/g)].map((m) => m[1]))];
     expect(tokens.sort()).toEqual(Object.keys(built.site.tokens).sort());
-    expect(site()).not.toMatch(/\{\{|\}\}/);
+    expect(site()).not.toMatch(/\{\{/);
     expect(existsSync(path.join(ROOT, "scripts", "site", "selectors.ts.txt"))).toBe(false);
   });
 
-  it("links the replay page, the owner's report and the executive report, and nothing outside the repository but its repository link: no CDN, no font, no script", () => {
+  it("types no figure: the template's own text, outside its styles, its icon and its tags, holds no digit, so every number on the page comes from a token", () => {
+    const text = readFileSync(SITE_TEMPLATE, "utf8").replace(/<style>[\s\S]*?<\/style>/, "").replace(/<svg[\s\S]*?<\/svg>/g, "").replace(/<[^>]+>/g, "").replace(/\{\{[A-Z0-9_]+\}\}/g, "");
+    expect(text).not.toMatch(/\d/);
+  });
+
+  it("holds no script and fetches nothing: no CDN, font, stylesheet or image, and no URL outside the repository but the repository link", () => {
     const html = site();
     const repo = repositoryUrl();
-    expect(html).not.toMatch(/<script|<link|<img|<iframe|<object|<embed|<video|<audio|@import|@font-face|url\(|\bsrc=/i);
+    expect(html).not.toMatch(/<script|<link|<img|<iframe|<object|<embed|<video|<audio|@import|@font-face|\bsrc=|url\((?!#)/i);
     const external = [...html.matchAll(/(?:[a-z][a-z0-9+.-]*:)?\/\/[^\s"'<>]+/gi)].map((m) => plain(m[0]));
     expect(external).toEqual([DECK_URL, repo ?? ""].filter((u) => /^https?:\/\//.test(u)));
-    expect([...html.matchAll(/\b(?:href|src|action)="([^"]*)"/g)].map((m) => plain(m[1]))).toEqual(["index.html", REPORT_LINK, EXECUTIVE_LINK, ...(DECK_URL ? [DECK_URL] : []), ...(repo ? [repo] : [])]);
-    // the one design's tokens and mark (src/design/theme.ts), light and dark, the dark block's braces apart
-    expect(html).toContain(ROOT_CSS.replaceAll("}}", "} }"));
-    expect(html).toContain(MARK);
+    // every link: the replay page, the owner's report, an anchor this page holds, or the deck and repository links when set
+    const ids = new Set(all(html, /\bid="([^"]+)"/g));
+    for (const href of all(html, /\b(?:href|src|action)="([^"]*)"/g).map(plain)) {
+      if (href.startsWith("#")) expect(ids.has(href.slice(1)), href).toBe(true);
+      else expect(["index.html", "index.html#sources", REPORT_LINK, EXECUTIVE_LINK, ...(DECK_URL ? [DECK_URL] : []), ...(repo ? [repo] : [])], href).toContain(href);
+    }
+    // the pages nav links the executive report beside the owner's report
+    expect(/<nav class="pages" aria-label="Pages">[\s\S]*?<\/nav>/.exec(html)![0]).toContain(`<a href="${REPORT_LINK}">Owner's report</a>\n<a href="${EXECUTIVE_LINK}">Executive report</a>`);
     // DECK_URL is empty and package.json names no repository: both links are left out, their template lines with them
     expect(html.includes(">Deck</a>")).toBe(DECK_URL !== "");
     expect(html.includes(">Repository</a>")).toBe(repo !== null);
@@ -622,78 +643,152 @@ describe("the landing page, docs/site.html", () => {
     expect(repositoryUrl(pkg("ssh", "git@github.com:o/r.git"))).toBeNull();
   });
 
-  it("opens with the README's first two sentences and lists the README's eight places, as written", () => {
+  it("opens with the README's track and its first three sentences, as written", () => {
     const html = site();
+    expect(readme()).toContain(plain(/<p class="eyebrow">([\s\S]*?)<\/p>/.exec(html)![1]));
+    expect(plain(/<p class="eyebrow">([\s\S]*?)<\/p>/.exec(html)![1])).toMatch(/^GenAI Works Open Agent Hackathon 2026, Track 1 \(Solving Fragmented Intelligence\)$/);
     const h1 = plain(/<h1>([\s\S]*?)<\/h1>/.exec(html)![1]);
-    const lede = plain(/<section class="hero">\s*<h1>[\s\S]*?<\/h1>\s*<p>([\s\S]*?)<\/p>/.exec(html)![1]);
+    const lede = plain(/<p class="lede">([\s\S]*?)<\/p>/.exec(html)![1]);
+    const third = plain(/<p class="sub">([\s\S]*?)<\/p>/.exec(section("sources"))![1]);
     const first = readme().split("\n").find((p) => !p.startsWith("#"))!;
-    expect(first.startsWith(`${h1} ${lede} `)).toBe(true);
-    expect([h1, lede].every((s) => /[^.]\.$/.test(s))).toBe(true);
+    expect(first.startsWith(`${h1} ${lede} ${third}`)).toBe(true);
+    expect([h1, lede, third].every((s) => /[^.]\.$/.test(s))).toBe(true);
     expect(h1).toMatch(/^ConfigLeaf, package `drift-agent`, /);
-    const items = [...html.matchAll(/<div class="source-item">([\s\S]*?)<\/div>/g)].map((m) => plain(m[1]));
-    const title = `The ${word(items.length)} places`;
-    expect(html).toContain(`<h2 class="section-title">${title}</h2>`);
-    expect(readme().split("\n")).toContain(`${title}: ${items.slice(0, -1).join(", ")}, and ${items.at(-1)}.`);
-    expect(items).toHaveLength(8);
+    expect(html).toContain('<h1><span class="grad">ConfigLeaf</span>, package <code>drift-agent</code>, ');
+    expect(/<meta name="description" content="([^"]*)">/.exec(html)![1]).toBe(escapeHtml(`${h1} ${lede}`.replace(/`/g, "")));
   });
 
-  it("names the semantic layer as src/zetaris/setup.ts holds it: its datasources, its entities and DQ rules by count and by name", () => {
-    const html = site();
-    expect(html).toContain(`<h2 class="section-title">Zetaris USL (${USL_NAME})</h2>`);
-    expect(html).toContain(`<span>${DS}, ${FILE_DATASOURCES.lesson}, ${FILE_DATASOURCES.rule}</span>`);
-    expect(html).toContain(`>${word(USL_TABLES.length)} entities, ${word(DQ_RULES.length)} DQ rules</span>`);
-    expect(html).toContain(`<div>Entities: ${USL_TABLES.join(", ")}</div>`);
-    expect(html).toContain(`<div class="usl-rules">DQ rules: ${DQ_RULES.map((r) => `${r.name} on ${r.table}`).join(", ")}</div>`);
-  });
-
-  it("fills the tiles from the owner's document and the index's totals", () => {
-    const tiles = [...site().matchAll(/<div class="metric-val">([^<]*)<\/div><div class="metric-label">([^<]*)<\/div>/g)].map((m) => [plain(m[1]), plain(m[2])]);
-    const md = readFileSync(path.join(EXAMPLES, "document.md"), "utf8");
+  it("fills the estate tiles from the owner's document", () => {
+    const tiles = [...site().matchAll(/<div class="tile"><b>([^<]*)<\/b><span>([^<]*)<\/span><\/div>/g)].map((m) => [plain(m[1]), plain(m[2])]);
+    const md = doc();
+    const runs = /^(\d+) collection runs on record, (\d+) passing the DQ gate\. (\d+ hosts) and (\d+ zones) in the latest passing runs\./m.exec(md)!;
     const open = /^(\d+) findings are open on the latest passing runs: (.+)\.$/m.exec(md)!;
-    const copies = /^(\d+) vault copies at the latest commit of each repository/m.exec(md)!;
-    const t = built.index.totals;
-    expect(tiles.map((x) => x[0])).toEqual([open[1], copies[1], `${t.checksRerun} / ${t.checks}`, `${t.nemotron.signatureVerified} / ${t.nemotron.calls}`]);
-    expect(tiles[0][1]).toBe(`findings open in the owner's document, decided at ${built.document.decidedAt}: ${open[2]}`);
-    expect(tiles[2][1]).toContain(`over the ${t.findings} findings of the ${t.examples} examples`);
+    expect(tiles).toEqual([
+      [`${runs[2]} / ${runs[1]}`, "collection runs pass the DQ gate"],
+      [/^(\d+) settings have an approval of record/m.exec(md)![1], "settings with an approval of record"],
+      [/^(\d+) vault copies at the latest commit of each repository, each with its latest validation/m.exec(md)![1], "vault copies, each with its latest validation"],
+      [open[1], `findings open: ${open[2]}`],
+    ]);
+    expect(plain(/<p class="cap">([\s\S]*?)<\/p>/.exec(site())![1])).toBe(`From the owner's document, \`examples/document.md\`, tenant \`client-1\`: ${runs[3]} and ${runs[4]} in the latest passing runs, decided at ${built.document.decidedAt}.`);
   });
 
-  it("tells each act in the README's own words: every sentence stands in the README, at most capitalised and closed with a period", () => {
+  it("sets Ultra alone beside the checks with Ultra as the falsifier, per run, from the Nemotron tab's headline: each figure and each row of dots its run's", () => {
+    const h = built.nemotron.headline!;
+    expect(h).not.toBeNull();
+    const nm = section("nemotron");
+    const sides = all(nm, /<article class="side [^"]*">([\s\S]*?)<\/article>/g);
+    expect(sides).toHaveLength(2);
+    const bigs = sides.map((s) => all(s, /<p class="big">([^<]*)<\/p>/g));
+    const per = (xs: [number, number][]): string => (xs.every(([, d]) => d === xs[0][1]) ? `${xs.map(([k]) => k).join(", ")} of ${xs[0][1]}` : xs.map(([k, d]) => `${k} of ${d}`).join(", "));
+    expect(bigs).toEqual([
+      [per(h.alone.runs.map((r) => [r.readYes, r.labelledNo]))],
+      [per(h.checks.runs.map((r) => [r.readYes, r.labelledNo])), per(h.checks.runs.map((r) => [r.struck, r.claims]))],
+    ]);
+    // one row of dots per run: as many filled as the run's count, as many in all as its total
+    const rows = sides.flatMap((s) => all(s, /<p><span>run \d+<\/span>((?:<[bi]><\/[bi]>)*) \d+ of \d+<\/p>/g));
+    const want = [...h.alone.runs.map((r) => [r.readYes, r.labelledNo]), ...h.checks.runs.map((r) => [r.readYes, r.labelledNo]), ...h.checks.runs.map((r) => [r.struck, r.claims])];
+    expect(rows.map((r) => [r.split("<b>").length - 1, r.split("<b>").length - 1 + r.split("<i>").length - 1])).toEqual(want);
+    expect(sides[0]).toContain(`${h.alone.config} · `);
+    expect(sides[1]).toContain(`${h.checks.config} · `);
+    expect(nm).toContain(`<code>${built.nemotron.dir}</code>, the <code>${built.nemotron.totals.set}</code> set`);
+    expect(site()).toContain('<a href="#nemotron">Nemotron</a>');
+  });
+
+  it("reads the README's eight places into one Zetaris layer and out to the five verbs its third sentence names, in its order", () => {
+    const src = section("sources");
+    const items = [...src.matchAll(/<li><b>([\s\S]*?)<\/b>(?:<span>([\s\S]*?)<\/span>)?<\/li>/g)].map((m) => (m[2] ? `${plain(m[1])} (${plain(m[2])})` : plain(m[1])));
+    expect(items).toHaveLength(8);
+    const title = `The ${word(items.length)} places`;
+    expect(src).toContain(`<h2>${title}, read as one</h2>`);
+    expect(readme().split("\n")).toContain(`${title}: ${items.slice(0, -1).join(", ")}, and ${items.at(-1)}.`);
+    const hub = /<div class="hub-card">([\s\S]*?)<\/div>/.exec(src)![1];
+    expect(hub).toBe(`<small>Zetaris</small><b>${USL_NAME}</b><span>${DS} · ${FILE_DATASOURCES.lesson} · ${FILE_DATASOURCES.rule}</span><span>${word(USL_TABLES.length)} entities · ${word(DQ_RULES.length)} DQ rules</span>`);
+    const out = all(src, /<li class="v-(\w+)">/g);
+    expect([...out].sort()).toEqual([...VERBS].sort());
+    const third = plain(/<p class="sub">([\s\S]*?)<\/p>/.exec(src)![1]);
+    expect(out.map((v) => third.indexOf(v))).toEqual(out.map((v) => third.indexOf(v)).sort((a, b) => a - b));
+    expect(src).toContain('<li class="v-HOLD"><b>HOLD</b>with an expiry</li>');
+  });
+
+  it("carries the README's opening bullets as the stack: each lead and its words, the link to the README's own section left out", () => {
+    const lines = readmeRaw().split("\n");
+    const bullets = lines.slice(0, lines.findIndex((l) => l.startsWith("## "))).flatMap((l) => {
+      const m = /^- \*\*(.+?)\*\*: (.+)$/.exec(l);
+      return m ? [[m[1], m[2].replace(/\s*\(\[[^\]]*\]\(#[^)]*\)\)(?=\.?$)/, "")]] : [];
+    });
+    expect(bullets.map((b) => b[0])).toEqual(["Zetaris", "Meterless", "NVIDIA Nemotron"]);
+    const stack = section("stack");
+    expect(stack).toContain("<h2>Zetaris, Meterless and NVIDIA Nemotron</h2>");
+    const cards = [...stack.matchAll(/<article class="card"><h3>([\s\S]*?)<\/h3><p>([\s\S]*?)<\/p><\/article>/g)].map((m) => [plain(m[1]), plain(m[2])]);
+    expect(cards).toEqual(bullets.map(([lead, text]) => [lead, `${text[0].toUpperCase()}${text.slice(1)}`]));
+  });
+
+  it("lays out the semantic layer as src/zetaris/setup.ts holds it: each entity once, in the lane of its datasource, with its DQ rule", () => {
+    const layer = section("layer");
+    const lanes = all(layer, /<div class="lane">([\s\S]*?)<\/ul><\/div>/g);
+    expect(lanes.map((l) => /<b>(\w+)<\/b>/.exec(l)![1])).toEqual([DS, FILE_DATASOURCES.lesson, FILE_DATASOURCES.rule]);
+    const entities = lanes.flatMap((l) => all(l, /<li><code>(\w+)<\/code>/g));
+    expect([...entities].sort()).toEqual([...USL_TABLES].sort());
+    for (const r of DQ_RULES) expect(layer).toMatch(new RegExp(`<li><code>${r.table}</code>[^<]*<br><em>${r.name}</em></li>`));
+    expect(all(layer, /<em>(\w+)<\/em>/g)).toHaveLength(DQ_RULES.length);
+    expect(plain(/<p class="sub">([\s\S]*?)<\/p>/.exec(layer)![1])).toBe(`\`${USL_NAME}\` in \`lightning.metastore.drift\` holds ${word(USL_TABLES.length)} entities over three datasources, each built from the tables its activation SELECT reads, and ${word(DQ_RULES.length)} DQ rules.`);
+  });
+
+  it("decides under the README's policy, its bullets as written, beside the findings open by verb in the owner's document", () => {
+    const decide = section("decide");
+    const lines = readmeRaw().split("\n");
+    const from = lines.indexOf("## Policy");
+    const bullets = lines.slice(from + 1, lines.findIndex((l, i) => i > from && l.startsWith("## "))).flatMap((l) => {
+      const m = /^- ([A-Z]+(?:(?:, | or )[A-Z]+)*): (.+)$/.exec(l);
+      return m ? [[m[1], m[2]]] : [];
+    });
+    const cards = [...decide.matchAll(/<article class="vcard v-\w+"><h3>([\s\S]*?)<\/h3><p>([\s\S]*?)<\/p><\/article>/g)].map((m) => [plain(m[1]), plain(m[2])]);
+    expect(cards).toEqual(bullets.map(([lead, text]) => [lead, `${text[0].toUpperCase()}${text.slice(1)}`]));
+    const open = /^(\d+) findings are open on the latest passing runs: (.+)\.$/m.exec(doc())!;
+    const verbs = [...open[2].matchAll(/([A-Z]+) (\d+)/g)].map((m) => [m[1], m[2]]);
+    expect([...decide.matchAll(/<span class="v-(\w+)" style="flex:(\d+)"><\/span>/g)].map((m) => [m[1], m[2]])).toEqual(verbs);
+    expect(all(decide, /<li class="v-\w+">([^<]*)<\/li>/g)).toEqual(verbs.map(([v, n]) => `${v} ${n}`));
+  });
+
+  it("tells each act in the README's own words, dated by the README's times, act two the provider's revert of a record with FOUND-BUT-DIFFERENT on two rows", () => {
     const text = readme();
-    const acts = [...site().matchAll(/<div class="act-card">[\s\S]*?<p>([\s\S]*?)<\/p>/g)].map((m) => plain(m[1]));
-    expect(acts).toHaveLength(4);
-    for (const a of acts) {
-      for (const s of a.split(/(?<=[.!?]["')]*) (?=[A-Z])/)) {
+    const acts = section("acts");
+    const cards = [...acts.matchAll(/<div class="act-time">([^<]*)<span>(\w+)<\/span><\/div><article class="act-card"><h3>[^<]*<\/h3><p>([\s\S]*?)<\/p>/g)].map((m) => ({ time: m[1], where: m[2], text: plain(m[3]) }));
+    expect(cards.map((c) => c.where)).toEqual(["production", "production", "production", "lab"]);
+    for (const c of cards) {
+      expect(c.text).toContain(`at ${c.time}`);
+      for (const s of c.text.split(/(?<=[.!?]["')]*) (?=[A-Z])/)) {
         const forms = [s, s.replace(/\.$/, "")].flatMap((x) => [x, `${x[0].toLowerCase()}${x.slice(1)}`]);
         expect(forms.some((x) => text.includes(x)), s).toBe(true);
       }
     }
-    // act two: a record changed and put back through the provider, the provider confirming; FOUND-BUT-DIFFERENT on two rows
-    expect(acts[1]).toContain("2 `found_but_different` findings");
-    expect(acts[1]).toContain("`revert_record` through the provider");
-    expect(acts[1]).toContain("with the provider confirming the value");
-    expect(acts[1]).not.toMatch(/restor/i);
-    expect(site()).toContain(`<span class="act-badge">${built.site.tokens.ACT_ONE_BADGE}</span>`);
-    expect(built.site.tokens.ACT_ONE_BADGE).toMatch(/^\d{2}:\d{2} UTC, rollback_file$/);
-    expect(acts[0]).toContain(built.site.tokens.ACT_ONE_BADGE!.split(",")[0]);
-    // the timeline's title: the days of the README's sentence on act one and of the three traces, no count typed in
-    const traceDays = built.site.traces.flatMap((t) => readTrace(t.file).map((e) => e.ts.slice(0, 10)));
-    expect([...new Set(traceDays)]).toEqual(["2026-10-25"]);
+    expect(cards[1].text).toContain("2 `found_but_different` findings");
+    expect(cards[1].text).toContain("`revert_record` through the provider");
+    expect(cards[1].text).toContain("with the provider confirming the value");
+    expect(cards[1].text).not.toMatch(/restor/i);
+    expect(acts).toContain('<span class="kind">rollback_file</span>');
+    // the title's days: the README's sentence on act one and the three traces
+    expect([...new Set(built.site.traces.flatMap((t) => readTrace(t.file).map((e) => e.ts.slice(0, 10))))]).toEqual(["2026-10-25"]);
     expect(text).toContain("all on 25 Oct 2026 in the operator's rehearsal");
-    expect(site()).toContain('<h2 class="section-title">The production estate and the lab chain, 25 Oct 2026</h2>');
+    expect(acts).toContain("<h2>The production estate and the lab chain, 25 Oct 2026</h2>");
   });
 
-  it("quotes trace lines the replay page's redactor leaves as they are, each a line of the committed trace its act names", () => {
-    const blocks = [...site().matchAll(/<div class="trace-block">([\s\S]*?)<\/div>/g)].map((m) => plain(m[1]).split("\n"));
+  it("quotes trace lines the replay page's redactor leaves as they are, each a line of the committed trace its caption names, counted against it", () => {
+    const figures = [...section("acts").matchAll(/<figure class="trace"><figcaption><span>([^<]*)<\/span><span>([^<]*)<\/span><\/figcaption><pre>([\s\S]*?)<\/pre><\/figure>/g)];
+    expect(figures.map((m) => m[1])).toEqual(["examples/traces/cycle_mvo2bil0.jsonl", "examples/traces/cycle_mvo5600q.jsonl", "examples/traces/cycle_mvoa0l1i.jsonl"]);
+    const blocks = figures.map((m) => plain(m[3]).split("\n"));
     expect(built.site.traces.map((t) => t.lines)).toEqual(blocks);
-    expect(built.site.traces.map((t) => t.file)).toEqual(["examples/traces/cycle_mvo2bil0.jsonl", "examples/traces/cycle_mvo5600q.jsonl", "examples/traces/cycle_mvoa0l1i.jsonl"]);
+    expect(built.site.traces.map((t) => t.file)).toEqual(figures.map((m) => m[1]));
     const salted = new Redactor(randomBytes(16).toString("hex"), config.redactWords);
     const fixed = new Redactor("site-build", []);
-    for (const [i, t] of built.site.traces.entries()) {
-      expect(site()).toContain(`<span class="act-badge">${t.file}</span>`);
-      const printed = new Set(readTrace(t.file).map((e) => formatTraceLine(e, (s) => s)));
+    for (const [i, m] of figures.entries()) {
+      const events = readTrace(m[1]);
+      const ts = events.map((e) => e.ts).sort();
+      expect(plain(m[2])).toBe(`${blocks[i].length} of ${events.length.toLocaleString("en-US")} lines · ${ts[0].slice(11, 19)} to ${ts.at(-1)!.slice(11, 19)} UTC`);
+      const printed = new Set(events.map((e) => formatTraceLine(e, (s) => s)));
       for (const line of blocks[i]) {
-        expect(printed.has(line), `${t.file}: ${line}`).toBe(true);
-        expect(salted.text(line), `${t.file}: a line the redactor changes`).toBe(line);
+        expect(printed.has(line), `${m[1]}: ${line}`).toBe(true);
+        expect(salted.text(line), `${m[1]}: a line the redactor changes`).toBe(line);
         expect(fixed.text(line)).toBe(line);
       }
     }
@@ -705,28 +800,41 @@ describe("the landing page, docs/site.html", () => {
     expect(lab.every((l) => l.startsWith("explainer/explain · ok · "))).toBe(true);
   });
 
-  it("states the eval from the results directory the Nemotron tab is built from, and the receipts lines npm run receipts:verify prints for it", () => {
-    const html = site();
-    const t = built.nemotron.totals;
+  it("proves it with the rings, the eval line and the receipts lines npm run receipts:verify prints for the results directory the Nemotron tab is built from", () => {
+    const proof = section("proof");
+    const t = built.index.totals;
+    const nm = built.nemotron.totals;
     const dir = built.nemotron.dir;
-    const line = plain(/<section class="cli-section">\s*<h2[^>]*>[^<]*<\/h2>\s*<p>([\s\S]*?)<\/p>/.exec(html)![1]);
-    for (const s of [`The \`${t.set}\` set`, `(\`${dir}\`)`, `${built.nemotron.runs.length} configuration runs`, `${t.calls} Nemotron calls, ${t.signatureVerified} with a verified receipt, ${t.substitutions} substitutions`, `of the ${t.judgeSelects} judge SELECTs recorded with a row count, ${t.rerunEqual} re-run at build`]) expect(line).toContain(s);
-    const out = /npm run receipts:verify -- ([^<]*)<span class="cli-output">([\s\S]*?)<\/span>/.exec(html)!;
-    expect(out[1]).toBe(dir);
     const r = spawnSync(process.execPath, ["--import", "tsx", "scripts/receipts-verify.ts", dir], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
     expect(r.status, r.stderr).toBe(0);
     const printed = r.stdout.trim().split("\n");
-    const shown = plain(out[2]).split("\n");
+    const counts = /receipts: [\d,]+ receipt ids, ([\d,]+) in receipts\.json, ([\d,]+) withheld; ([\d,]+) of [\d,]+ signatures verified/.exec(printed.join("\n"))!;
+    expect(all(proof, /<b>([^<]*)<\/b><figcaption>/g)).toEqual([`${t.checksRerun} / ${t.checks}`, `${nm.rerunEqual} / ${nm.judgeSelects}`, `${nm.signatureVerified} / ${nm.calls}`, `${counts[3]} / ${counts[1]}`]);
+    const line = plain(/<p class="evalline">([\s\S]*?)<\/p>/.exec(proof)![1]);
+    for (const s of [`The \`${nm.set}\` set`, `(\`${dir}\`)`, `${built.nemotron.runs.length} configuration runs`, `${nm.calls} Nemotron calls, ${nm.signatureVerified} with a verified receipt, ${nm.substitutions} substitutions`, `of the ${nm.judgeSelects} judge SELECTs recorded with a row count, ${nm.rerunEqual} re-run at build`]) expect(line).toContain(s);
+    const consoles = [...proof.matchAll(/<pre>\$ ([^\n]*)\n<span class="out">([\s\S]*?)<\/span><\/pre>/g)].map((m) => [plain(m[1]), plain(m[2])]);
+    expect(consoles.map((c) => c[0])).toEqual([`npm run receipts:verify -- ${dir}`, SAMPLE_COMMAND]);
+    const shown = consoles[0][1].split("\n");
     expect(shown.filter((l) => l !== "…")).toEqual([printed.find((l) => / receipt ids, /.test(l)), printed.at(-1)]);
     expect(shown.at(-1)).toMatch(/^receipts: OK, \d+ signatures verified, 0 mismatches$/);
-  }, 60_000);
-
-  it("shows the summary line of SAMPLE_MODE=true npm run sample cut to its counts and verbs, from the build's own pass over sample/bundle.json", () => {
+    // the sample: the summary line --json prints, from the build's own pass over sample/bundle.json, cut to its counts and verbs
     const s = built.index.sample!;
     expect(s.gatedOut).toBe(0);
-    const out = plain(/SAMPLE_MODE=true npm run sample<span class="cli-output">([\s\S]*?)<\/span>/.exec(site())![1]);
     const verbs = VERBS.filter((v) => s.verbs[v]).map((v) => `${v} ${s.verbs[v]}`).join(", ");
-    expect(out).toBe(`…\nSAMPLE: ${s.runs} collection runs, 0 failed the DQ gate (none), ${s.observed} observations in the World Model, ${s.findings} finding(s): …; verbs: ${verbs}; …\n…`);
+    expect(SAMPLE_COMMAND).toBe("SAMPLE_MODE=true npm run sample -- --json");
+    expect(consoles[1][1]).toBe(`SAMPLE: ${s.runs} collection runs, 0 failed the DQ gate (none), ${s.observed} observations in the World Model, ${s.findings} finding(s): …; verbs: ${verbs}; …`);
+  }, 60_000);
+
+  it("names each file it reads, with the hash of each file it quotes", () => {
+    const rows = [...section("provenance").matchAll(/<li><code>([^<]*)<\/code><span>[^<]*<\/span><small>([^<]*)<\/small><\/li>/g)].map((m) => [m[1], plain(m[2])]);
+    expect(rows.map((r) => r[0])).toEqual(["README.md", "examples/document.md", "src/zetaris/setup.ts", ...built.site.traces.map((t) => t.file), built.nemotron.dir, "sample/bundle.json", "data/index.json"]);
+    for (const [file, meta] of rows) {
+      const shown = /^(sha256:[0-9a-f]+)…/.exec(meta)?.[1];
+      if (!shown) continue;
+      const full = file === "sample/bundle.json" ? built.index.sample!.sha256 : sha(readFileSync(path.join(ROOT, file), "utf8").replace(/\r\n/g, "\n"));
+      expect(full.startsWith(shown), file).toBe(true);
+    }
+    expect(rows.filter((r) => r[1].startsWith("sha256:")).map((r) => r[0])).toEqual(["examples/document.md", ...built.site.traces.map((t) => t.file), "sample/bundle.json"]);
   });
 
   it("refuses a results directory whose receipts npm run receipts:verify would fail: a receipt's signature changed in a copy", () => {
@@ -741,17 +849,18 @@ describe("the landing page, docs/site.html", () => {
     expect(() => renderSiteHtml({ ...input(), resultsDir: dir })).toThrow(/refusing to publish: npm run receipts:verify -- \S+ finds \d+ mismatch(es)?; the landing page states the verdict it prints/);
   }, 60_000);
 
-  it("refuses a template token it does not fill and a token it fills that the template lacks; a token with no source leaves out its line", () => {
+  it("refuses a template token it does not fill and a token it fills that the template lacks; a source the build lacks leaves out what it would fill", () => {
     const template = readFileSync(SITE_TEMPLATE, "utf8");
     expect(() => renderSiteHtml(input(), template.replace("</main>", "{{NO_SUCH_TOKEN}}</main>"))).toThrow(SiteError);
     expect(() => renderSiteHtml(input(), template.replace("</main>", "{{NO_SUCH_TOKEN}}</main>"))).toThrow(/scripts\/site\/landing\.html holds the token \{\{NO_SUCH_TOKEN\}\}, which the build does not fill/);
     expect(() => renderSiteHtml(input(), template.replace("{{TILES_HTML}}", ""))).toThrow(/the build fills \{\{TILES_HTML\}\}, which scripts\/site\/landing\.html does not hold/);
-    // no sample pass, no receipts.json: the two commands' lines are left out, and the rest is the committed page's
+    // no sample pass and no receipts.json: the two commands and the receipts ring are left out, and nothing else changes
     const bare = renderSiteHtml({ ...input(), resultsDir: tmp }, template);
-    expect([bare.tokens.SAMPLE_RUN_RESULT, bare.tokens.RECEIPTS_VERIFY_RESULT]).toEqual([null, null]);
-    expect(bare.html).not.toMatch(/npm run sample|npm run receipts:verify/);
-    expect(bare.html).not.toMatch(/\{\{|\}\}/);
-    // the two commands' boxes run over several lines, one per line of output
-    expect(site().split("\n").filter((l) => !/npm run (sample|receipts:verify)|^receipts: |^SAMPLE: |^…(<\/span><\/div>)?$/.test(l))).toEqual(bare.html.split("\n"));
+    expect(bare.html).not.toMatch(/npm run sample|npm run receipts:verify|signature verifies offline/);
+    expect(bare.html).not.toMatch(/\{\{/);
+    // the provenance row of the results directory names receipts.json only when it is there
+    expect(bare.html).toContain(`${built.nemotron.runs.length} run files, planted.json</small>`);
+    const strip = (h: string): string => h.replace(/<div class="rings">[\s\S]*?<\/div>\n<p class="evalline">/, "").replace(/<div class="consoles">[\s\S]*?<\/div><\/section>/, "").replace("planted.json, receipts.json</small>", "planted.json</small>");
+    expect(strip(bare.html)).toBe(strip(site()));
   });
 });
