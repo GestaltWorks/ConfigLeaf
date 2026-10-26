@@ -17,6 +17,7 @@ import { DataLayer } from "../../../src/data/layer.ts";
 import { SqlJsEngine } from "../../../src/data/engines/sqljs.ts";
 import { AUTHORITY, obsId, probeId, type Disposition, type Observation } from "../../../src/data/rows.ts";
 import { DriftWorld } from "../../../src/engine/world.ts";
+import { LocalContractAuthority, type ContractAuthority } from "../../../src/guard/contract.ts";
 import { MemoryLedger } from "../../../src/ledger.ts";
 import { runPass, type PassResult } from "../../../src/pipeline.ts";
 import { Redactor } from "../../../src/redactor.ts";
@@ -69,6 +70,8 @@ export interface World extends Omit<Base, "cleanup"> {
   /** Names whose probes answer fail. */
   failing: Set<string>;
   tracer: MemTracer;
+  /** The execution-contract authority every deps() carries: a throwaway Ed25519 key (src/guard/contract.ts), so a test issues the contracts the Actor checks. */
+  contracts: ContractAuthority;
   deps(over?: Partial<ActorDeps>): ActorDeps;
   cleanup(): void;
 }
@@ -127,6 +130,7 @@ export async function buildWorld(base: Base, opts: { cf?: { failWrites?: boolean
   const probes: World["probes"] = [];
   const failing = new Set<string>();
   const tracer = new MemTracer("test_actions", {});
+  const contracts = LocalContractAuthority.ephemeral();
   let n = 0;
   const probe = async (names: readonly string[], kinds: readonly ProbeKind[]): Promise<Probe[]> => {
     probes.push({ names: [...names], kinds: [...kinds] });
@@ -137,13 +141,13 @@ export async function buildWorld(base: Base, opts: { cf?: { failWrites?: boolean
     })));
   };
   const world: World = {
-    root, redactor, vault, commits, bundle, engine, layer, pass, dispositions, host, cf, model, probes, failing, tracer,
+    root, redactor, vault, commits, bundle, engine, layer, pass, dispositions, host, cf, model, probes, failing, tracer, contracts,
     deps: (over = {}) => ({
       layer, sink: new MemoryActionSink(engine), redactor, vault, aliasOf: (h) => (h === HOST ? ALIAS : null), ssh: host.run,
       records: new Cloudflare({ token: CF_TOKEN, fetch: cf.fetch }), probe, model, receipts: model.receipts,
       findingOf: async (d) => pass.findings.find((f) => f.id === d.finding_id) ?? null,
       lightning: ["openrouter/nvidia/nemotron-3.5-lightning"], ultra: ["openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"],
-      now: () => new Date("2026-10-23T03:04:00.000Z"), tracer, ...over,
+      now: () => new Date("2026-10-23T03:04:00.000Z"), tracer, contracts, ...over,
     }),
     cleanup: () => engine.close(),
   };
