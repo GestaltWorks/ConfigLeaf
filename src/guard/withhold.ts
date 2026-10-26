@@ -61,7 +61,7 @@ function note(d: TextDecision, o: GuardOptions): GuardNote | null {
     agent: o.agent, action: "guard", status: n.level === "block" ? "failed" : "needs_revision",
     input_summary: `${n.prompt}: ${n.source}`,
     output_summary: `${n.level} ${n.class} at ${n.source} line ${n.line}`,
-    detail: `${d.hits.map((x) => x.rule).join(", ")}: ${n.reason}; ${n.level === "block" ? "the text was withheld from the model" : "the text went to the model"}; the text is not recorded`,
+    detail: `${d.hits.map((x) => x.rule).join(", ")}: ${n.reason}; ${n.level === "block" ? (n.class === "unread" ? "the text was withheld from the model unread" : "the text was withheld from the model") : "the text went to the model"}; the text is not recorded`,
   });
   return n;
 }

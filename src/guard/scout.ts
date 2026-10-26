@@ -23,10 +23,11 @@
 //     and Unicode tag characters decoded, so fullwidth letters and zero-width splits read as the plain phrase.
 //   - A decision carries a class, a rule id, a line number and a fixed sentence per hit. It never carries the text it
 //     read, so a trace line or a record line built from it leaks nothing.
-//   - Size: one text is read up to MAX_SCAN_CHARS (64 KiB). A longer text is read for its first 64 KiB, and the decision
-//     is review at least, with a hit of class "unread" (rule input.over_limit): the rest of it is not read. The prompts
-//     the code builds are far smaller, so the limit bounds the work per text and a decide() call costs at most that
-//     much per text, whatever an attacker puts in a field.
+//   - Size: one text is read up to MAX_SCAN_CHARS (64 KiB). A longer text fails closed: the decision is block, with a
+//     hit of class "unread" (rule input.over_limit), so it is withheld from the model unread. The reason is that
+//     Nightshift sends the model only the last 4,000 characters of a prompt: padding past the limit with an injection at
+//     the end would put exactly that injection in front of the model. The first 64 KiB is still scanned, so the other
+//     hits are reported, and a decide() call costs at most that much per text, whatever an attacker puts in a field.
 //   - Limits: the rules are patterns. A paraphrase that avoids every pattern passes, and so does a homoglyph spelling
 //     or a payload encoded in base64. The guard is a best-effort filter that narrows what a model reads; the Decider,
 //     the receipts gate, the execution contract (src/guard/contract.ts) and --apply bound what a model can cause.
@@ -261,14 +262,14 @@ const classOf = (r: Pick<Rule, "cls">, pass: Pass, hidden: boolean): ThreatClass
  * The findings that are not a pattern over the flat text, each with its own id, class and sentence. The spec lists
  * embedded-control attempts with role confusion, so on the raw input both control-character findings carry that class;
  * on a snippet they are context_poisoning, because characters nobody sees hide text by definition. A text longer than
- * the guard reads has no class of the spec's: it is "unread", and its level is review.
+ * the guard reads has no class of the spec's: it is "unread", and its level is block.
  */
 const CONTROL_CHARS = { id: "hidden.control_chars", cls: "role_confusion", reason: "carries invisible, zero-width or bidirectional control characters" } as const;
 const ESCAPED_CONTROLS = { id: "hidden.escaped_control", cls: "role_confusion", reason: "spells out an escaped control character" } as const;
 
 /** The most of one text the guard reads, in UTF-16 units. The rules are linear in it, so a decide() call costs at most this per text. */
 export const MAX_SCAN_CHARS = 64 * 1024;
-export const OVER_LIMIT = { id: "input.over_limit", reason: `is longer than ${MAX_SCAN_CHARS / 1024} KiB, so only the first ${MAX_SCAN_CHARS / 1024} KiB was read` } as const;
+export const OVER_LIMIT = { id: "input.over_limit", reason: `is longer than ${MAX_SCAN_CHARS / 1024} KiB, so it is withheld unread` } as const;
 
 /** The 1-based line of the first control character in `text`. */
 const controlLine = (text: string): number => {
@@ -276,7 +277,7 @@ const controlLine = (text: string): number => {
   return m ? text.slice(0, m.index).split("\n").length : 1;
 };
 
-/** One text through every rule: the first MAX_SCAN_CHARS of it, and review at least when there is more. */
+/** One text through every rule: the first MAX_SCAN_CHARS of it, and block when there is more. */
 export function scanText(full: string, pass: Pass, source: string): TextDecision {
   const over = full.length > MAX_SCAN_CHARS;
   const text = over ? full.slice(0, MAX_SCAN_CHARS) : full;
@@ -291,7 +292,7 @@ export function scanText(full: string, pass: Pass, source: string): TextDecision
   }
   const esc = ESCAPED_CONTROL.exec(p.flat);
   if (esc) hits.push({ pass, source, class: classOf(ESCAPED_CONTROLS, pass, true), rule: ESCAPED_CONTROLS.id, level: "review", line: p.lineAt(esc.index), reason: ESCAPED_CONTROLS.reason });
-  if (over) hits.push({ pass, source, class: "unread", rule: OVER_LIMIT.id, level: "review", line: 1, reason: OVER_LIMIT.reason });
+  if (over) hits.push({ pass, source, class: "unread", rule: OVER_LIMIT.id, level: "block", line: 1, reason: OVER_LIMIT.reason });
   hits.sort((a, b) => WORSE[b.level] - WORSE[a.level] || a.line - b.line);
   const first = hits[0];
   return {
