@@ -281,7 +281,7 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
         // the file is named for the tenant: an id src/policy/schema.ts TENANT reads, or no file (state.ts tenantIds lists no other)
         let attachment: string;
         try { attachment = downloadName(tenant, period); } catch (e) {
-          return html(await page(tenant, "executive", "Executive report", () => ({ body: errorPage((e as Error).message) })), 400);
+          return html(await page(tenant, "executive", "Executive report", () => ({ body: errorPage(b.redactor.text(redact((e as Error).message))) })), 400);
         }
         const { x, ctx } = await executive(tenant, period);
         // the file and its CSP before anything is sent: a renderer that fails, or a file fileCsp refuses, is a 500 page
@@ -478,13 +478,18 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
   async function handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     if (!hosts.has((req.headers.host ?? "").toLowerCase())) return send(res, 421, "text/plain; charset=utf-8", "the console answers on 127.0.0.1 only\n");
     const url = new URL(req.url ?? "/", origin);
-    const tenant = current;
     if (req.method === "GET" || req.method === "HEAD") {
+      // the page's tenant: the one its URL names (every link a page renders carries it), else the default the switcher set
+      const asked = url.searchParams.get("tenant");
+      if (asked !== null && !b.tenants.includes(asked)) return send(res, 400, "text/html; charset=utf-8", layoutError(`No tenant ${asked.slice(0, 64)}: the store holds runs of ${b.tenants.join(", ")}.`));
+      const tenant = asked ?? current;
+      if (st(tenant).first === null) await firstPass(tenant);
       if (url.pathname === "/") { res.writeHead(303, { ...answerHeaders("text/plain; charset=utf-8", csp("")), location: "/overview" }); res.end(); return; }
       const a = STATIC.get(url.pathname);
       if (a) return sendAsset(req, res, a);
       const nonce = randomBytes(16).toString("base64");
-      const r = await render(tenant, url.pathname, url.searchParams, null, nonce);
+      const rendered = await render(tenant, url.pathname, url.searchParams, null, nonce);
+      const r = rendered && !rendered.attachment ? { ...rendered, body: tenantLinks(rendered.body, tenant) } : rendered;
       if (!r) return send(res, 404, "text/html; charset=utf-8", layoutError(`No page ${url.pathname}.`), { policy: csp(nonce) });
       // a download is the executive report as one file: its style block by hash, no nonce; every other page the nonce
       const policy = r.attachment ? fileCsp(r.body) : csp(nonce);
@@ -496,23 +501,27 @@ export async function startConsole(o: ConsoleOptions): Promise<ConsoleServer> {
     const wantsJson = (req.headers.accept ?? "").includes("application/json");
     const body = await readBody(req);
     const form = new URLSearchParams(body ?? "");
+    // the tenant the action acts on: the one its form was rendered for (page_tenant), never the switcher's default; a switch names its own
+    const named = form.get("page_tenant");
+    const tenant = named !== null && b.tenants.includes(named) ? named : null;
     const reply = async (toast: Toast): Promise<void> => {
       const status = toast.status ?? (toast.ok ? 200 : 400);
       if (wantsJson) return send(res, status, "application/json; charset=utf-8", JSON.stringify({ ok: toast.ok, title: toast.title, lines: toast.lines }));
       const back = form.get("return") ?? "/overview";
       // a switch answers with the page it came from, read again for the new tenant: a reload then asks for nothing twice
-      if (m[1] === "tenant" && toast.ok) { res.writeHead(303, { ...answerHeaders("text/plain; charset=utf-8", csp("")), location: returnPathOf(back) }); res.end(); return; }
-      // every action returns to the same pages a switch does (RETURN_PATHS), read again with the toast
+      if (m[1] === "tenant" && toast.ok) { res.writeHead(303, { ...answerHeaders("text/plain; charset=utf-8", csp("")), location: tenantLinks(`href="${returnPathOf(back)}"`, current).slice(6, -1).replaceAll("&amp;", "&") }); res.end(); return; }
+      // every action returns to the same pages a switch does (RETURN_PATHS), read again with the toast, for the tenant it acted on
       const to = new URL(returnPathOf(back), origin);
-      const r = await render(current, to.pathname, to.searchParams, toast);
-      return send(res, status, "text/html; charset=utf-8", r!.body);
+      const r = await render(tenant ?? current, to.pathname, to.searchParams, toast);
+      return send(res, status, "text/html; charset=utf-8", tenantLinks(r!.body, tenant ?? current));
     };
     if (body === null) return reply({ ok: false, status: 413, title: "Refused: the form is larger than 64 KB", lines: [] });
     const refusal = csrfRefusal(req, form);
     if (refusal) return reply({ ok: false, status: 403, title: `Refused: ${refusal}`, lines: ["reload the page for a fresh form"] });
     if (m[1] !== "pass" && m[1] !== "tenant" && form.get("confirm") !== "yes") return reply({ ok: false, title: "Confirm on the page first: the action carries its confirmation", lines: [] });
+    if (m[1] !== "tenant" && !tenant) return reply({ ok: false, title: `Refused: the form names ${named === null ? "no tenant" : `tenant ${named.slice(0, 64)}, which the store holds no run of`}; reload the page`, lines: [] });
     try {
-      const toast = await actions[m[1]](form, tenant);
+      const toast = await actions[m[1]](form, tenant ?? current);
       print(`console: ${m[1]}: ${toast.title}`);
       return reply(toast);
     } catch (e) {
@@ -578,6 +587,15 @@ export const csp = (nonce: string): string =>
   `default-src 'none'; style-src 'self'${nonce ? ` 'nonce-${nonce}'` : ""}; script-src 'self'${nonce ? ` 'nonce-${nonce}'` : ""}; img-src 'self' data:; frame-src 'self'; frame-ancestors 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'`;
 
 const SECURITY = { "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" } as const;
+
+/**
+ * A page's links carry its tenant: every href, action and src to a console path (not an asset) gains tenant=<id>, so a
+ * tab keeps reading the tenant it rendered for whatever another tab switches to; a tenant id needs no escaping.
+ */
+export function tenantLinks(html: string, tenant: string): string {
+  return html.replace(/\b(href|action|src)="(\/(?!assets\/)[^"#]*)(#[^"]*)?"/g, (_m, attr: string, p: string, hash: string | undefined) =>
+    `${attr}="${p}${p.includes("?") ? "&amp;" : "?"}tenant=${encodeURIComponent(tenant)}${hash ?? ""}"`);
+}
 
 /** The headers a route may set on its answer besides its type: the attachment of a download, and nothing else. */
 export type RouteHeaders = { "content-disposition"?: string };

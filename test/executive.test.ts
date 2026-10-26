@@ -9,7 +9,7 @@
 // redactor over every data string. The period's days, the median and the durations. Offline; nothing is written but a
 // temporary file.
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,7 +21,7 @@ import { DataLayer } from "../src/data/layer.ts";
 import { SqlJsEngine } from "../src/data/engines/sqljs.ts";
 import { fileRows } from "../src/data/file-rows.ts";
 import {
-  DQ_READS, EXECUTIVE_MAX_BYTES, FILE_CSS, RECEIPTS_CACHED, classOfFinding, dqRows, duration, evalReceipts, evalScans, executiveSections, median, periodDays, readExecutive, receiptsCached,
+  DQ_READS, EXECUTIVE_MAX_BYTES, FILE_CSS, plantedOf, runFileOf, RECEIPTS_CACHED, classOfFinding, dqRows, duration, evalReceipts, evalScans, executiveSections, median, periodDays, readExecutive, receiptsCached,
   renderExecutive, type Executive,
 } from "../src/document/executive.ts";
 import { renderDocument } from "../src/document/render.ts";
@@ -213,6 +213,23 @@ describe("the executive report over sample/bundle.json", () => {
 });
 
 describe("the review of 67cd782: the reads, the class, the cache, the file and the escaping", () => {
+  it("the receipts' files are checked for shape: a run file or planted.json that parses but lacks a field refuses the directory, never a NaN on the page", () => {
+    expect(() => runFileOf({ config: { id: "C3" }, run: 1, set: "dev", counts: { calls: 3, false_positives: 0 }, calls: [] }, "C3-run1.json")).toThrow("C3-run1.json is not a run file");
+    expect(() => runFileOf(null)).toThrow(/is not a run file/);
+    expect(runFileOf({ config: { id: "C3" }, run: 1, set: "dev", counts: { calls: 3, false_positives: 0, labelled_no: 9 }, calls: [] }).run).toBe(1);
+    expect(() => plantedOf({ claims: [{ config: "C3" }] })).toThrow("planted.json is not a list of claims");
+    const root = mkdtempSync(path.join(tmpdir(), "receipts-shape-"));
+    try {
+      const newest = evalReceipts(ROOT)!;
+      cpSync(path.join(ROOT, newest.dir), path.join(root, newest.dir), { recursive: true });
+      const run = readdirSync(path.join(root, newest.dir)).find((f) => /^C\d+-run\d+\.json$/.test(f))!;
+      writeFileSync(path.join(root, newest.dir, run), JSON.stringify({ config: { id: "C3" }, run: 1 }));
+      expect(evalReceipts(root)).toBeNull();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("DQ_READS reads every rule of DQ_RULES: a new rule ships with its reading or this fails", () => {
     expect(DQ_RULES.map((r) => r.name).filter((n) => !(n in DQ_READS))).toEqual([]);
     for (const row of c1.executive.dq) expect(row.text, row.rule).not.toBe("the executive report has no reading of this rule");

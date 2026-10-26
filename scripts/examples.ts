@@ -218,7 +218,8 @@ export function examplesFacts(dir: string): string {
   const lessons = new TechnicianMemory({ storage: "read", directory: path.join(dir, "memory") }).lessons().length;
   const doc = read("document.md");
   const exec = read("executive.html");
-  const incidents = /<h2>Incidents of the period<span class="cnt">([\d,]+)<\/span><\/h2>/.exec(exec)?.[1] ?? "?";
+  const incidents = /<h2>Incidents of the period<span class="cnt">([\d,]+)<\/span><\/h2>/.exec(exec)?.[1];
+  if (incidents === undefined) throw new Error("examples/executive.html names no incident count: its markup changed, so the README table cannot be written");
   const dq = (exec.match(/<li><span class="dq [a-z]+">/g) ?? []).length;
   rows.push(
     `| policy | ${[...policyRows].map(n).join(", ")} \`policy_rule\` rows in each slice; with the shipped \`policy/hackathon.json\` loaded, version ${policy.version}'s ${policy.rules.length} rules govern |`,

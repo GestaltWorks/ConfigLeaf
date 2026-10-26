@@ -150,6 +150,22 @@ interface RunFile {
 }
 interface PlantedFile { claims: { config: string; run: number; struck?: boolean; status?: string }[] }
 
+const isNum = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
+/** A run file as the receipts section reads it, its shape checked: a field missing or of another type refuses the directory, never a NaN on the page. */
+export function runFileOf(x: unknown, name = "a run file"): RunFile {
+  const r = x as Partial<RunFile> | null;
+  const ok = !!r && typeof r === "object" && typeof r.config?.id === "string" && isNum(r.run) && typeof r.set === "string"
+    && isNum(r.counts?.calls) && isNum(r.counts?.false_positives) && isNum(r.counts?.labelled_no) && Array.isArray(r.calls);
+  if (!ok) throw new Error(`${name} is not a run file: config.id, run, set, counts.calls, counts.false_positives, counts.labelled_no and calls are owed`);
+  return r as RunFile;
+}
+/** planted.json as the receipts section reads it, its shape checked. */
+export function plantedOf(x: unknown): PlantedFile {
+  const p = x as Partial<PlantedFile> | null;
+  if (!p || !Array.isArray(p.claims) || !p.claims.every((c) => c && typeof c.config === "string" && isNum(c.run))) throw new Error("planted.json is not a list of claims with config and run");
+  return p as PlantedFile;
+}
+
 /** A directory's modification time; -1 when it is not there. Adding, removing or renaming an entry moves it. */
 const mtimeOf = (p: string): number => { try { return statSync(p).mtimeMs; } catch { return -1; } };
 
@@ -201,8 +217,8 @@ function readEvalDir(dir: string): EvalReceipts | null {
   const stamp = path.basename(dir);
   let value: EvalReceipts | null = null;
   try {
-    const runs = readdirSync(dir).filter((f) => RUN_FILE.test(f)).sort().map((f) => JSON.parse(readFileSync(path.join(dir, f), "utf8")) as RunFile);
-    const planted = JSON.parse(readFileSync(path.join(dir, "planted.json"), "utf8")) as PlantedFile;
+    const runs = readdirSync(dir).filter((f) => RUN_FILE.test(f)).sort().map((f) => runFileOf(JSON.parse(readFileSync(path.join(dir, f), "utf8")), f));
+    const planted = plantedOf(JSON.parse(readFileSync(path.join(dir, "planted.json"), "utf8")));
     const v = verify(dir);
     const alone = runs.find((r) => r.config.direct === "ultra")?.config.id;
     const checked = runs.find((r) => r.config.judge === "ultra" && r.config.select?.kind === "model")?.config.id;

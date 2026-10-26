@@ -55,6 +55,13 @@ describe("the export deny-list probe", () => {
     expect(Object.keys(countLabels("ACME-internal", ["acme-internal"]))).toEqual(["acme-internal"]);
   });
 
+  it("a label's own characters are literal: a dot, a bracket or a plus matches itself only, and a pathological label is no slow match", () => {
+    expect([labelsIn("acme.local", ["acme.local"]), labelsIn("acmexlocal", ["acme.local"]), labelsIn("a(b", ["a(b"]), labelsIn("a+b", ["a+b"]), labelsIn("aab", ["a+b"])]).toEqual([1, 0, 1, 1, 0]);
+    const t0 = Date.now();
+    expect(labelsIn("a".repeat(50_000) + "!", ["(a+)+$", "a*a*a*a*b"])).toBe(0);
+    expect(Date.now() - t0).toBeLessThan(2_000);
+  });
+
   it("finds a label as an export carries it: HTML-escaped as the reports escape a string, or URL-encoded in a link", () => {
     expect(labelForms("Smith & Sons")).toEqual(["Smith & Sons", "Smith &amp; Sons", "Smith%20%26%20Sons"]);
     expect(labelForms("acme-internal")).toEqual(["acme-internal"]);

@@ -183,7 +183,11 @@ export const isTenantId = (x: unknown): boolean => typeof x === "string" && x !=
 export const tenantIds = (ids: readonly string[]): string[] => [...new Set(ids.filter(isTenantId))].sort(cmp);
 
 /** The same backend for another of its tenants: one store, one engine, one redactor; the pages, the passes and the actions read and write that tenant's rows. */
-export const withTenant = (b: Backend, tenant: string): Backend => (b.tenant === tenant ? b : { ...b, tenant });
+export const withTenant = (b: Backend, tenant: string): Backend => {
+  // the primitive refuses on its own: a tenant the store holds no run of is no backend, whoever forgot to check
+  if (!b.tenants.includes(tenant)) throw new Error(`no backend for tenant ${JSON.stringify(tenant.slice(0, 64))}: the store holds runs of ${b.tenants.join(", ")}`);
+  return b.tenant === tenant ? b : { ...b, tenant };
+};
 
 /** Why live mode cannot start, as one sentence; null when it can. */
 export function liveRefusal(env: NodeJS.ProcessEnv = process.env): string | null {

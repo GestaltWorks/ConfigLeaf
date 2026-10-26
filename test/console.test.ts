@@ -26,7 +26,7 @@ import { duplicateText, encodeKey, latestRules, passDq, plainUrls, templatesOf, 
 import {
   PAGE_PATH, RETURN_PATHS, answerHeaders, contentDisposition, csp, downloadName, fileCsp, nonceReport, returnPathOf, startConsole, type ConsoleServer,
 } from "../src/console/server.ts";
-import { isTenantId, objectKey, readTenants, sampleBackend, tenantIds, zetarisGaps, type Backend } from "../src/console/state.ts";
+import { isTenantId, objectKey, readTenants, sampleBackend, tenantIds, withTenant, zetarisGaps, type Backend } from "../src/console/state.ts";
 import { PERIODS, renderExecutive, type Executive, type ExecutiveContext } from "../src/document/executive.ts";
 import { defaultTenant } from "../src/document/sample.ts";
 import { BUNDLE_REDACTOR } from "../src/explain/explain.ts";
@@ -81,13 +81,19 @@ async function boot(o: Boot): Promise<{ server: ConsoleServer; backend: Backend 
   return { server, backend };
 }
 
-const get = async (s: ConsoleServer, p: string, headers: Record<string, string> = {}): Promise<{ status: number; body: string; headers: Headers }> => {
+/**
+ * A GET. `raw` is the page as served; `body` is the page without the tenant every console link carries (tenantLinks),
+ * which the per-tab test reads raw, so the other tests read the page's own structure.
+ */
+const get = async (s: ConsoleServer, p: string, headers: Record<string, string> = {}): Promise<{ status: number; body: string; raw: string; headers: Headers }> => {
   const r = await fetch(`${s.url}${p}`, { headers });
-  return { status: r.status, body: await r.text(), headers: r.headers };
+  const raw = await r.text();
+  return { status: r.status, body: raw.replace(/(?:\?|&amp;)tenant=[A-Za-z0-9._-]+(?=["#])/g, ""), raw, headers: r.headers };
 };
 
 const post = async (s: ConsoleServer, action: string, fields: Record<string, string>, headers: Record<string, string> = {}): Promise<{ status: number; json: { ok: boolean; title: string; lines: string[] } }> => {
-  const r = await fetch(`${s.url}/do/${action}`, { method: "POST", body: new URLSearchParams({ csrf: s.csrf, confirm: "yes", ...fields }), headers: { accept: "application/json", ...headers } });
+  // a form carries the tenant its page was rendered for: the default one unless the test names another
+  const r = await fetch(`${s.url}/do/${action}`, { method: "POST", body: new URLSearchParams({ csrf: s.csrf, confirm: "yes", page_tenant: s.tenant(), ...fields }), headers: { accept: "application/json", ...headers } });
   return { status: r.status, json: await r.json() as { ok: boolean; title: string; lines: string[] } };
 };
 
@@ -440,7 +446,8 @@ describe("the tenant switcher over sample/bundle.json: client-1 and lab-1", SERV
     for (const [p] of PAGES) expect((await get(server, p)).body, p).toContain('<select id="tenant-pick" name="tenant" data-autosubmit><option value="client-1" selected>client-1</option><option value="lab-1">lab-1</option></select>');
     expect((await get(server, "/executive?period=all")).body).toContain('<input type="hidden" name="return" value="/executive?period=all">');
     const r = await tenantPost({ tenant: "lab-1", return: "/executive?period=all" });
-    expect([r.status, r.headers.get("location")]).toEqual([303, "/executive?period=all"]);
+    // the page it came from, for the tenant it switched to
+    expect([r.status, r.headers.get("location")]).toEqual([303, "/executive?period=all&tenant=lab-1"]);
     expect(server.tenant()).toBe("lab-1");
     for (const [p] of PAGES) expect((await get(server, p)).body, p).toContain('<option value="lab-1" selected>lab-1</option>');
     expect((await get(server, "/settings")).body).toContain("Every object the estate holds for lab-1: 5 files on 1 host and 0 records in 0 zones");
@@ -472,7 +479,7 @@ describe("the tenant switcher over sample/bundle.json: client-1 and lab-1", SERV
     expect(server.tenant()).toBe("lab-1");
     for (const back of ["https://elsewhere.example/", "//elsewhere.example", "/traces/view?f=..%2F..%2Fpackage.json", "/executive?period=1y"]) {
       const r = await tenantPost({ tenant: "lab-1", return: back });
-      expect([r.status, r.headers.get("location")], back).toEqual([303, "/overview"]);
+      expect([r.status, r.headers.get("location")], back).toEqual([303, "/overview?tenant=lab-1"]);
     }
   });
 
@@ -616,6 +623,36 @@ describe("the review of 67cd782: one first pass, a download that fails cleanly, 
     await tenantPost("client-1");
   });
 
+  it("a tab keeps its tenant: A renders client-1, B switches to lab-1, and A's Approve acts on client-1; a form that names no tenant, or one the store lacks, is refused", async () => {
+    await tenantPost("client-1");
+    const a = (await get(server, "/settings")).raw;
+    // every form carries the page's tenant, every link names it
+    expect(a).toContain('<input type="hidden" name="page_tenant" value="client-1">');
+    expect(a).toContain('<li><a href="/findings?tenant=client-1">Findings');
+    expect(a).not.toMatch(/\b(?:href|action)="\/(?!assets\/)(?![^"]*tenant=client-1)[^"#]*(?:#[^"]*)?"/);
+    const key = settingRows(a).find((r) => r.key.startsWith("linux.nginx"))!.key;
+    // tab B switches: the default moves, tab A's page and form do not
+    await tenantPost("lab-1");
+    expect(server.tenant()).toBe("lab-1");
+    expect((await get(server, "/settings?tenant=client-1")).raw).toContain('<option value="client-1" selected>client-1</option>');
+    const approved = await post(server, "approve", { key: encodeKey(key), by: "tech-a", note: "", page_tenant: "client-1" });
+    expect([approved.status, approved.json.ok], approved.json.title).toEqual([200, true]);
+    expect(approved.json.title).toMatch(/^Approved: /);
+    // the same form against the default tenant would not find the object: the action read client-1, not the global
+    const onDefault = await post(server, "approve", { key: encodeKey(key), by: "tech-a", note: "", page_tenant: "lab-1" });
+    expect(onDefault.json.title).toBe("Approve refused: the object is not in the latest passing runs of this tenant");
+    for (const named of ["nope", ""]) {
+      const r = await post(server, "approve", { key: encodeKey(key), by: "tech-a", page_tenant: named });
+      expect([r.status, r.json.title.startsWith("Refused: the form names ")], named).toEqual([400, true]);
+    }
+    const none = await fetch(`${server.url}/do/lock`, { method: "POST", body: new URLSearchParams({ csrf: server.csrf, confirm: "yes", key: encodeKey(key) }), headers: { accept: "application/json" } });
+    expect([none.status, ((await none.json()) as { title: string }).title]).toEqual([400, "Refused: the form names no tenant; reload the page"]);
+    // a page that names a tenant the store lacks is refused, not read for the default
+    expect((await get(server, "/settings?tenant=nope")).status).toBe(400);
+    expect(() => withTenant({ tenant: "client-1", tenants: ["client-1"] } as unknown as Backend, "nope")).toThrow('no backend for tenant "nope"');
+    await tenantPost("client-1");
+  });
+
   it("a download whose file fails: a renderer that throws, or a file with two style blocks, is the console's 500 page with the fixed headers, and the console answers on", async () => {
     for (const period of ["30d", "all"]) {
       const r = await get(server, `/executive/download?period=${period}`);
@@ -635,11 +672,11 @@ describe("the review of 67cd782: one first pass, a download that fails cleanly, 
   });
 
   it("every action returns to the pages a switch returns to: a refused action from Templates or the executive report answers that page with its toast", async () => {
-    const form = (ret: string) => fetch(`${server.url}/do/lock`, { method: "POST", body: new URLSearchParams({ csrf: server.csrf, confirm: "yes", key: "", return: ret }) });
+    const form = (ret: string) => fetch(`${server.url}/do/lock`, { method: "POST", body: new URLSearchParams({ csrf: server.csrf, confirm: "yes", key: "", return: ret, page_tenant: "client-1" }) });
     const templates = await (await form("/templates")).text();
     expect(templates).toContain("<h1>Templates</h1>");
     expect(templates).toContain("Lock refused: the object is not in the latest passing runs of this tenant");
-    expect(await (await form("/executive?period=30d")).text()).toContain('<a href="/executive?period=30d" aria-current="page">30 days</a>');
+    expect(await (await form("/executive?period=30d")).text()).toContain('<a href="/executive?period=30d&amp;tenant=client-1" aria-current="page">30 days</a>');
     for (const back of ["https://elsewhere.example/", "/traces/view?f=..%2F..%2Fpackage.json", "/executive?period=1y"]) expect(await (await form(back)).text(), back).toContain("<h1>Overview</h1>");
   });
 

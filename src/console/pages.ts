@@ -150,20 +150,21 @@ export function barHtml(v: View): string {
 }
 
 /** The "Run a pass" form: the pass over the store, never act. */
-export function passForm(v: Pick<View, "csrf" | "mode" | "passRunning">, where: "side" | "page"): string {
+export function passForm(v: Pick<View, "csrf" | "mode" | "passRunning" | "tenant">, where: "side" | "page"): string {
   const label = v.mode === "sample" ? "Run a pass" : "Run a dry pass";
   const hint = v.mode === "sample" ? "over sql.js, recorded in memory" : "through Zetaris, nothing recorded";
   if (v.passRunning) return `<p class="busy">A pass is running since ${escapeHtml(utc(v.passRunning))}.</p>`;
   return `<form method="post" action="/do/pass" data-action="pass"${where === "page" ? "" : ' class="side-pass"'}>
-<input type="hidden" name="csrf" value="${escapeHtml(v.csrf)}"><input type="hidden" name="return" value="/findings">
+<input type="hidden" name="csrf" value="${escapeHtml(v.csrf)}"><input type="hidden" name="page_tenant" value="${escapeHtml(v.tenant)}"><input type="hidden" name="return" value="/findings">
 <button type="submit" class="btn${where === "side" ? " full" : " primary"}">${label}</button>
 <p class="busy" data-busy="Running the pass" hidden>Running the pass</p>
 ${where === "page" ? `<p class="busy">${hint}; the console never runs act</p>` : ""}
 </form>`;
 }
 
+/** A form's hidden fields: the console's token, the tenant the page was rendered for (the action acts on it alone), then its own. */
 const hidden = (v: View, fields: Record<string, string>): string =>
-  [`<input type="hidden" name="csrf" value="${escapeHtml(v.csrf)}">`, ...Object.entries(fields).map(([k, x]) => `<input type="hidden" name="${k}" value="${escapeHtml(x)}">`)].join("");
+  [`<input type="hidden" name="csrf" value="${escapeHtml(v.csrf)}">`, `<input type="hidden" name="page_tenant" value="${escapeHtml(v.tenant)}">`, ...Object.entries(fields).map(([k, x]) => `<input type="hidden" name="${k}" value="${escapeHtml(x)}">`)].join("");
 
 const confirmBlock = (text: string, yes: string): string =>
   `<div class="confirm" hidden><p data-summary>${text}</p><div class="act"><button type="submit" class="btn primary" data-yes>${yes}</button><button type="button" class="btn" data-no>Cancel</button></div></div>`;
