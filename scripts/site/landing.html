@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ConfigLeaf (drift-agent)</title>
+  <style>
+    :root {
+      --bg-dark: #0f172a;
+      --card-bg: #1e293b;
+      --border-color: #334155;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --accent-green: #10b981;
+      --accent-teal: #06b6d4;
+      --code-bg: #0b0f19;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      line-height: 1.5;
+      padding: 1.5rem;
+    }
+    header {
+      max-width: 1100px;
+      margin: 0 auto 3rem auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 1.25rem;
+    }
+    .brand { display: flex; align-items: center; gap: 0.75rem; }
+    .brand-title { font-size: 1.4rem; font-weight: 700; }
+    .brand-title span { color: var(--accent-green); }
+    .brand-subtitle { font-size: 0.8rem; color: var(--accent-teal); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    .nav-links { display: flex; gap: 1.25rem; font-size: 0.9rem; }
+    .nav-links a { color: var(--text-muted); text-decoration: none; border-bottom: 1px dashed transparent; }
+    .nav-links a:hover { color: var(--text-main); border-bottom-color: var(--text-main); }
+    main { max-width: 1100px; margin: 0 auto; }
+    .hero { margin-bottom: 3rem; }
+    h1 { font-size: 2rem; font-weight: 800; line-height: 1.25; margin-bottom: 0.75rem; }
+    .hero p { font-size: 1.05rem; color: var(--text-muted); margin-bottom: 1.75rem; max-width: 850px; }
+    .hero-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+    .metric-card { background-color: var(--card-bg); border: 1px solid var(--border-color); padding: 1rem; border-radius: 6px; }
+    .metric-val { font-size: 1.5rem; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-weight: 700; color: var(--accent-teal); }
+    .metric-label { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem; }
+    .section-title { font-size: 1.15rem; font-weight: 700; margin-bottom: 1rem; border-left: 3px solid var(--accent-green); padding-left: 0.75rem; }
+    .grid-two { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 3rem; }
+    .source-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.6rem; }
+    .source-item {
+      background-color: var(--card-bg);
+      border: 1px solid var(--border-color);
+      padding: 0.65rem 0.75rem;
+      border-radius: 4px;
+      font-size: 0.85rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    .usl-box {
+      background-color: var(--code-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 1.15rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.8rem;
+    }
+    .usl-header { color: var(--accent-green); border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem; margin-bottom: 0.5rem; display: flex; justify-content: space-between; }
+    .usl-rules { margin-top: 0.65rem; border-top: 1px dashed var(--border-color); padding-top: 0.65rem; color: var(--text-muted); }
+    .timeline { margin-bottom: 3rem; }
+    .act-card { background-color: var(--card-bg); border: 1px solid var(--border-color); border-radius: 6px; padding: 1.25rem; margin-bottom: 1.25rem; }
+    .act-header { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; justify-content: space-between; align-items: baseline; border-bottom: 1px solid var(--border-color); padding-bottom: 0.6rem; margin-bottom: 0.75rem; }
+    .act-header h3 { font-size: 1rem; font-weight: 700; }
+    .act-badge { background-color: var(--bg-dark); padding: 0.2rem 0.5rem; border-radius: 3px; font-size: 0.75rem; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; border: 1px solid var(--border-color); color: var(--text-muted); max-width: 100%; overflow-wrap: anywhere; }
+    .act-card p { font-size: 0.92rem; color: var(--text-main); }
+    .trace-block {
+      background-color: var(--code-bg);
+      padding: 0.85rem;
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.75rem;
+      overflow-x: auto;
+      margin-top: 0.85rem;
+      border-left: 2px solid var(--accent-teal);
+      color: #cbd5e1;
+      white-space: pre-wrap;
+    }
+    .cli-section { margin-bottom: 3rem; }
+    .cli-box {
+      background-color: var(--code-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      padding: 0.9rem 1rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.8rem;
+      margin-top: 0.6rem;
+      color: #34d399;
+      white-space: pre-wrap;
+    }
+    .cli-prompt { color: var(--text-muted); }
+    .cli-output { color: var(--text-muted); display: block; margin-top: 0.35rem; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.9em; }
+    @media (max-width: 768px) { .grid-two { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <svg width="32" height="32" viewBox="0 0 100 100" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" style="color: var(--accent-green);">
+        <path d="M 50 15 C 57 15, 62 25, 62 30 C 65 22, 75 22, 80 27 C 82 31, 80 43, 85 45 C 92 48, 92 62, 85 65 C 77 68, 77 75, 75 80 C 68 85, 55 83, 50 78 C 45 83, 32 85, 25 80 C 23 75, 23 68, 15 65 C 8 62, 8 48, 15 45 C 20 43, 18 31, 20 27 C 25 22, 35 22, 38 30 C 38 25, 43 15, 50 15 Z" />
+        <path d="M 50 78 L 50 88" />
+        <path d="M 50 78 L 50 35 M 50 62 L 70 70 M 50 52 L 30 62" stroke="var(--accent-teal)" stroke-width="4" />
+      </svg>
+      <div>
+        <div class="brand-title">Config<span>Leaf</span></div>
+        <div class="brand-subtitle">drift-agent</div>
+      </div>
+    </div>
+    <nav class="nav-links">
+      <a href="index.html">Replay</a>
+      <a href="{{REPORT_HREF}}">Owner's report</a>
+      <a href="{{DECK_HREF}}">Deck</a>
+      <a href="{{REPO_HREF}}">Repository</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <h1>{{README_SENTENCE_ONE}}</h1>
+      <p>{{README_SENTENCE_TWO}}</p>
+      <div class="hero-metrics">
+        {{TILES_HTML}}
+      </div>
+    </section>
+
+    <section class="grid-two">
+      <div>
+        <h2 class="section-title">{{SOURCES_TITLE}}</h2>
+        <div class="source-list">
+          {{SOURCES_HTML}}
+        </div>
+      </div>
+      <div>
+        <h2 class="section-title">Zetaris USL ({{USL_SCHEMA_NAME}})</h2>
+        <div class="usl-box">
+          <div class="usl-header">
+            <span>{{USL_DATASOURCE}}</span>
+            <span style="color: var(--accent-teal)">{{USL_ENTITY_COUNT_WORD}} entities, {{USL_RULE_COUNT_WORD}} DQ rules</span>
+          </div>
+          <div>Entities: {{USL_ENTITY_NAMES}}</div>
+          <div class="usl-rules">DQ rules: {{USL_RULE_NAMES}}</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="timeline">
+      <h2 class="section-title">{{TIMELINE_TITLE}}</h2>
+
+      <div class="act-card">
+        <div class="act-header">
+          <h3>Act 1: A locked vhost, broken and rolled back</h3>
+          <span class="act-badge">{{ACT_ONE_BADGE}}</span>
+        </div>
+        <p>{{ACT_ONE_TEXT}}</p>
+      </div>
+
+      <div class="act-card">
+        <div class="act-header">
+          <h3>Act 2: A record pointed outside the inventory and reverted</h3>
+          <span class="act-badge">{{ACT_TWO_BADGE}}</span>
+        </div>
+        <p>{{ACT_TWO_TEXT}}</p>
+        <div class="trace-block">{{ACT_TWO_SUMMARIES}}</div>
+      </div>
+
+      <div class="act-card">
+        <div class="act-header">
+          <h3>Act 3: A no-copy case, investigated and ticketed</h3>
+          <span class="act-badge">{{ACT_THREE_BADGE}}</span>
+        </div>
+        <p>{{ACT_THREE_TEXT}}</p>
+        <div class="trace-block">{{ACT_THREE_SUMMARIES}}</div>
+      </div>
+
+      <div class="act-card">
+        <div class="act-header">
+          <h3>Lab chain: Why it changed</h3>
+          <span class="act-badge">{{LAB_CHAIN_BADGE}}</span>
+        </div>
+        <p>{{LAB_CHAIN_TEXT}}</p>
+        <div class="trace-block">{{LAB_CHAIN_SUMMARIES}}</div>
+      </div>
+    </section>
+
+    <section class="cli-section">
+      <h2 class="section-title">Verify the receipts offline</h2>
+      <p>{{EVAL_SUMMARY_LINE}}</p>
+      <div class="cli-box"><span class="cli-prompt">$ </span>npm run receipts:verify -- {{EVAL_DIR}}<span class="cli-output">{{RECEIPTS_VERIFY_RESULT}}</span></div>
+      <div class="cli-box"><span class="cli-prompt">$ </span>SAMPLE_MODE=true npm run sample<span class="cli-output">{{SAMPLE_RUN_RESULT}}</span></div>
+    </section>
+  </main>
+</body>
+</html>
