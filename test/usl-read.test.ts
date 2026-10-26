@@ -167,7 +167,7 @@ describe("fencedOr: an OR Spark could push whole into one USL scan", () => {
 
   it("the catalogue's own: the reads whose OR names one table are fenced, and only those", () => {
     const fenced = CATALOGUE_SQL.filter(([, sql]) => fencedOr(sql)).map(([name]) => name).sort();
-    expect(fenced).toEqual(["APPROVED_COPIES_SQL", "APPROVED_MISSING_SQL", "POLICY_RULES_SQL", "template other_settings_reference"]);
+    expect(fenced).toEqual(["APPROVED_COPIES_SQL", "APPROVED_MISSING_SQL", "MAIL_RECORDS_SQL", "POLICY_RULES_SQL", "template other_settings_reference"]);
   });
 
   it("a fenced query reads every entity through a SELECT with LIMIT, an OR in an overlay body included; sql.js is untouched", () => {

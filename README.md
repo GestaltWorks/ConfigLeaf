@@ -641,7 +641,8 @@ Plan ==".
 | `policy` | `policy_rule` | `policy_rule` | `rule_id` |  |  |
 | `copy` | `vault_copy`, `copy_validation`: each `vault_copy` with its latest `copy_validation` (by `validated_at`, then `validation_id`); `validated` is 1 when that result is ok or ok_with_gaps |  | `copy_id`; `run_id` references `collection(run_id)` | `copy_validated` | `validated = 1` |
 | `probe` | `probe` | `probe` | `probe_id`; `run_id` references `collection(run_id)` |  |  |
-| `disposition` | `disposition` | `disposition` | `disposition_id`; `run_id` references `collection(run_id)` |  |  |
+| `change_window` | `change_window` | `change_window` | `window_id` |  |  |
+| `disposition` | `disposition` | `disposition` | `disposition_id`; `run_id` references `collection(run_id)`; `window_id` references `change_window(window_id)` |  |  |
 | `action` | `action` | `action` | `action_id`; `disposition_id` references `disposition(disposition_id)` | `action_verified` | `kind NOT IN ('rollback_file','revert_record') OR status IN ('failed','refused','not_judged') OR verification <> ''` |
 | `ticket` | `ticket` | `ticket` | `ticket_id` |  |  |
 | `cause` | `finding_cause`: `class` as `cause_class` | `finding_cause` | `cause_id`; `disposition_id` references `disposition(disposition_id)` | `cause_evidenced` | `cause_class = 'unknown' OR evidence_ids <> '[]'` |
@@ -649,16 +650,15 @@ Plan ==".
 | `rule` | `RULES.rule`: one row per rule of the policy file, as `rules.json` in the Zetaris filestore; `lock` as `locked`, `hold_max_hours` as `hold_hours`, `note` as `description` | `rule` | `rule_id` |  |  |
 | `adoption` | `disposition`, `LESSONS.lesson`: each `disposition` decided ADOPT by the operator, under an accepted exception, LEFT JOINed across the two datasources to the `LESSONS.lesson` row its reason names, on the tenant and the lesson id |  | `disposition_id`; `lesson_id` references `lesson(lesson_id)` | `exception_in_force` | `lesson_id IS NOT NULL AND lesson_kind = 'exception' AND lesson_recorded_at <= decided_at AND decided_at < lesson_expires_at` |
 | `dns_live` | `CLOUDFLARE.zone_<zone id>`, `collection_run`, `dns_record`: each record the DNS API returns at the query, the `result` array of every `CLOUDFLARE.zone_<zone id>` REST table exploded (one table per zone and page), LEFT JOINed across the datasources to the last complete `cloudflare.dns` run of `collection_run` and to that run's `dns_record` row of the same Cloudflare record id; ids are joined on, never a name or a content |  | `record_id`; `run_id` references `collection(run_id)` | `dns_inventory_current` | `held_type <> '' AND held_type = live_type AND held_proxied = live_proxied` |
-| `dns_record` | `dns_record`: `dns_record_id` is `run_id:record_id`, a Cloudflare record id being unique within one DNS run only | `dns_record` | `dns_record_id`; `run_id` references `collection(run_id)` |  |  |
+| `dns_record` | `dns_record`: `dns_record_id` is `run_id` and `record_id` joined by `:` (a `:` in a value escaped), a Cloudflare record id being unique within one DNS run only | `dns_record` | `dns_record_id`; `run_id` references `collection(run_id)` |  |  |
 | `inventory_asset` | `inventory_asset`: `source` as `source_kind` | `inventory_asset` | `asset_id` |  |  |
 | `approved_setting` | `approved_setting` | `approved_setting` | `approval_id` |  |  |
 | `backup_snapshot` | `backup_snapshot` | `backup_snapshot` | `snapshot_id` |  |  |
-| `backup_item` | `backup_item`: `item_id` is `snapshot_id:object_id:setting_path` | `backup_item` | `item_id`; `snapshot_id` references `backup_snapshot(snapshot_id)` |  |  |
+| `backup_item` | `backup_item`: `item_id` is `snapshot_id`, `object_id` and `setting_path` joined by `:` (a `:` in a value escaped) | `backup_item` | `item_id`; `snapshot_id` references `backup_snapshot(snapshot_id)` |  |  |
 | `vault_copy` | `vault_copy`: `source` as `source_kind` | `vault_copy` | `copy_id`; `run_id` references `collection(run_id)` |  |  |
 | `copy_validation` | `copy_validation` | `copy_validation` | `validation_id`; `copy_id` references `vault_copy(copy_id)` |  |  |
-| `referent_fingerprint` | `referent_fingerprint`: `fingerprint_id` is `obs_id:dns_run_id` | `referent_fingerprint` | `fingerprint_id`; `obs_id` references `setting(setting_id)` |  |  |
+| `referent_fingerprint` | `referent_fingerprint`: `fingerprint_id` is `obs_id` and `dns_run_id` joined by `:` (a `:` in a value escaped) | `referent_fingerprint` | `fingerprint_id`; `obs_id` references `setting(setting_id)` |  |  |
 | `audit_event` | `audit_event`: `source` as `source_kind` | `audit_event` | `event_id` |  |  |
-| `change_window` | `change_window` | `change_window` | `window_id` |  |  |
 
 ## Meterless
 
