@@ -70,9 +70,9 @@
     .usl-rules { margin-top: 0.65rem; border-top: 1px dashed var(--border-color); padding-top: 0.65rem; color: var(--text-muted); }
     .timeline { margin-bottom: 3rem; }
     .act-card { background-color: var(--card-bg); border: 1px solid var(--border-color); border-radius: 6px; padding: 1.25rem; margin-bottom: 1.25rem; }
-    .act-header { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 1px solid var(--border-color); padding-bottom: 0.6rem; margin-bottom: 0.75rem; }
+    .act-header { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; justify-content: space-between; align-items: baseline; border-bottom: 1px solid var(--border-color); padding-bottom: 0.6rem; margin-bottom: 0.75rem; }
     .act-header h3 { font-size: 1rem; font-weight: 700; }
-    .act-badge { background-color: var(--bg-dark); padding: 0.2rem 0.5rem; border-radius: 3px; font-size: 0.75rem; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; border: 1px solid var(--border-color); color: var(--text-muted); }
+    .act-badge { background-color: var(--bg-dark); padding: 0.2rem 0.5rem; border-radius: 3px; font-size: 0.75rem; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; border: 1px solid var(--border-color); color: var(--text-muted); max-width: 100%; overflow-wrap: anywhere; }
     .act-card p { font-size: 0.92rem; color: var(--text-main); }
     .trace-block {
       background-color: var(--code-bg);
@@ -100,6 +100,7 @@
     }
     .cli-prompt { color: var(--text-muted); }
     .cli-output { color: var(--text-muted); display: block; margin-top: 0.35rem; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.9em; }
     @media (max-width: 768px) { .grid-two { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -118,9 +119,9 @@
     </div>
     <nav class="nav-links">
       <a href="index.html">Replay</a>
-      <a href="../examples/report.html">Owner's report</a>
+      <a href="{{REPORT_HREF}}">Owner's report</a>
       <a href="{{DECK_HREF}}">Deck</a>
-      {{REPO_LINK}}
+      <a href="{{REPO_HREF}}">Repository</a>
     </nav>
   </header>
 
@@ -135,7 +136,7 @@
 
     <section class="grid-two">
       <div>
-        <h2 class="section-title">The eight places</h2>
+        <h2 class="section-title">{{SOURCES_TITLE}}</h2>
         <div class="source-list">
           {{SOURCES_HTML}}
         </div>
@@ -154,12 +155,12 @@
     </section>
 
     <section class="timeline">
-      <h2 class="section-title">Three passes on 25 Oct 2026</h2>
+      <h2 class="section-title">{{TIMELINE_TITLE}}</h2>
 
       <div class="act-card">
         <div class="act-header">
           <h3>Act 1: A locked vhost, broken and rolled back</h3>
-          <span class="act-badge">15:53 UTC, ROLLBACK</span>
+          <span class="act-badge">{{ACT_ONE_BADGE}}</span>
         </div>
         <p>{{ACT_ONE_TEXT}}</p>
       </div>
@@ -167,7 +168,7 @@
       <div class="act-card">
         <div class="act-header">
           <h3>Act 2: A record pointed outside the inventory and reverted</h3>
-          <span class="act-badge">examples/traces/cycle_mvo2bil0.jsonl</span>
+          <span class="act-badge">{{ACT_TWO_BADGE}}</span>
         </div>
         <p>{{ACT_TWO_TEXT}}</p>
         <div class="trace-block">{{ACT_TWO_SUMMARIES}}</div>
@@ -176,7 +177,7 @@
       <div class="act-card">
         <div class="act-header">
           <h3>Act 3: A no-copy case, investigated and ticketed</h3>
-          <span class="act-badge">examples/traces/cycle_mvo5600q.jsonl</span>
+          <span class="act-badge">{{ACT_THREE_BADGE}}</span>
         </div>
         <p>{{ACT_THREE_TEXT}}</p>
         <div class="trace-block">{{ACT_THREE_SUMMARIES}}</div>
@@ -185,7 +186,7 @@
       <div class="act-card">
         <div class="act-header">
           <h3>Lab chain: Why it changed</h3>
-          <span class="act-badge">examples/traces/cycle_mvoa0l1i.jsonl</span>
+          <span class="act-badge">{{LAB_CHAIN_BADGE}}</span>
         </div>
         <p>{{LAB_CHAIN_TEXT}}</p>
         <div class="trace-block">{{LAB_CHAIN_SUMMARIES}}</div>
@@ -195,7 +196,7 @@
     <section class="cli-section">
       <h2 class="section-title">Verify the receipts offline</h2>
       <p>{{EVAL_SUMMARY_LINE}}</p>
-      <div class="cli-box"><span class="cli-prompt">$ </span>npm run receipts:verify -- eval/results/{{EVAL_STAMP}}<span class="cli-output">{{RECEIPTS_VERIFY_RESULT}}</span></div>
+      <div class="cli-box"><span class="cli-prompt">$ </span>npm run receipts:verify -- {{EVAL_DIR}}<span class="cli-output">{{RECEIPTS_VERIFY_RESULT}}</span></div>
       <div class="cli-box"><span class="cli-prompt">$ </span>SAMPLE_MODE=true npm run sample<span class="cli-output">{{SAMPLE_RUN_RESULT}}</span></div>
     </section>
   </main>

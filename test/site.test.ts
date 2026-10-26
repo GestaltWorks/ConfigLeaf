@@ -10,17 +10,31 @@
 // by one makes the build throw and write nothing; the header links the owner's report (../examples/report.html), a
 // fixed relative link outside the tab row; a second build is byte-identical;
 // and the committed docs/ is exactly this build (rerun `npm run site` when not).
+//
+// The landing page, docs/site.html, comes out of the same build from scripts/site/landing.html: every token filled and
+// none left; no URL outside the repository but its repository link (no CDN, no font, no script); the README's first two
+// sentences, its eight places and its own words for each act, as written; the semantic layer's entities and DQ rules
+// as src/zetaris/setup.ts holds them; trace lines the replay page's redactor leaves as they are, each a line of the
+// committed trace its act names; the receipts lines npm run receipts:verify prints; and the page within the byte budget.
+import { spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { MAX_BYTES, REPORT_LINK, SiteError, buildSite, escapeHtml, markdownToHtml, nemotronView, newestResults, scanOutput, type BuildResult, type ExampleView, type JudgeSelectView } from "../scripts/build-site.ts";
+import {
+  DECK_URL, MAX_BYTES, REPORT_LINK, SITE_TEMPLATE, SiteError, buildSite, escapeHtml, formatTraceLine, markdownToHtml, nemotronView, newestResults, readTrace, renderSiteHtml,
+  repositoryUrl, scanOutput, word, type BuildResult, type ExampleView, type JudgeSelectView, type SiteInput,
+} from "../scripts/build-site.ts";
 import { templateById } from "../src/catalogue/templates.ts";
 import { config } from "../src/config.ts";
+import { FILE_DATASOURCES } from "../src/data/files.ts";
 import { DataLayer } from "../src/data/layer.ts";
 import { ZetarisEngine } from "../src/data/engines/zetaris.ts";
 import { fileSourceRows, sourceRows, sourcesMarkdown } from "../src/document/render.ts";
+import { VERBS } from "../src/pipeline.ts";
+import { Redactor } from "../src/redactor.ts";
 import { DQ_RULES, USL_NAME, USL_TABLES } from "../src/zetaris/setup.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -78,8 +92,8 @@ function brokenExamples(name: string, edit: (findings: Record<string, any>[]) =>
 }
 
 describe("the replay page", () => {
-  it("builds the three examples into index.html, .nojekyll and one data file each, written to the output directory", () => {
-    expect([...built.files.keys()].sort()).toEqual([".nojekyll", "data/index.json", "data/orphans.json", "data/proxy-split.json", "data/wildcard-no-real-ip.json", "index.html"]);
+  it("builds the three examples into index.html, site.html, .nojekyll and one data file each, written to the output directory", () => {
+    expect([...built.files.keys()].sort()).toEqual([".nojekyll", "data/index.json", "data/orphans.json", "data/proxy-split.json", "data/wildcard-no-real-ip.json", "index.html", "site.html"]);
     for (const name of built.files.keys()) expect(existsSync(path.join(tmp, "out", name))).toBe(true);
     expect(built.index.examples.map((e) => [e.dir, e.findings])).toEqual([["proxy-split", 1], ["wildcard-no-real-ip", 1], ["orphans", 7]]);
     // an exception in force gives ADOPT until its expiry: the wildcard and the three orphan vhosts the operator's lessons
@@ -360,7 +374,8 @@ describe("the replay page", () => {
     ].join("\n"));
   });
 
-  it(`stays under ${MAX_BYTES} bytes, page and data together, the whole document in the page`, () => {
+  it(`stays under ${MAX_BYTES} bytes, the page, the landing page and the data together, the whole document in the page`, () => {
+    expect(built.files.has("site.html")).toBe(true);
     expect(built.bytes).toBeLessThan(MAX_BYTES);
     expect(built.bytes).toBe([...built.files.values()].reduce((n, s) => n + Buffer.byteLength(s), 0));
     expect(Buffer.byteLength(built.files.get("index.html")!)).toBeGreaterThan(built.document.bytes);
@@ -450,5 +465,168 @@ describe("the replay page", () => {
       expect(existsSync(file), `docs/${name} is missing: run npm run site`).toBe(true);
       expect(readFileSync(file, "utf8").replace(/\r\n/g, "\n"), `docs/${name} is stale: run npm run site`).toBe(text);
     }
+  });
+});
+
+describe("the landing page, docs/site.html", () => {
+  const site = (): string => built.files.get("site.html")!;
+  const ENTITY: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" };
+  /** Element text as written before the build escaped it, inline code as the README's backticks. */
+  const plain = (s: string): string => s.replace(/<\/?code>/g, "`").replace(/&(amp|lt|gt|quot|#39);/g, (_, e: string) => ENTITY[e]);
+  /** The README's paragraphs, each on one line, joined: the text the page quotes from. */
+  const readme = (): string => readFileSync(path.join(ROOT, "README.md"), "utf8").replace(/\r\n/g, "\n").split(/\n[ \t]*\n/).map((p) => p.replace(/\s+/g, " ").trim()).join("\n");
+  const input = (): SiteInput => ({
+    index: built.index, nemotron: built.nemotron, resultsDir: path.join(ROOT, built.nemotron.dir),
+    documentText: readFileSync(path.join(EXAMPLES, "document.md"), "utf8").replace(/\r\n/g, "\n"), documentFile: "examples/document.md", sampleLine: null,
+  });
+
+  it("is built with the replay page from scripts/site/landing.html, every token the template holds filled and none left", () => {
+    const template = readFileSync(SITE_TEMPLATE, "utf8");
+    const tokens = [...new Set([...template.matchAll(/\{\{([A-Z0-9_]+)\}\}/g)].map((m) => m[1]))];
+    expect(tokens.sort()).toEqual(Object.keys(built.site.tokens).sort());
+    expect(site()).not.toMatch(/\{\{|\}\}/);
+    expect(existsSync(path.join(ROOT, "scripts", "site", "selectors.ts.txt"))).toBe(false);
+  });
+
+  it("links the replay page and the owner's report, and nothing outside the repository but its repository link: no CDN, no font, no script", () => {
+    const html = site();
+    const repo = repositoryUrl();
+    expect(html).not.toMatch(/<script|<link|<img|<iframe|<object|<embed|<video|<audio|@import|@font-face|url\(|\bsrc=/i);
+    const external = [...html.matchAll(/(?:[a-z][a-z0-9+.-]*:)?\/\/[^\s"'<>]+/gi)].map((m) => plain(m[0]));
+    expect(external).toEqual([DECK_URL, repo ?? ""].filter((u) => /^https?:\/\//.test(u)));
+    expect([...html.matchAll(/\b(?:href|src|action)="([^"]*)"/g)].map((m) => plain(m[1]))).toEqual(["index.html", REPORT_LINK, ...(DECK_URL ? [DECK_URL] : []), ...(repo ? [repo] : [])]);
+    // DECK_URL is empty and package.json names no repository: both links are left out, their template lines with them
+    expect(html.includes(">Deck</a>")).toBe(DECK_URL !== "");
+    expect(html.includes(">Repository</a>")).toBe(repo !== null);
+    expect([built.site.tokens.DECK_HREF === null, built.site.tokens.REPO_HREF === null]).toEqual([DECK_URL === "", repo === null]);
+  });
+
+  it("reads the repository link off package.json's repository field, a URL or the GitHub shorthand, as an https link; no field, no link", () => {
+    const pkg = (name: string, repository?: unknown): string => {
+      const file = path.join(tmp, `package-${name}.json`);
+      writeFileSync(file, JSON.stringify(repository === undefined ? { name: "drift-agent" } : { name: "drift-agent", repository }));
+      return file;
+    };
+    expect(repositoryUrl(pkg("none"))).toBeNull();
+    expect(repositoryUrl(pkg("object", { type: "git", url: "git+https://github.com/o/r.git" }))).toBe("https://github.com/o/r");
+    expect(repositoryUrl(pkg("string", "https://github.com/o/r"))).toBe("https://github.com/o/r");
+    expect(repositoryUrl(pkg("shorthand", "github:o/r"))).toBe("https://github.com/o/r");
+    expect(repositoryUrl(pkg("ssh", "git@github.com:o/r.git"))).toBeNull();
+  });
+
+  it("opens with the README's first two sentences and lists the README's eight places, as written", () => {
+    const html = site();
+    const h1 = plain(/<h1>([\s\S]*?)<\/h1>/.exec(html)![1]);
+    const lede = plain(/<section class="hero">\s*<h1>[\s\S]*?<\/h1>\s*<p>([\s\S]*?)<\/p>/.exec(html)![1]);
+    const first = readme().split("\n").find((p) => !p.startsWith("#"))!;
+    expect(first.startsWith(`${h1} ${lede} `)).toBe(true);
+    expect([h1, lede].every((s) => /[^.]\.$/.test(s))).toBe(true);
+    expect(h1).toMatch(/^ConfigLeaf, package `drift-agent`, /);
+    const items = [...html.matchAll(/<div class="source-item">([\s\S]*?)<\/div>/g)].map((m) => plain(m[1]));
+    const title = `The ${word(items.length)} places`;
+    expect(html).toContain(`<h2 class="section-title">${title}</h2>`);
+    expect(readme().split("\n")).toContain(`${title}: ${items.slice(0, -1).join(", ")}, and ${items.at(-1)}.`);
+    expect(items).toHaveLength(8);
+  });
+
+  it("names the semantic layer as src/zetaris/setup.ts holds it: its datasources, its entities and DQ rules by count and by name", () => {
+    const html = site();
+    expect(html).toContain(`<h2 class="section-title">Zetaris USL (${USL_NAME})</h2>`);
+    expect(html).toContain(`<span>${DS}, ${FILE_DATASOURCES.lesson}, ${FILE_DATASOURCES.rule}</span>`);
+    expect(html).toContain(`>${word(USL_TABLES.length)} entities, ${word(DQ_RULES.length)} DQ rules</span>`);
+    expect(html).toContain(`<div>Entities: ${USL_TABLES.join(", ")}</div>`);
+    expect(html).toContain(`<div class="usl-rules">DQ rules: ${DQ_RULES.map((r) => `${r.name} on ${r.table}`).join(", ")}</div>`);
+  });
+
+  it("fills the tiles from the owner's document and the index's totals", () => {
+    const tiles = [...site().matchAll(/<div class="metric-val">([^<]*)<\/div><div class="metric-label">([^<]*)<\/div>/g)].map((m) => [plain(m[1]), plain(m[2])]);
+    const md = readFileSync(path.join(EXAMPLES, "document.md"), "utf8");
+    const open = /^(\d+) findings are open on the latest passing runs: (.+)\.$/m.exec(md)!;
+    const copies = /^(\d+) vault copies at the latest commit of each repository/m.exec(md)!;
+    const t = built.index.totals;
+    expect(tiles.map((x) => x[0])).toEqual([open[1], copies[1], `${t.checksRerun} / ${t.checks}`, `${t.nemotron.signatureVerified} / ${t.nemotron.calls}`]);
+    expect(tiles[0][1]).toBe(`findings open in the owner's document, decided at ${built.document.decidedAt}: ${open[2]}`);
+    expect(tiles[2][1]).toContain(`over the ${t.findings} findings of the ${t.examples} examples`);
+  });
+
+  it("tells each act in the README's own words: every sentence stands in the README, at most capitalised and closed with a period", () => {
+    const text = readme();
+    const acts = [...site().matchAll(/<div class="act-card">[\s\S]*?<p>([\s\S]*?)<\/p>/g)].map((m) => plain(m[1]));
+    expect(acts).toHaveLength(4);
+    for (const a of acts) {
+      for (const s of a.split(/(?<=[.!?]["')]*) (?=[A-Z])/)) {
+        const forms = [s, s.replace(/\.$/, "")].flatMap((x) => [x, `${x[0].toLowerCase()}${x.slice(1)}`]);
+        expect(forms.some((x) => text.includes(x)), s).toBe(true);
+      }
+    }
+    // act two: a record changed and put back through the provider, the provider confirming; FOUND-BUT-DIFFERENT on two rows
+    expect(acts[1]).toContain("2 `found_but_different` findings");
+    expect(acts[1]).toContain("`revert_record` through the provider");
+    expect(acts[1]).toContain("with the provider confirming the value");
+    expect(acts[1]).not.toMatch(/restor/i);
+    expect(site()).toContain(`<span class="act-badge">${built.site.tokens.ACT_ONE_BADGE}</span>`);
+    expect(built.site.tokens.ACT_ONE_BADGE).toMatch(/^\d{2}:\d{2} UTC, rollback_file$/);
+    expect(acts[0]).toContain(built.site.tokens.ACT_ONE_BADGE!.split(",")[0]);
+  });
+
+  it("quotes trace lines the replay page's redactor leaves as they are, each a line of the committed trace its act names", () => {
+    const blocks = [...site().matchAll(/<div class="trace-block">([\s\S]*?)<\/div>/g)].map((m) => plain(m[1]).split("\n"));
+    expect(built.site.traces.map((t) => t.lines)).toEqual(blocks);
+    expect(built.site.traces.map((t) => t.file)).toEqual(["examples/traces/cycle_mvo2bil0.jsonl", "examples/traces/cycle_mvo5600q.jsonl", "examples/traces/cycle_mvoa0l1i.jsonl"]);
+    const salted = new Redactor(randomBytes(16).toString("hex"), config.redactWords);
+    const fixed = new Redactor("site-build", []);
+    for (const [i, t] of built.site.traces.entries()) {
+      expect(site()).toContain(`<span class="act-badge">${t.file}</span>`);
+      const printed = new Set(readTrace(t.file).map((e) => formatTraceLine(e, (s) => s)));
+      for (const line of blocks[i]) {
+        expect(printed.has(line), `${t.file}: ${line}`).toBe(true);
+        expect(salted.text(line), `${t.file}: a line the redactor changes`).toBe(line);
+        expect(fixed.text(line)).toBe(line);
+      }
+    }
+    const [two, three, lab] = blocks;
+    expect(two.filter((l) => /^detector\/detect · ok · .* · found_but_different: /.test(l))).toHaveLength(2);
+    expect(two.at(-1)).toMatch(/^actor\/revise · ok · revert_record cloudflare\.dns .* · done: /);
+    expect(three.map((l) => l.split(" · ").slice(0, 2).join(" · "))).toEqual(["actor/check · ok", "actor/escalate · skipped"]);
+    expect(three[1]).toContain("refused: no fix is allowed without a valid copy");
+    expect(lab.every((l) => l.startsWith("explainer/explain · ok · "))).toBe(true);
+  });
+
+  it("states the eval from the results directory the Nemotron tab is built from, and the receipts lines npm run receipts:verify prints for it", () => {
+    const html = site();
+    const t = built.nemotron.totals;
+    const dir = built.nemotron.dir;
+    const line = plain(/<section class="cli-section">\s*<h2[^>]*>[^<]*<\/h2>\s*<p>([\s\S]*?)<\/p>/.exec(html)![1]);
+    for (const s of [`The \`${t.set}\` set`, `(\`${dir}\`)`, `${built.nemotron.runs.length} configuration runs`, `${t.calls} Nemotron calls, ${t.signatureVerified} with a verified receipt, ${t.substitutions} substitutions`, `of the ${t.judgeSelects} judge SELECTs recorded with a row count, ${t.rerunEqual} re-run at build`]) expect(line).toContain(s);
+    const out = /npm run receipts:verify -- ([^<]*)<span class="cli-output">([\s\S]*?)<\/span>/.exec(html)!;
+    expect(out[1]).toBe(dir);
+    const r = spawnSync(process.execPath, ["--import", "tsx", "scripts/receipts-verify.ts", dir], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
+    expect(r.status, r.stderr).toBe(0);
+    const printed = r.stdout.trim().split("\n");
+    const shown = plain(out[2]).split("\n");
+    expect(shown.filter((l) => l !== "…")).toEqual([printed.find((l) => / receipt ids, /.test(l)), printed.at(-1)]);
+    expect(shown.at(-1)).toMatch(/^receipts: OK, \d+ signatures verified, 0 mismatches$/);
+  }, 60_000);
+
+  it("shows the summary line of SAMPLE_MODE=true npm run sample cut to its counts and verbs, from the build's own pass over sample/bundle.json", () => {
+    const s = built.index.sample!;
+    expect(s.gatedOut).toBe(0);
+    const out = plain(/SAMPLE_MODE=true npm run sample<span class="cli-output">([\s\S]*?)<\/span>/.exec(site())![1]);
+    const verbs = VERBS.filter((v) => s.verbs[v]).map((v) => `${v} ${s.verbs[v]}`).join(", ");
+    expect(out).toBe(`…\nSAMPLE: ${s.runs} collection runs, 0 failed the DQ gate (none), ${s.observed} observations in the World Model, ${s.findings} finding(s): …; verbs: ${verbs}; …\n…`);
+  });
+
+  it("refuses a template token it does not fill and a token it fills that the template lacks; a token with no source leaves out its line", () => {
+    const template = readFileSync(SITE_TEMPLATE, "utf8");
+    expect(() => renderSiteHtml(input(), template.replace("</main>", "{{NO_SUCH_TOKEN}}</main>"))).toThrow(SiteError);
+    expect(() => renderSiteHtml(input(), template.replace("</main>", "{{NO_SUCH_TOKEN}}</main>"))).toThrow(/scripts\/site\/landing\.html holds the token \{\{NO_SUCH_TOKEN\}\}, which the build does not fill/);
+    expect(() => renderSiteHtml(input(), template.replace("{{TILES_HTML}}", ""))).toThrow(/the build fills \{\{TILES_HTML\}\}, which scripts\/site\/landing\.html does not hold/);
+    // no sample pass, no receipts.json: the two commands' lines are left out, and the rest is the committed page's
+    const bare = renderSiteHtml({ ...input(), resultsDir: tmp }, template);
+    expect([bare.tokens.SAMPLE_RUN_RESULT, bare.tokens.RECEIPTS_VERIFY_RESULT]).toEqual([null, null]);
+    expect(bare.html).not.toMatch(/npm run sample|npm run receipts:verify/);
+    expect(bare.html).not.toMatch(/\{\{|\}\}/);
+    // the two commands' boxes run over several lines, one per line of output
+    expect(site().split("\n").filter((l) => !/npm run (sample|receipts:verify)|^receipts: |^SAMPLE: |^…(<\/span><\/div>)?$/.test(l))).toEqual(bare.html.split("\n"));
   });
 });
