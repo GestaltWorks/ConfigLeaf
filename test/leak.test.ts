@@ -29,7 +29,8 @@ function* files(p: string): Generator<string> {
   else if (TEXT.test(path.basename(p))) yield p;
 }
 
-describe.skipIf(!WORDS.length)("deny-list probe over the tree", () => {
+// It reads every committed text file, the eval results and the 22 MB supplementary bundle among them: seconds under load.
+describe.skipIf(!WORDS.length)("deny-list probe over the tree", { timeout: 60_000 }, () => {
   it("no configured label or ssh alias stands alone in any file a judge will read", () => {
     const hits: string[] = [];
     let scanned = 0;

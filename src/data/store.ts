@@ -1,7 +1,8 @@
 // Store: the app Postgres the collectors write through (drift-pg, registered in Zetaris as the DRIFT
 // datasource, so what lands here is what the live pass reads): 127.0.0.1:15432 from Windows (DATABASE_URL),
 // drift-pg:5432 from inside the Zetaris network. Measured 24 Oct 2026: a second apply of sql/schema.sql
-// changed nothing.
+// changed nothing. applySchema runs MIGRATIONS after it, so a store created before disposition.window_id and the
+// change_window constraints gains them.
 //
 // Contract:
 //   - Every collected-text column (rows.ts REDACT: names, paths, values, actors; not ids, hashes,
@@ -24,8 +25,8 @@
 //     copy_validation, probe, disposition, action, ticket, referent_fingerprint) and of finding_cause
 //     (the explain step, src/explain/), each ON CONFLICT DO NOTHING on its key. Reads: latestPassingRun
 //     (the gate's definition of passing), observationsOf, dnsRecordsOf, policyRules (the tenant's and
-//     every "*" rule), and rowsOf for any table by column equality; every read is one READ ONLY transaction and returns rows in natural-key order. One
-//     update: updateTicket, a ticket row's external_id, url, status and action_id by ticket_id with
+//     every "*" rule), and rowsOf for any table by column equality; every read is one READ ONLY transaction and returns rows in natural-key order. Two
+//     updates: closeChangeWindow, a change window's closed_at while it is null (the console's Approve and Lock), and updateTicket, a ticket row's external_id, url, status and action_id by ticket_id with
 //     updated_at, the url redacted (the PSA step, src/psa/step.ts); ticketsOf reads one tenant's tickets; actionsOf the
 //     actions that carry out a list of dispositions (src/actions/). An action row's target, reason and record go
 //     through the redactor, and a record over rows.ts ACTION_RECORD_MAX (4000) characters is refused.
@@ -47,7 +48,7 @@ import { SqlJsEngine } from "./engines/sqljs.ts";
 import { SCHEMA_SQL } from "./schema.ts";
 import {
   ACTION_RECORD_MAX, COLUMNS, KEYS, REDACT, isTimestampColumn,
-  type Action, type ApprovedSetting, type AuditEvent, type BackupItem, type BackupSnapshot, type CollectionRun, type CopyValidation,
+  type Action, type ApprovedSetting, type AuditEvent, type BackupItem, type BackupSnapshot, type ChangeWindow, type CollectionRun, type CopyValidation,
   type Disposition, type DnsRecord, type FindingCause, type InventoryAsset, type Observation, type PolicyRule, type Probe, type ReferentFingerprint,
   type Rows, type RunStatus, type TableName, type Ticket, type VaultCopy,
 } from "./rows.ts";
@@ -97,9 +98,31 @@ const CONFLICT: { [K in TableName]: string | null } = {
   ticket: "ON CONFLICT (ticket_id) DO NOTHING",
   referent_fingerprint: "ON CONFLICT (obs_id, dns_run_id) DO NOTHING",
   finding_cause: "ON CONFLICT (cause_id) DO NOTHING",
+  change_window: "ON CONFLICT (window_id) DO NOTHING",
 };
 
 type Row = Record<string, string | number | null>;
+
+/**
+ * Postgres only, after sql/schema.sql: what CREATE TABLE IF NOT EXISTS leaves out on a store created before it, each
+ * step idempotent. disposition.window_id (src/policy/decide.ts step 3), and change_window's three CHECK constraints
+ * on a table the console created before they existed, added NOT VALID: rows already stored are not rechecked, every
+ * later write is. sql.js always starts from the current DDL and needs none of it.
+ */
+export const MIGRATIONS = `ALTER TABLE disposition ADD COLUMN IF NOT EXISTS window_id TEXT;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'change_window'::regclass AND conname = 'change_window_span') THEN
+    ALTER TABLE change_window ADD CONSTRAINT change_window_span CHECK (until > opened_at) NOT VALID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'change_window'::regclass AND conname = 'change_window_closed') THEN
+    ALTER TABLE change_window ADD CONSTRAINT change_window_closed CHECK (closed_at IS NULL OR closed_at >= opened_at) NOT VALID;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'change_window'::regclass AND conname = 'change_window_surface') THEN
+    ALTER TABLE change_window ADD CONSTRAINT change_window_surface CHECK (surface IN ('linux.nginx', 'linux.etc', 'cloudflare.dns')) NOT VALID;
+  END IF;
+END
+$$`;
 
 const keyOf = (table: TableName, r: Record<string, unknown>): string => KEYS[table].map((k) => String(r[k])).join("\u001f");
 
@@ -152,9 +175,12 @@ export class Store {
     return new Store(pool, new Redactor(config.redactSalt || randomBytes(16).toString("hex"), config.redactWords));
   }
 
-  /** sql/schema.sql, every CREATE TABLE IF NOT EXISTS, in one simple-protocol call. */
+  /** sql/schema.sql, every CREATE TABLE and CREATE INDEX IF NOT EXISTS, then MIGRATIONS, in one simple-protocol call each, one transaction. */
   async applySchema(): Promise<void> {
-    await this.tx((c) => c.query(SCHEMA_SQL));
+    await this.tx(async (c) => {
+      await c.query(SCHEMA_SQL);
+      await c.query(MIGRATIONS);
+    });
   }
 
   async beginRun(run: RunStart): Promise<void> {
@@ -204,6 +230,13 @@ export class Store {
   insertTickets(rows: readonly Ticket[]): Promise<number> { return this.write("ticket", rows); }
   insertReferentFingerprints(rows: readonly ReferentFingerprint[]): Promise<number> { return this.write("referent_fingerprint", rows); }
   insertFindingCauses(rows: readonly FindingCause[]): Promise<number> { return this.write("finding_cause", rows); }
+  insertChangeWindows(rows: readonly ChangeWindow[]): Promise<number> { return this.write("change_window", rows); }
+
+  /** Close one change window that is still open (closed_at null) at closedAt, the canonical millisecond form; returns the rows changed, 0 when it is unknown or closed already. */
+  async closeChangeWindow(windowId: string, closedAt: string): Promise<number> {
+    if (!ISO_MS.test(closedAt)) throw new StoreError(`change_window.closed_at: timestamps must be ISO 8601 UTC in the millisecond form YYYY-MM-DDTHH:MM:SS.mmmZ, got ${closedAt}`);
+    return this.tx(async (c) => (await c.query("UPDATE change_window SET closed_at = $2 WHERE window_id = $1 AND closed_at IS NULL", [windowId, closedAt])).rowCount ?? 0);
+  }
 
   /**
    * One ticket row's mutable columns by ticket_id: external_id, url, status and action_id as the patch names

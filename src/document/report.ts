@@ -358,6 +358,8 @@ const shortWhy = (reason: string): string => reasonClauses(reason).join(", ").re
 function heldWhy(f: Facts, d: OpenDisposition): string {
   const r = d.rule_id ? f.ruleOf.get(d.rule_id) : undefined;
   const rule = r ? `${r.criticality} rule, holds up to ${r.hold_max_hours} h` : "";
+  const window = d.reason.match(/^change window \S+ opened by (.+?) until \S+: (.*)$/);
+  if (window) return `a change window ${window[1]} opened: ${window[2]}`;
   const drift = d.reason.match(/^(.*?)(?:,| with| and|;) (?:so )?rule \S+ holds it until/)?.[1];
   if (drift) return `${drift}${rule ? `; ${rule}` : ""}`;
   if (/concerns the setting's relation to another setting/.test(d.reason)) return `a relation between settings, not a value${rule ? `; ${rule}` : ""}`;
@@ -811,8 +813,8 @@ function footerHtml(f: Facts): string {
 
 // ---- the page ---------------------------------------------------------------------------------------------------
 
-const LIGHT = "--bg:#fbfaf7;--fg:#1d1e20;--muted:#62666d;--line:#dedad2;--card:#ffffff;--soft:#f2f0eb;--need:#b3361d;--need-bg:#fbebe6;--hold:#835700;--hold-bg:#f8ecd2;--adopted:#6c7178;--ok:#2f6b45";
-const DARK = "--bg:#141517;--fg:#e8e6e1;--muted:#a3a19b;--line:#33353a;--card:#1b1c1f;--soft:#222428;--need:#ff8e74;--need-bg:#3a201a;--hold:#f0c46e;--hold-bg:#382c13;--adopted:#9a9da3;--ok:#8fd1a6";
+export const LIGHT = "--bg:#fbfaf7;--fg:#1d1e20;--muted:#62666d;--line:#dedad2;--card:#ffffff;--soft:#f2f0eb;--need:#b3361d;--need-bg:#fbebe6;--hold:#835700;--hold-bg:#f8ecd2;--adopted:#6c7178;--ok:#2f6b45";
+export const DARK = "--bg:#141517;--fg:#e8e6e1;--muted:#a3a19b;--line:#33353a;--card:#1b1c1f;--soft:#222428;--need:#ff8e74;--need-bg:#3a201a;--hold:#f0c46e;--hold-bg:#382c13;--adopted:#9a9da3;--ok:#8fd1a6";
 
 const CSS = `:root{${LIGHT}}
 @media (prefers-color-scheme:dark){:root{${DARK}}}

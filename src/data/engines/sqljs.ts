@@ -159,6 +159,13 @@ export class SqlJsEngine implements Engine {
     return n;
   }
 
+  /** Close one change window that is still open (closed_at null), as Store.closeChangeWindow does on Postgres; returns the rows changed. */
+  closeChangeWindow(windowId: string, closedAt: string): number {
+    if (!ISO_MS.test(closedAt)) throw new DataLayerError(`change_window.closed_at: timestamps must be ISO 8601 UTC in the millisecond form YYYY-MM-DDTHH:MM:SS.mmmZ, got ${closedAt}`);
+    this.db.run("UPDATE change_window SET closed_at = ? WHERE window_id = ? AND closed_at IS NULL", [closedAt, windowId]);
+    return this.db.getRowsModified();
+  }
+
   /** Run exactly one statement. Same refusal as the Zetaris adapter: a trailing semicolon is stripped, a second statement is refused; a ';' inside a literal is data. */
   async run(sql: string, opts: RunOptions = {}): Promise<QueryResult> {
     const clean = sql.trim().replace(/;+\s*$/, "");
