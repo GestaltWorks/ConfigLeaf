@@ -84,11 +84,11 @@ const PASS_TLD = new Set(["invalid", "example", "test", "localhost"]);
 const ALIAS = /^[A-Za-z0-9_]{1,2}\.$/;
 /**
  * The agent's own dotted vocabulary, as trace lines carry it: collection surfaces (linux.etc,
- * linux.nginx, cloudflare.dns, cloudflare.audit), the nginx block and directive names a setting path
+ * linux.nginx, cloudflare.dns, cloudflare.audit, zetaris.control), the nginx block and directive names a setting path
  * ends in (server.listen, http.upstream.app.server) and the one schema table a datasource-qualified
  * name ends in (DRIFT.observation). None is a delegated TLD except .events, and no client runs under it.
  */
-const VOCAB = new Set("etc nginx dns audit http server location upstream events stream mail listen root index include observation metastore drift collection setting referent".split(" "));
+const VOCAB = new Set("etc nginx dns audit control http server location upstream events stream mail listen root index include observation metastore drift collection setting referent".split(" "));
 /** Dotted names ending in these are files, not hosts. A few are also ccTLDs (sh, so, md, pl, py); in collected configs the file reading wins. */
 const EXT = new Set(
   "conf cfg ini env log access error json jsonl yaml yml toml txt md pem key crt cer csr pub pid sock socket service timer target mount slice sh bash py pl rb go js ts mjs cjs tf html htm css php so bak old orig dist default sample lock gz tgz tar zip xz bz2 zst deb rpm db sqlite sql csv xml types map list inc tmpl tpl j2 swp tmp save out sig asc gpg sum".split(" "),

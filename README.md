@@ -1,9 +1,9 @@
 # ConfigLeaf
 
 ConfigLeaf, package `drift-agent`, is a configuration assurance agent for an MSP. An MSP's knowledge of one setting
-lives in eight places, and whether that setting is right, backed up, restorable and still means what it meant takes
-several of them at once. ConfigLeaf reads the eight as one through one Zetaris layer and decides each finding under the
-MSP's policy: ROLLBACK, FIX, ESCALATE, HOLD with an expiry, or ADOPT.
+could live in eight different places, and whether that setting is: Correct, Documented, Backed-Up, Restorable, and
+Relevant takes an awareness of many sources at once. ConfigLeaf reads the eight as one through one Zetaris layer and
+decides each finding under the MSP's policy: ROLLBACK, FIX, ESCALATE, HOLD with an expiry, or ADOPT.
 
 The eight places: the live host (over SSH), the nightly export (the backup tarball), the documentation of record
 (`approved_setting`, the rows an IT Glue or Hudu adapter would write), the DNS provider (Cloudflare), the provider's
@@ -215,6 +215,8 @@ Measured on the operator's estate, tenant `client-1`, and the writes on the lab 
 | `npm run conformance`, `npm run conformance:hmem` | The vendored Meterless suites pass: the World Model suite runs through `src/engine/world.ts`, and the H-MEM suite runs through the reference class that `src/engine/memory.ts` re-exports. | World Model 8 of 8; H-MEM 13 of 13 and the `TechnicianMemory` wrapper check, 25 Oct 2026; and in CI on every push to main and every pull request ([ci.yml](.github/workflows/ci.yml)). |
 | `npm run spike:nightshift` | Nightshift serves Lightning and Ultra by explicit id, signs a receipt for each call that verifies offline, and tracks the app as a job whose event stream replays its turns. | 9 of 9 PASS: 142 model ids listed, Lightning in 3,107 ms and Ultra in 1,625 ms on their OpenRouter routes, 100 of 100 listed receipts verified, this run's 2 receipts in the list, 65 turn events replayed, 25 Oct 2026. |
 | `npm run zetaris:setup` | The idempotent setup of the `DRIFT` datasource, the `LESSONS` and `RULES` file sources, the fourteen-entity USL and its five DQ rules. | 71 statements, 0 failed; `run_complete` 140 of 140 runs valid, `exception_in_force` 184 of 184 adoptions valid, 25 Oct 2026 22:57 UTC. |
+| `npm run collect:zetaris -- --tenant client-1` | Zetaris's own control plane is a collected surface, `zetaris.control`: the semantic layer's entities, the DQ rules, the grants, the datasources and the server version, read only, one observation per object of its canonical JSON with the population asserted, committed to the vault; once approved, the pass holds it to the approval, and an edited rule, a dropped entity or a widened grant is `drift_vs_approved` ESCALATE with its diff (`test/zetaris-control.test.ts`). | Run 30 of 30 objects complete (16 for the USL, 6 DQ rules, 2 for the grants, 5 for the datasources, the server), 30 rows written, its vault commit changing no file since the setup's run of 04:55 UTC; `npm run approve -- --tenant client-1 --surface zetaris.control` wrote 30 approvals; the read-only pass after it raised 0 findings on the surface, 26 Oct 2026. |
+| `npm run pass` (the schema guard) | Before every live pass reads a row, the columns of the fourteen `DRIFT` tables it reads and of each `CLOUDFLARE` REST table are held to sql/schema.sql and to the fields `dns_live` reads; a missing or retyped column fails the surfaces that read it closed, their findings not checked and kept from the ledger (`test/schema-guard.test.ts`). | "schema 20 tables as expected" on the pass row for client-1 at 04:55 UTC, 21 statements, 0.96 s when the guard runs alone; the pass's EXPLAIN QUERY AS of the hero join and the `dns_live` read traced once each, 26 Oct 2026. |
 | `npm run zetaris:queries` | The hero query, the survey and the detectors run through Zetaris itself. | 0 hero rows, the 27 survey findings, 0 invalid runs, 24 Oct 2026. |
 
 ## Where each answer comes from
@@ -243,12 +245,15 @@ The sources:
 - inventory (`inventory_asset`): the hosts' addresses.
 - populations (`collection_run`): each source's own population, asserted before a row is read, and each run's status.
 
-Two more sources decide what happens to a finding: the technician's memory store, which the Decider recalls from, and the policy file, which `npm run policy:load` turns into the `policy_rule` rows. Zetaris reads both as files beside `DRIFT`: `npm run zetaris:setup` writes them into its filestore and registers them. The DQ rule `exception_in_force` on `drift_usl.adoption` joins every ADOPT the ledger holds under an accepted exception to its lesson, across the two datasources. The rows are those of the committed files:
+Two more sources decide what happens to a finding: the technician's memory store, which the Decider recalls from, and the policy file, which `npm run policy:load` turns into the `policy_rule` rows. Zetaris reads both as files beside `DRIFT`: `npm run zetaris:setup` writes them into its filestore and registers them. The DQ rule `exception_in_force` on `drift_usl.adoption` joins every ADOPT the ledger holds under an accepted exception to its lesson, across the two datasources.
+
+Zetaris also reads one source itself, live: the Cloudflare DNS API, which `npm run zetaris:setup` registers as the REST datasource `CLOUDFLARE`, one table per zone, fetched again at each query. The DQ rule `dns_inventory_current` on `drift_usl.dns_live` holds every record live at the provider to the last complete DNS collection run, joined on Cloudflare's record id; a record that fails means the provider changed since that run. The file sources' rows are those of the committed files, the live source's the count measured on 26 Oct 2026:
 
 | source | Zetaris datasource | tables | rows | what it holds |
 |---|---|---|---|---|
 | technician memory store (`examples/memory`) | `LESSONS` | `LESSONS.lesson`, `LESSONS.ledger` | 23 lessons, 23 ledger entries | the lessons the technician taught, in the Meterless H-MEM store, each with its tenant, scope key, expiry and provenance; the Decider recalls them, and an accepted exception makes its finding ADOPT until it expires |
-| policy rules (`policy/hackathon.json`) | `RULES` | `RULES.rule` | 15 rules, version 2 | the MSP's policy, one row per rule under the rule id every disposition decided by policy names |
+| policy rules (`policy/hackathon.json`) | `RULES` | `RULES.rule` | 16 rules, version 2 | the MSP's policy, one row per rule under the rule id every disposition decided by policy names |
+| Cloudflare live (`api.cloudflare.com/client/v4/zones/<zone id>/dns_records`) | `CLOUDFLARE` | `CLOUDFLARE.zone_<zone id>` | 58 records in 6 zones on 26 Oct 2026 | every DNS record at the provider now, which Zetaris fetches itself under the read token at each query; drift_usl.dns_live holds each to the last complete DNS collection run by record id, type and proxied flag |
 
 ## Policy
 
@@ -527,27 +532,42 @@ on `localhost:8888` (`ZETARIS_REST_URL`). The agent sends an API key created by 
 (Management > API tokens) and set as `ZETARIS_API_KEY`: `npm run zetaris:setup` needs a key of an admin role, and the
 agent's own query path is SELECT-only ([.env.example](.env.example)).
 
-Zetaris federates three datasources. `DRIFT` is the app Postgres: the collectors and the ledger write to it, and every
+Zetaris federates four datasources. `DRIFT` is the app Postgres: the collectors and the ledger write to it, and every
 query of a live pass runs through Zetaris Lightning SQL over REST. `LESSONS` is the technician's memory store, the
 Meterless H-MEM store the Decider recalls from: `LESSONS.lesson` holds one row per lesson and `LESSONS.ledger` the
 store's H-MEM ledger, entry for entry. `RULES` is the policy file: `RULES.rule` holds one row per rule, under the rule
-id every disposition decided by policy carries. The last two are Lightning databases over files in the Zetaris
-filestore: `npm run zetaris:setup` writes the three files from `DRIFT_MEMORY_DIR` and `DRIFT_POLICY_FILE` into the
+id every disposition decided by policy carries. `CLOUDFLARE` is the Cloudflare DNS API, a Lightning REST datasource
+Zetaris reads itself: the setup reads the zones the read token sees and their record counts first (GETs only), then
+registers one REST table per zone and page of 500 records, `zone_<zone id>` for the first page and
+`zone_<zone id>_p<n>` after it, each sending the token in its Authorization header. The tables are uncached, so every
+query fetches their endpoints again and reads the provider at that instant. `LESSONS` and `RULES` are Lightning
+databases over files in the Zetaris filestore: `npm run zetaris:setup` writes the three files from `DRIFT_MEMORY_DIR` and `DRIFT_POLICY_FILE` into the
 driver container with docker (through `wsl.exe -d Ubuntu-24.04` on Windows) and registers them. Each copy records the
 files' sha256 in `.world/filestore-copy.json`, gitignored, and a live pass (before the Decider's DQ read) and
 `npm run answer` (after it writes the store) put the files again when their hash differs, so `LESSONS.lesson` holds
 the store the Decider recalls from; the setup's copy of the three files took 511 ms on 25 Oct 2026 at 23:24 UTC. The
-setup then builds the `drift_usl` semantic layer of fourteen entities (`collection`, `setting`, `referent`,
-`backup_copy`, `policy`, `copy`, `probe`, `disposition`, `action`, `ticket`, `cause`, `lesson`, `rule`, `adoption`)
-and five DQ rules: `run_complete` on `collection`, `copy_validated` on `copy` (the copy's latest validation is ok or
-ok_with_gaps), `action_verified` on `action` (a done rollback or revert names the probes that verified it),
-`cause_evidenced` on `cause` (a cause of any class but unknown names at least one evidence id) and
-`exception_in_force` on `adoption`. The `adoption` entity is the cross-source join: every ADOPT decided under an
-accepted exception, a `DRIFT` row, joined to the `LESSONS` lesson its reason names; `exception_in_force` holds each
-one to a lesson that was in force at the decision instant. After the Decider, a live pass reads the same rule over its
-own adoptions with one SELECT on `drift_usl.adoption`, and the pass row's Zetaris line prints it; the dry pass measured
-on 25 Oct 2026 over the recording of 21:12 UTC printed "DQ exception_in_force 23 of 23 adoptions of the pass recorded
-at 2026-10-25 21:12 UTC". The `cause` entity names `finding_cause.class` as `cause_class`. `test/parity.test.ts` holds sql.js and Zetaris to the same columns, rows and
+setup then builds the `drift_usl` semantic layer of fifteen entities (`collection`, `setting`, `referent`,
+`backup_copy`, `policy`, `copy`, `probe`, `disposition`, `action`, `ticket`, `cause`, `lesson`, `rule`, `adoption`,
+`dns_live`) and six DQ rules: `run_complete` on `collection`, `copy_validated` on `copy` (the copy's latest validation
+is ok or ok_with_gaps), `action_verified` on `action` (a done rollback or revert names the probes that verified it),
+`cause_evidenced` on `cause` (a cause of any class but unknown names at least one evidence id), `exception_in_force`
+on `adoption` and `dns_inventory_current` on `dns_live`. The `adoption` entity is the cross-source join: every ADOPT
+decided under an accepted exception, a `DRIFT` row, joined to the `LESSONS` lesson its reason names;
+`exception_in_force` holds each one to a lesson that was in force at the decision instant. After the Decider, a live
+pass reads the same rule over its own adoptions with one SELECT on `drift_usl.adoption`, and the pass row's Zetaris
+line prints it; the dry pass measured on 25 Oct 2026 over the recording of 21:12 UTC printed "DQ exception_in_force 23
+of 23 adoptions of the pass recorded at 2026-10-25 21:12 UTC". The `dns_live` entity is the live join: each
+`CLOUDFLARE` table's `result` array exploded into one row per record, LEFT JOINed to the last complete
+`cloudflare.dns` run of `collection_run` (the latest run `run_complete` passes) and to that run's `dns_record` row of
+the same Cloudflare record id, so the join reads Cloudflare's ids alone. `dns_inventory_current` holds every
+record live at the provider to that run with the same type and proxied flag, so a record that fails means the provider
+changed since the run and the pass's picture of the zone is stale until the next collection. For a tenant with a DNS
+run, a live pass reads the rule with one SELECT on `drift_usl.dns_live` beside the adoption read, and the pass row's DQ
+lines print both. On 26 Oct 2026 at 04:17 UTC the setup read 6 zones and 58 records in 1.9 s, then ran 90 statements,
+53 ok, 37 skipped and 0 failed in 38.6 s, the fifteen entities and the six rules listed as stated; RUN DQ measured
+`dns_inventory_current` valid on 58 of 58 live records in 16.1 s, its `record_id` key and its `run_id` foreign key 58
+of 58, `count dns_live` 58 beside the 58 the zones report, `run_complete` 157 of 157, `copy_validated` 2,303 of 2,641,
+`action_verified` 16 of 18, `cause_evidenced` 10 of 10 and `exception_in_force` 230 of 230. The `cause` entity names `finding_cause.class` as `cause_class`. `test/parity.test.ts` holds sql.js and Zetaris to the same columns, rows and
 totals over 111 cases, the two file tables and the adoption join among them. Measured on Zetaris 2.4.3.1: a function
 inside a top-level WHERE on a `DRIFT` table is dropped, every row coming back, and a correlated reference in a
 subquery's JOIN ON is refused, so the catalogue's top-level predicates compare plain columns and every correlation
@@ -562,9 +582,55 @@ the eleven-entity USL stale, removed and compiled with fourteen; a second run ga
 `exception_in_force` valid on 184 of 184 adoptions: the 23 ADOPTs of client-1 in each of 8 recorded passes, each
 joined to one of the 23 lessons of `examples/memory` (`RULES.rule` 15 rows, `LESSONS.ledger` 23).
 
+ConfigLeaf assures the layer it stands on as a ninth source, the surface `zetaris.control`
+([src/zetaris/control.ts](src/zetaris/control.ts)). `npm run collect:zetaris -- --tenant <id>`, and the setup at its
+end for each tenant with a DNS or control-plane run, reads Zetaris's control plane with read-only statements: SHOW
+NAMESPACES OR TABLES IN the USL (the entities the model must hold, the run's asserted population), LOAD USL (the model
+as JSON), LIST DQ USL, SHOW GRANT ON ALL, SHOW DATASOURCES, SHOW LIGHTNING DATABASES and SHOW SERVER VERSION. Each
+object becomes one observation on the host `zetaris`, setting `definition`: the USL's entity list, each entity as LOAD
+USL reports it (its columns, keys, checks, access-control annotations and activation query), each custom DQ rule with
+its table and expression, the list of principals, each principal's grants (the grant time left out), the datasource
+list, each datasource and Lightning database with its id, and the server version. The value is the object's canonical
+JSON (keys sorted, two-space indent), value_hash its sha256, the text redacted as every observation is (a principal's
+mail address becomes its pseudonym), and the run is committed to the vault as a host's run is, at
+`<DRIFT_VAULT_DIR>/<tenant>/zetaris`. SHOW GRANT needs an administrator or Access Control Read: when the key may not
+run it, the grants are not_checked with the reason and the run goes on without them; any other statement that fails
+leaves the run failed, so the gate refuses it. `npm run approve -- --tenant <id> --surface zetaris.control` signs off
+the whole state, and the existing `drift_vs_approved` detector covers the surface unchanged: an edited DQ rule, a
+dropped entity or a widened grant is a finding, its cause carrying the line diff of the canonical JSON (a dropped
+entity is also `approved_missing`). The policy file's `zetaris.control` rule (critical, locked, `on_drift`
+`escalate`, alert always) makes every such finding ESCALATE, a ticket for a technician, and the agent changes nothing
+on the layer. On 26 Oct 2026 the setup's collection at 04:55 UTC gave run 30 of 30 objects complete (16 for the USL,
+6 DQ rules, 2 for the grants, 5 for the datasources, the server), committed to the vault in 876 ms; `npm run
+collect:zetaris -- --tenant client-1` at 04:55:30 UTC gave the same 30 objects with the same hashes, 30 rows written,
+its vault commit changing no file; the approval at 04:55:43 UTC wrote 30 rows. `test/zetaris-control.test.ts` holds the
+three drifts to ESCALATE over sql.js, the edited rule's diff its one changed expression line.
+
+Before every live pass reads a row, the source-schema guard ([src/zetaris/schema-guard.ts](src/zetaris/schema-guard.ts))
+runs DESCRIBE DATASOURCE TABLE for the fourteen `DRIFT` tables the pass's SQL reads and, after SHOW LIGHTNING TABLES
+CLOUDFLARE, for each REST table, and compares the columns with sql/schema.sql (TEXT as string, INTEGER as integer) and
+with the three fields `dns_live` reads from each zone table's `result` array (id and type strings, proxied a boolean).
+A column the pass reads that is missing or has changed type fails the pass closed on the surfaces that read it: the
+backup tables feed linux.nginx, the DNS record, audit and inventory tables linux.nginx and cloudflare.dns, and every
+other table every surface. Their dispositions go to no ledger, each of their findings is one NOT CHECKED line with the
+reason, and the pass row prints "schema <ds>.<table> changed: <column>" in red; a pass whose own SQL fails over the
+change decides nothing and says so, the schema first. A changed REST field leaves the findings decided and the
+`dns_inventory_current` read not made. When everything matches, the row prints "schema 20 tables as expected".
+`change_window` stands apart: a store created before it lacks it, and the pass's window read already decides what its
+absence means. Last, the pass asks Zetaris for its plan of the two cross-source queries, EXPLAIN QUERY AS of the hero
+join over the tenant's latest nginx and DNS runs and of the `dns_live` read
+([src/zetaris/explain.ts](src/zetaris/explain.ts)): one trace line each, agent zetaris, action explain, the plan
+redacted and cut to 4,000 characters, its first line under `--verbose`; a key that may not run EXPLAIN (it is for
+administrators) gives a not_checked line. The read-only pass for client-1 on 26 Oct 2026 at 04:55 UTC printed "schema
+20 tables as expected" (21 statements, 0.96 s when the guard runs alone), decided 27 findings as before (ADOPT 23, HOLD 3, ESCALATE
+1) and 0 on `zetaris.control` (`drift_vs_approved` 0 and `approved_missing` 0 over the 30 approved objects, no locked
+setting without an approved value), sent 491 Lightning SQL queries (29,933 rows, 0 failed) in 97.9 s and traced the
+hero join's plan (cut at 4,000 characters) and the `dns_live` plan (2,409 characters), each opening "== Parsed Logical
+Plan ==".
+
 ### The semantic layer
 
-`drift_usl` in `lightning.metastore.drift` is the semantic layer over three datasources: `DRIFT`, the app Postgres; `LESSONS`, the technician's memory store; `RULES`, the policy file. It holds 14 entities, each activated as one SELECT over the tables it is built from (`activation()` in `src/zetaris/setup.ts`), a table of `DRIFT` by its name and a file table as `<datasource>.<table>`, and 5 DQ rules, each an expression RUN DQ tests on every row of its entity.
+`drift_usl` in `lightning.metastore.drift` is the semantic layer over four datasources: `DRIFT`, the app Postgres; `LESSONS`, the technician's memory store; `RULES`, the policy file; `CLOUDFLARE`, the Cloudflare DNS API, which Zetaris reads itself at each query. It holds 15 entities, each activated as one SELECT over the tables it is built from (`activation()` in `src/zetaris/setup.ts`), a table of `DRIFT` by its name and a file or REST table as `<datasource>.<table>`, and 6 DQ rules, each an expression RUN DQ tests on every row of its entity.
 
 | entity | built from | key | DQ rule | expression |
 |---|---|---|---|---|
@@ -582,6 +648,7 @@ joined to one of the 23 lessons of `examples/memory` (`RULES.rule` 15 rows, `LES
 | `lesson` | `LESSONS.lesson`: one row per lesson of the technician's memory store, the Meterless H-MEM store the Decider recalls from, as `lessons.json` in the Zetaris filestore | `lesson_id` |  |  |
 | `rule` | `RULES.rule`: one row per rule of the policy file, as `rules.json` in the Zetaris filestore; `lock` as `locked`, `hold_max_hours` as `hold_hours`, `note` as `description` | `rule_id` |  |  |
 | `adoption` | `disposition`, `LESSONS.lesson`: each `disposition` decided ADOPT by the operator, under an accepted exception, LEFT JOINed across the two datasources to the `LESSONS.lesson` row its reason names, on the tenant and the lesson id | `disposition_id`; `lesson_id` references `lesson(lesson_id)` | `exception_in_force` | `lesson_id IS NOT NULL AND lesson_kind = 'exception' AND lesson_recorded_at <= decided_at AND decided_at < lesson_expires_at` |
+| `dns_live` | `CLOUDFLARE.zone_<zone id>`, `collection_run`, `dns_record`: each record the DNS API returns at the query, the `result` array of every `CLOUDFLARE.zone_<zone id>` REST table exploded (one table per zone and page), LEFT JOINed across the datasources to the last complete `cloudflare.dns` run of `collection_run` and to that run's `dns_record` row of the same Cloudflare record id; ids are joined on, never a name or a content | `record_id`; `run_id` references `collection(run_id)` | `dns_inventory_current` | `held_type <> '' AND held_type = live_type AND held_proxied = live_proxied` |
 
 ## Meterless
 

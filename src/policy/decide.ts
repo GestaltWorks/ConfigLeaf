@@ -7,6 +7,9 @@
 //      lesson's expiry; a lapsed one gives ESCALATE. decided_by "operator", whatever rule matches, whatever
 //      HOLD the setting had.
 //   2. Policy, when a rule governs the setting (src/policy/resolve.ts); decided_by "policy", rule_id the rule.
+//      on_drift escalate, first and whatever the lock or the class: ESCALATE, the reason naming the drift from the
+//      approved value when there is one; the agent changes nothing (the rule zetaris.control carries, the layer the
+//      agent reads through).
 //      drift_vs_approved (the live value differs from the latest approval) and approved_missing (the approved
 //      object is absent from the run: a drift from the approved value to the live value ""):
 //        lock 1 or on_drift rollback:
@@ -269,6 +272,14 @@ function byRule(input: DecideInput, rule: PolicyRule, until = holdUntil(input.de
   const prod = production(input.probes, input.serves);
   const id = rule.rule_id;
   const cls = input.finding.class;
+
+  // escalate: a technician decides every finding the rule governs; the agent changes nothing, whatever the lock.
+  if (rule.on_drift === "escalate") {
+    const what = APPROVAL_CLASSES.includes(cls) && input.approved
+      ? (cls === "approved_missing" ? `approved ${hex(input.approved.value_hash, 12)} is absent from the run` : `live value drifted from approved ${hex(input.approved.value_hash, 12)}`)
+      : `this ${cls} finding stands`;
+    return by("ESCALATE", `${what}; rule ${id} (${rule.criticality}) sends it to a technician and the agent changes nothing`);
+  }
 
   if (APPROVAL_CLASSES.includes(cls) && input.approved) {
     const approvedHash = input.approved.value_hash;

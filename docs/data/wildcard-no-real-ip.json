@@ -15,8 +15,8 @@
  "files": [
   {
    "path": "examples/wildcard-no-real-ip/bundle.json",
-   "bytes": 675620,
-   "sha256": "sha256:abbfa0ce09e45525a4501f31ce0b47e01944e65fdfcb4bceb6fe2d4387d1ac79"
+   "bytes": 675643,
+   "sha256": "sha256:dad5433f52005dd7839961ba89178db4dd9a6a25a7f98791073dca7627a0b3af"
   },
   {
    "path": "examples/wildcard-no-real-ip/findings.json",
