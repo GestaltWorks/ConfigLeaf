@@ -32,7 +32,7 @@ carries a signed receipt, verified offline.
 | C3: C1, with Nemotron 3 Ultra as the falsifier | 9 of 9, 8 of 8 and 8 of 8 (0, 1 and 1 not judged) | 0 of 9 | 9, 8 and 8 of 10 |
 | C4: Nemotron 3 Ultra alone, no SQL | 3, 4 and 3 of 9 (2 not judged) | 6, 5 and 6 of 9 | not asked |
 
-HELD_OUT_RESULTS
+The 23 held-out items run once, on the frozen code, after the feature freeze (the protocol's rule). Their result lands in `eval/results/` and is quoted here whatever it says; until then the table above is the development set only.
 
 - **Zetaris**: every query of a live pass runs through Lightning SQL over the `DRIFT` datasource, with the `drift_usl` semantic layer and its DQ rules over it ([Zetaris](#zetaris)).
 - **Meterless**: the World Model holds the observations and the fingerprints FOUND-BUT-DIFFERENT compares, H-MEM holds the technician's lessons, and Nightshift serves Nemotron and signs a receipt for every call ([Meterless](#meterless)).
