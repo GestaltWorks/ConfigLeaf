@@ -31,7 +31,10 @@ import { defaultTenant, sampleExecutive, textSha256 } from "../src/document/samp
 import { TechnicianMemory } from "../src/engine/memory.ts";
 import { DriftWorld } from "../src/engine/world.ts";
 import { runPass } from "../src/pipeline.ts";
-import { TENANT } from "../src/policy/schema.ts";
+import { TENANT_ID, TENANT_ID_SHAPE } from "../src/policy/schema.ts";
+import { exitOnConfigError } from "../src/cli.ts";
+
+exitOnConfigError();
 import { Redactor } from "../src/redactor.ts";
 import { probeExport } from "../src/document/export.ts";
 import { FileTracer, traceIdOf } from "../src/loop/trace.ts";
@@ -57,7 +60,7 @@ if (args.help) {
 }
 const period = args.period ?? "7d";
 if (!isPeriod(period)) usage(`--period is ${PERIODS.join(", ")}, got ${period}`);
-if (args.tenant !== undefined && (!TENANT.test(args.tenant) || args.tenant === "*")) usage(`a tenant id is [A-Za-z0-9._-], up to 64, got ${args.tenant}`);
+if (args.tenant !== undefined && !TENANT_ID.test(args.tenant)) usage(`the tenant must be ${TENANT_ID_SHAPE}, got ${args.tenant}`);
 const sample = config.sampleMode || args.bundle !== undefined;
 const rel = (p: string): string => path.relative(ROOT, p).replace(/\\/g, "/");
 // the trace goes to logs/ only, one line per query, as the sample pass writes it; its id carries the process id, so two
