@@ -40,15 +40,37 @@ carries a signed receipt, verified offline.
 
 ## Quick start, no credentials
 
-Node 22 or later, no `.env`:
+Node 22 or later, no `.env`. One command checks the main claims on your machine, with no credentials, no model and no
+network, in about 20 seconds:
 
 ```bash
 npm ci
-SAMPLE_MODE=true npm run sample
-npm run judge                        # six checks of the main claims on your machine, about 20 seconds
+npm run judge
 ```
 
-The real pass over `sample/bundle.json`, the redacted recording of the live estate, in about five seconds:
+```text
+ConfigLeaf · judge · no credentials, no model, no network
+  ok    1  the pass over the recorded estate  8.1 s
+           decide ADOPT 23 · HOLD 3 · ESCALATE 1 · decided at 2026-10-25 14:17 UTC
+  ok    2  signed receipts, verified offline  0.9 s
+           eval/results/2026-10-26T08-21-54Z: receipts: OK, 375 signatures verified, 0 mismatches
+  ok    3  Meterless World Model conformance  1.2 s
+           8/8 checks passed
+  ok    4  Meterless H-MEM conformance  0.9 s
+           TechnicianMemory wrapper check (recordException, recall by exact scope key, lapsed flagge…
+  ok    5  the replay page rebuilt byte for byte  6.9 s
+           site: 382571 bytes in 7 files (budget 400000) -> docs; docs/ unchanged
+  ok    6  a live-only command refuses without credentials  0.6 s
+           exit 2: pass: ZETARIS_API_KEY is blank: the live pass reads through Zetaris
+judge: 6 of 6 checks passed in 18.7 s
+```
+
+Its first check is the real pass over `sample/bundle.json`, the redacted recording of the live estate. To watch that
+pass on its own, in about five seconds:
+
+```bash
+SAMPLE_MODE=true npm run sample
+```
 
 ```text
 ConfigLeaf · sample · tenant client-1 · recorded estate, no credentials
