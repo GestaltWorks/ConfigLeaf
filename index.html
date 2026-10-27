@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ConfigLeaf</title>
+<meta name="description" content="One setting lives in eight places. ConfigLeaf reads all eight as one through Zetaris, tries to prove each finding wrong with Nemotron, and decides what to do under the MSP's policy.">
+<style>
+  :root {
+    --bg: #fbfaf7; --surface: #ffffff; --fg: #14181f; --muted: #4b5563; --line: #e4e1d8;
+    --accent: #2f7d32; --accent-fg: #ffffff; --link: #1d4ed8; --code-bg: #f1efe8; --warn: #9a3412;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1411; --surface: #151d18; --fg: #e8efe9; --muted: #a3b3a8; --line: #26332b;
+      --accent: #6fcf73; --accent-fg: #0b1a0d; --link: #8fb4ff; --code-bg: #0a100c; --warn: #fdba74;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 17px/1.6 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+  a { color: var(--link); }
+  .wrap { max-width: 62rem; margin: 0 auto; padding: 0 16px; }
+  header.hero { padding: 64px 0 36px; }
+  .kicker { color: var(--accent); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; font-size: .8rem; margin: 0 0 12px; }
+  h1 { font-size: clamp(2.2rem, 6vw, 3.6rem); line-height: 1.05; margin: 0 0 16px; letter-spacing: -.02em; }
+  .lede { font-size: clamp(1.15rem, 2.6vw, 1.45rem); line-height: 1.4; max-width: 40rem; margin: 0 0 8px; }
+  .sub { color: var(--muted); max-width: 40rem; margin: 0 0 28px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 12px; }
+  .btn { display: inline-block; padding: 12px 20px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface);
+         color: var(--fg); text-decoration: none; font-weight: 600; }
+  .btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+  .btn[hidden] { display: none; }
+  .btn:hover { border-color: var(--accent); }
+  .btn:focus-visible, a:focus-visible { outline: 3px solid var(--link); outline-offset: 2px; }
+  section { padding: 36px 0; border-top: 1px solid var(--line); }
+  h2 { font-size: 1.6rem; margin: 0 0 6px; letter-spacing: -.01em; }
+  .note { color: var(--muted); margin: 0 0 22px; max-width: 44rem; }
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+  .card .big { font-size: 2.3rem; font-weight: 800; line-height: 1.1; letter-spacing: -.02em; margin: 0 0 6px; }
+  .card .big.good { color: var(--accent); }
+  .card .big.bad { color: var(--warn); }
+  .card h3 { margin: 0 0 6px; font-size: 1.02rem; }
+  .card p { margin: 0; color: var(--muted); font-size: .98rem; }
+  ol.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); counter-reset: s; }
+  ol.steps li { counter-increment: s; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+  ol.steps li::before { content: counter(s); display: inline-flex; width: 28px; height: 28px; border-radius: 50%; background: var(--accent);
+                        color: var(--accent-fg); font-weight: 700; align-items: center; justify-content: center; margin-bottom: 8px; }
+  ol.steps h3 { margin: 0 0 4px; font-size: 1.05rem; }
+  ol.steps p { margin: 0; color: var(--muted); font-size: .98rem; }
+  ul.facts { margin: 0; padding-left: 1.2rem; max-width: 46rem; }
+  ul.facts li { margin: 8px 0; }
+  pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 12px; padding: 16px; overflow-x: auto; font: 15px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; margin: 0 0 12px; }
+  .pills { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+  .pill { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 6px 14px; font-size: .95rem; }
+  footer { padding: 28px 0 56px; border-top: 1px solid var(--line); color: var(--muted); font-size: .95rem; }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <p class="kicker">GenAI Works Open Agent Hackathon 2026 &middot; Track 1 &middot; NVIDIA Nemotron award</p>
+    <h1>ConfigLeaf</h1>
+    <p class="lede">One setting lives in eight places. ConfigLeaf reads all eight as one, and decides what to do.</p>
+    <p class="sub">A configuration assurance agent for MSPs, running on a real estate. It checks every finding with SQL through Zetaris, has Nemotron try to prove the finding wrong, and decides under the MSP's own policy. Every model call comes back with a signed receipt.</p>
+    <div class="actions">
+      <a class="btn primary" href="docs/index.html">Replay every finding</a>
+      <a class="btn" href="examples/executive.html">Executive report</a>
+      <a class="btn" href="examples/report.html">Owner's report</a>
+      <a class="btn" id="repo" hidden>Code and quick start</a>
+    </div>
+  </div>
+</header>
+
+<main>
+<section>
+  <div class="wrap">
+    <h2>Why it checks, and does not just ask</h2>
+    <p class="note">Measured on a pre-registered development set: 15 items judged against the operator's own labels, three runs of each configuration, 390 model calls.</p>
+    <div class="grid">
+      <div class="card"><p class="big bad">3 to 4 of 9</p><h3>Nemotron 3 Ultra alone</h3><p>Reading the same rows with no SQL, it agrees with the labels on 3 or 4 of 9 items and raises a false alarm on 5 or 6 of the 9 labelled no.</p></div>
+      <div class="card"><p class="big good">0 false alarms</p><h3>The SQL checks</h3><p>They agree with the labels on every item they judge, 9 of 9, and read yes on none of the 9 labelled no.</p></div>
+      <div class="card"><p class="big good">9, 8, 8 of 10</p><h3>False claims struck</h3><p>With Ultra as the falsifier, deliberately false test claims are struck 9, 8 and 8 times out of 10 across three runs. With no falsifier, none are.</p></div>
+    </div>
+    <p class="note" style="margin-top:16px">Every call carries a signed receipt: 390 calls, 384 receipts published and verified offline, no substitutions, no injected memory.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>How a pass works</h2>
+    <p class="note">Rules decide. Models only read and refute.</p>
+    <ol class="steps">
+      <li><h3>Read all eight</h3><p>The live host, the backup, the documentation, DNS, the audit log, the inventory, the probes and the tickets, joined in one Zetaris semantic layer. A run that read less than it promised is thrown out.</p></li>
+      <li><h3>Check with SQL</h3><p>Detectors join across sources. A catalogue of checks tests each finding. A setting whose bytes match the backup but whose DNS name now points elsewhere only shows in the join.</p></li>
+      <li><h3>Try to refute</h3><p>Nemotron Lightning picks the checks. Nemotron Ultra writes one SELECT that returns rows only if the claim is false. A verdict counts only on a verified receipt.</p></li>
+      <li><h3>Decide and explain</h3><p>Policy and the technician's earlier lessons give one verb: ROLLBACK, FIX, ESCALATE, HOLD with an expiry, or ADOPT. One ledger row each, with who changed it and when.</p></li>
+    </ol>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Real, not a mock-up</h2>
+    <ul class="facts">
+      <li>It runs on the operator's two production hosts, six Cloudflare zones and the mail records of a Microsoft 365 tenant.</li>
+      <li>On 25 Oct 2026 a staged DNS change on production was raised as a byte-identical setting whose referent changed, named, and put back through the provider.</li>
+      <li>A live pass sends 235 queries through Zetaris in about 48 seconds and decides 27 findings under the MSP's policy.</li>
+      <li>Writes happen only behind <code>--apply</code>; every query is SELECT-only; a Scout guard blocks injected instructions before a model reads them.</li>
+      <li>Sample mode replays a redacted recording of the same estate, with no credentials and no model, so anyone can run the real pass.</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Run it in two minutes</h2>
+    <p class="note">Node 22 or later. No credentials, no <code>.env</code>.</p>
+<pre>npm ci
+SAMPLE_MODE=true npm run sample      # the whole pass, about 5 seconds
+SAMPLE_MODE=true npm run console     # the technician's console on http://127.0.0.1:8090/</pre>
+    <p class="note">The console is a local app: every setting with its lock, and the technician's Unlock, Approve and Lock.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Built with</h2>
+    <div class="pills">
+      <span class="pill"><strong>Zetaris</strong>: every query, a 25-entity semantic layer, six data-quality rules</span>
+      <span class="pill"><strong>Meterless</strong>: World Model, H-MEM, Scout, and Nightshift receipts</span>
+      <span class="pill"><strong>NVIDIA Nemotron</strong>: Lightning picks checks, Ultra tries to refute</span>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">ConfigLeaf, built solo in the hackathon window, 22 to 27 October 2026.</div>
+</footer>
+
+<script>
+  (function () {
+    var host = location.hostname.split(".");
+    var repo = location.pathname.split("/")[1];
+    if (host.length > 2 && host[1] === "github" && repo) {
+      var a = document.getElementById("repo");
+      a.href = "https://github.com/" + host[0] + "/" + repo;
+      a.hidden = false;
+    }
+  })();
+</script>
+</body>
+</html>
