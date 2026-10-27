@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ConfigLeaf demo</title>
+<meta name="description" content="ConfigLeaf, a configuration assurance agent for MSPs: the demo video, the technician's console and the code.">
+<style>
+  :root { --bg: #fbfaf7; --fg: #14181f; --muted: #4b5563; --line: #e4e1d8; --accent: #2f7d32; --link: #1d4ed8; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0e1411; --fg: #e8efe9; --muted: #a3b3a8; --line: #26332b; --accent: #6fcf73; --link: #8fb4ff; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 17px/1.55 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+  main { max-width: 64rem; margin: 0 auto; padding: 40px 16px 56px; }
+  .kicker { color: var(--accent); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; font-size: .8rem; margin: 0 0 8px; }
+  h1 { font-size: clamp(1.9rem, 5vw, 2.8rem); margin: 0 0 8px; letter-spacing: -.02em; }
+  p { margin: 0 0 16px; color: var(--muted); max-width: 46rem; }
+  video { display: block; width: 100%; height: auto; border-radius: 12px; border: 1px solid var(--line); background: #000; margin: 8px 0 20px; }
+  .links { display: flex; flex-wrap: wrap; gap: 12px; }
+  .links a { display: inline-block; padding: 10px 18px; border-radius: 10px; border: 1px solid var(--line); color: var(--fg); text-decoration: none; font-weight: 600; }
+  .links a.primary { background: var(--accent); border-color: var(--accent); color: #0b1a0d; }
+  .links a:focus-visible { outline: 3px solid var(--link); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<main>
+  <p class="kicker">GenAI Works Open Agent Hackathon 2026 · Track 1 · NVIDIA Nemotron award</p>
+  <h1>ConfigLeaf: the demo</h1>
+  <p>One setting lives in eight places. ConfigLeaf reads all eight as one through Zetaris, has Nemotron try to prove each finding wrong on signed receipts, and decides under the MSP's own policy. Under four minutes, recorded from the real system: the agent's own traces of real runs, the console, and the commands a judge can run.</p>
+  <video controls preload="metadata" src="/demo.mp4">Your browser cannot play this video; <a href="/demo.mp4">download it</a>.</video>
+  <div class="links">
+    <a class="primary" href="/work">Open the technician's console</a>
+    <a href="https://github.com/GestaltWorks/ConfigLeaf#evaluation">The evals</a>
+    <a href="https://claude.ai/artifact/BRP2CbHXFzkConR1fnSJbt">The slide deck</a>
+    <a href="https://github.com/GestaltWorks/ConfigLeaf">The code</a>
+    <a href="/demo.mp4" download>Download the video</a>
+  </div>
+</main>
+</body>
+</html>
